@@ -9,33 +9,43 @@ excerpt: "I ran an Agent session that accumulated 160 million tokens of context 
 
 ## A number that changed how I think about AI inference
 
-Last week, I was reviewing the consumption logs of a production multi-turn Agent session. The task was routine — a long-running research assistant that maintained context across hundreds of turns. But one number stopped me cold.
+This July, my team was running a multi-turn Agent session on [LongCat-2.0](https://longcat.chat) — a long-running research assistant that maintained context across hundreds of turns and accumulated millions of tokens of dialogue history. After a few weeks of continuous operation, I downloaded the usage data from [LongCat Platform](https://longcat.chat/platform/usage), and one chart stopped me cold.
 
-**160.4 million cache hit tokens.**
+**LongCat-2.0 Daily Token Consumption — July 2026**
 
-That's not the total tokens processed. That's just the tokens *recalled from KV-Cache memory* — the historical context that the model "remembered" rather than recomputed. The actual compute (cache misses + output)? Just 1.467 million tokens.
+![Daily Token Consumption](assets/images/token_usage_july_2026.png)
 
-The ratio: **110 storage tokens for every 1 compute token.**
+Look at July 20 alone: **229.6 million cache hit tokens** consumed in a single day. Over the entire tracking period (July 14–20), the total reached **480.4 million cache hit tokens** — with only **11.3 million actual compute tokens** (cache miss + output). The ratio: **42.7 storage tokens for every 1 compute token.**
 
-This is the new reality of long-context AI. And it fundamentally changes which resource dominates your bill.
-
-> **99.1% of tokens in a long-context Agent session are "remembered," not "computed."**
+This is not an anomaly. This is the new reality of long-context AI. And it fundamentally changes which resource dominates your bill.
 
 ---
 
-## The Scenario: One Million Tokens of Remembered Context
+## The Scenario: Real Data from 480 Million Cache Hit Tokens
 
-Here's the real-world consumption profile from that session:
+Here's the actual consumption profile from the LongCat-2.0 Agent session (July 14–20, 2026):
 
 | Metric | Value | What It Means |
 |---|---|---|
-| Cache Hit Tokens | 160.4M | KV-Cache reads: historical context reused |
-| Cache Miss Tokens | 1.02M | New tokens requiring actual computation |
-| Output Tokens | 0.447M | Model-generated responses |
-| Total Compute | 1.467M | What you'd traditionally call "processing" |
-| Storage:Compute Ratio | ~110:1 | Each compute token "serves" 110 cached |
+| **Cache Hit Tokens** (storage) | **480.4M** | KV-Cache reads: historical context reused |
+| **Cache Miss Tokens** (compute) | 7.8M | New tokens requiring actual computation |
+| **Output Tokens** | 3.5M | Model-generated responses |
+| **Total Compute** (Miss + Output) | **11.3M** | Actual FLOP-bound computation |
+| **Storage:Compute Ratio** | **42.7:1** | Each compute token "serves" 42.7 cached tokens |
+| **Peak Single Day** | Jul 20: 229.6M cache hits | Maximum daily storage consumption |
 
-The context window had reached a steady state of **200K–450K tokens** [^contextwindow] — every request carried this full history. And the vast majority of the "work" was simply keeping that history available in memory, not computing new things.
+The context window reached a steady state of 200K–450K tokens [^contextwindow] — every request carried this full history. And the vast majority of the "work" was simply keeping that history available in memory, not computing new things.
+
+Daily Breakdown:
+
+| Date | Cache Hit (M) | Compute (M) | Requests |
+|---|---|---|---|
+| Jul 14 | 23.9 | 1.2 | 507 |
+| Jul 15 | 56.1 | 1.9 | 1,061 |
+| Jul 16 | 33.7 | 1.7 | 707 |
+| Jul 17 | 4.8 | 0.3 | 44 |
+| Jul 18 | 132.4 | 4.5 | 1,163 |
+| Jul 20 | 229.6 | 1.6 | 1,010 |
 
 [^contextwindow]: Context window steady state is determined by the Agent architecture: system prompt (5-10K) + tool definitions (10-30K) + accumulated dialogue history (100K-300K) + working memory (50K-100K). See [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) for a detailed breakdown.
 
