@@ -12,55 +12,68 @@ POSTS_DIR = os.path.join(REPO, 'posts')
 
 # ──── 报告元数据 (与 sync_reports.sh 的 PROJECTS 数组保持同步) ────
 # visual = 卡片上的大字 (提取标题关键词)
+# tags = 具体技术关键词 (用于 Tags 页聚合)
 REPORTS = [
     {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
      "desc":"12 章统一分析 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 合并 spine+L4 agent+源码+社区 90d pulse · 每节 source 溯源锚点",
-     "cat":"inference","priority":"p0"},
+     "cat":"inference","priority":"p0",
+     "tags":["vLLM","KV-Cache","调度器","分布式推理","Ascend","性能调优"]},
     {"dst":"pd-separation","entry":"report.html","visual":"P/D",
      "title":"P/D 分离 KVCache 流通",
      "desc":"vLLM / SGLang / LMCache / Mooncake / Dynamo 五大框架的 Prefill-Decode 分离 + KV Cache 路由内部实现源码级拆解 · BootstrapQueue→WaitingQueue→InflightQueue 全生命周期",
-     "cat":"inference","priority":"p0"},
+     "cat":"inference","priority":"p0",
+     "tags":["P-D分离","KV-Cache","vLLM","SGLang","Dynamo","请求路由"]},
     {"dst":"mlsys2026","entry":"index.html","visual":"MLSys",
      "title":"MLSys 2026 深度综合",
      "desc":"Keynote + 19 篇论文逐篇深度解读后的跨论文战略综合 · 6 条主轴: 同步税 / 存储层级重定义 / P2P 转移 / Superchip 冲击 / 批判性转向 / 训练路线分叉",
-     "cat":"mixed","priority":"p0"},
+     "cat":"mixed","priority":"p0",
+     "tags":["MLSys","论文综述","训练系统","推理系统","Superchip","存储层级"]},
     {"dst":"deepseek-mtp","entry":"index.html","visual":"MTP",
      "title":"DeepSeek MTP 算力影响",
      "desc":"dspark MTP 算法对算力与总线系统行业的深度影响分析 · 算法设计者视角的范式推演",
-     "cat":"inference","priority":"p1"},
+     "cat":"inference","priority":"p1",
+     "tags":["MTP","DeepSeek","DSpark","算力","总线","推理加速"]},
     {"dst":"moe-clos","entry":"report.html","visual":"CLOS",
      "title":"Sparse CLOS × MoE 推理",
      "desc":"MoE 专家并行推理在 Sparse CLOS 网络上的效率与成本收益深度分析 · MegaScale / MixNet / UBEP / SpecMoE 多篇对比",
-     "cat":"network","priority":"p1"},
+     "cat":"network","priority":"p1",
+     "tags":["MoE","CLOS","SparseCLOS","专家并行","MegaScale","SpecMoE"]},
     {"dst":"generative-rec","entry":"generative_recommendation_report.html","visual":"RecSys",
      "title":"生成式推荐研究热点",
      "desc":"2026 年 Generative Recommendation 最新研究热点调查报告 · 算法 + 系统 + 工业落地",
-     "cat":"mixed","priority":"p1"},
+     "cat":"mixed","priority":"p1",
+     "tags":["推荐系统","生成式推荐","RecSys","工业落地","算法"]},
     {"dst":"sparse-clos","entry":"sparse_clos_report.html","visual":"CLOS",
      "title":"Sparse Clos 组网深度调研",
      "desc":"Sparse Clos / SlimFly / Jupiter 等无阻塞组网技术的深度调研 · 来源: 论文 + 厂商 + 学术会议",
-     "cat":"network","priority":"p1"},
+     "cat":"network","priority":"p1",
+     "tags":["CLOS","SlimFly","Jupiter","无阻塞网络","组网","数据中心网络"]},
     {"dst":"ai-supernode-bus","entry":"report.html","visual":"SuperNode",
      "title":"AI 超节点总线调研",
      "desc":"2026H1 AI 超节点总线技术市场调研 · NVLink / UALink / PCIe 6 / 光互联 + 产业格局",
-     "cat":"chip","priority":"p1"},
+     "cat":"chip","priority":"p1",
+     "tags":["超节点","NVLink","UALink","PCIe","光互联","总线"]},
     {"dst":"supernode-metrics","entry":"supernode_metrics_report.html","visual":"Metric",
      "title":"超节点指标定义",
      "desc":"超节点行业指标定义深度调研 · 制造商(NVIDIA/华为/Google) / 云商 / 学术 三视角 + 量化指标体系",
-     "cat":"mixed","priority":"p1"},
+     "cat":"mixed","priority":"p1",
+     "tags":["超节点","指标体系","NVIDIA","华为","Google","量化指标"]},
     {"dst":"mtp-survey","entry":"MTP_DSpark_Survey.html","visual":"MTP",
      "title":"MTP 算法 Survey",
      "desc":"大模型推理 MTP (Multi-Token Prediction) 算法 Survey · 围绕 DeepSeek DSpark 的全景调研",
-     "cat":"inference","priority":"p1"},
+     "cat":"inference","priority":"p1",
+     "tags":["MTP","DSpark","DeepSeek","算法调研","推理加速"]},
     {"dst":"3dls","entry":"3DLS_analysis_report.html","visual":"3DLS",
      "title":"3DLS 论文深度分析",
      "desc":"3DLS 论文深度分析报告 · 芯片 / 系统 / AI 推理架构 交叉视角",
-     "cat":"chip","priority":"p2"},
+     "cat":"chip","priority":"p2",
+     "tags":["3DLS","芯片架构","3D封装","系统架构","推理架构"]},
     {"dst":"space-ecom","entry":"report.html","visual":"Space",
      "title":"太空经济联盟调研",
      "desc":"联盟首批意向成员 + 初创企业调研报告 · 含 306 家深度分析",
-     "cat":"mixed","priority":"p2"},
+     "cat":"mixed","priority":"p2",
+     "tags":["太空经济","航天","初创企业","产业调研"]},
 ]
 
 CATS = {
@@ -191,24 +204,25 @@ def gen_search_db(posts):
     items = []
     for r in REPORTS:
         items.append({"t": r["title"], "d": r["desc"], "u": f"{r['dst']}/{r['entry']}",
-                      "tags": CATS.get(r["cat"],{}).get('label','')})
+                      "tags": " ".join(r.get("tags",[]))})
     for p in posts:
         items.append({"t": p["title"], "d": p["excerpt"], "u": p["url"],
                       "tags": " ".join(p.get("tags",[]))})
     return json.dumps(items, ensure_ascii=False)
 
-# ──── 生成 Tag Cloud ────
+# ──── 生成 Tag Cloud — 使用具体技术 tags ────
 def gen_tag_cloud(posts):
     tag_count = {}
     for r in REPORTS:
-        label = CATS.get(r["cat"],{}).get('label', r["cat"])
-        tag_count[label] = tag_count.get(label, 0) + 1
+        for t in r.get("tags", []):
+            tag_count[t] = tag_count.get(t, 0) + 1
     for p in posts:
         for t in p.get("tags", []):
             tag_count[t] = tag_count.get(t, 0) + 1
+    # 按计数降序,取前 20 个
     html_parts = []
-    for tag, count in sorted(tag_count.items(), key=lambda x: -x[1]):
-        html_parts.append(f'<a href="tags.html" class="tag-pill">{tag} <span class="count">{count}</span></a>')
+    for tag, count in sorted(tag_count.items(), key=lambda x: -x[1])[:24]:
+        html_parts.append(f'<a href="tags.html" class="tag-pill"># {tag} <span class="count">{count}</span></a>')
     return "\n".join(html_parts)
 
 # ──── 生成 Posts 列表 (Lil'Log 风格) ────
@@ -231,25 +245,26 @@ def gen_posts_list(posts, full=False):
 '''
     return f'<ul class="posts-list">{items}</ul>'
 
-# ──── 生成 Tags 页完整内容 ────
+# ──── 生成 Tags 页完整内容 — 按具体技术 tag 聚合 ────
 def gen_tags_full(posts):
-    # 按 tag 聚合
     groups = {}
     for r in REPORTS:
-        label = CATS.get(r["cat"],{}).get('label', r["cat"])
-        groups.setdefault(label,[]).append(
-            {"t": r["title"], "d": r["desc"], "u": f"{r['dst']}/{r['entry']}"})
+        for t in r.get("tags", []):
+            groups.setdefault(t,[]).append(
+                {"t": r["title"], "d": r["desc"], "u": f"{r['dst']}/{r['entry']}", "kind":"AI"})
     for p in posts:
         for t in p.get("tags", []):
             groups.setdefault(t,[]).append(
-                {"t": p["title"], "d": p["excerpt"], "u": p["url"]})
+                {"t": p["title"], "d": p["excerpt"], "u": p["url"], "kind":"Post"})
     out = ""
-    for tag in sorted(groups.keys()):
+    # 按计数降序排列
+    for tag in sorted(groups.keys(), key=lambda t: -len(groups[t])):
         items = groups[tag]
         out += f'<div class="tag-group" data-tag="{tag}">'
-        out += f'<h3><span class="hash">#</span>{tag} <span style="color:var(--muted-2);font-family:var(--font-mono);font-size:.9rem">({len(items)})</span></h3>'
+        out += f'<h3><span class="hash">#</span> {tag} <span class="cnt">({len(items)})</span></h3>'
         out += '<ul class="posts-list">'
         for it in items:
+            kind_label = 'AI' if it.get('kind')=='AI' else 'Post'
             out += f'''<li class="posts-item">
   <div class="posts-content"><h3><a href="{it['u']}">{it['t']}</a></h3><p class="posts-excerpt">{it['d']}</p></div>
 </li>'''
