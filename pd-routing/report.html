@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PD 分离 Request Routing 内部实现研究 — 2026-07-15</title>
+<style>
+:root {
+  --bg:#0d1117; --fg:#c9d1d9; --accent:#58a6ff; --accent2:#7ee78f;
+  --accent3:#d2a8ff; --accent4:#ff7b72; --card:#161b22; --border:#30363d; --muted:#8b949e;
+}
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+       background: var(--bg); color: var(--fg); line-height: 1.7; margin: 0 auto; padding: 14px; max-width: 920px; }
+h1 { color: var(--accent); font-size: 1.5em; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h2 { color: var(--accent2); font-size: 1.25em; margin-top: 32px; }
+h3 { color: var(--accent3); font-size: 1.05em; }
+h4 { color: var(--accent4); font-size: 1em; }
+.meta { color: var(--muted); font-size: 0.82em; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+        padding: 14px 18px; margin: 12px 0; }
+.card:hover { border-color: #4b5563; }
+.tag { display: inline-block; background: #1f2937; color: var(--accent);
+       padding: 2px 9px; border-radius: 14px; font-size: 0.72em; margin: 3px 4px 3px 0; }
+.tag-g { background:#1f2937; color: var(--accent2); }
+.tag-v { background:#1f2937; color: var(--accent3); }
+.tag-r { background:#1f2937; color: var(--accent4); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: #1c2128; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; }
+pre { background: #1c2128; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.82em; line-height:1.5; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 8px 0; }
+th, td { padding: 8px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: #1f2937; color: var(--accent2); }
+tr:nth-child(even) { background: #161b22; }
+.warn { border-left: 4px solid var(--accent4); padding: 10px 14px; margin: 12px 0; }
+.insight { border-left: 4px solid var(--accent); padding: 10px 14px; margin: 12px 0; }
+.ok { color: var(--accent2); }
+.fail { color: var(--accent4); }
+footer { color: var(--muted); font-size: 0.8em; border-top: 1px solid var(--border); margin-top:32px; padding-top:12px; }
+.orig { display: block; color: var(--muted); font-size: 0.78em; margin-top: 6px; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>PD 分离推理 — Request Routing 内部实现</h1>
+<p class="meta">调研日期 2026-07-15 · 覆盖：vLLM (NixlConnector + Push + Lease), NVIDIA Dynamo, SGLang (Mooncake/NIXL + router), LMCache MP (NixlConnector + ZMQ + P2P)</p>
+
+<details open><summary><b>⚡ TL;DR (30s 速览)</b></summary>
+<div class="card">
+<table><tr><th>系统</th><th>Preferred Prefill Worker 选择</th><th>Decode Worker 选择</th><th>KV 路由方向</th><th>Lease/失效机制</th></tr>
+<tr><td>vLLM NixlConnector</td><td>Router 任选可用 P；Proxy 轮询 P</td><td>P 完成 prefill 后由 Router/Proxy 以 kv_transfer_params 选定 D</td><td>pull (默认 D READ) / push (P WRITE)</td><td>lease + heartbeat，D 在 queueing/in-flight 期续租</td></tr>
+<tr><td>NVIDIA Dynamo</td><td>Planner 按 SLA 输出 P 池大小；Router KV-aware scoring</td><td>Router 用 workload + cache-overlap 打分</td><td>pull (READ via NIXL/NVLink)</td><td>ModelExpress weight streaming；Canary liveness</td></tr>
+<tr><td>SGLang PD</td><td>客户端直送 P 端；sgl_router --pd-disaggregation 轮询/负载均衡</td><td>Bootstrap server 协调：P 向 D 主动推送 transfer_info 选择某 D</td><td>push：P-side sender 主动 WRITE/transfer KV indices to D's prealloc 地址；receiver 等待 poll</td><td>bootstrap_timeout (默认 300s)；HiCache restore 失败回退本地重 prefill</td></tr>
+<tr><td>LMCache MP + NixlConnector</td><td>与 vLLM 相同（共享 NixlConnector）；LMCacheMPConnector 叠加跨请求 KV 复用</td><td>Router --vllm-pd-disaggregation 模式</td><td>pull：D READ from P over NIXL；MP server (CPU DRAM) 作为第二源（本地 GPU → LMCache → recompute）</td><td>L1 TTL；P2P 跨节点 RDMA lock-and-locate；NIXL lease（复用 vLLM lease）</td></tr>
+</table></div></details>
+
+<h2>1. vLLM — NixlConnector (Pull mode) + NixlPushConnector + Lease Renewal</h2>
+<div class="insight"><b>核心思想</b>：Router/Proxy 先将请求只发 1 个 token 做 prefill leg（P 端，do_remote_decode=True），拿到 kv_transfer_params 后再发 decode leg（D 端，do_remote_prefill=True）。KV 在 P→D 之间通过 NIXL 传输，由 <b>NixlConnectorScheduler</b> 协调 scheduler/worker 两侧抽象传输。</div>
+
+<h3>1.1 Pull 模式生命周期 <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md" class="tag">设计文档</a></h3>
+<div class="card">
+<p><b>① Request arrives → Router 选 P</b>：Router/Proxy 挑一个可用 prefill instance（策略由上层决定，vLLM 自身仅暴露 do_remote_decode/do_remote_prefill 两个标志位）。</p>
+<p><b>② P 执行 prefill</b>：跑 full prefill，得到 KV cache blocks，提交 NIXL READ-ready 状态。</p>
+<p><b>③ P 返回 kv_transfer_params</b>：通过 HTTP response 将 P 的 NIXL 侧信道 (host/port/tp_size/engine_id/block 元信息) 给 Proxy。</p>
+<p><b>④ Proxy 选 D 并签发 decode leg</b>：D 端 worker pre-allocates 等量 KV blocks，对 P 发起 RDMA READ。</p>
+<p><b>⑤ D 读取完成后通知 P</b>：P 释放 blocks（lease 到期或 transfer 完成即释放）。</p>
+<orig>出处：NIXL KV Cache Lease Renewal 设计文档 <code>docs/design/nixl_kv_cache_lease.md</code></orig></div>
+
+<h3>1.2 Push 模式（NixlPushConnector，更晚的内部实现） <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_push_connector.md" class="tag">设计文档</a></h3>
+<div class="card">
+<p><b>动机</b>：默认 pull 模式下 D 必须主动拉，两侧握手顺序和 watchdog 逻辑复杂；push 让 P 直接 WRITE 到 D 预注册内存，"发送即完成"。</p>
+<p><b>新增 nixl-push-writer 线程</b>：每个 TP rank 起一个 background writer 线程，仅负责 <code>nixl_wrapper.get_new_notifs</code> / <code>make_prepped_xfer</code> / <code>transfer(WRITE)</code>。</p>
+<p><b>Writer-local matching tables</b> 实现两侧顺序无关的 request_id 匹配：<code>_pending_d_registrations</code>（D 侧发来的 PUSH_REG）与 <code>_push_finished_blocks</code>（P 侧 scheduler stage 的 blocks）。时间对齐用 <code>get_base_request_id()</code> 剥离 cmpl-uuid-index 后的 8-hex 随机 suffix。<span class="tag-r">关键：这是 Proxy 给两腿的同一 X-Request-Id 被 input_processor 随机化后的解同步手段</span></p>
+<p><b>Wire format</b>：D→P 的 PUSH_REG 通过 NIXL notification 发 <code>PUSH_REG:&lt;msgpack&gt;</code>，字段：<code>request_id, decode_engine_id, decode_host, decode_port, decode_tp_size, local_block_ids (per-group), remote_engine_id</code>。</p>
+<p><b>Transfer 流程</b>：</p>
+<pre>
+D allocate → stash → worker build_connector_meta → meta.push_registrations
+→ writer enqueue PUSH_REG → NIXL send_notif → P writer 收到 → _handle_push_reg_notif
+P prefill finish → meta.push_finished_blocks → writer 匹配 → NIXL WRITE → D
+→ D 收到 completion notif → update_connector_output(finished_recving) → stop watchdog
+</pre>
+<p><b>Wake model</b>：三个事件源 + 1ms self-poll：① start_load_kv 握手产生新材料；② get_finished 始终唤醒（让 writer drain HB / completion / late PUSH_REG）；③ handshake 完成回调。</p>
+</div>
+
+<h3>1.3 Lease / Heartbeat 机制 <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md" class="tag">设计文档</a></h3>
+<div class="card">
+<p><b>设计动机</b>：单一大超时 480s 遇 D crash 保活浪费显存；过短则易误杀排队的 D。解法：<b>lease renewal via heartbeat</b>。</p>
+<p><b>Lease 默认参数</b>：initial lease 30s；heartbeat interval ≈5s（lease_duration//6）；每次续租延长 ≈20s（2/3 lease）；P 校验用 <code>max(old_expiry, now + lease_extension)</code>（never 缩短）。</p>
+<p><b>关键设计：D 端 <code>on_new_request()</code> 从 request 进入 scheduler waiting queue 就开始发 HB</b>，不等被 schedule 执行。所以 prefill 完成时 P blocks 立即进入 "leased" 状态。</p>
+<p><b>HB 基于 request</b>：不是 per-instance，而是 per-request。这样 P 无需知道 "哪个 D 持有我的 blocks"，路由解耦。</p>
+<p><b>Transport</b>：复用 NIXL send_notif/get_new_notifs，后端 IB/RoCE/TCP 自动 fallback。HB 消息格式 <code>HB:&lt;payload&gt;</code>，每个 HB 消息可批量续租同一 P 的所有 in-flight requests。</p>
+<p><b>Proactive handshake</b>：D 发 HB 时若尚未与 P 握手（请求还在排队），就触发 background thread 主动完成握手，加速后续 KV READ。</p>
+</div>
+
+<h3>1.4 vLLM 的 PD 路由抽象层 <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/features/disagg_prefill.md" class="tag">设计文档</a></h3>
+<div class="card">
+<p>vLLM 自身不实现 Router，而是提供 <b>Connector / LookupBuffer / Pipe</b> 三层抽象：</p>
+<ul>
+<li><b>Connector</b>：kv consumer 从 kv producer 拉取 KV caches 的入口。</li>
+<li><b>LookupBuffer</b>：SQL 语义的 <code>insert</code>（非阻塞）+ <code>drop_select</code>（阻塞）KV cache 缓冲区。</li>
+<li><b>Pipe</b>：单向 FIFO tensor 传输，<code>send_tensor</code> / <code>recv_tensor</code>。</li>
+</ul>
+<p>每个进程一个 connector：<b>Scheduler connector</b>（调度 KV transfer ops）+ <b>Worker connectors</b>（执行 KV transfer ops）。</p>
+<p>Connector 实现：NixlConnector、LMCacheConnectorV1、MooncakeConnector、MoRIIOConnector、MultiConnector、OffloadingConnector、FlexKVConnectorV1。</p>
+<orig>出处：<code>docs/features/disagg_prefill.md</code></orig>
+</div>
+
+<h2>2. NVIDIA Dynamo — KV-Aware Router + Planner + KVBM</h2>
+<div class="insight"><b>定位</b>：Dynamo 是编排层，不替代 SGLang/TRT-LLM/vLLM，而是把多 GPU 集群变成协调推理系统。Router 是 Dynamo 的内置组件，不是外部 proxy。</div>
+
+<h3>2.1 路由拓扑 <a href="https://github.com/ai-dynamo/dynamo" class="tag">GitHub</a> <a href="https://docs.nvidia.com/dynamo/" class="tag-v">官方文档</a></h3>
+<div class="card">
+<p>两种入口：</p>
+<ul>
+<li><b>Dynamo-native Frontend routing</b>：<code>client → Frontend → Router → workers</code>，无需外部 gateway。</li>
+<li><b>Gateway API routing with GAIE</b>：<code>client → Gateway → EPP (Endpoint Picker Plugin) → Frontend sidecar (router-mode direct) → workers</code>。</li>
+</ul>
+<p>Router 决策基于 <b>worker load + KV cache overlap</b>（KV-aware routing），消除冗余 prefill 计算。</p>
+</div>
+
+<h3>2.2 核心能力矩阵 <a href="https://github.com/ai-dynamo/dynamo/blob/main/README.md" class="tag">README</a></h3>
+<div class="card">
+<table><tr><th>能力</th><th>作用</th><th>与 PD 路由的关系</th></tr>
+<tr><td>Disaggregated Prefill/Decode</td><td>P/D 独立可扩展 GPU 池</td><td>Router 把 prefill leg 和 decode leg 分别路由到 P 池和 D 池</td></tr>
+<tr><td>KV-Aware Routing</td><td>基于 worker load + KV cache overlap 路由</td><td>避免重复 prefill，2x TTFT 加速</td></tr>
+<tr><td>KVBM (KV Block Manager)</td><td>GPU → CPU → SSD → remote 多级 KV 卸载</td><td>Router 可感知 KV 在远端存储中的位置</td></tr>
+<tr><td>ModelExpress</td><td>NIXL/NVLink GPU-to-GPU 权重流式加载</td><td>7x 冷启动加速，新 replica 快速上线</td></tr>
+<tr><td>Planner</td><td>SLA-driven autoscaler，profile + right-size pools</td><td>决定 P/D 池大小，间接影响路由选择空间</td></tr>
+<tr><td>Grove (K8s operator)</td><td>拓扑感知 gang scheduling (NVL72)</td><td>把 workload 放到最优 rack/host/NUMA</td></tr>
+<tr><td>Fault Tolerance</td><td>Canary health check + in-flight request migration</td><td>Worker 失败时请求不丢</td></tr>
+</table>
+</div>
+
+<h3>2.3 关键设计决策 <a href="https://github.com/ai-dynamo/dynamo/blob/main/README.md" class="tag">README</a></h3>
+<div class="card">
+<ul>
+<li><b>Rust 写性能关键路径</b>，Python 写扩展性。</li>
+<li><b>KVBM 在 SGLang 后端仍在开发</b>（README 表格中 SGLang 列 🚧，TRT-LLM/vLLM 列 ✅）。</li>
+<li><b>1.0 新增</b>：Zero-config deploy (DGDR)、Agentic inference (per-request hints)、Multimodal E/P/D、K8s Inference Gateway plugin、Storage-tier KV offload (S3/Azure)。</li>
+<li><b>Day-0 Nemotron 3 Ultra recipes</b> 已合 main，含 KV-aware routing + MTP + disaggregated prefill/decode。</li>
+</ul>
+</div>
+
+<h2>3. SGLang — PD Disaggregation (Mooncake/NIXL + sgl_router)</h2>
+<div class="insight"><b>核心思想</b>：SGLang 的 PD 分离是 <b>push 模式</b> — P 端 sender 主动把 KV 推到 D 端 receiver 预分配的地址。Router 是独立的 <code>sgl_router</code> 进程，<code>--pd-disaggregation</code> 模式把请求先送 P 再送 D。</div>
+
+<h3>3.1 整体流程 <a href="https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/docs/advanced_features/pd_disaggregation.mdx" class="tag">用户文档</a></h3>
+<div class="card">
+<p>启动命令：</p>
+<pre>
+# P 端
+python -m sglang.launch_server --model-path ... --disaggregation-mode prefill --port 30000
+# D 端
+python -m sglang.launch_server --model-path ... --disaggregation-mode decode --port 30001
+# Router
+python -m sglang_router.launch_router --pd-disaggregation \
+  --prefill http://127.0.0.1:30000 --decode http://127.0.0.1:30001 --host 0.0.0.0 --port 8000
+</pre>
+<p>Router 把请求先送 P，P 完成 prefill 后把 transfer_info 给 Router，Router 再送 D。</p>
+</div>
+
+<h3>3.2 P 端生命周期（prefill.py） <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/prefill.py" class="tag">源码</a></h3>
+<div class="card">
+<p>四个阶段：</p>
+<pre>
+1. Bootstrap Queue
+   a. 为每个 request 初始化 sender
+   b. 用 queue 存储 bootstrap 未完成的 requests
+   c. poll senders 检查 bootstrap 状态
+   d. bootstrap 完成后移到 Waiting Queue
+
+2. Waiting Queue
+   a. PrefillAdder pop requests
+   b. 跑 forward
+   c. 移到 Inflight Queue
+
+3. Inflight Queue
+   a. 非阻塞 poll sender
+   b. transfer 完成后 return request
+</pre>
+<p>Sender 通过 <code>bootstrap_room</code> 与 D 端 receiver 握手，<code>bootstrap_addr</code> 是 P 端的 HTTP bootstrap server 地址。</p>
+</div>
+
+<h3>3.3 D 端生命周期（decode.py） <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/decode.py" class="tag">源码</a></h3>
+<div class="card">
+<p>四个阶段：</p>
+<pre>
+1. PreallocQueue
+   a. 为每个 request 初始化 receiver
+   b. request 先 handshake，有可用 KV 时 pre-allocate
+   c. 移到 TransferQueue
+
+2. TransferQueue
+   a. poll receiver 检查 transfer 状态
+   b. transfer 完成后移到 waiting queue
+
+3. WaitingQueue
+   a. 用 queue 中的 requests 构造 PrebuiltExtendBatch
+   b. 跳过 prefill forward，只填充 metadata
+
+4. RunningBatch
+   a. 把 PrebuiltExtendBatch 合并进 running batch 跑 decoding
+</pre>
+<p><b>关键</b>：D 端 <b>跳过 prefill forward</b>，直接用 P 端传来的 KV 构造 <code>PrebuiltExtendBatch</code>，省掉 prefill 计算。</p>
+</div>
+
+<h3>3.4 Bootstrap Server 与 KV transfer 协调 <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/common/conn.py" class="tag">源码</a></h3>
+<div class="card">
+<p><b>CommonKVBootstrapServer</b>：只在 P 端启动，HTTP 服务，D 端 receiver 通过它发现 P 端 sender。</p>
+<p><b>CommonKVManager</b>：每个 TP rank 一个，bind ZMQ PULL socket，管理 request_status / socket_cache / failure_records。</p>
+<p><b>CommonKVSender.init(num_kv_indices, aux_index)</b>：设置本地 request 的 index metadata。</p>
+<p><b>CommonKVSender.send(kv_indices, state_indices)</b>：把指定 indices 的 KV cache 推到 D 端。</p>
+<p><b>CommonKVSender.poll()</b>：检查 transfer 状态，返回 KVPoll (Failed/Bootstrapping/WaitingForInput/Transferring/Success)。</p>
+<p><b>DP attention 下的 prefill dp_rank 注册</b>：<code>_register_prefill_dp_rank()</code> 把 P 端的 dp_rank 注册到 bootstrap server，D 端据此选择正确的 P rank。<code>follow_bootstrap_room</code> 模式用 bootstrap_room % dp_size 决定。</p>
+</div>
+
+<h3>3.5 NIXL 后端（nixl/conn.py） <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/nixl/conn.py" class="tag">源码</a></h3>
+<div class="card">
+<p>2717 行，核心：</p>
+<ul>
+<li><b>_KVXferMemSegment</b>：描述 VRAM/DRAM 内存段。</li>
+<li><b>_normalize_kv_mem_kinds / _pack_kv_mem_kinds</b>：支持 VRAM + DRAM 混合 KV 内存。</li>
+<li><b>NIXL 错误处理</b>：<code>nixlRemoteDisconnectError / nixlBackendError / nixlCancelledError</code> 统一捕获。</li>
+<li><b>Staging buffer 支持</b>：异构 TP 时 P 端 gather KV head slices → contiguous buffer → bulk RDMA → D 端 scatter，2-5x 吞吐提升。</li>
+</ul>
+</div>
+
+<h3>3.6 Mooncake 后端（mooncake/conn.py） <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/mooncake/conn.py" class="tag">源码</a></h3>
+<div class="card">
+<p>TransferInfo 结构：</p>
+<pre>
+@dataclasses.dataclass
+class TransferInfo:
+    room: int
+    endpoint: str
+    dst_port: int
+    mooncake_session_id: str
+    dst_kv_indices: npt.NDArray[np.int32]
+    dst_aux_index: int
+    dst_state_indices: List[List[int]]
+    required_dst_info_num: int
+    is_dummy: bool
+    decode_prefix_len: Optional[int] = None
+    staging: Optional[StagingTransferInfo] = None
+</pre>
+<p>Mooncake 用 <code>mooncake_session_id</code> 标识 session，支持 <code>SGLANG_MOONCAKE_CUSTOM_MEM_POOL</code> 环境变量选择 NVLINK / INTRA_NODE_NVLINK / BAREX 模式。</p>
+</div>
+
+<h3>3.7 HiCache — KV Cache 恢复优化 <a href="https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/decode_hicache_mixin.py" class="tag">源码</a></h3>
+<div class="card">
+<p><b>DecodeHiCachePreallocMixin / DecodeHiCacheTransferMixin</b>：D 端 mixin，支持从 P 端恢复 KV cache 时做 prefix match。</p>
+<p><b>HiCacheRestoreGatedKVReceiver</b>：带门控的 KV receiver，restore 失败时回退到本地重 prefill。</p>
+<p><b>DecodePrefixMatch</b>：在 D 端 radix cache 中匹配已有 prefix，减少需要传输的 KV 量。</p>
+</div>
+
+<h3>3.8 SGLang Router 的 PD 模式 <a href="https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/docs/advanced_features/pd_disaggregation.mdx" class="tag">用户文档</a></h3>
+<div class="card">
+<p><code>sgl_router --pd-disaggregation --prefill &lt;urls&gt; --decode &lt;urls&gt;</code></p>
+<p>Router 把请求先送 P，P 完成 prefill 后把 transfer_info 给 Router，Router 再送 D。</p>
+<p>环境变量：</p>
+<ul>
+<li><code>SGLANG_DISAGGREGATION_THREAD_POOL_SIZE</code>：每 TP rank 的 KV transfer 线程数（默认 0.75*cpu_count/8，限制 4-12）。</li>
+<li><code>SGLANG_DISAGGREGATION_QUEUE_SIZE</code>：并行 transfer 队列数（默认 4），多 D 请求共享带宽。</li>
+<li><code>SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT</code>：bootstrap 超时（默认 300s）。</li>
+<li><code>SGLANG_DISAGGREGATION_HEARTBEAT_INTERVAL / MAX_FAILURE</code>：D→P 心跳（默认 5s / 2 次失败标记 offline）。</li>
+</ul>
+</div>
+
+<h2>4. LMCache MP 模式 — NixlConnector + ZMQ + P2P</h2>
+<div class="insight"><b>核心思想</b>：LMCache 作为独立 daemon 进程（每节点一个），通过 ZMQ 与 vLLM 实例通信。PD 分离时，每个 vLLM 实例同时挂两个 connector：<b>NixlConnector</b>（当前请求 P→D）+ <b>LMCacheMPConnector</b>（跨请求 KV 复用）。</div>
+
+<h3>4.1 架构 <a href="https://raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/mp/index.rst" class="tag">设计文档</a></h3>
+<div class="card">
+<pre>
+vLLM Instance(s)
+     |
+     | ZMQ (tcp)
+     v
+MessageQueueServer (mq.py)
+     |
+     | dispatch by RequestType
+     v
+MPCacheServer (server.py)
+     |
+     |--- TokenHasher / SessionManager
+     |
+     v
+StorageManager (distributed/storage_manager.py)
+     |
+     |--- L1Manager (l1_manager.py)
+     |       |--- L1MemoryManager (CPU DRAM) or
+     |       |    GDSL1MemoryManager (NVMe slab via cuFile / hipFile)
+     |       |--- TTLLock per object (read/write)
+     |
+     |--- StoreController  -----> L2 Adapter(s) (async L1->L2 push)
+     |--- PrefetchController ---> L2 Adapter(s) (async L2->L1 load)
+     |--- EvictionController ----> L1Manager (watermark-triggered eviction)
+     |
+     v
+EventBus + OTel providers (observability)
+</pre>
+<p><b>Server 入口</b>：<code>lmcache server</code>（推荐，ZMQ + FastAPI HTTP frontend）或 <code>python3 -m lmcache.v1.multiprocess.server</code>（legacy）。</p>
+</div>
+
+<h3>4.2 Disaggregated Prefill（MP 模式） <a href="https://raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/mp/disaggregated_prefill.rst" class="tag">设计文档</a></h3>
+<div class="card">
+<p>最小部署 5 个进程：</p>
+<ul>
+<li><b>Prefill vLLM (producer)</b>：<code>MultiConnector[NixlConnector (kv_producer), LMCacheMPConnector]</code></li>
+<li><b>Decode vLLM (consumer)</b>：<code>MultiConnector[NixlConnector (kv_consumer), LMCacheMPConnector]</code></li>
+<li><b>Two LMCache servers</b>：每个 vLLM 实例一个（不能共享）</li>
+<li><b>Router</b>：<code>vllm-router --vllm-pd-disaggregation</code></li>
+</ul>
+<p><b>KV source order on prefill path</b>：本地 GPU cache → LMCache → recompute。</p>
+<p><b>配置</b>：</p>
+<pre>
+--kv-transfer-config '{"kv_connector":"MultiConnector","kv_role":"kv_both",
+  "kv_connector_extra_config":{"connectors":[
+    {"kv_connector":"NixlConnector","kv_role":"kv_both"},
+    {"kv_connector":"LMCacheMPConnector","kv_role":"kv_both"}]}}'
+</pre>
+<p><b>关键 PR</b>：<code>vllm-project/vllm#46865</code>（MultiConnector real-blocks fix）是 LMCache offload 的前置条件。</p>
+</div>
+
+<h3>4.3 P2P KV Cache Sharing <a href="https://raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/mp/p2p.rst" class="tag">设计文档</a></h3>
+<div class="card">
+<p><b>问题</b>：多节点部署时，每个节点独立缓存，相同 prefix 在不同节点需重复 prefill。</p>
+<p><b>解法</b>：P2P 把 per-node caches 变成逻辑上的一个 cache。</p>
+<p>三组件：</p>
+<ul>
+<li><b>Coordinator</b>：一个小型 HTTP 服务（每个 deployment 一个），跟踪 LMCache server 的存活。</li>
+<li><b>LMCache server</b>：每个 server 的 P2P controller 定期从 coordinator 获取 peer list，为每个 live peer 开连接。</li>
+<li><b>Transfer channel</b>：RDMA 层，每个 server 启动时注册 L1 buffer，peers 可直接 read。</li>
+</ul>
+<p><b>流程</b>：cache miss → 向拥有 prefix 的 peer 请求 lock-and-locate → 拿到远端地址 → RDMA read 到本地 L1 → 服务请求。</p>
+<p><b>特点</b>：one-sided RDMA read，拥有数据的 node 不被中断；peer 自动发现/断开。</p>
+</div>
+
+<h3>4.4 ZMQ Protocol <a href="https://raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/mp/index.rst" class="tag">设计文档</a></h3>
+<div class="card">
+<p>vLLM ↔ LMCache 用 ZMQ DEALER/ROUTER 模式通信。</p>
+<p>RequestType 枚举：</p>
+<table><tr><th>Request Type</th><th>Handler</th><th>描述</th></tr>
+<tr><td>REGISTER_KV_CACHE</td><td>SYNC</td><td>注册 GPU KV cache tensors</td></tr>
+<tr><td>UNREGISTER_KV_CACHE</td><td>SYNC</td><td>反注册</td></tr>
+<tr><td>STORE</td><td>BLOCKING</td><td>GPU → L1 (CPU)，LMCache-driven，CUDA IPC</td></tr>
+<tr><td>RETRIEVE</td><td>BLOCKING</td><td>L1 (CPU) → GPU，LMCache-driven，CUDA IPC</td></tr>
+<tr><td>PREPARE_STORE / COMMIT_STORE</td><td>BLOCKING</td><td>Engine-driven path，CPU/accelerator workers</td></tr>
+<tr><td>PREPARE_RETRIEVE / COMMIT_RETRIEVE</td><td>BLOCKING</td><td>Engine-driven path</td></tr>
+</table>
+<p><b>Transfer mode</b>：<code>--supported-transfer-mode</code> 可选 <code>lmcache_driven</code> / <code>engine_driven</code> / <code>auto</code>（默认）。</p>
+</div>
+
+<h2>5. Mooncake — Transfer Engine（外部观察）</h2>
+<div class="warn"><b>⚠️ 注意</b>：<code>github.com/MoonshotAI/Mooncake</code> 仓库已 404（可能已删除或改名）。本报告基于 SGLang/vLLM 集成文档和 <code>stmatengss/SuSG2025-MooncakeTransferEngine</code> 等间接信息。</div>
+
+<h3>5.1 已知信息</h3>
+<div class="card">
+<ul>
+<li><b>Mooncake Transfer Engine</b>：Moonshot AI 开源的 KV cache 传输引擎，支持 RDMA / NVLink / TCP。</li>
+<li><b>SGLang 集成</b>：<code>--disaggregation-transfer-backend mooncake</code>，环境变量 <code>MOONCAKE_TE_META_DATA_SERVER</code> / <code>MOONCAKE_MASTER</code> / <code>MOONCAKE_PROTOCOL</code> / <code>MOONCAKE_GLOBAL_SEGMENT_SIZE</code>。</li>
+<li><b>vLLM 集成</b>：<code>MooncakeConnector</code> / <code>MooncakeStoreConnector</code>，见 <code>docs/features/disagg_prefill.md</code>。</li>
+<li><b>NVLink 模式</b>：<code>SGLANG_MOONCAKE_CUSTOM_MEM_POOL=NVLINK</code> + <code>MC_FORCE_MNNVL=True</code>（NVL72 推荐）。</li>
+<li><b>Intra-Node NVLink</b>：<code>SGLANG_MOONCAKE_CUSTOM_MEM_POOL=INTRA_NODE_NVLINK</code> + <code>MC_INTRANODE_NVLINK=true</code>（A100/H20/H100）。</li>
+<li><b>Global multimodal embedding cache</b>：SGLang EPD 模式下，encoder 可把 ViT embeddings 存到 Mooncake 全局缓存，重复 image 直接复用。</li>
+</ul>
+</div>
+
+<h2>6. 横向对比 — 关键设计决策</h2>
+<div class="card">
+<table><tr><th>维度</th><th>vLLM</th><th>NVIDIA Dynamo</th><th>SGLang</th><th>LMCache MP</th></tr>
+<tr><td><b>KV 路由方向</b></td><td>pull (默认) / push (NixlPushConnector)</td><td>pull</td><td>push (sender → receiver)</td><td>pull (NixlConnector) + MP server</td></tr>
+<tr><td><b>Preferred P 选择</b></td><td>Router/Proxy 任选</td><td>Planner + Router KV-aware</td><td>sgl_router 轮询/负载均衡</td><td>Router 任选</td></tr>
+<tr><td><b>Decode Worker 选择</b></td><td>Proxy 拿到 kv_transfer_params 后选 D</td><td>Router 用 workload + cache-overlap 打分</td><td>Bootstrap server 协调，P 主动推</td><td>Router --vllm-pd-disaggregation</td></tr>
+<tr><td><b>Lease 机制</b></td><td>lease + heartbeat，D 从 queueing 开始续租</td><td>Canary health check</td><td>bootstrap_timeout (300s)</td><td>L1 TTL；NIXL lease</td></tr>
+<tr><td><b>KV Pool 感知</b></td><td>LookupBuffer (SQL 语义)</td><td>KVBM (GPU→CPU→SSD→remote)</td><td>radix cache prefix match</td><td>L1 (CPU DRAM) + L2 (NIXL/GDS)</td></tr>
+<tr><td><b>跨请求 KV 复用</b></td><td>Automatic Prefix Caching</td><td>KV-aware routing 避免重复 prefill</td><td>HiCache restore</td><td>LMCacheMPConnector + P2P</td></tr>
+<tr><td><b>传输后端</b></td><td>NIXL (UCX/GDS)</td><td>NIXL/NVLink</td><td>Mooncake / NIXL / Ascend</td><td>NIXL + ZMQ</td></tr>
+<tr><td><b>Router 位置</b></td><td>外部 (Proxy)</td><td>内置 (Dynamo Frontend + Router)</td><td>内置 (sgl_router)</td><td>外部 (vllm-router)</td></tr>
+</table>
+</div>
+
+<h2>7. 深度洞察</h2>
+<div class="insight">
+<h3>1. Push vs Pull 的本质是 "谁拥有调度权"</h3>
+<p>Pull 模式下 D 主动拉，D 端 scheduler 决定何时传输，与本地 batch 调度天然对齐；但 D 端需要知道 P 的地址和 block 布局，耦合度高。Push 模式下 P 主动推，P 端完成即可发送，D 端只需等待 poll；但 D 端需要预分配内存，且需要处理 "P 推完了但 D 还没 prealloc" 的竞态。vLLM 的 NixlPushConnector 用 writer-local matching tables 解决这个竞态。</p>
+</div>
+
+<div class="insight">
+<h3>2. Lease 机制是 PD 分离的 "垃圾回收"</h3>
+<p>vLLM 的 lease + heartbeat 设计精妙之处在于：<b>lease 是 per-request 不是 per-instance</b>。P 无需知道哪个 D 持有它的 blocks，D 也无需知道 P 的 block 布局。这实现了 P/D 的完全解耦，Router 可以自由选择 D 而不影响 P 的 block 管理。</p>
+</div>
+
+<div class="insight">
+<h3>3. Bootstrap Server 是 SGLang PD 的 "控制平面"</h3>
+<p>SGLang 的 bootstrap server 是 P 端的一个 HTTP 服务，D 端 receiver 通过它发现 P 端 sender。这个设计把 "P 在哪里" 的发现逻辑从 Router 解耦出来，Router 只需要知道 P 的 bootstrap server 地址即可。<code>bootstrap_room</code> 是 request 级别的会话标识。</p>
+</div>
+
+<div class="insight">
+<h3>4. HiCache — KV Cache 的 "增量传输"</h3>
+<p>SGLang 的 HiCache 在 D 端 radix cache 中匹配已有 prefix，只传输 "缺失的 suffix"。这大幅减少 KV 传输量，尤其在多轮对话场景。<code>DecodePrefixMatch</code> + <code>HiCacheRestoreGatedKVReceiver</code> 的组合是工程上的精巧设计。</p>
+</div>
+
+<div class="insight">
+<h3>5. LMCache MP — "KV Cache 即服务"</h3>
+<p>LMCache 把 KV cache 从 vLLM 进程中完全剥离，变成独立 daemon。这带来：① 进程隔离（cache 问题不 crash 推理引擎）；② 跨 pod 共享 L1 缓存；③ 多级存储 (L1 CPU DRAM + L2 NVMe/remote)；④ P2P 跨节点 RDMA 共享。这是 "KV Cache as a Service" 的范式。</p>
+</div>
+
+<div class="warn">
+<h3>6. 大厂公开信息的局限性</h3>
+<p>Mooncake 仓库已 404，NVIDIA Dynamo 的 Router 内部实现（scoring 函数、KVBM 细节）未完全开源。实际生产系统的路由策略可能远超公开水平。</p>
+</div>
+
+<h2>8. 访问的 URL 和状态</h2>
+<div class="card">
+<table><tr><th>#</th><th>URL</th><th>状态</th><th>备注</th></tr>
+<tr><td>1</td><td><code>raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_push_connector.md</code></td><td class="ok">✅ OK</td><td>8500+ chars 本地保存</td></tr>
+<tr><td>2</td><td><code>raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md</code></td><td class="ok">✅ OK</td><td>完整设计文档</td></tr>
+<tr><td>3</td><td><code>docs.vllm.ai/en/latest/features/disagg_prefill.html</code></td><td class="fail">❌ 404</td><td>Rerouted</td></tr>
+<tr><td>3b</td><td><code>raw.githubusercontent.com/vllm-project/vllm/main/docs/features/disagg_prefill.md</code></td><td class="ok">✅ OK (curl)</td><td>Markdown 成功获取</td></tr>
+<tr><td>4</td><td><code>github.com/ai-dynamo/dynamo</code></td><td class="ok">✅ OK</td><td>README 7.5K stars</td></tr>
+<tr><td>5</td><td><code>docs.sglang.ai/references/disagg.html</code></td><td class="fail">❌ 404</td><td>Not found</td></tr>
+<tr><td>5b</td><td><code>raw.githubusercontent.com/sgl-project/sglang/main/docs_new/docs/advanced_features/pd_disaggregation.mdx</code></td><td class="ok">✅ OK</td><td>用户文档</td></tr>
+<tr><td>5c</td><td><code>github.com/sgl-project/sglang/blob/main/python/sglang/srt/disaggregation/{prefill,decode,nixl/conn,mooncake/conn,decode_hicache_mixin,common/conn}.py</code></td><td class="ok">✅ OK</td><td>源码级 PD routing 内部实现</td></tr>
+<tr><td>6</td><td><code>github.com/MoonshotAI/Mooncake</code></td><td class="fail">❌ 404</td><td>仓库已删除/改名</td></tr>
+<tr><td>7</td><td><code>docs.lmcache.ai/</code></td><td class="ok">✅ OK</td><td>主站</td></tr>
+<tr><td>7b</td><td><code>raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/mp/{index,disaggregated_prefill,p2p}.rst</code></td><td class="ok">✅ OK</td><td>MP 模式内部实现</td></tr>
+<tr><td>7c</td><td><code>raw.githubusercontent.com/LMCache/LMCache/dev/docs/source/disaggregated_prefill/nixl/1p1d.rst</code></td><td class="ok">✅ OK</td><td>1P1D 示例</td></tr>
+</table>
+</div>
+
+<h2>9. 本地研究目录</h2>
+<div class="card">
+<p>所有原始资料保存在 <code>/Users/backyes/work/claude_workspace/pd_routing_research/</code>：</p>
+<ul>
+<li><code>vllm_nixl_kv_push_connector.txt</code> — vLLM push 模式设计文档</li>
+<li><code>vllm_nixl_kv_cache_lease.txt</code> — vLLM lease 机制设计文档</li>
+<li><code>vllm_disagg_prefill.md</code> — vLLM PD 分离抽象层</li>
+<li><code>dynamo_readme.txt</code> — NVIDIA Dynamo README</li>
+<li><code>sglang_pd_disaggregation.mdx</code> — SGLang PD 用户文档</li>
+<li><code>lmcache_mp_index.rst</code> — LMCache MP 模式架构</li>
+<li><code>lmcache_mp_disagg.rst</code> — LMCache MP PD 分离</li>
+<li><code>lmcache_p2p.rst</code> — LMCache P2P KV 共享</li>
+<li><code>lmcache_nixl_1p1d.rst</code> — LMCache 1P1D 示例</li>
+<li><code>url_status.md</code> — URL 访问状态</li>
+</ul>
+</div>
+
+<footer>
+<p>— 报告结束 —<br>
+所有引用观点均附原始来源 URL，可点击溯源。<br>
+本地研究目录: <code>/Users/backyes/work/claude_workspace/pd_routing_research/</code><br>
+生成时间: 2026-07-15
+</p>
+</footer>
+
+</body>
+</html>

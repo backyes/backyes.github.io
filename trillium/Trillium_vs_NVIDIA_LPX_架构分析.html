@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trillium vs NVIDIA Groq 3 LPX：微架构与集群架构设计深度分析</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --card2:#1c2330; --border:#30363d;
+    --text:#e6edf3; --muted:#9da7b3; --accent:#58a6ff; --accent2:#f0883e;
+    --green:#3fb950; --red:#f85149; --purple:#bc8cff; --quote:#8b949e;
+    --src:#79c0ff;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.75;font-size:16px;-webkit-text-size-adjust:100%;}
+  .wrap{max-width:860px;margin:0 auto;padding:16px 16px 80px;}
+  header{padding:24px 0 12px;border-bottom:1px solid var(--border);margin-bottom:18px;}
+  h1{font-size:1.5rem;line-height:1.35;margin:0 0 6px;color:#fff;}
+  h2{font-size:1.2rem;margin:30px 0 10px;color:var(--accent);border-left:4px solid var(--accent);padding-left:10px;}
+  h3{font-size:1.02rem;margin:20px 0 8px;color:var(--accent2);}
+  h4{font-size:0.96rem;margin:14px 0 6px;color:var(--purple);}
+  p{margin:8px 0;}
+  .sub{color:var(--muted);font-size:0.85rem;}
+  .meta{color:var(--muted);font-size:0.8rem;margin-top:6px;}
+  .lead{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin:14px 0;}
+  .thesis{background:linear-gradient(135deg,#1a2233,#231a33);border:1px solid var(--accent);border-radius:10px;padding:14px 16px;margin:16px 0;}
+  .thesis b{color:var(--accent);}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:12px 0;}
+  blockquote{border-left:3px solid var(--accent2);margin:10px 0;padding:6px 14px;color:var(--quote);background:rgba(240,136,62,0.06);border-radius:0 6px 6px 0;font-size:0.92rem;}
+  blockquote.en{font-style:italic;}
+  code{background:#0d1117;border:1px solid var(--border);padding:1px 5px;border-radius:4px;font-size:0.85em;color:var(--green);font-family:"SF Mono",Menlo,monospace;}
+  .src{font-size:0.72rem;color:var(--src);text-decoration:none;border-bottom:1px dotted var(--src);}
+  .src:hover{color:#fff;}
+  table{border-collapse:collapse;width:100%;font-size:0.8rem;margin:12px 0;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top;white-space:normal;}
+  th{background:var(--card2);color:var(--accent);position:sticky;top:0;}
+  tr:nth-child(even) td{background:rgba(255,255,255,0.015);}
+  .tag{display:inline-block;background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:1px 9px;font-size:0.72rem;color:var(--muted);margin:2px 4px 2px 0;}
+  .tag.g{color:var(--green);border-color:#2ea04333;}
+  .tag.n{color:var(--accent2);border-color:#f0883e33;}
+  .kbox{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;}
+  .kbox>div{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px;}
+  .kbox h4{margin-top:0;}
+  .kbox.g{border-left:3px solid var(--green);}
+  .kbox.n{border-left:3px solid var(--accent2);}
+  @media(max-width:560px){.kbox{grid-template-columns:1fr;} h1{font-size:1.3rem;} body{font-size:15px;}}
+  .pill{background:var(--accent2);color:#111;border-radius:4px;padding:0 6px;font-weight:700;font-size:0.7rem;}
+  .pill.g{background:var(--green);}
+  details{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin:10px 0;}
+  summary{cursor:pointer;color:var(--accent);font-weight:600;}
+  ul{margin:6px 0;padding-left:20px;} li{margin:3px 0;}
+  .warn{background:rgba(248,81,73,0.08);border:1px solid #f8514955;border-radius:8px;padding:8px 12px;font-size:0.88rem;margin:10px 0;}
+  .ok{background:rgba(63,185,80,0.08);border:1px solid #3fb95055;border-radius:8px;padding:8px 12px;font-size:0.88rem;margin:10px 0;}
+  hr{border:0;border-top:1px solid var(--border);margin:22px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 16px;font-size:0.85rem;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  footer{margin-top:30px;padding-top:16px;border-top:1px solid var(--border);font-size:0.78rem;color:var(--muted);}
+  .num{color:var(--purple);font-weight:700;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<h1>Trillium vs NVIDIA Groq 3 LPX<br>微架构与集群架构设计深度分析</h1>
+<div class="sub">面向 AI 算法 / 系统 / 芯片研究人员的架构研判报告</div>
+<div class="meta">调研日期：2026-07-07 · 数据来源：Google Cloud 官方文档/博客、NVIDIA 开发者技术博客、The Next Platform、SemiAnalysis（见文末溯源清单）</div>
+</header>
+
+<div class="toc">
+<b>目录</b><br>
+<a href="#s0">0. 概念澄清：LPX 是什么</a> ·
+<a href="#s1">1. 核心论点</a> ·
+<a href="#s2">2. Trillium 微架构</a> ·
+<a href="#s3">3. Trillium 集群架构</a> ·
+<a href="#s4">4. NVIDIA LPX 微架构</a> ·
+<a href="#s5">5. NVIDIA LPX 集群架构</a> ·
+<a href="#s6">6. 架构对比</a> ·
+<a href="#s7">7. 深度研判（三视角）</a> ·
+<a href="#s8">8. 关键风险与待验证点</a> ·
+<a href="#s9">9. 溯源清单</a>
+</div>
+
+<h2 id="s0">0. 概念澄清："NVIDIA LPX" 指什么</h2>
+<div class="lead">
+<p>"NVIDIA LPX" = <b>NVIDIA Groq 3 LPX</b>，是 NVIDIA 在 <span class="num">GTC 2026（2026 年 3 月）</span>发布的<b>机架级低延迟推理加速器</b>，属于 <b>Vera Rubin 平台</b>。其底层芯片 <b>LP30</b> 基于被 NVIDIA 收购的 <b>Groq 第三代 LPU（Tensor Streaming Processor, TSP）架构</b>。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></p>
+<p class="sub">关键含义：本报告比较的<b>不是 GPU 与 TPU</b>，而是两种<b>非传统 GPU 的加速器架构</b>——Google 的<b>脉动阵列 MXU + HBM（Trillium）</b> vs Groq 的<b>确定性数据流 LPU + SRAM（LPX）</b>。这让微架构对比格外有张力。</p>
+</div>
+
+<h2 id="s1">1. 核心论点</h2>
+<div class="thesis">
+<p><b>Trillium 与 LPX 并非直接竞品，而是对"不同问题"的两种回答：</b></p>
+<ul>
+<li><span class="pill g">Trillium</span> <b>通用 AI 加速器</b>（训练+推理、稠密+稀疏/MoE+embedding），HBM 承载、脉动 MXU、垂直整合，面向<b>超大规模聚合吞吐与成本</b>（Google 月推理 token 量已逼近 <span class="num">1 千万亿</span>）。</li>
+<li><span class="pill n">LPX</span> <b>专用低延迟 decode 加速器</b>（仅推理，专攻 FFN/MoE 专家 + 草稿模型），<b>SRAM-only（无 HBM）</b>、确定性 LPU，设计上<b>与 GPU 互补而非取代</b>（AFD 解耦），面向<b>高端低延迟交互</b>（agentic、coding、实时语音）。</li>
+</ul>
+<p>两者在<b>内存层级哲学、计算模型、确定性、规模范式、商业模式</b>上根本性分叉，却殊途同归地走向<b>推理解耦（prefill/decode、attention/FFN）</b>这一共同趋势。</p>
+</div>
+
+<h2 id="s2">2. Trillium 微架构（TPU v6e）</h2>
+<p>Trillium 是 Google 第六代 TPU，代号取自延龄草。官方在所有技术面（API、日志）以 <code>v6e</code> 指代。<a class="src" href="https://docs.cloud.google.com/tpu/docs/v6e" target="_blank">[Google Cloud 官方文档]</a></p>
+
+<h3>2.1 芯片级架构</h3>
+<div class="card">
+<p>每颗 v6e 芯片含 <b>1 个 TensorCore</b>，每个 TensorCore 含：<b>2 个矩阵乘单元（MXU）</b> + 1 个向量单元 + 1 个标量单元，外加独立的 <b>第三代 SparseCore</b>。<a class="src" href="https://docs.cloud.google.com/tpu/docs/v6e" target="_blank">[官方文档]</a></p>
+<blockquote class="en">"Each v6e chip contains one TensorCore. Each TensorCore has 2 matrix-multiply units (MXU), a vector unit, and a scalar unit." — Google Cloud Docs</blockquote>
+</div>
+
+<h4>MXU 的演进（关键研判点）</h4>
+<p>The Next Platform 指出：前四代 TPU 的 MXU 均为 <code>128×128</code>，而 Trillium "enlarged the MXU"。他们推测 Google 回归了 <b>TPU v1 的 256×256</b> 并实现了高效双泵（double-pump）：<a class="src" href="https://www.nextplatform.com/ai/2024/06/10/lots-of-questions-on-googles-trillium-tpu-v6-a-few-answers/1633984" target="_blank">[TNP]</a></p>
+<blockquote class="en">"The Trillium chips have larger matrix multiply units (MXUs) than the ones used in the prior four generations, which use 128×128 matrices... The TPU v1 chips used a 256×256 matrix in its cores, and we think Google may have reverted to this format and figured out a way to double pump it efficiently."</blockquote>
+<p class="sub">这解释了官方文档"2 个 MXU"与部分二手源"4 个 MXU"的出入——若每个 MXU 从 128×128 升到 256×256（面积/算力 ~4×），则 2 个新 MXU ≈ 8 个旧 MXU 的算力，结合时钟提升得到相对 v5e（单 128×128 MXU）的 <b>4.7×</b> 峰值。<span class="num">918 TFLOPs ÷ 197 TFLOPs(v5e) ≈ 4.66×</span>，与官方 4.7× 吻合。</p>
+
+<h4>SparseCore（Google 的差异化护城河）</h4>
+<div class="card">
+<p>SparseCore 自 <b>TPU v4 引入</b>，是面向<b>超大规模 embedding（排序/推荐）</b>的专用处理器——这正是 Google 搜索与广告业务的核心负载。<a class="src" href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus" target="_blank">[Google 博客]</a></p>
+<blockquote class="en">"Trillium is equipped with third-generation SparseCore, a specialized accelerator for processing ultra-large embeddings common in advanced ranking and recommendation workloads."</blockquote>
+<ul>
+<li>第三代 SparseCore 引入<b>可变 SIMD 宽度</b>（FP32 时 8 元素、BF16 时 16 元素）、<b>异步执行</b>与<b>翻倍内存通道</b>，有效隐藏延迟。<a class="src" href="https://www.google.com/search?q=Trillium+third-generation+SparseCore+variable+SIMD" target="_blank">[SERP 汇总: introl.com / rajatpandit.com]</a></li>
+<li>SparseCore 仅占约 <span class="num">5% 芯片面积与功耗</span>，却可将 embedding 负载加速 <span class="num">5–7×</span>。<a class="src" href="https://www.google.com/search?q=TPU+v4+SparseCore+5%25+area+5-7x" target="_blank">[SERP: 2025-12-17]</a></li>
+<li>它"战略性地将随机、细粒度访问从 TensorCore 卸载"——把<b>不规则内存访问</b>（embedding 查表的随机性）与<b>规则矩阵算子</b>分离到不同硬件，避免互相干扰。</li>
+</ul>
+<p class="sub"><b>模型设计者视角</b>：这是 Trillium 区别于一切 GPU/LPU 的独门设计——现代推荐/检索增强模型（DLRM、双塔、MoE 的 embedding 表）的瓶颈恰是稀疏嵌入的不规则访存，而非稠密算力。SparseCore 用 ~5% 面积买 5-7×，是极高的面积 ROI。</p>
+</div>
+
+<h3>2.2 关键规格（官方权威值）</h3>
+<table>
+<tr><th>指标</th><th>TPU v6e (Trillium) 每芯片</th></tr>
+<tr><td>峰值算力 BF16</td><td><b>918 TFLOPs</b></td></tr>
+<tr><td>峰值算力 Int8</td><td><b>1836 TOPs</b></td></tr>
+<tr><td>HBM 容量</td><td><b>32 GB</b>（较 v5e 翻倍）</td></tr>
+<tr><td>HBM 带宽</td><td><b>1638 GB/s</b>（较 v5e 翻倍）</td></tr>
+<tr><td>ICI 双向带宽（每芯片）</td><td><b>800 GB/s</b>，4 端口</td></tr>
+<tr><td>每主机 DRAM</td><td>1536 GiB（v5e 的 3×）</td></tr>
+<tr><td>每主机芯片数</td><td>8</td></tr>
+<tr><td>精度</td><td>BF16、Int8（官方文档未列 FP8；部分分析称支持 FP8，待官方确认）</td></tr>
+<tr><td>特殊单元</td><td>第三代 SparseCore</td></tr>
+</table>
+<p class="sub">注：Google I/O 发布博客宣称"较 v5e 提升峰值算力 4.7×、HBM 容量与带宽翻倍、ICI 带宽翻倍、能效提升 &gt;67%"。<a class="src" href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus" target="_blank">[发布博客]</a></p>
+<div class="warn"><b>规格出入提示（分析价值）</b>：发布博客的"2× ICI"与官方文档的"800 GB/s 双向"存在字节/比特单位混用问题；二手源曾出现"3,200 Gbps/芯片"。本报告以官方文档 <b>GB/s</b> 为准。</div>
+
+<h2 id="s3">3. Trillium 集群架构</h2>
+
+<h3>3.1 Pod 与拓扑</h3>
+<div class="card">
+<p>单 Pod = <b>256 颗芯片</b>，<b>2D Torus</b> 拓扑。<a class="src" href="https://docs.cloud.google.com/tpu/docs/v6e" target="_blank">[官方文档]</a></p>
+<table>
+<tr><th>Pod 级指标</th><th>值</th></tr>
+<tr><td>Pod 芯片数</td><td>256</td></tr>
+<tr><td>拓扑</td><td>2D torus</td></tr>
+<tr><td>BF16 峰值算力</td><td>234.9 PFLOPs</td></tr>
+<tr><td>all-reduce 带宽</td><td>102.4 TB/s</td></tr>
+<tr><td>二分带宽</td><td>3.2 TB/s</td></tr>
+<tr><td>每主机 NIC</td><td>4 × 200 Gbps</td></tr>
+<tr><td>Pod DCN 带宽</td><td>25.6 Tbps</td></tr>
+</table>
+<p class="sub">"e" 变体（v5e/v6e）采用更小、更省的 256 芯片 2D torus；而 v4/v5p 等训练向变体用 4096 芯片 <b>3D torus</b>。Ironwood（v7）已演进到 <b>9,216 芯片 / 36 Pod / 4D torus</b>。<a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">[TNP: Google 推理规模]</a></p>
+</div>
+
+<h3>3.2 跨 Pod 规模：Multislice + Jupiter + OCS</h3>
+<div class="card">
+<p>Google 通过 <b>Multislice 技术 + Titanium IPU</b> 把数百个 Pod 连成"楼宇级超算"，由<b>多 P比特/秒数据中心网络</b>互联。<a class="src" href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus" target="_blank">[发布博客]</a></p>
+<blockquote class="en">"with multislice technology and Titanium Intelligence Processing Units (IPUs), Trillium TPUs can scale to hundreds of pods, connecting tens of thousands of chips in a building-scale supercomputer interconnected by a multi-petabit-per-second datacenter network."</blockquote>
+<p>Google 独门的 <b>OCS（光路交换机，Optical Circuit Switch）</b>是关键：<b>动态可重构</b>，能在 TPU 故障时绕开失效芯片<b>无需重启训练/推理任务</b>。<a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">[TNP]</a></p>
+<blockquote class="en">"That OCS interconnect... has dynamic reconfiguration capabilities and can heal around TPU failures without having to restart entire training and inference jobs. This latter bit is huge."</blockquote>
+</div>
+
+<h3>3.3 液冷：Google 的基础设施护城河</h3>
+<div class="card">
+<blockquote class="en">"Google has been working on liquid pooling since 2014... we are now in our fifth generation cooling distribution unit... as of 2024, we had around a gigawatt of total liquid cooled capacity, which was 70 times more than any other fleet at that point in time. We created this first for TPUs and now we will replicate it for GPUs." — Mark Lohmeyer, Google</blockquote>
+<p class="sub">自 2014 年起做液冷、第五代 CDU、~1 GW 液冷容量（彼时是其他厂商的 70×），CDU 规格将贡献给 OCP。<a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">[TNP]</a></p>
+</div>
+
+<h3>3.4 推理软件栈（集群级）</h3>
+<div class="card">
+<ul>
+<li><b>Pathways</b>：多主机推理编排（v6e-8 单 VM 8 芯优化推理，多主机走 Pathways）。<a class="src" href="https://docs.cloud.google.com/tpu/docs/v6e" target="_blank">[官方文档]</a></li>
+<li><b>JAX + XLA</b>：声明式模型描述，从任意前代 TPU 直接映射到新硬件；PyTorch/XLA、Keras 3；现也原生支持 PyTorch。<a class="src" href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus" target="_blank">[发布博客]</a> <a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">[TNP]</a></li>
+<li><b>GKE</b>（≈内部 Borg/Omega）+ <b>vLLM</b> 为推理核心（与 NVIDIA Dynamo 类似）。</li>
+<li><b>Anywhere Cache</b>（新闪存缓存）：区域内读延迟降 <span class="num">70%</span>，跨区域降 <span class="num">96%</span>。</li>
+<li><b>GKE Inference Gateway</b>：AI 负载均衡/路由，把请求路由到"内存中已有上下文"的设备；<b>解耦 prefill 与 decode</b>（与 NVIDIA "Rubin CPX" 思路一致）。</li>
+<li><b>投机解码（speculative decoding）</b>：已用于 Gemini，能效提升约 <span class="num">33×</span>。</li>
+<li>客户结果：推理延迟最多降 96%、吞吐最多升 40%、单 token 成本最多降 30%。</li>
+</ul>
+</div>
+
+<h3>3.5 规模实况：推理 token 指数爆炸</h3>
+<div class="card">
+<p>Google 全产品推理 token 速率：<a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">[TNP]</a></p>
+<table>
+<tr><th>时间</th><th>月推理 token 量</th></tr>
+<tr><td>2024-04</td><td>9.7 万亿</td></tr>
+<tr><td>2024-12</td><td>~160 万亿</td></tr>
+<tr><td>2025-04</td><td>&gt;480 万亿（同比 49.5×）</td></tr>
+<tr><td>2025-06</td><td>980 万亿</td></tr>
+<tr><td>2025-08（估）</td><td>~1,460 万亿</td></tr>
+</table>
+<p>MLPerf 上单颗 Trillium v6e 跑 Llama 2 70B 约 <b>800 tokens/s</b> ≈ 每月 ~20.7 亿 token。TNP 据此粗估 2025-08 Google 内部推理需约 <b>70 万颗 Trillium 等效</b>。</p>
+<blockquote class="en">"the rate of inference across all Google products that the company has to serve has gone exponential."</blockquote>
+</div>
+
+<h2 id="s4">4. NVIDIA Groq 3 LPX 微架构</h2>
+<p>LPX 的核心是 <b>NVIDIA Groq 3 LPU</b>——"Vera Rubin 平台的第七颗芯片"，源自 Groq 的 <b>TSP（Tensor Streaming Processor）</b>架构（参考论文 <i>Think Fast: A Tensor Streaming Processor</i>）。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></p>
+
+<h3>4.1 设计哲学：确定性优先</h3>
+<div class="card">
+<blockquote class="en">"Rather than optimizing only for peak arithmetic throughput, the LPU emphasizes deterministic execution, high on-chip memory bandwidth, and explicit data movement."</blockquote>
+<p>LPU 采用 Groq 的<b>空间执行模型（spatial execution）</b>：编译器显式调度计算、数据搬运与同步，<b>无运行时动态硬件调度器</b>。硬件采用<b>近同步（plesiosynchronous）芯片间协议</b>消除时钟漂移，把数百颗 LPU 对齐为单一协同系统。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></p>
+<blockquote class="en">"the compiler relies on plesiosynchronous, chip-to-chip protocol in hardware that cancels natural clock drift and aligns hundreds of LPU accelerators to act as a single coordinated system."</blockquote>
+</div>
+
+<h3>4.2 计算与显式数据搬运：320 字节向量</h3>
+<div class="card">
+<p><b>工作单元 = 320 字节向量</b>。算术、访存、跨设备传输全部以该定长向量为单位，简化调度与同步。专用执行模块：<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></p>
+<ul>
+<li><b>MXM</b>（Matrix eXecution Module）：稠密 MAC，定数据类型、可预测吞吐。</li>
+<li><b>VXM</b>（Vector eXecution Module）：逐点算术、类型转换、激活——每 lane 一组 ALU mesh。</li>
+<li><b>SXM</b>（Switch eXecution Module）：结构化数据搬运——置换、旋转、分发、转置。</li>
+<li><b>MEM</b>：扁平、SRAM 优先的内存架构，<b>500 MB 高速片上 SRAM 作为推理主工作存储</b>。<b>无硬件管理 cache</b>，编译器/运行时显式放置权重、激活、KV 状态。</li>
+</ul>
+<blockquote class="en">"Compute and communication in the LPU are organized around 320-byte vectors as the unit of work... By making data movement explicit and programmable, the LPU enables memory access, compute, and communication to be overlapped, rather than relying on hardware heuristics."</blockquote>
+</div>
+
+<h3>4.3 LP30 芯片规格（SemiAnalysis 补充）</h3>
+<div class="card">
+<table>
+<tr><th>指标</th><th>LP30（Groq 3 LPU）</th></tr>
+<tr><td>制程</td><td><b>三星 SF4</b>（非 TSMC N3）</td></tr>
+<tr><td>封装</td><td><b>单 monolithic die，无先进封装</b></td></tr>
+<tr><td>片上 SRAM</td><td><b>500 MB</b>（主工作存储）</td></tr>
+<tr><td>片上 SRAM 带宽</td><td><b>150 TB/s</b></td></tr>
+<tr><td>算力</td><td><b>1.2 PFLOPS FP8</b></td></tr>
+<tr><td>scale-up 双向带宽</td><td><b>2.5 TB/s</b></td></tr>
+<tr><td>C2C 链路</td><td>96 条 × 112 Gbps</td></tr>
+<tr><td>HBM</td><td><b>无</b></td></tr>
+<tr><td>对比 Groq 一代</td><td>230 MB SRAM / 750 TFLOPs INT8（GF16→SF4 提速）</td></tr>
+</table>
+<p class="sub"><a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></p>
+</div>
+
+<h4>SRAM vs HBM：根本性取舍（核心研判）</h4>
+<div class="card">
+<p>LP30 的 <b>150 TB/s 片上 SRAM 带宽</b>约为 Trillium HBM 带宽（1.6 TB/s）的 <span class="num">~90×</span>，但容量仅 500 MB vs 32 GB（~1/64）。这是"带宽/确定性"对"容量"的经典权衡。</p>
+<blockquote class="en">"the high-density SRAM = limited capacity: after weights are loaded, very little space remains, and as batch sizes increase, the KV cache quickly becomes saturated, resulting in overall throughput that is significantly lower than that of GPUs." — SemiAnalysis</blockquote>
+<p class="sub"><b>结论</b>：独立 LPU 系统<b>不适合大规模 token 吞吐服务</b>，但在<b>单用户、低延迟、小 batch</b> 场景的 TTFT 与每 token 延迟无可匹敌——这正是它被定位到 AFD 解耦架构的基础。</p>
+</div>
+
+<h3>4.4 LPX 的固有局限（批判视角）</h3>
+<div class="warn">
+<ul>
+<li><b>KV 缓存饱和</b>：SRAM 太小，attention 的动态 KV cache 无法承载并发 → LPU 几乎不能做 attention，只能做无状态、可静态调度的 FFN。</li>
+<li><b>吞吐劣势</b>：batch 一大，KV cache 占满，整体吞吐远低于 GPU。</li>
+<li><b>形态未定</b>：当前 LPX 依赖 x86 CPU 的 PCIe root complex，而 Vera（GPU）走 NVLink C2C——"The final form of the LPX remains uncertain"。<a class="src" href="https://www.google.com/search?q=NVIDIA+Groq+3+LPX+x86+PCIe+NVLink+C2C" target="_blank">[SERP: 2026-04-14]</a></li>
+</ul>
+</div>
+
+<h2 id="s5">5. NVIDIA Groq 3 LPX 集群架构</h2>
+
+<h3>5.1 机架级：256 颗 LP30</h3>
+<div class="card">
+<p>单机架 = <b>32 个液冷 1U 计算托盘</b>，官方每托盘 <b>8 颗 LP30</b>，共 <b>256 颗芯片</b>；cableless 设计，配 2 台 Spectrum-X 交换机。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></p>
+<table>
+<tr><th>机架级指标</th><th>LPX</th></tr>
+<tr><td>AI 推理算力</td><td><b>315 PFLOPS</b>（FP8）</td></tr>
+<tr><td>总 SRAM 容量</td><td><b>128 GB</b>（256×500MB）</td></tr>
+<tr><td>片上 SRAM 带宽</td><td><b>40 PB/s</b></td></tr>
+<tr><td>scale-up 密度</td><td>256 颗芯片</td></tr>
+<tr><td>scale-up 带宽</td><td><b>640 TB/s</b></td></tr>
+</table>
+<table>
+<tr><th>每托盘（官方）</th><th>值</th></tr>
+<tr><td>LP30 芯片</td><td>8</td></tr>
+<tr><td>片上 SRAM</td><td>4 GB（8×500MB）</td></tr>
+<tr><td>SRAM 带宽</td><td>1.2 PB/s</td></tr>
+<tr><td>经 Fabric Expansion 的 DRAM</td><td>最高 256 GB</td></tr>
+<tr><td>经主机 CPU 的 DRAM</td><td>最高 128 GB</td></tr>
+<tr><td>FP8 算力</td><td>9.6 PFLOPS（8×1.2）</td></tr>
+<tr><td>scale-up 带宽</td><td>20 TB/s</td></tr>
+</table>
+<div class="warn"><b>托盘芯片数出入</b>：SemiAnalysis 称每托盘 16 颗 LP30（"背靠背 8 上 + 8 下"）+ 2 颗 Altera FPGA + 1 颗 Intel Granite Rapids 主机 CPU + 1 个 BlueField-4 前端模块。但 NVIDIA 官方每托盘表（SRAM 4GB、算力 9.6 PFLOPS）<b>仅在 8 颗/托盘时自洽</b>。合理解释：SemiAnalysis 的"16"实为<b>双托盘 NODE</b>（8+8 背靠背构成全 mesh 节点）。本报告以官方 8 颗/托盘为准，fabric 细节取 SemiAnalysis。<a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></div>
+</div>
+
+<h3>5.2 Fabric 与 scale-out</h3>
+<div class="card">
+<ul>
+<li><b>Fabric Expansion Logic（FPGA）</b>三职能：① LPU C2C → Ethernet（接 Spectrum-X scale-out）；② LPU↔主机 CPU 的 PCIe 桥；③ 每板提供最高 <b>256 GB DDR5 扩展内存用于 KV cache</b>。<a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></li>
+<li>拓扑：节点内 16-LPU <b>全 mesh</b>（背靠背 8+8 最小化 X/Y 走线）；跨节点 <b>铜背板</b>；跨机架 <b>前面板 OSFP</b>。</li>
+<li>scale-out：<b>Spectrum-X 以太网 + BlueField-4 DPU</b>。</li>
+<li>设计哲学（与 Vera ETL256 一致）：把密度推到<b>铜缆可及的阈值</b>，骨干免光模块，省下的钱覆盖液冷成本。</li>
+</ul>
+</div>
+
+<h3>5.3 异构推理：AFD（Attention-FFN 解耦）</h3>
+<div class="card">
+<p>LPX 的集群价值不在独立吞吐，而在与 <b>Vera Rubin NVL72（GPU）</b>协同的<b>双引擎 decode 环</b>：<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a> <a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></p>
+<table>
+<tr><th>decode 阶段</th><th>承载硬件</th><th>原因</th></tr>
+<tr><td>prefill（建 KV cache）</td><td>GPU（NVL72）</td><td>稠密并行算力 + 大内存容量</td></tr>
+<tr><td>decode attention</td><td>GPU</td><td>依赖动态 KV cache 加载，需大 HBM</td></tr>
+<tr><td>decode FFN / MoE 专家</td><td><b>LPU（LPX）</b></td><td>无状态、可静态调度，契合确定性架构</td></tr>
+</table>
+<ul>
+<li>GPU 专注 attention → 释放 HBM 给 KV cache → 系统可并发更多 token。</li>
+<li>GPU↔LPU 经 <b>all-to-all 集合通信</b>分发/聚合 token，<b>ping-pong 流水</b>隐藏通信延迟。</li>
+<li><b>投机解码</b>：草稿模型 / MTP（多 token 预测）层放 LPU → 每步输出 token 增 <b>1.5–2×</b>；GPU 做验证。</li>
+</ul>
+<blockquote class="en">"Together they deliver a heterogeneous serving path that improves interactive responsiveness without sacrificing AI factory throughput."</blockquote>
+</div>
+
+<h3>5.4 编排与平台</h3>
+<div class="card">
+<ul>
+<li><b>NVIDIA Dynamo</b>：异构后端的解耦服务/解耦 decode 编排层——请求分类、按延迟目标路由、低开销搬运中间激活、KV-aware 路由、burst 下稳定尾延迟。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></li>
+<li><b>Vera Rubin 平台 = 7 颗芯片 / 5 种机架级系统</b>：Rubin GPU、Vera CPU、Groq LP30 LPU、BlueField-4 DPU、Spectrum-X/6 交换机、CX-9 NIC、SOCAMM 内存；机架含 NVL72（GPU）、LPX（LPU）、<b>Vera ETL256（256 CPU 液冷机架）</b>、<b>STX（存储参考架构）</b>等。<a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></li>
+<li>NVIDIA 宣称：较 GB200 NVL72，Vera Rubin NVL72+LPX 在 400 TPS/user 下 TPS/MW 高 <b>35×</b>，营收/MW 高达 <b>10×</b>。<a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">[NVIDIA 技术博客]</a></li>
+</ul>
+</div>
+
+<h2 id="s6">6. 架构对比</h2>
+
+<h3>6.1 微架构对比（每芯片）</h3>
+<table>
+<tr><th>维度</th><th>Trillium (TPU v6e)</th><th>LP30 (Groq 3 LPU)</th></tr>
+<tr><td>定位</td><td>通用 AI 加速（训练+推理、稠密+稀疏+embedding）</td><td>专用低延迟推理（decode FFN/MoE + 草稿）</td></tr>
+<tr><td>制程/封装</td><td>未公开（HBM，推测 CoWoS）</td><td>三星 SF4 / monolithic / 无先进封装</td></tr>
+<tr><td>算力</td><td>918 TFLOPs BF16 / 1836 TOPs Int8</td><td>1.2 PFLOPS FP8</td></tr>
+<tr><td>计算模型</td><td>2× MXU 脉动阵列 + 向量 + 标量 + SparseCore（硬件管理）</td><td>TSP 空间数据流：MXM+VXM+SXM+MEM，320B 向量，编译器显式调度</td></tr>
+<tr><td>片上 SRAM</td><td>小（cache 性质）</td><td><b>500 MB（主工作存储）</b></td></tr>
+<tr><td>SRAM 带宽</td><td>—</td><td><b>150 TB/s</b></td></tr>
+<tr><td>HBM</td><td><b>32 GB @ 1638 GB/s</b></td><td><b>无</b></td></tr>
+<tr><td>外部内存</td><td>HBM + 主机 DRAM</td><td>DDR5（经 FPGA，最高 256 GB/板）+ 主机 DRAM</td></tr>
+<tr><td>scale-up 互联</td><td>ICI 800 GB/s 双向，4 端口</td><td>C2C 2.5 TB/s 双向，96×112Gbps</td></tr>
+<tr><td>确定性</td><td>部分（硬件管理）</td><td><b>全确定性，近同步</b></td></tr>
+<tr><td>独门单元</td><td>第三代 SparseCore（embedding）</td><td>—</td></tr>
+<tr><td>主要瓶颈</td><td>HBM 带宽（长 context attention）</td><td>SRAM 容量（KV cache 饱和）</td></tr>
+</table>
+
+<h3>6.2 集群对比（Pod / 机架）</h3>
+<table>
+<tr><th>维度</th><th>Trillium Pod</th><th>LPX Rack</th></tr>
+<tr><td>芯片数</td><td>256</td><td>256（32 托盘×8）</td></tr>
+<tr><td>拓扑</td><td>2D torus（大规模 3D/4D torus）</td><td>节点全 mesh + 铜背板 + OSFP；2× Spectrum-X</td></tr>
+<tr><td>聚合算力</td><td>234.9 PFLOPs BF16</td><td>315 PFLOPS FP8</td></tr>
+<tr><td>scale-up 带宽</td><td>二分 3.2 TB/s</td><td>640 TB/s</td></tr>
+<tr><td>内存</td><td>8.2 TB HBM</td><td>128 GB SRAM + DDR5</td></tr>
+<tr><td>冷却</td><td>液冷（属 ~1 GW 机群）</td><td>液冷</td></tr>
+<tr><td>scale-out</td><td>Jupiter DCN + OCS + Titanium IPU + multislice</td><td>Spectrum-X 以太网 + BlueField-4</td></tr>
+<tr><td>软件栈</td><td>Pathways / JAX+XLA / GKE / vLLM / Anywhere Cache / GKE Inference Gateway</td><td>Dynamo / AFD / 投机解码</td></tr>
+<tr><td>集群范式</td><td><b>同构</b> multislice（数万同类 TPU）</td><td><b>异构</b>（NVL72 GPU Pod + LPX LPU 机架）</td></tr>
+<tr><td>核心目标</td><td>聚合吞吐与成本</td><td>每用户延迟与高端交互</td></tr>
+</table>
+<div class="warn"><b>算力不可直接比</b>：LPX 315 PFLOPS 是 <b>FP8 推理峰值</b>，Trillium 234.9 PFLOPs 是 <b>BF16</b>；且 LPX 仅推理、Trillium 通用。归一化须同精度、同负载。</div>
+
+<h2 id="s7">7. 深度研判（三视角）</h2>
+
+<h3>7.1 模型设计者视角（rule 8）</h3>
+<div class="card">
+<p>站在算法/模型设计者角度，两类架构映射到当代模型范式的不同痛点：</p>
+<ul>
+<li><b>MoE 化</b>：稀疏专家使单 token 的 FFN 计算量与活跃参数解耦。LPX 的确定性 SRAM 流水<b>天然契合 MoE 专家</b>（无状态、静态调度、专家权重常驻 SRAM）；Trillium 的 MXU 则用稠密算力吃满专家 batch。</li>
+<li><b>长上下文</b>：attention 随 context 增长被<b>数据搬运与内存带宽</b>束缚（NVIDIA 原文）。Trillium 靠 HBM 容量(32GB)+带宽(1.6TB/s)承载 KV cache；LPX 因 SRAM 太小<b>主动放弃 attention</b>，交给 GPU——这是 AFD 的算法-硬件协同必然。</li>
+<li><b>Agentic decode</b>：小 batch、多步、延迟累积。LPX 的低 jitter、稳定 TTFT 正为此设计；"approaching 1,000 tokens per second per user" 的"思维速度计算"是产品形态驱动的架构选择。</li>
+<li><b>embedding/推荐</b>：Trillium 的 SparseCore 是<b>唯一</b>正面解决"稀疏嵌入不规则访存"的设计——这是 Google 搜索/广告的命脉，也是 DLRM/检索增强模型的真实瓶颈。LPX 完全不涉及此场景。</li>
+</ul>
+<p><b>范式判断</b>：行业正从"单一硬件吃全部负载"转向<b>按 decode 内部阶段硬件解耦</b>（prefill/decode → attention/FFN）。Google 用<b>一类灵活加速器 + 软件智能</b>（Pathways/Inference Gateway）实现；NVIDIA 用<b>专用加速器 + 编排</b>（Dynamo/AFD）实现。<b>解耦是共同终局，谁做硬件解耦、谁做软件解耦是分野。</b></p>
+</div>
+
+<h3>7.2 投资经理视角（rule 9）</h3>
+<div class="card">
+<h4>NVIDIA–Groq 交易：防御性整合 + 产能套利</h4>
+<ul>
+<li>结构为 <b>~$20B IP 授权 + 团队招募（acquihire），非传统并购</b>，非独家；4 个月内推出 LP30+LPX。<a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">[SemiAnalysis]</a></li>
+<li>批判观点："defensive consolidation disguised as platform expansion... paying nearly 3x valuation"。<a class="src" href="https://www.google.com/search?q=Nvidia+Groq+deal+defensive+consolidation+3x+valuation" target="_blank">[SERP: 2025-12-24]</a></li>
+<li><b>最关键的产能逻辑</b>：LP30 用<b>三星 SF4、无 HBM、无先进封装</b> → NVIDIA 增加推理产能<b>却不挤占自家紧张的 TSMC N3 / CoWoS / HBM 供给</b>。"Nvidia can now sell more AI chips than TSMC has CoWoS production capacity to make for them." 这是<b>产能套利</b>：用不受限的工艺做增量收入。</li>
+<li>对冲：若确定性 LPU 在低延迟推理层胜出，NVIDIA 已握住该架构，避免被颠覆。</li>
+</ul>
+<h4>推理市场二分</h4>
+<ul>
+<li><b>吞吐层</b>（批处理、embedding、免费档）：成本驱动，Trillium（尤其 SparseCore）与 GPU 主导。</li>
+<li><b>延迟层</b>（agentic、coding、语音）：体验驱动、溢价，LPX 主攻。NVIDIA 的 35× TPS/MW、10× 营收/MW 是抢占高端层的叙事。</li>
+</ul>
+<h4>Google TPU 的战略账</h4>
+<ul>
+<li>垂直整合 + 对 NVIDIA 的议价筹码 + 让 Gemini 在 token 指数爆炸下经济可行（~70 万 Trillium 等效）。</li>
+<li>Google 仍维持 GPU 机群（A4/A4X/GB300 NVL72）+ 自研 TPU 的混合，并把 NVIDIA Dynamo 纳入可选推理栈——既合作又对冲。</li>
+</ul>
+</div>
+
+<h3>7.3 学术/前沿视角（rule 10）</h3>
+<div class="card">
+<ul>
+<li><b>脉动阵列 lineage</b>：Trillium 承袭 TPU v1（2015，256×256）以来的脉动 MXU 思路，是<b>硬件管理、通用</b>的矩阵流。研究价值在混合精度、内存子系统与互联的持续演进（TNP 评语）。<a class="src" href="https://www.nextplatform.com/ai/2024/06/10/lots-of-questions-on-googles-trillium-tpu-v6-a-few-answers/1633984" target="_blank">[TNP]</a></li>
+<li><b>TSP lineage</b>：LPX 承袭 Groq 的 <i>Think Fast: A Tensor Streaming Processor</i> 与 <i>Software-defined Tensor Streaming Multiprocessor</i>——<b>软件定义硅、确定性空间执行</b>的研究路线，是"把调度从硬件移到编译器"的极端派。</li>
+<li><b>确定性 vs 灵活性</b>：这是计算机体系结构的永恒张力。LPU 用确定性换可预测延迟（牺牲通用性与吞吐）；MXU 用硬件调度换通用性与利用率（牺牲尾延迟可预测性）。两者代表谱系两端。</li>
+<li><b>近同步（plesiosynchronous）协议</b>对齐数百芯片、OCS 动态重构绕障——均是少见的、面向超大规模确定性的工程贡献。</li>
+</ul>
+</div>
+
+<h2 id="s8">8. 关键风险与待验证点</h2>
+<div class="warn">
+<ul>
+<li><b>LPX 形态未定</b>：当前依赖 x86 PCIe，未上 NVLink C2C；独立吞吐差，价值<b> contingent on Dynamo/AFD 成熟度</b>。</li>
+<li><b>规格出入</b>：托盘芯片数（官方 8 vs SemiAnalysis 16/node）、Trillium MXU 数（官方 2 vs 部分 4）、ICI 单位（GB/s vs Gbps）均需以官方为准并标注。</li>
+<li><b>算力对比须归一</b>：FP8 vs BF16、推理 vs 通用，315 vs 234.9 PFLOPs 不可直接比。</li>
+<li><b>云 SKU vs 内部 fleet</b>：v6e 文档是云保守值；Google 内部服务 Gemini 的 Trillium 配置可能更高；TNP 预测存在 v6p 训练变体。</li>
+<li><b>制程可持续性</b>：LP30 依赖三星 SF4，其良率/产能能否支撑 LPX 规模化是未知数；NVIDIA 自家 N3/HBM 供给仍是行业瓶颈。</li>
+</ul>
+</div>
+
+<div class="ok">
+<b>一句话结论</b>：Trillium 是"用一类通用加速器 + 软件智能吃下全部负载"的<b>垂直整合吞吐派</b>（HBM/脉动阵列/SparseCore/OCS multislice）；LPX 是"用专用确定性加速器 + 异构编排啃下 decode 延迟尖刺"的<b>解耦延迟派</b>（SRAM/TSP/AFD/Spectrum-X）。二者不争同一战场，却共同指向<b>推理按阶段解耦</b>的未来——Google 押注软件解耦，NVIDIA 押注硬件解耦。
+</div>
+
+<h2 id="s9">9. 溯源清单</h2>
+<div class="card">
+<ol>
+<li><b>NVIDIA 技术博客</b> — <i>Inside NVIDIA Groq 3 LPX: The Low-Latency Inference Accelerator for the NVIDIA Vera Rubin Platform</i>（GTC 2026, 2026-03）<br><a class="src" href="https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/" target="_blank">developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-...</a></li>
+<li><b>SemiAnalysis</b>（moomoo 镜像）— <i>GTC In-Depth Analysis: Behind Three New Systems, NVIDIA Is Redefining the Boundaries of AI Infrastructure</i>（2026-03-24）；原文 <i>NVIDIA: The Inference Kingdom Expands</i><br><a class="src" href="https://www.moomoo.com/news/post/67335112/semianalysis-gtc-in-depth-analysis-behind-three-new-systems-nvidia" target="_blank">moomoo.com/news/post/67335112</a> · <a class="src" href="https://newsletter.semianalysis.com/p/nvidia-the-inference-kingdom-expands" target="_blank">newsletter.semianalysis.com</a></li>
+<li><b>Google Cloud 博客</b> — <i>Introducing Trillium, sixth-generation TPUs</i>（Google I/O 2024-05）<br><a class="src" href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus" target="_blank">cloud.google.com/blog/.../introducing-trillium-6th-gen-tpus</a></li>
+<li><b>Google Cloud 官方文档</b> — <i>TPU v6e</i>（live 2026-07-07）<br><a class="src" href="https://docs.cloud.google.com/tpu/docs/v6e" target="_blank">docs.cloud.google.com/tpu/docs/v6e</a></li>
+<li><b>The Next Platform</b> — <i>Lots Of Questions On Google's "Trillium" TPU v6, A Few Answers</i>（2024-06-10）<br><a class="src" href="https://www.nextplatform.com/ai/2024/06/10/lots-of-questions-on-googles-trillium-tpu-v6-a-few-answers/1633984" target="_blank">nextplatform.com/ai/2024/06/10/lots-of-questions-...</a></li>
+<li><b>The Next Platform</b> — <i>Google Shows Off Its Inference Scale And Prowess</i>（AI Infra Summit 2025-09-17）<br><a class="src" href="https://www.nextplatform.com/ai/2025/09/17/google-shows-off-its-inference-scale-and-prowess/1642358" target="_blank">nextplatform.com/ai/2025/09/17/google-shows-off-...</a></li>
+<li><b>SERP 汇总</b>（SparseCore 变量 SIMD / 5% 面积 5-7× / Groq 交易 $20B 非独家授权 + acquihire / x86 PCIe 依赖）— 经 Google 检索结果交叉验证，原始页见 introl.com、rajatpandit.com 等。</li>
+</ol>
+<p class="sub">原始调研笔记已持久化于 <code>trillium_nvidia_analysis/raw/</code>（00_disambiguation → 06_semianalysis_lpx 共 7 份），供后续人工分析。</p>
+</div>
+
+<footer>
+本报告由 Claude（GLM-5.2）基于公开网络资料调研整理，面向 AI 算法/系统/芯片研究人员。所有关键观点均附溯源链接，引用原文保留原始语言（英文引文不译）。规格以厂商官方文档为准，二手分析已标注并提示出入。报告不构成投资建议。
+</footer>
+
+</div>
+</body>
+</html>
