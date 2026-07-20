@@ -175,6 +175,8 @@ def md_to_html(text):
         s = re.sub(r'`([^`]+)`', r'<code>\1></code>', s)
         # 加粗 **text**
         s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
+        # 斜体 *text* (不在 ** 内部)
+        s = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', s)
         # 链接 [text](url)
         s = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank" rel="noopener">\1</a>', s)
         return s
