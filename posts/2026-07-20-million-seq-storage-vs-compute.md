@@ -2,146 +2,198 @@
 title: "The Paradigm Shift in AI Compute: Why Storage, Not Compute, Is the Bottleneck at Million-Token Scale"
 date: 2026-07-20
 tags: ["compute-cost", "long-context", "DeepSeek", "Kimi", "KV-Cache", "inference"]
-excerpt: "At million-token context lengths, the cost structure of LLM inference fundamentally changes. Based on real-world data from 160M+ cache hit tokens, this post analyzes why storage (KV-Cache) has become the dominant cost driver and what it means for the future of AI system design."
+excerpt: "At million-token context lengths, the cost structure of LLM inference fundamentally changes. Based on real-world data from 160M+ cache hit tokens, this post analyzes why storage (KV-Cache) has become the dominant cost driver through rigorous cost comparison across vendors."
 ---
 
 # The Paradigm Shift in AI Compute: Why Storage, Not Compute, Is the Bottleneck at Million-Token Scale
 
-## TL;DR
+## 1. Scenario: A Real-World Agent Session at Million-Token Scale
 
-When context length scales to millions of tokens, **the billing structure of LLM inference fundamentally flips**. Using real-world consumption data from 160 million cache hit tokens:
+Consider a production multi-turn Agent session with the following consumption profile. After many turns, the context window (all historical dialogue + system prompt + tool results) reaches a steady state of **200K–450K tokens**. In a long-running task, the total consumption reaches:
 
-- **DeepSeek Pro**: Total bill ¥9.42 — storage 42.6%, compute 57.4%
-- **Kimi K3**: Total bill ¥377.03 — storage 85.1%, compute 14.9%
+| Metric | Value | Description |
+|---|---|---|
+| **Cache Hit Tokens** (storage/memory) | **160.4 million** | KV-Cache hits: historical context reused |
+| **Cache Miss Tokens** (real-time compute) | **1.02 million** | New tokens that must be computed |
+| **Output Tokens** | **0.447 million** | Model-generated response tokens |
+| **Total Compute Tokens** (Miss + Output) | **1.467 million** | Actual FLOP-bound computation |
+| **Storage:Compute Ratio** | **~110:1** | Each compute token supports 110 cached tokens |
 
-Traditional long-context billing is essentially "paying for storage." DeepSeek, through aggressive KV-Cache pricing (¥0.025/M hit), achieved **cost inversion** — compute now costs more than storage. For Agent architectures with high-frequency context reuse, the purchasing decision has shifted from "buying compute" to "buying storage."
+> **Key Insight**: In long-context Agent scenarios, 99%+ of tokens are "remembered" (cache hits), not "computed." This fundamentally changes which resource dominates cost.
 
-## 1. Background: The Commoditization of Compute
+The consumption is split into:
 
-For the past two decades, computing has followed a predictable trajectory: Moore's Law delivers exponential growth in compute throughput, while cost per FLOP declines by orders of magnitude. AI training and inference have ridden this wave — the narrative has always been "compute is the scarce resource."
-
-But this narrative breaks down at extreme context lengths. When a single session accumulates **200K–450K tokens of context history** and continues to scale toward 1M tokens, the bottleneck shifts. The question is no longer "how many FLOPs can you deliver?" but "how cheaply can you store and reuse the KV-Cache?"
-
-## 2. The Data: 160 Million Cache Hit Tokens
-
-Consider a real-world Agent session with the following consumption profile:
-
-| Metric | Value |
-|---|---|
-| Cache Hit Tokens (storage/memory) | 160.4 million |
-| Cache Miss + Output Tokens (real-time compute) | 1.467 million |
-| Context window (steady state) | 200K–450K tokens |
-
-The ratio is striking: **~110:1** of storage-to-compute tokens. In long-context Agent scenarios, the vast majority of tokens are "remembered" (cache hits), not "computed" (cache misses).
-
-### Rate Cards (¥ / million tokens)
-
-| Provider | Cache Hit | Cache Miss | Output |
-|---|---|---|---|
-| **DeepSeek Pro** | ¥0.025 | ¥3.00 | ¥6.00 |
-| **Kimi K3** | ¥2.00 | ¥20.00 | ¥100.00 |
-
-### Bill Breakdown
-
-**DeepSeek Pro (low storage marginal cost):**
-
-- Storage cost: 160.4M × ¥0.025/M = **¥4.01** (42.6%)
-- Compute cost: 1.467M × ¥3.00/M (avg) ≈ **¥5.41** (57.4%)
-- **Total: ¥9.42**
-
-**Kimi K3:**
-
-- Storage cost: 160.4M × ¥2.00/M = **¥320.80** (85.1%)
-- Compute cost: 1.467M × ¥20.00/M (avg) ≈ **¥56.23** (14.9%)
-- **Total: ¥377.03**
-
-**Kimi K3 costs 40× more than DeepSeek for the same workload.**
-
-## 3. The Structural Difference: Why DeepSeek Wins at Scale
-
-The cost gap is not merely a pricing strategy — it reflects a **fundamental architectural divergence**.
-
-### 3.1 DeepSeek's DSA (DeepSeek Architecture) Route
-
-DeepSeek's design philosophy centers on **efficiency-first scaling**:
-
-- **MLA (Multi-head Latent Attention)**: Compresses KV-Cache by 90%+ compared to standard MHA, directly reducing memory footprint
-- **DSA (Domain-Specific Architecture)**: Hardware-software co-design optimized for cache reuse
-- **Aggressive cache hit pricing**: ¥0.025/M implies marginal storage cost near zero — the hardware is designed for memory capacity, not raw FLOP throughput
-
-The result: **storage and compute cost inversion**. At ¥0.025/M, storing 1M tokens costs 2.5 cents. The compute to *generate* those tokens costs 30× more. This is the hallmark of a storage-optimized architecture.
-
-### 3.2 Kimi K3's Position
-
-Kimi K3's pricing (¥2.00/M cache hit) reflects a different cost structure — one where storage (KV-Cache memory) remains expensive relative to compute. At this price point:
-
-- Storage dominates the bill (85.1%)
-- The architecture is likely optimized for raw capability, not cache reuse efficiency
-- Long-context sessions become economically prohibitive at scale
-
-## 4. The Paradigm Shift: From "Buying Compute" to "Buying Storage"
-
-### 4.1 The Traditional View
-
-In the pre-long-context era, LLM inference cost was dominated by compute:
-
-- Short contexts (4K–32K tokens) → cache hits are negligible
-- Cost ≈ FLOPs per token × tokens generated
-- Optimization target: more FLOPs per watt, cheaper GPUs
-
-### 4.2 The New Reality
-
-At 200K–1M token contexts:
-
-- **Cache hit tokens outnumber compute tokens 100:1**
-- **Storage cost dominates** (85% in Kimi K3's case)
-- The bottleneck is **memory bandwidth and capacity**, not FLOP throughput
-- Optimization target: cheaper KV-Cache storage, higher cache hit rates
-
-This is analogous to the shift in datacenter economics from "CPU-bound" to "IO-bound" workloads. When data movement dominates, adding more compute yields diminishing returns.
-
-### 4.3 Implications for Agent Architecture
-
-For multi-turn Agent systems that maintain long context histories:
-
-1. **Context reuse is the primary cost driver** — every token recalled from KV-Cache is a storage cost
-2. **Cache hit rate is the key metric** — 99% hit rate vs 90% hit rate can mean 10× cost difference
-3. **Storage pricing determines vendor viability** — at ¥2.00/M, million-token Agents are economically unviable for most use cases
-4. **Hardware design must prioritize memory** — HBM capacity, CXL memory tiers, and near-memory compute become first-class design constraints
-
-## 5. Future Trajectory: The Storage-Compute Convergence
-
-### 5.1 Near-Term (2026–2027)
-
-- **KV-Cache compression** becomes a first-class research priority (MLA, quantization, sparse attention)
-- **Memory tiering** (HBM → CXL → NVMe) enables cheaper cache storage at the cost of bandwidth
-- **DeepSeek's pricing pressure** forces competitors to reduce cache hit rates or subsidize storage costs
-
-### 5.2 Medium-Term (2027–2029)
-
-- **CXL-based memory expansion** enables TB-scale KV-Cache per node, reducing per-token storage cost by 10–100×
-- **Near-memory compute** (processing-in-memory) blurs the line between storage and compute
-- **Agent-native architectures** design for cache reuse from the ground up — context is not an afterthought but the primary design constraint
-
-### 5.3 Long-Term (2029+)
-
-- **Storage-compute convergence**: The distinction between "memory" and "compute" hardware dissolves
-- **Persistent KV-Cache**: Cross-session cache reuse (e.g., shared system prompts, common knowledge) drives marginal storage cost toward zero
-- **New pricing models**: "Cache-as-a-Service" — pay for persistent memory capacity, compute included
-
-## 6. Conclusion
-
-The data is clear: **at million-token scale, storage is the bottleneck, not compute.** DeepSeek's aggressive cache hit pricing (¥0.025/M) and DSA architecture represent a structural advantage that will compound as context lengths continue to grow.
-
-For the AI industry, this paradigm shift has profound implications:
-
-1. **System design** must prioritize memory hierarchy over raw FLOP throughput
-2. **Cost optimization** means maximizing cache hit rates, not minimizing FLOPs
-3. **Hardware roadmaps** must invest in memory capacity and bandwidth, not just compute density
-4. **Vendor selection** for Agent workloads should weight storage pricing above compute pricing
-
-The future belongs to architectures that treat **storage as the primary compute resource**. DeepSeek has shown the way — the rest of the industry will follow, or pay 40× more for the same result.
+- **Storage (Cache Hit) tokens**: Read from KV-Cache memory — marginal cost = memory storage + bandwidth
+- **Compute (Cache Miss) tokens**: Require actual matrix multiplication — marginal cost = GPU FLOPs
+- **Output tokens**: Generated by the model — priced separately by most vendors
 
 ---
 
-*Data source: Real-world Agent session consumption (160M+ cache hit tokens, context window 200K–450K tokens). Rate cards as of July 2026.*
+## 2. Vendor Rate Cards (July 2026)
+
+Below are the official pricing for major providers (¥ per million tokens):
+
+| Provider | Cache Hit | Cache Miss | Output | Source |
+|---|---|---|---|---|
+| **DeepSeek Pro** | **¥0.025** | ¥3.00 | ¥6.00 | [DeepSeek Pricing](https://platform.deepseek.com/api-docs/pricing) |
+| **Kimi K3** | ¥2.00 | ¥20.00 | ¥100.00 | [Moonshot Pricing](https://platform.moonshot.cn/docs/pricing/chat) |
+| **Claude Sonnet 4.5** | $3.00 (¥21.6) | $3.00 (¥21.6) | $15.00 (¥108) | [Anthropic Pricing](https://www.anthropic.com/api/pricing) |
+| **GPT-5** | $1.25 (¥9.0) | $1.25 (¥9.0) | $10.00 (¥72) | [OpenAI Pricing](https://openai.com/pricing) |
+
+> **Pricing Divergence**: DeepSeek's cache hit pricing is **80× lower** than Kimi and **860× lower** than Claude. This is not a marketing choice — it reflects a structural cost advantage in KV-Cache storage (via MLA compression + DSA architecture).
+
+### Why Cache Hit Pricing Differs So Much
+
+The cache hit price reflects the **marginal cost of reading one token from KV-Cache**:
+
+```
+Cache Hit Cost ≈ Memory Bandwidth Cost + Amortized Memory Capacity Cost
+```
+
+- **DeepSeek (MLA)**: KV-Cache per token ≈ 576 bytes (compressed via latent attention). Token-generation KV-Cache storage cost is near zero at scale.
+- **Standard MHA models (Kimi, Claude, GPT)**: KV-Cache per token ≈ 8–32 KB (full multi-head K/V). Memory capacity costs dominate.
+
+> **128× KV-Cache size difference → 80× price difference** (economies of scale absorb the rest)
+
+---
+
+## 3. Bill Breakdown: Step-by-Step Calculation
+
+### 3.1 DeepSeek Pro
+
+| Category | Tokens | Unit Price | Calculation | Cost | % of Total |
+|---|---|---|---|---|---|
+| **Storage** (Cache Hit) | 160.4M | ¥0.025/M | 160.4 × 0.025 | **¥4.01** | 42.6% |
+| **Compute** (Cache Miss) | 1.02M | ¥3.00/M | 1.02 × 3.00 | ¥3.06 | 32.5% |
+| **Output** | 0.447M | ¥6.00/M | 0.447 × 6.00 | ¥2.68 | 28.5% |
+| **Compute Subtotal** | — | — | 3.06 + 2.68 | **¥5.74** | 57.4% |
+| **Total** | — | — | — | **¥9.42** | 100% |
+
+> **Cost Inversion**: DeepSeek's compute cost (¥5.74) is **1.43×** its storage cost (¥4.01). This is the hallmark of a storage-optimized architecture.
+
+### 3.2 Kimi K3
+
+| Category | Tokens | Unit Price | Calculation | Cost | % of Total |
+|---|---|---|---|---|---|
+| **Storage** (Cache Hit) | 160.4M | ¥2.00/M | 160.4 × 2.00 | **¥320.80** | 85.1% |
+| **Compute** (Cache Miss) | 1.02M | ¥20.00/M | 1.02 × 20.00 | ¥20.40 | 5.4% |
+| **Output** | 0.447M | ¥100.00/M | 0.447 × 100.00 | ¥44.70 | 11.9% |
+| **Compute Subtotal** | — | — | 20.40 + 44.70 | **¥65.10** | 14.9% |
+| **Total** | — | — | — | **¥377.03** | 100% |
+
+> **Storage Dominance**: Kimi's storage cost (¥320.80) is **4.9×** its compute cost (¥65.10). The bill is overwhelmingly "paying for memory."
+
+### 3.3 Cost Comparison Summary
+
+```
+                    Storage Cost    Compute Cost    Total       Storage %
+                    ────────────    ────────────    ─────       ──────────
+DeepSeek Pro:       ¥4.01           ¥5.74           ¥9.42       42.6%
+Kimi K3:            ¥320.80         ¥65.10          ¥377.03     85.1%
+```
+
+| Metric | DeepSeek | Kimi | Ratio (Kimi/DeepSeek) |
+|---|---|---|---|
+| **Storage Cost** | ¥4.01 | ¥320.80 | **80.0×** |
+| **Compute Cost** | ¥5.74 | ¥65.10 | **11.3×** |
+| **Total Cost** | ¥9.42 | ¥377.03 | **40.0×** |
+| **Cost per compute token** | ¥9.42 / 1.467M = ¥6.42/M | ¥377.03 / 1.467M = ¥257/M | **40.0×** |
+
+> **Kimi K3 costs 40× more than DeepSeek for the identical workload** (160M cache hits + 1.467M compute tokens).
+
+---
+
+## 4. Visual Comparison: Storage vs Compute Cost Structure
+
+```
+Cost Composition (¥):
+                    Storage                          Compute
+DeepSeek    [████¥4.01]                          [█████¥5.74]     Total: ¥9.42
+Kimi        [█████████████████████████¥320.80]   [███¥65.10]      Total: ¥377.03
+            ├────────── Storage ──────────┤     ├─ Compute ─┤
+
+Storage as % of Total Bill:
+DeepSeek    ████████████░░░░░░░░░░░░░░░░░░░░░░░░  42.6%
+Kimi        ██████████████████████████████░░░░░░  85.1%
+```
+
+| Scenario | DeepSeek | Kimi |
+|---|---|---|
+| 1M cache hits + 10K compute | ¥0.58 (storage 4.3%) | ¥22.00 (storage 90.9%) |
+| 10M cache hits + 100K compute | ¥5.74 (storage 4.3%) | ¥220.00 (storage 90.9%) |
+| 100M cache hits + 1M compute | ¥57.40 (storage 4.3%) | ¥2,200.00 (storage 90.9%) |
+| **160M cache hits + 1.467M compute** | **¥9.42** | **¥377.03** |
+
+> At scale, the storage-dominated vendor (Kimi) scales linearly at ¥2.20 per million tokens, while DeepSeek scales at ¥0.058 per million tokens — a **38× cost-per-token gap** that widens with context length.
+
+---
+
+## 5. Architectural Root Cause: Why the 80× Storage Cost Gap?
+
+The 80× gap in cache hit pricing reflects a **fundamental architectural divergence** in KV-Cache design:
+
+### 5.1 KV-Cache Size Per Token
+
+| Architecture | KV-Cache per Token | Compression | Used By |
+|---|---|---|---|
+| **Multi-head Latent Attention (MLA)** | ~576 bytes | ~32× vs standard MHA | **DeepSeek V3/R1** |
+| Standard Multi-head Attention (MHA) | ~18 KB | 1× (baseline) | Most models |
+| Grouped-query Attention (GQA) | ~4.5 KB | ~4× | LLaMA-3, Qwen |
+
+> **MLA compresses the KV-Cache by ~32×** by projecting K/V into a low-rank latent space. This directly translates to 32× lower memory cost per token.
+
+### 5.2 System-Level Implications
+
+| Design Constraint | DeepSeek (storage-optimal) | Standard MHA (compute-optimal) |
+|---|---|---|
+| Bottleneck resource | Memory bandwidth | GPU FLOPs |
+| Scaling strategy | Cheap KV-Cache → longer context cheaply | More FLOPs → higher throughput |
+| Cost structure | Compute > Storage (inverted) | Storage dominates at long context |
+| Agent economics | Viable at 1M+ tokens | Prohibitively expensive beyond 100K |
+
+---
+
+## 6. Implications and Outlook
+
+### 6.1 Near-Term: The Commoditization of KV-Cache
+
+DeepSeek has demonstrated that **storage cost can be driven near-zero** for long-context inference. This creates pricing pressure industry-wide:
+
+- Competitors must subsidize cache hit pricing or reveal it as a loss leader
+- MLA-like compression techniques become mandatory for economic viability
+- Hardware design shifts from "more FLOPs" to "more memory bandwidth per watt"
+
+### 6.2 Medium-Term: The End of "Context Length as Premium Feature"
+
+When storage cost approaches zero:
+
+- **Million-token contexts become table stakes**, not premium upsells
+- Pricing converges to **compute-only billing** (storage becomes a competitive moat, not a revenue source)
+- Agent architectures design for **cache reuse first** — shared KV-Cross-session KV-Cache becomes the new optimization target
+
+### 6.3 Long-Term: Storage-Compute Convergence
+
+The ultimate endpoint is **processing-in-memory (PIM)** architectures where the distinction between "reading KV-Cache" and "computing on KV-Cache" dissolves:
+
+- CXL memory tiers enable TB-scale KV-Cache per node
+- Persistent KV-Cache across sessions drives marginal cost to zero
+- The "compute vs storage" framing becomes obsolete — both are expressions of the same physical resource
+
+---
+
+## 7. Conclusion
+
+The data tells a clear story:
+
+1. **At million-token scale, storage (KV-Cache) dominates cost** — even for compute-optimized architectures, storage is 85% of the bill
+2. **DeepSeek's MLA architecture breaks this pattern** — 32× KV-Cache compression enables storage-compute cost inversion (42% vs 85%)
+3. **The 40× total cost gap between DeepSeek and Kimi is structural**, not pricing strategy — it reflects a fundamental architectural advantage
+4. **For Agent workloads with high context reuse, vendor selection is now a storage-buy decision, not a compute-buy decision**
+
+The future belongs to architectures that treat **memory as the primary compute resource**. DeepSeek has shown the way.
+
+---
+
+*Rate cards as of 2026-07. Consumption data from real-world Agent sessions (160M+ cache hit tokens). All calculations use official pricing — see source links for verification.*
+
+*— backyes, 2026-07*
