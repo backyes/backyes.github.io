@@ -245,6 +245,20 @@ def gen_posts_list(posts, full=False):
 '''
     return f'<ul class="posts-list">{items}</ul>'
 
+# ──── 生成标签 sidebar ────
+def gen_tags_sidebar(posts):
+    tag_count = {}
+    for r in REPORTS:
+        for t in r.get("tags", []):
+            tag_count[t] = tag_count.get(t, 0) + 1
+    for p in posts:
+        for t in p.get("tags", []):
+            tag_count[t] = tag_count.get(t, 0) + 1
+    out = ""
+    for tag, count in sorted(tag_count.items(), key=lambda x: (-x[1], x[0])):
+        out += f'<li><a href="#tag-{tag}"># {tag} <span class="cnt">{count}</span></a></li>\n'
+    return out
+
 # ──── 生成 Tags 页完整内容 — 按具体技术 tag 聚合 ────
 def gen_tags_full(posts):
     groups = {}
@@ -260,7 +274,7 @@ def gen_tags_full(posts):
     # 按计数降序排列
     for tag in sorted(groups.keys(), key=lambda t: -len(groups[t])):
         items = groups[tag]
-        out += f'<div class="tag-group" data-tag="{tag}">'
+        out += f'<div class="tag-group" id="tag-{tag}" data-tag="{tag}">'
         out += f'<h3><span class="hash">#</span> {tag} <span class="cnt">({len(items)})</span></h3>'
         out += '<ul class="posts-list">'
         for it in items:
@@ -337,17 +351,7 @@ def main():
         [{"t":p["title"],"d":p["excerpt"],"u":p["url"],"tags":" ".join(p.get("tags",[]))}
          for p in posts], ensure_ascii=False)
     tags_full = gen_tags_full(posts)
-
-    # 读模板 (template 文件保留 placeholder,每次 build 从上一次的输出读取)
-    def build_page(src_name, dest_name, replacements):
-        """读取 src 文件,执行多组 regex 替换,写入 dest。
-        replacements: list of (pattern, replacement, flags_or_0)
-        """
-        src = open(os.path.join(REPO, src_name), encoding='utf-8').read()
-        out = src
-        for pat, repl, flg in replacements:
-            out = re.sub(pat, repl, out, flags=flg) if flg else re.sub(pat, repl, out)
-        open(os.path.join(REPO, dest_name), 'w', encoding='utf-8').write(out)
+    tags_sidebar = gen_tags_sidebar(posts)
 
     # index.html (从 index.html 自身读取 — template 与输出合并,placeholder 在 source 里)
     idx = open(os.path.join(REPO, 'index.html'), encoding='utf-8').read()
@@ -377,6 +381,8 @@ def main():
 
     # tags.html
     th = open(os.path.join(REPO, 'tags.html'), encoding='utf-8').read()
+    th = re.sub(r'<!--TAGS_SIDEBAR-->.*?<!--/TAGS_SIDEBAR-->',
+                f'<!--TAGS_SIDEBAR-->\n{tags_sidebar}\n<!--/TAGS_SIDEBAR-->', th, flags=re.S)
     th = re.sub(r'<!--TAGS_FULL-->.*?<!--/TAGS_FULL-->',
                 f'<!--TAGS_FULL-->\n{tags_full}\n<!--/TAGS_FULL-->', th, flags=re.S)
     open(os.path.join(REPO,'tags.html'),'w',encoding='utf-8').write(th)
