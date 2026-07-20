@@ -13,7 +13,7 @@ This July, my team was running a multi-turn Agent session on [LongCat-2.0](https
 
 **LongCat-2.0 Daily Token Consumption — July 2026**
 
-![Daily Token Consumption](../assets/images/token_usage_july_2026.png)
+![Daily Token Consumption](assets/images/token_usage_july_2026.png)
 
 Look at July 20 alone: **229.6 million cache hit tokens** consumed in a single day. Over the entire tracking period (July 14–20), the total reached **480.4 million cache hit tokens** — with only **11.3 million actual compute tokens** (cache miss + output). The ratio: **42.7 storage tokens for every 1 compute token.**
 
@@ -125,7 +125,7 @@ Our measured data shows the gap scales linearly:
 
 > At 480M tokens (one week of a single Agent session), Kimi costs **$140 more** than DeepSeek for the identical workload.
 
-The root cause is KV-Cache storage efficiency. DeepSeek's [MLA architecture](https://arxiv.org/abs/2606.19348) (DeepSeek-V2/V3) compresses KV-Cache by ~32× compared to standard MHA, directly reducing memory cost per token. The result: DeepSeek's cache hit price ($0.07/M) is 80× lower than Kimi's ($0.28/M).
+The root cause is KV-Cache storage efficiency. DeepSeek's [MLA architecture](https://arxiv.org/abs/2606.19348) (DeepSeek-V4) compresses KV-Cache by ~32× compared to standard MHA, directly reducing memory cost per token. The result: DeepSeek's cache hit price ($0.07/M) is 80× lower than Kimi's ($0.28/M).
 
 ### Practical Implications
 
@@ -159,7 +159,7 @@ One week of a single Agent session: **480M cache hit tokens**. This is what it c
 2. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 3. [Anthropic Claude Pricing](https://www.anthropic.com/api/pricing) — Claude Sonnet 4.5 / Opus 4
 4. [OpenAI Pricing](https://openai.com/pricing) — GPT-5 official pricing
-5. [DeepSeek-V2 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture, Section 3.2
+5. [DeepSeek-V4 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture
 6. [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition
 7. [Anthropic - Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) — Multi-turn Agent patterns
 8. [Google - Agent Design Patterns](https://cloud.google.com/use-cases/agentic-ai) — Agent architecture reference
