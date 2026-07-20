@@ -27,13 +27,13 @@ REPORTS = [
     {"dst":"mlsys2026","entry":"index.html","visual":"MLSys",
      "title":"MLSys 2026 深度综合",
      "desc":"Keynote + 19 篇论文逐篇深度解读后的跨论文战略综合 · 6 条主轴: 同步税 / 存储层级重定义 / P2P 转移 / Superchip 冲击 / 批判性转向 / 训练路线分叉",
-     "cat":"mixed","priority":"p0",
+     "cat":"conference","priority":"p0",
      "tags":["MLSys","论文综述","训练系统","推理系统","Superchip","存储层级"]},
     {"dst":"deepseek-mtp","entry":"index.html","visual":"MTP",
      "title":"DeepSeek MTP 算力影响",
      "desc":"dspark MTP 算法对算力与总线系统行业的深度影响分析 · 算法设计者视角的范式推演",
-     "cat":"inference","priority":"p1",
-     "tags":["MTP","DeepSeek","DSpark","算力","总线","推理加速"]},
+     "cat":"model","priority":"p1",
+     "tags":["MTP","DeepSeek","DSpark","算力","模型架构","推理加速"]},
     {"dst":"moe-clos","entry":"report.html","visual":"CLOS",
      "title":"Sparse CLOS × MoE 推理",
      "desc":"MoE 专家并行推理在 Sparse CLOS 网络上的效率与成本收益深度分析 · MegaScale / MixNet / UBEP / SpecMoE 多篇对比",
@@ -42,7 +42,7 @@ REPORTS = [
     {"dst":"generative-rec","entry":"generative_recommendation_report.html","visual":"RecSys",
      "title":"生成式推荐研究热点",
      "desc":"2026 年 Generative Recommendation 最新研究热点调查报告 · 算法 + 系统 + 工业落地",
-     "cat":"mixed","priority":"p1",
+     "cat":"recsys","priority":"p1",
      "tags":["推荐系统","生成式推荐","RecSys","工业落地","算法"]},
     {"dst":"sparse-clos","entry":"sparse_clos_report.html","visual":"CLOS",
      "title":"Sparse Clos 组网深度调研",
@@ -52,18 +52,18 @@ REPORTS = [
     {"dst":"ai-supernode-bus","entry":"report.html","visual":"SuperNode",
      "title":"AI 超节点总线调研",
      "desc":"2026H1 AI 超节点总线技术市场调研 · NVLink / UALink / PCIe 6 / 光互联 + 产业格局",
-     "cat":"chip","priority":"p1",
-     "tags":["超节点","NVLink","UALink","PCIe","光互联","总线"]},
+     "cat":"cluster","priority":"p1",
+     "tags":["超节点","NVLink","UALink","PCIe","光互联","集群"]},
     {"dst":"supernode-metrics","entry":"supernode_metrics_report.html","visual":"Metric",
      "title":"超节点指标定义",
      "desc":"超节点行业指标定义深度调研 · 制造商(NVIDIA/华为/Google) / 云商 / 学术 三视角 + 量化指标体系",
-     "cat":"mixed","priority":"p1",
+     "cat":"cluster","priority":"p1",
      "tags":["超节点","指标体系","NVIDIA","华为","Google","量化指标"]},
     {"dst":"mtp-survey","entry":"MTP_DSpark_Survey.html","visual":"MTP",
      "title":"MTP 算法 Survey",
      "desc":"大模型推理 MTP (Multi-Token Prediction) 算法 Survey · 围绕 DeepSeek DSpark 的全景调研",
-     "cat":"inference","priority":"p1",
-     "tags":["MTP","DSpark","DeepSeek","算法调研","推理加速"]},
+     "cat":"model","priority":"p1",
+     "tags":["MTP","DSpark","DeepSeek","算法调研","模型架构"]},
     {"dst":"3dls","entry":"3DLS_analysis_report.html","visual":"3DLS",
      "title":"3DLS 论文深度分析",
      "desc":"3DLS 论文深度分析报告 · 芯片 / 系统 / AI 推理架构 交叉视角",
@@ -72,7 +72,7 @@ REPORTS = [
     {"dst":"space-ecom","entry":"report.html","visual":"Space",
      "title":"太空经济联盟调研",
      "desc":"联盟首批意向成员 + 初创企业调研报告 · 含 306 家深度分析",
-     "cat":"mixed","priority":"p2",
+     "cat":"space","priority":"p2",
      "tags":["太空经济","航天","初创企业","产业调研"]},
 
     # ── 以下为新规模化添加 ──
@@ -89,26 +89,31 @@ REPORTS = [
     {"dst":"spacex","entry":"太空经济与SpaceX深度分析报告.html","visual":"SpaceX",
      "title":"SpaceX 深度分析 (全球视野·AI算力视角)",
      "desc":"SpaceX 全版图深度分析 · 产品布局 / 财务数据 / 政府合同 / 技术迭代 · 中国太空经济对比 · AI 算力交叉视角",
-     "cat":"mixed","priority":"p0",
+     "cat":"space","priority":"p0",
      "tags":["SpaceX","太空经济","产业调研","财务分析","AI算力","全球视野"]},
     {"dst":"hbm-cxl","entry":"report.html","visual":"HBM",
      "title":"HBM / CXL / Memory 市场调研",
      "desc":"HBM CXL NAND 内存层级市场深度调研 · 三星 / SK海力士 / 美光 · 技术路线与竞争格局",
-     "cat":"chip","priority":"p1",
+     "cat":"storage","priority":"p1",
      "tags":["HBM","CXL","存储","内存层级","三星","SK海力士","美光"]},
     {"dst":"inference-community","entry":"web/sources/coreweave_inference.html","visual":"InferCom",
      "title":"推理社区 2026 前沿动态",
      "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
-     "cat":"inference","priority":"p1",
+     "cat":"community","priority":"p1",
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
 ]
 
 CATS = {
-    "inference": {"label":"推理引擎","color":"tag-inference"},
-    "system":    {"label":"系统软件","color":"tag-system"},
-    "network":   {"label":"网络拓扑","color":"tag-network"},
-    "chip":      {"label":"芯片架构","color":"tag-chip"},
-    "mixed":     {"label":"交叉领域","color":"tag-mixed"},
+    "inference":  {"label":"推理引擎","color":"tag-inference"},
+    "model":      {"label":"模型架构","color":"tag-model"},
+    "network":    {"label":"网络拓扑","color":"tag-network"},
+    "chip":       {"label":"芯片架构","color":"tag-chip"},
+    "cluster":    {"label":"集群系统","color":"tag-cluster"},
+    "storage":    {"label":"存储系统","color":"tag-storage"},
+    "recsys":     {"label":"推荐系统","color":"tag-recsys"},
+    "conference": {"label":"学术会议","color":"tag-conference"},
+    "space":      {"label":"太空经济","color":"tag-space"},
+    "community":  {"label":"推理社区","color":"tag-community"},
 }
 
 # ──── 解析手写文章 ────
@@ -205,7 +210,7 @@ def gen_cards():
             if r["priority"] != prefix: continue
             dst, entry = r["dst"], r["entry"]
             if not os.path.isfile(os.path.join(REPO, dst, entry)): continue
-            cat = CATS.get(r["cat"], CATS["mixed"])
+            cat = CATS.get(r["cat"], CATS["community"])
             visual = visual_placeholder(r.get("visual",""), r["cat"])
             cards += f'''<a class="card" href="{dst}/{entry}" data-cat="{r['cat']}">
   <div class="card-img">{visual}<span class="tag {cat['color']}">{cat['label']}</span></div>
