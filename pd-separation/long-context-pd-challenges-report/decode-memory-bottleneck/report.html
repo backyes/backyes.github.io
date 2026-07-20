@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PD 分离 D 端内存瓶颈 — 社区技术调研报告</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--warn:#f0883e;--green:#3fb950;--red:#f85149;--purple:#bc8cff;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:16px;max-width:900px;margin:0 auto}
+h1{font-size:1.5em;color:var(--accent);margin:16px 0 8px;border-bottom:1px solid var(--border);padding-bottom:8px}
+h2{font-size:1.2em;color:var(--warn);margin:20px 0 8px}
+h3{font-size:1.05em;color:var(--purple);margin:14px 0 6px}
+.meta{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0;font-size:.85em}
+.meta span{display:inline-block;margin-right:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin:12px 0}
+.card.warn{border-left:4px solid var(--warn)}
+.card.info{border-left:4px solid var(--accent)}
+.card.ok{border-left:4px solid var(--green)}
+ul,ol{padding-left:22px;margin:6px 0}
+li{margin:4px 0}
+a{color:var(--accent);word-break:break-all}
+code{background:#1c2128;padding:2px 6px;border-radius:4px;font-size:.88em}
+.tag{display:inline-block;background:#1c2128;border:1px solid var(--border);border-radius:12px;padding:2px 10px;font-size:.78em;margin:2px}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.85em}
+th,td{border:1px solid var(--border);padding:6px 8px;text-align:left}
+th{background:#1c2128;color:var(--accent)}
+blockquote{border-left:3px solid var(--accent);padding-left:12px;color:#8b949e;margin:8px 0;font-style:italic}
+.src{font-size:.78em;color:#8b949e;margin-top:4px}
+.src a{color:#8b949e}
+.highlight{color:var(--warn);font-weight:600}
+.num{color:var(--green);font-weight:600}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--border);font-size:.78em;color:#8b949e}
+</style>
+</head>
+<body>
+
+<h1>PD 分离 D 端（Decode）内存瓶颈<br><span style="font-size:.7em;color:#8b949e">社区论坛 / GitHub Issue / 博客评论区 技术调研</span></h1>
+
+<div class="meta">
+  <span>📅 调研日期：2026-07-15</span>
+  <span>🔍 搜索源：6 主搜 + 8 深度 Issue</span>
+  <span>📄 本地存档：18 文件 / 82 KB</span>
+  <span>⏱ 预算：8 min</span>
+</div>
+
+<div class="card info">
+<b>核心结论速览</b>：PD 分离后 <span class="highlight">Decode 侧 KV 容量（HBM）是主导瓶颈</span>，即使 compute 仍有空闲。社区已形成明确分类：<b>Decode-KV-bound</b>（vLLM RFC #43470 正式命名）。三大症状：①长 context 下 KV pool 耗尽 OOM ②高并发 batch 下 CUDA graph + KV pool 死锁 ③异构 P/D 间 KV 格式/所有权不一致导致容量浪费。
+</div>
+
+<!-- ============ SECTION 1 ============ -->
+<h2>1. 瓶颈定性：Decode-KV-bound 成为独立瓶颈类</h2>
+
+<h3>1.1 vLLM RFC #43470 — 首次正式定义 "Decode-KV-bound"</h3>
+<div class="card warn">
+<p>vLLM 社区 RFC <a href="https://github.com/vllm-project/vllm/issues/43470" target="_blank">#43470 "Bottleneck-aware expansion for PD disaggregation"</a>（2026-05-22, author: zsn6493）将 PD 运行时的压力明确分为三类：</p>
+<table>
+<tr><th>瓶颈类</th><th>定义</th><th>扩展动作</th></tr>
+<tr><td>Prefill-bound</td><td>Prefill 侧 compute/memory 压力主导</td><td>加 prefill 容量</td></tr>
+<tr><td>Decode-bound</td><td>Decode 侧 token 吞吐/调度压力主导</td><td>加 decode 容量</td></tr>
+<tr><td class="highlight">Decode-KV-bound</td><td class="highlight">Decode 侧 <b>KV holding capacity</b> 主导，即使 compute 未饱和</td><td class="highlight">加 decode 侧 KV capacity / tier</td></tr>
+</table>
+<p>关键原文：<em>"decode-side KV capacity becomes the dominant bottleneck even when compute is still available; remote KV transfer backlog creates hidden stalls between the two pools"</em></p>
+<p>协作方 robertgshaw2-redhat（llm-d）回应：该能力应放在编排层（llm-d flow-control / Dynamo 路由），vLLM 作为执行层暴露压力信号即可。</p>
+<div class="src">源：<a href="https://github.com/vllm-project/vllm/issues/43470">github.com/vllm-project/vllm/issues/43470</a></div>
+</div>
+
+<h3>1.2 Google AI Overview 双重确认</h3>
+<div class="card">
+<p>Google 搜索 <code>sglang decode side memory pressure PD disaggregation long context</code> 的 AI 摘要：</p>
+<blockquote>"In Prefill-Decode (PD) disaggregated serving, long-context requests place massive Key-Value (KV) cache burdens on the decode side. Managing this requires preventing Out-Of-Memory (OOM) lockups without sacrificing generation speed."</blockquote>
+<p>搜索 <code>vllm decode worker HBM PD disaggregation capacity bottleneck</code> 的 AI 摘要：</p>
+<blockquote>"the system often faces a decode worker bottleneck caused by HBM (High Bandwidth Memory) capacity and PD disaggregation bandwidth limitations"</blockquote>
+<div class="src">源：Google Search AI Overviews（2026-07-15 抓取）</div>
+</div>
+
+<!-- ============ SECTION 2 ============ -->
+<h2>2. 实际部署数据：D 端内存不够的具体案例</h2>
+
+<h3>2.1 SGLang #24523 — PD 部署 input length 被硬限 18,432 Tokens（H200 140GB）</h3>
+<div class="card warn">
+<p>DeepSeek-V4-Pro FP8 + H200 GPU（total_gpu_memory=<span class="num">138.17 GB</span>），PD 分离 prefill 节点因 <code>is_hybrid_swa=true</code> 错误地把 token 容量钳制到 <code>swa_max_total_num_tokens = 18,432</code>，而实际硬件 KV pool 可支撑 <span class="num">186,368 tokens</span>：</p>
+<pre><code>Memory profiling: available_gpu_memory=17.94 GB, total_gpu_memory=138.17 GB, mem_fraction_static=0.90, rest_memory=4.13 GB
+DSv4 memory calculation: bytes_per_full_token=23749.84, available_bytes=4.13 GB, full_token=186368
+DSv4 pool sizes: full=186368, swa=18432, c4=46592, c128=1456, c4_state=1152, c128_state=18432</code></pre>
+<p>错误信息：<code>"Request ... exceeds the maximum number of tokens: 100804 > 18432"</code></p>
+<p>根因：SWA allocator 在 prefill 时分配了全量 KV cache，但运行时仍用 SWA 上界卡 max_total_num_tokens。Commenter CloudRipple 反馈 <code>swa=91904</code> 同样 "severely unusable"。</p>
+<p>维护者 weireweire 建议：应把 swa_max_total_num_tokens 与 <b>估计峰值 SWA 需求</b>（chunk size + sliding window margin）比较，而非与全量 prompt 比较。</p>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/issues/24523">github.com/sgl-project/sglang/issues/24523</a>（2026-05-06, 14 comments, open）</div>
+</div>
+
+<h3>3.2 SGLang #30010 — 高并发 batch 下 Decode 死锁（GB300 / Kimi-K2.5-NVFP4）</h3>
+<div class="card warn">
+<p>GB300 节点（4 GPU/node, MNNVL fabric），Kimi-K2.5-NVFP4，mooncake transfer backend。<b>per-DP-rank running requests > ~450 时，decode worker 在 4–8 分钟内卡死（6/6 复现）</b>：</p>
+<table>
+<tr><th>场景</th><th>CUDA graphs</th><th>Per-rank occupancy</th><th>结果</th></tr>
+<tr><td>PD disagg serving (mooncake)</td><td>on</td><td>450–790</td><td class="red">deadlock 6/6, 4–8 min</td></tr>
+<tr><td>PD disagg serving</td><td>--disable-cuda-graph</td><td>512 (slot cap)</td><td class="green">stable 26 min</td></tr>
+<tr><td>Single-node agg, fixed-bs</td><td>on</td><td>512</td><td class="green">stable</td></tr>
+<tr><td>Single-node agg, dynamic</td><td>on</td><td>730–790</td><td class="green">stable 16 min</td></tr>
+</table>
+<p>关键配置：<code>--mem-fraction-static 0.85 --context-length 9216 --max-running-requests 4096 --cuda-graph-max-bs 2048</code>，decode TP8 跨 node0+node1。</p>
+<p>故障需要 <b>PD disaggregation + CUDA graphs + 高 per-rank batch size</b> 三者同时成立。</p>
+<p>Workaround：① 限制 decode admission 使 per-rank ≤ ~400（--max-running-requests 3200 for DP8）② --disable-cuda-graph（稳定但慢）。</p>
+<p>怀疑方向：KV cache 从 mooncake custom mem pool 分配（cuMemCreate/fabric memory）与普通 allocator 行为不同；并发 mooncake NVLink writes into KV pool 与 captured graph replay 竞争。</p>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/issues/30010">github.com/sgl-project/sglang/issues/30010</a>（2026-07, yhyang201, open）</div>
+</div>
+
+<h3>2.3 SGLang #31252 — HiCache draft KV pool backup 在 PD 模式 crash</h3>
+<div class="card">
+<p><a href="https://github.com/sgl-project/sglang/issues/31252" target="_blank">#31252</a>：HiCache 的 draft KV pool backup 在 PD disaggregation 下触发 <code>cudaMemcpyBatchAsync invalid argument</code>。显示 D 端多级 KV pool（HiCache 的 full/draft 分层）在 PD 模式下的内存管理仍不成熟。</p>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/issues/31252">github.com/sgl-project/sglang/issues/31252</a>（open）</div>
+</div>
+
+<h3>2.4 SGLang #23022 — 多模态 + DP > 1 + PD 共享内存过早释放</h3>
+<div class="card">
+<p><a href="https://github.com/sgl-project/sglang/issues/23022" target="_blank">#23022</a>：<code>ShmPointerMMData</code> shared memory 在 multimodal + dp_size > 1 + PD disaggregation 组合下被过早 unlinked。显示 PD 模式下 host-memory 共享元数据层的生命周期管理缺陷。</p>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/issues/23022">github.com/sgl-project/sglang/issues/23022</a>（open, 3 comments）</div>
+</div>
+
+<!-- ============ SECTION 3 ============ -->
+<h2>3. 学术前沿：异构 PD 设计空间（arXiv 2606.29708, 2026-06-30）</h2>
+<div class="card info">
+<p>论文 <b>"Demystifying the Design Space and Best Practices for Heterogeneous LLM Inference and Serving"</b>（arXiv <a href="https://arxiv.org/abs/2606.29708" target="_blank">2606.29708</a>, 2026-06-30）系统化了异构 PD 的设计空间，提出 <span class="num">4 个设计轴 + 3 个边界决策</span>：</p>
+<h3>四设计轴</h3>
+<ul>
+<li><b>Accelerator Architecture</b>：P/D 使用不同厂商硬件（NVIDIA / AMD / ASIC）</li>
+<li><b>Precision Policy</b>：权重/KV cache 使用不同量化位宽（FP16/INT8/FP4）</li>
+<li><b>Interconnect Topology</b>：PCIe / NVLink / Ethernet / CPU fallback</li>
+<li><b>KV Residency</b>：KV cache 在 GPU VRAM / host DRAM / 多级存储 间的放置</li>
+</ul>
+<h3>三边界决策（与 D 端内存直接相关）</h3>
+<ol>
+<li><b>KV Representation & Layout Compatibility</b>：不同 runtime（vLLM vs TensorRT-LLM）的 page size、memory layout、padding、attention variant 不同 → 不兼容时 decode 端浪费周期重构。<b>最佳实践</b>：KV transfer engine 应只是 byte-mover，layout compatibility 作为显式边界问题嵌入 transfer 层 metadata。</li>
+<li><b>KV Ownership & Lifecycle Management</b>：分割推理产生分布式状态管理 — memory reservation / cache release / node failure recovery。<b>最佳实践</b>：统一跨阶段生命周期协议，显式分配 KV ownership，保证可预测内存分配与快速清理。</li>
+<li><b>Compute Placement & Precision Policy</b>：低比特量化在 decode 端缓解内存压力，但可能在 prefill 加速器上无 kernel 路径。<b>最佳实践</b>：precision policy 属于 runtime role 而非全局设置。</li>
+</ol>
+<div class="src">源：<a href="https://arxiv.org/abs/2606.29708">arxiv.org/abs/2606.29708</a>（2026-06-30）</div>
+</div>
+
+<!-- ============ SECTION 4 ============ -->
+<h2>4. 工业实践：D 端 KV pool 规划与容量扩展</h2>
+
+<h3>4.1 vLLM 单节点 PD — MORI-IO 解决 ITL 尖峰（2026-04-07 博客）</h3>
+<div class="card">
+<p>vLLM 官方博客 <a href="https://vllm.ai/blog/2026-04-07-mori-io" target="_blank">"Next-Level Inference: Why Your Single-Node vLLM Setup Needs Prefill-Decode Disaggregation"</a>（22 min read）核心论点：</p>
+<ul>
+<li>Prefill 与 decode 共享 GPU 时，大 prefill 会阻塞正在进行的 decode，导致 <b>ITL（Inter-Token Latency）尖峰</b> 与不可预测卡顿</li>
+<li>单节点 8×MI300X 用 MORI-IO 拆分 prefill / decode 实例，吞吐提升 <span class="num">up to 2.5×</span></li>
+<li>Trade-off：TTFT 略增（decode 需等 KV transfer "remote KVS" 状态）；Write mode 重叠 prefill+transfer 优化 TTFT，Read mode 更简单但 TTFT 更长</li>
+</ul>
+<div class="src">源：<a href="https://vllm.ai/blog/2026-04-07-mori-io">vllm.ai/blog/2026-04-07-mori-io</a>（Apr 7, 2026）</div>
+</div>
+
+<h3>4.2 vLLM × Mooncake — 分布式 KV cache pool via MultiConnector（2026-05-06）</h3>
+<div class="card">
+<p>博客 <a href="https://vllm.ai/blog/2026-05-06-mooncake-agentic" target="_blank">"Serving Agentic Workloads at Scale with vLLM x Mooncake"</a>：</p>
+<blockquote>"PD disaggregation combined with the distributed KV cache pool via MultiConnector. Prefill: The prefill instance prepares KV blocks..."</blockquote>
+<p>通过 Mooncake Store 作为分布式 KV cache，跨 turn / 跨 instance 复用 shared prefix，解耦 KV capacity 与本地 HBM。</p>
+<div class="src">源：<a href="https://vllm.ai/blog/2026-05-06-mooncake-agentic">vllm.ai/blog/2026-05-06-mooncake-agentic</a>（May 6, 2026）</div>
+</div>
+
+<h3>4.3 vLLM #46107 — MoRIIO 异构 TP↔DP 并行（MI300X 实测数据）</h3>
+<div class="card info">
+<p><a href="https://github.com/vllm-project/vllm/issues/46107" target="_blank">#46107</a> 实测 DeepSeek-R1 8K-in/1K-out on MI300X（gfx942），512 concurrency：</p>
+<table>
+<tr><th>配置</th><th>Total throughput (tok/s)</th><th>Mean TTFT (ms)</th><th>Benchmark dur (s)</th></tr>
+<tr><td>2P_TP8 : 1D_TP8（同质 TP8）</td><td>38,407</td><td>55,179</td><td>1,106</td></tr>
+<tr><td>2P_DP8EP : 1D_DP8EP（同质 DP8EP）</td><td>34,935</td><td>77,155</td><td>1,216</td></tr>
+<tr><td class="highlight">2P_TP8 : 1D_DP8EP（MIXED）</td><td class="num">42,349</td><td class="num">46,052</td><td class="num">1,003</td></tr>
+</table>
+<p>混合并行（TP prefill + DP/EP decode）在最高并发下吞吐最高、TTFT 最低。核心机制：KV transfer connector 需支持跨不同 (dp_size, tp_size) 的 read routing，引入 per-(dp,tp) session keying + flexible prefill-TP read（round-robin 分散 read load 到多个 prefill TP ranks）。</p>
+<div class="src">源：<a href="https://github.com/vllm-project/vllm/issues/46107">github.com/vllm-project/vllm/issues/46107</a>（2026-05, edwinlim0919, open）</div>
+</div>
+
+<h3>4.4 SGLang Uni-PD — Memory-semantic PD 范式（#35263, 2025-12-09）</h3>
+<div class="card info">
+<p>SGLang <a href="https://github.com/sgl-project/sglang/issues/35263" target="_blank">"Memory-semantic PD-disaggregation paradigm"</a>（Uni-PD）：</p>
+<ul>
+<li>Prefill GPU 在计算 kernel 时 <b>直接远程写入 Decode GPU 的 HBM</b>（peer view of decode HBM）</li>
+<li><span class="num">100% 消除显式 KV Cache 网络传输</span>，send_kv_chunk() 延迟开销降低 ~80%</li>
+<li>对 attention kernel 完全透明，decode 端无需改动</li>
+<li>SuperPod-native 架构，依赖高速互连 fabric 的 RDMA 能力</li>
+</ul>
+<p>这是对"D 端内存不够"的另一种解题思路：不是扩大 pool，而是让 KV 产生即落地到 D 端 HBM，消除 transfer backlog 造成的 hidden stall。</p>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/issues/35263">github.com/sgl-project/sglang/issues/35263</a>（2025-12-09）</div>
+</div>
+
+<!-- ============ SECTION 5 ============ -->
+<h2>5. KV pool sizing 方法论</h2>
+<div class="card">
+<p>Google AI Overview 给出的单 sequence KV cache HBM 空间估算公式：</p>
+<blockquote>"The formula to estimate the HBM space (S) in gigabytes needed for a single sequence's KV cache is: ... You must balance how much HBM is dedicated to holding active tokens versus generating new ones. HBM is expensive and limited, so managing its size properly determines how many users an LLM can serve at once."</blockquote>
+<p>关键策略：</p>
+<ul>
+<li><b>KV Cache Offloading</b>：decode HBM 满时，将冷 KV cache blocks 从 HBM offload 到 CPU DRAM（vLLM offloading connector）</li>
+<li><b>Multi-tier KV</b>：vLLM #38260 Multi-tier KV offloading via offloading connector</li>
+<li><b>Decoupling capacity from compute</b>：llm-d 0.5 把 KV blocks offload 到共享文件系统，将 cache capacity 与本地节点内存解耦</li>
+</ul>
+<div class="src">源：Google Search AI Overview + <a href="https://llm-d.ai/blog/llm-d-v0.5-sustaining-performance-at-scale">llm-d v0.5 blog</a>（2026-02-04）</div>
+</div>
+
+<!-- ============ SECTION 6 ============ -->
+<h2>6. 其他关键 Issue 索引</h2>
+<div class="card">
+<table>
+<tr><th>Issue</th><th>系统</th><th>主题</th><th>状态</th></tr>
+<tr><td>#43470</td><td>vLLM</td><td>Bottleneck-aware expansion（定义 Decode-KV-bound）</td><td>open</td></tr>
+<tr><td>#46107</td><td>vLLM</td><td>MoRIIO 异构 TP/DP PD 并行</td><td>open</td></tr>
+<tr><td>#45749</td><td>vLLM</td><td>MoRI/MoRIIO READ-mode hangs (AMD)</td><td>open</td></tr>
+<tr><td>#44300</td><td>vLLM</td><td>MooncakeConnector KV corruption under concurrent PD transfers</td><td>open</td></tr>
+<tr><td>#45036</td><td>vLLM</td><td>Mooncake Store Connector Roadmap</td><td>open</td></tr>
+<tr><td>#44238</td><td>vLLM</td><td>KV cache pruning feature</td><td>open</td></tr>
+<tr><td>#47722</td><td>vLLM</td><td>KV cache init shape mismatch EP+DP on MoE</td><td>open</td></tr>
+<tr><td>#24523</td><td>SGLang</td><td>PD input length hard-cap 18432 (SWA bug)</td><td>open</td></tr>
+<tr><td>#30010</td><td>SGLang</td><td>Decode deadlock high batch + CUDA graph</td><td>open</td></tr>
+<tr><td>#31252</td><td>SGLang</td><td>HiCache draft KV pool backup crash PD</td><td>open</td></tr>
+<tr><td>#23022</td><td>SGLang</td><td>ShmPointerMMData PD shared mem unlink</td><td>open</td></tr>
+<tr><td>#30242</td><td>SGLang</td><td>Deepseek V4 NVFP4 Disagg Decode node failure</td><td>closed</td></tr>
+<tr><td>#23499</td><td>SGLang</td><td>NIXL UCX segfault in disaggregated KV transfer</td><td>closed</td></tr>
+</table>
+</div>
+
+<!-- ============ SECTION 7 ============ -->
+<h2>7. 社区讨论（SGLang Discussions）</h2>
+<div class="card">
+<ul>
+<li><b>"How to prioritize decode batches over prefill in SGLang? (GLM-4.7 deployment)"</b> — 直接涉及 decode 调度优先级</li>
+<li><b>"Is there a example about deepseek-v4-pro pd disaggregation？"</b> — 反映用户对 PD 部署 example 的强烈需求</li>
+<li><b>"Does sglang really support run Qwen3.5-397B-A17B for processing Ultra-Long Texts(1M) ?"</b> — 长 context 需求</li>
+<li><b>"SGLang Inference 8*H200(1 HGX). QWEN-3.5-397B-A17B-FP8"</b> — 硬件配置咨询</li>
+</ul>
+<div class="src">源：<a href="https://github.com/sgl-project/sglang/discussions">github.com/sgl-project/sglang/discussions</a></div>
+</div>
+
+<!-- ============ SECTION 8 ============ -->
+<h2>8. 研判总结（模型设计者视角）</h2>
+<div class="card warn">
+<ol>
+<li><b>D 端内存瓶颈是 PD 分离的"第二类问题"</b>：第一类是 P/D 干扰（已解决），第二类是 D 端 KV capacity 与 compute 解耦后暴露的 HBM 墙。vLLM 已正式分类为 Decode-KV-bound。</li>
+<li><b>长 context 是放大器</b>：SWA（sliding window attention）在 PD 模式下的 pool 分配 bug（#24523）让 140GB H200 只能跑 18k tokens，利用率 < 14%。KV pool sizing 必须与 attention 语义（full / SWA / sliding window margin）联合建模。</li>
+<li><b>高并发 batch 与 CUDA graph 的耦合隐患</b>：#30010 显示 mooncake custom mem pool + CUDA graph replay + 高 batch 三者组合会死锁，说明 D 端 KV pool 的内存分配器在 PD 模式下需要专门验证路径。</li>
+<li><b>解耦 capacity 是产业方向</b>：llm-d 0.5 共享文件系统、Mooncake 分布式 KV pool、vLLM Multi-tier offloading — 都在把 KV capacity 从本地 HBM 解耦出去。</li>
+<li><b>Memory-semantic 路线（Uni-PD）</b>：从"传 KV"改为"直接写 D 端 HBM"，消除 transfer backlog hidden stall，是 SuperPod-native 的最优解，但依赖 fabric RDMA 能力。</li>
+<li><b>异构 PD 成为标配</b>：arXiv 2606.29708 + vLLM MoRIIO 实测都证明 P/D 用不同并行策略（TP prefill + DP/EP decode）在高压下最优，KV transfer 层必须支持跨 (dp,tp) 的 byte-mover 语义。</li>
+</ol>
+</div>
+
+<!-- ============ REFERENCES ============ -->
+<h2>附录 A：全部抓取来源 URL</h2>
+<div class="card" style="font-size:.82em">
+<h3>主搜索（6 项）</h3>
+<ol>
+<li><a href="https://github.com/sgl-project/sglang/issues?q=is%3Aissue+disagg+memory+decode">github.com/sgl-project/sglang/issues?q=is%3Aissue+disagg+memory+decode</a></li>
+<li><a href="https://github.com/vllm-project/vllm/issues?q=is%3Aissue+disaggregated+memory">github.com/vllm-project/vllm/issues?q=is%3Aissue+disaggregated+memory</a></li>
+<li><a href="https://github.com/sgl-project/sglang/discussions">github.com/sgl-project/sglang/discussions</a></li>
+<li><a href="https://www.google.com/search?q=sglang+decode+side+memory+pressure+PD+disaggregation+long+context">Google: sglang decode side memory pressure PD</a></li>
+<li><a href="https://www.google.com/search?q=vllm+decode+worker+HBM+PD+disaggregation+capacity+bottleneck">Google: vllm decode worker HBM PD</a></li>
+<li><a href="https://www.google.com/search?q=PD+disaggregation+decode+KVcache+pool+sizing+HBM">Google: PD disaggregation decode KVcache pool sizing HBM</a></li>
+</ol>
+<h3>深度 Issue / 博客（8 项）</h3>
+<ol start="7">
+<li><a href="https://github.com/vllm-project/vllm/issues/43470">vllm#43470 — Bottleneck-aware expansion RFC</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/24523">sglang#24523 — PD input length hard-cap 18432</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/30010">sglang#30010 — Decode deadlock high batch CUDA graph</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/23022">sglang#23022 — ShmPointerMMData PD shared mem</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/31252">sglang#31252 — HiCache draft KV pool crash PD</a></li>
+<li><a href="https://github.com/vllm-project/vllm/issues/46107">vllm#46107 — MoRIIO heterogeneous TP/DP</a></li>
+<li><a href="https://vllm.ai/blog/2026-04-07-mori-io">vllm.ai/blog/2026-04-07-mori-io — Single-node PD</a>（SPA 404，内容来自 Google AI Overview）</li>
+<li><a href="https://arxiv.org/abs/2606.29708">arXiv 2606.29708 — Heterogeneous PD Design Space</a></li>
+</ol>
+<h3>访问失败</h3>
+<ul>
+<li>kuncoro.io/blog/prefill-decode-disaggregation — net::ERR_ABORTED</li>
+<li>vllm-project.github.io — net::ERR_ABORTED</li>
+<li>多个 vllm.ai/blog/2026-04-07-* 猜测 URL — 404（SPA 路由）</li>
+</ul>
+</div>
+
+<footer>
+报告生成：2026-07-15 by Claude (LongCat-2.0) · 本地存档目录：research/decode-memory-bottleneck/ · 原始抓取文件 18 个共 82 KB
+</footer>
+</body>
+</html>

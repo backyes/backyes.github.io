@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>prefix_caching.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">prefix_caching.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/prefix_caching.md</span> <span class="src-tag">13882 chars</span></div>
+
+<h1>Automatic Prefix Caching</h1>
+
+<p>Prefix caching kv-cache blocks is a popular optimization in LLM inference to avoid redundant prompt computations. The core idea is simple – we cache the kv-cache blocks of processed requests, and reuse these blocks when a new request comes in with the same prefix as previous requests. Since prefix caching is almost a free lunch and won’t change model outputs, it has been widely used by many public endpoints (e.g., OpenAI, Anthropic, etc.) and most open source LLM inference frameworks (e.g., SGLang).</p>
+
+<p>While there are many ways to implement prefix caching, vLLM chooses a hash-based approach. Specifically, we hash each kv-cache block by the tokens in the block and the tokens in the prefix before the block:</p>
+
+<pre>                    Block 1                  Block 2                  Block 3
+         [A gentle breeze stirred] [the leaves as children] [laughed in the distance]
+Block 1: |&lt;--- block tokens ----&gt;|
+Block 2: |&lt;------- prefix ------&gt;| |&lt;--- block tokens ---&gt;|
+Block 3: |&lt;------------------ prefix --------------------&gt;| |&lt;--- block tokens ----&gt;|</pre>
+
+<p>In the example above, the KV cache in the first block can be uniquely identified with the token “A gentle breeze stirred”. The third block can be uniquely identified with the tokens in the block “laughed in the distance”, along with the prefix tokens “A gentle breeze stirred the leaves as children”. Therefore, we can build the block hash of `hash(tuple[components])`, where components are:</p>
+
+<p>* Parent hash value: The hash value of the parent hash block.</p>
+<p>* Block tokens: A tuple of tokens in this block. The reason to include the exact tokens is to reduce potential hash value collision.</p>
+<p>* Extra hashes: Other values required to make this block unique, such as LoRA IDs, multi-modality input hashes (see the example below), and cache salts to isolate caches in multi-tenant environments.</p>
+
+<p>!!! note &quot;Note 1&quot;</p>
+<p>    We only cache full blocks.</p>
+
+<p>!!! note &quot;Note 2&quot;</p>
+<p>    In previous versions, the hash key was not guaranteed to be collision-free. As of v0.11, the default hashing algorithm is `sha256`, which addresses collision risks.</p>
+
+<p>    For `vllm serve`, you can control the hashing algorithm via `--prefix-caching-hash-algo`:</p>
+<p>    - `sha256` (default): Uses Python&#x27;s `pickle` for serialization. Hashes may not be reproducible across different Python or vLLM versions.</p>
+<p>    - `sha256_cbor`: Uses `cbor2` for serialization, providing a reproducible, cross-language compatible hash. This is recommended for deterministic caching across environments.</p>
+<p>    - `xxhash`: Uses Pickle serialization with xxHash (128-bit) for faster, non-cryptographic hashing. Requires the optional `xxhash` package. IMPORTANT: Use of a hashing algorithm that is not considered cryptographically secure theoretically increases the risk of hash collisions, which can cause undefined behavior or even leak private information in multi-tenant environments. Even if collisions are still very unlikely, it is important to consider your security risk tolerance against the performance benefits before turning this on.</p>
+<p>    - `xxhash_cbor` combines canonical CBOR serialization with xxHash for reproducible hashing. Requires the optional `xxhash` package.    </p>
+
+<p>**A hashing example with multi-modality inputs**  </p>
+<p>In this example, we illustrate how prefix caching works with multi-modality inputs (e.g., images). Assuming we have a request with the following messages:</p>
+
+<pre>messages = [
+    {&quot;role&quot;: &quot;user&quot;,
+     &quot;content&quot;: [
+         {&quot;type&quot;: &quot;text&quot;,
+          &quot;text&quot;: &quot;What&#x27;s in this image?&quot;
+         },
+         {&quot;type&quot;: &quot;image_url&quot;,
+          &quot;image_url&quot;: {&quot;url&quot;: image_url},
+         },
+    ]},
+]</pre>
+
+<p>It will become the following prompt:</p>
+
+<pre>Prompt:
+    &lt;s&gt;[INST]What&#x27;s in this image?\n[IMG][/INST]
+
+Tokenized prompt:
+    [1, 3, 7493, 1681, 1294, 1593, 3937, 9551, 10, 4]
+
+Prompt with placeholders (&lt;P&gt;):
+    [1, 3, 7493, 1681, 1294, 1593, 3937, 9551, &lt;P&gt;, &lt;P&gt;, ..., &lt;P&gt;, 4]</pre>
+
+<p>As we can see, after the tokenization, the `[IMG]` will be replaced by a sequence of placeholder tokens, and these placeholders will be replaced by image embeddings during prefill. The challenge for prefix caching to support this case is we need to differentiate images from the placeholders. To address this problem, we encode the image hash generated by the frontend image processor. For example, the hash of the blocks in the above prompt would be (assuming block size 16, and we have 41 placeholder tokens):</p>
+
+<pre>Block 0
+    Parent hash: None
+    Token IDs: 1, 3, 7493, 1681, 1294, 1593, 3937, 9551, &lt;p&gt;, ..., &lt;p&gt;
+    Extra hash: &lt;image hash&gt;
+Block 1
+    Parent hash: Block 0 hash
+    Token IDs: &lt;p&gt;, ..., &lt;p&gt;
+    Extra hash: &lt;image hash&gt;
+Block 2
+    Parent hash: Block 1 hash
+    Token IDs: &lt;p&gt;, ..., &lt;p&gt;
+    Extra hash: &lt;image hash&gt;
+Block 3
+    Parent hash: Block 2 hash
+    Token IDs: &lt;p&gt;, ..., &lt;p&gt;, 4
+    Extra hash: &lt;image hash&gt;</pre>
+
+<p>In the rest of this document, we first introduce the data structure used for prefix caching in vLLM v1, followed by the prefix caching workflow of major KV cache operators (e.g., allocate, append, free, eviction). Finally, we use an example to illustrate the end to end prefix caching workflow.</p>
+
+<p>**Cache Isolation for Security**</p>
+<p>To improve privacy in shared environments, vLLM supports isolating prefix cache reuse through optional per-request salting. By including a `cache_salt` in the request, this value is injected into the hash of the first block, ensuring that only requests with the same salt can reuse cached KV blocks. This prevents timing-based attacks where an adversary could infer cached content by observing latency differences. This offers protection without compromising performance.</p>
+
+<pre>{
+  &quot;messages&quot;: [
+    {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;You are a helpful assistant.&quot;},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Here is a document with details about the world series: ...&quot;},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Who won the world series in 2020?&quot;}
+  ],
+  &quot;cache_salt&quot;: &quot;your-cache-salt&quot;
+}</pre>
+
+<p>With this setup, cache sharing is limited to users or requests that explicitly agree on a common salt, enabling cache reuse within a trust group while isolating others.</p>
+
+<h2>Data Structure</h2>
+
+<p>The prefix caching in vLLM v1 is implemented in the KV cache manager. The basic building block is the “Block” data class (simplified):</p>
+
+<pre>class KVCacheBlock:
+    # The block ID (immutable)
+    block_id: int
+    # The block hash (will be assigned when the block is full,
+    # and will be reset when the block is evicted).
+    block_hash: BlockHash
+    # The number of requests using this block now.
+    ref_cnt: int
+
+    # The pointers to form a doubly linked list for the free queue.
+    prev_free_block: &quot;KVCacheBlock | None&quot; = None
+    next_free_block: &quot;KVCacheBlock | None&quot; = None</pre>
+
+<p>There are two design points to highlight:</p>
+
+<p>1. We allocate all KVCacheBlock when initializing the KV cache manager to be a block pool. This avoids Python object creation overheads and can easily track all blocks all the time.  </p>
+<p>2. We introduce doubly linked list pointers directly in the KVCacheBlock, so that we could construct a free queue directly. This gives us two benefits:  </p>
+<p>    1. We could have O(1) complexity moving elements in the middle to the tail.  </p>
+<p>    2. We could avoid introducing another Python queue (e.g., `deque`) which has a wrapper to the elements.</p>
+
+<p>As a result, we will have the following components when the KV cache manager is initialized:</p>
+
+<p>![Component Overview](../assets/design/prefix_caching/overview.png)</p>
+
+<p>* Block Pool: A list of KVCacheBlock.  </p>
+<p>* Free Block Queue: Only store the pointers of head and tail blocks for manipulations.  </p>
+<p>* Cache blocks: Mapping from hash key to block IDs.  </p>
+<p>* Request blocks: Mapping from request ID to allocated block IDs.</p>
+
+<h2>Operations</h2>
+
+<h3>Block Allocation</h3>
+
+<p>**New request:** Workflow for the scheduler to schedule a new request with KV cache block allocation:</p>
+
+<p>1. The scheduler calls `kv_cache_manager.get_computed_blocks()` to get a sequence of blocks that have already been computed. This is done by hashing the prompt tokens in the request and looking up cache blocks.  </p>
+<p>2. The scheduler calls `kv_cache_manager.allocate_slots()`. It does the following steps:  </p>
+<p>    1. Compute the number of new required blocks, and return if there are no sufficient blocks to allocate.  </p>
+<p>    2. “Touch” the computed blocks. It increases the reference count of the computed block by one, and removes the block from the free queue if the block wasn’t used by other requests. This is to avoid these computed blocks being evicted. See the example in the next section for illustration.  </p>
+<p>    3. Allocate new blocks by popping the heads of the free queue. If the head block is a cached block, this also “evicts” the block so that no other requests can reuse it anymore from now on.  </p>
+<p>    4. If an allocated block is already full of tokens, we immediately add it to the cache block, so that the block can be reused by other requests in the same batch.</p>
+
+<p>**Running request:** Workflow for the scheduler to schedule a running request with KV cache block allocation:</p>
+
+<p>1. The scheduler calls `kv_cache_manager.allocate_slots()`. It does the following steps:  </p>
+<p>    1. Compute the number of new required blocks, and return if there are no sufficient blocks to allocate.  </p>
+<p>    2. Allocate new blocks by popping the heads of the free queue. If the head block is a cached block, this also “evicts” the block so that no other requests can reuse it anymore from now on.  </p>
+<p>    3. Append token IDs to the slots in existing blocks as well as the new blocks. If a block is full, we add it to the cache block to cache it.</p>
+
+<p>**Duplicated blocks**  </p>
+<p>Assuming block size is 4 and you send a request (Request 1\) with prompt ABCDEF and decoding length 3:</p>
+
+<pre>Prompt: [A, B, C, D, E, F]
+Output: [G, H, I]
+
+Time 0:
+  Tokens: [A, B, C, D, E, F, G]
+  Block Table: [0 (ABCD), 1 (EFG)]
+  Cache Blocks: 0
+Time 1:
+  Tokens: [A, B, C, D, E, F, G, H]
+  Block Table: [0 (ABCD), 1 (EFGH)]
+  Cache Blocks: 0, 1
+Time 2:
+  Tokens: [A, B, C, D, E, F, G, H, I]
+  Block Table: [0 (ABCD), 1 (EFGH), 2 (I)]
+  Cache Blocks: 0, 1</pre>
+
+<p>Now block 0 and block 1 are cached, and we send the same request again (Request 2\) with greedy sampling, so that it will produce exactly the same outputs as the Request 1:</p>
+
+<pre>Prompt: [A, B, C, D, E, F]
+Output: [G, H, I]
+
+Time 0:
+  Tokens: [A, B, C, D, E, F, G]
+  Block Table: [0 (ABCD), 3 (EFG)]
+  Cache Blocks: 0, 1
+Time 1:
+  Tokens: [A, B, C, D, E, F, G, H]
+  Block Table: [0 (ABCD), 3 (EFGH)]
+  Cache Blocks: 0, 1, 3</pre>
+
+<p>As can be seen, block 3 is a new full block and is cached. However, it is redundant as block 1, meaning that we cached the same block twice. In v0, when detecting block 3 is duplicated, we free block 3 and let Request 2 use block 1 instead, so its block table becomes `[0, 1]` in Time 1. However, the block table in vLLM v1 is append-only, meaning that changing the block table from `[0, 3]` to `[0, 1]` is not allowed. As a result, we will have duplicated blocks for the hash key E-H. This duplication will be eliminated when the request is freed.</p>
+
+<h3>Free</h3>
+
+<p>When a request is finished, we free all its blocks if no other requests are using them (reference count = 0). In this example, we free request 1 and block 2, 3, 4, 8 associated with it. We can see that the freed blocks are added to the tail of the free queue in the *reverse* order. This is because the last block of a request must hash more tokens and is less likely to be reused by other requests. As a result, it should be evicted first.</p>
+
+<p>![Free queue after a request is freed](../assets/design/prefix_caching/free.png)</p>
+
+<h3>Eviction (LRU)</h3>
+
+<p>When the head block (least recently used block) of the free queue is cached, we have to evict the block to prevent it from being used by other requests. Specifically, eviction involves the following steps:</p>
+
+<p>1. Pop the block from the head of the free queue. This is the LRU block to be evicted.  </p>
+<p>2. Remove the block ID from the cache block.  </p>
+<p>3. Remove the block hash.</p>
+
+<h2>Example</h2>
+
+<p>In this example, we assume the block size is 4 (each block can cache 4 tokens), and we have 10 blocks in the KV-cache manager in total.</p>
+
+<p>**Time 1: The cache is empty and a new request comes in.** We allocate 4 blocks. 3 of them are already full and cached. The fourth block is partially full with 3 of 4 tokens.</p>
+
+<p>![Example Time 1](../assets/design/prefix_caching/example-time-1.png)</p>
+
+<p>**Time 2: Request 0 makes the block 3 full and asks for a new block to keep decoding.** We cache block 3 and allocate block 4.</p>
+
+<p>![Example Time 2](../assets/design/prefix_caching/example-time-3.png)</p>
+
+<p>**Time 3: Request 1 comes in with the 14 prompt tokens, where the first 10 tokens are the same as request 0.** We can see that only the first 2 blocks (8 tokens) hit the cache, because the 3rd block only matches 2 of 4 tokens.</p>
+
+<p>![Example Time 3](../assets/design/prefix_caching/example-time-4.png)</p>
+
+<p>**Time 4: Request 0 is finished and free.** Blocks 2, 3 and 4 are added to the free queue in the reverse order (but block 2 and 3 are still cached). Block 0 and 1 are not added to the free queue because they are being used by Request 1.</p>
+
+<p>![Example Time 4](../assets/design/prefix_caching/example-time-5.png)</p>
+
+<p>**Time 5: Request 1 is finished and free.**</p>
+
+<p>![Example Time 5](../assets/design/prefix_caching/example-time-6.png)</p>
+
+<p>**Time 6: Request 2 comes in with the 29 prompt tokens, where the first 12 tokens are the same as request 0\.** Note that even the block order in the free queue was `7 - 8 - 9 - 4 - 3 - 2 - 6 - 5 - 1 - 0`, the cache hit blocks (i.e., 0, 1, 2) are touched and removed from the queue before allocation, so the free queue becomes `7 - 8 - 9 - 4 - 3 - 6 - 5`. As a result, the allocated blocks are 0 (cached), 1 (cached), 2 (cached), 7, 8, 9, 4, 3 (evicted).</p>
+
+<p>![Example Time 6](../assets/design/prefix_caching/example-time-7.png)</p>
+
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>

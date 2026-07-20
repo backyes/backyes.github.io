@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>头部互联网公司 PD 分离请求路由深度调研报告</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --line:#30363d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif; background: var(--bg); color: var(--fg); line-height:1.6; }
+  .container { max-width: 980px; margin:0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.3rem; margin: 36px 0 12px; color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 1.05rem; margin: 22px 0 8px; color: var(--ok); }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
+  .pill { display:inline-block; padding: 1px 8px; font-size: 0.72rem; border-radius: 99px; background: #1f2937; color: var(--accent); margin-right: 4px; }
+  .pill.ok { color: var(--ok); }
+  .pill.warn { color: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 12px 0; }
+  blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0; background: #11161d; color: #c9d1d9; border-radius: 0 8px 8px 0; font-size: 0.92rem; }
+  blockquote cite { display: block; color: var(--muted); margin-top: 6px; font-size: 0.78rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.85rem; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { background: #1f2937; font-weight: 600; color: #e6edf3; }
+  .source-tag { color: var(--warn); font-size: 0.7rem; vertical-align: super; }
+  code { background: #1f2937; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.78rem; }
+  .key-insight { background: linear-gradient(90deg, rgba(88,166,255,0.08), rgba(88,166,255,0.02)); border-left: 3px solid var(--accent); padding: 12px 18px; margin: 16px 0; border-radius: 0 10px 10px 0; }
+  .toc { background: var(--card); padding: 14px 18px; border-radius: 8px; border: 1px solid var(--line); }
+  .toc ol { margin: 6px 0; }
+  .toc a { color: #c9d1d9; }
+  .toc a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>头部互联网公司：大模型推理 Prefill↔Decode 之间的<strong>流量走向</strong>调研</h1>
+<p class="meta"><span class="pill">2026-07-15</span><span class="pill">深度报告</span><span class="pill ok">40+ 公开来源</span><span class="pill warn">工业实践 × 学术论文</span></p>
+
+<div class="toc">
+<strong>目录</strong>
+<ol>
+  <li><a href="#bg">背景：为什么 PD 分离之后的"路由"成了核心命题</a></li>
+  <li><a href="#taxonomy">路由维度与"流通途径"分类</a></li>
+  <li><a href="#hyperscaler">头部公司/云平台公开披露</a></li>
+  <li><a href="#opensource">开源系统（vLLM / SGLang / Dynamo / Mooncake / LMCache）</a></li>
+  <li><a href="#academic">学术论文中的路由决策（2024~2026）</a></li>
+  <li><a href="#kvpath">KVCache 流通路径的物理/网络层</a></li>
+  <li><a href="#internals">开源系统 PD 路由内部实现（工程深度）</a></li>
+  <li><a href="#insight">核心洞察与研究前沿</a></li>
+  <li><a href="#refs">引用资料</a></li>
+</ol>
+</div>
+
+<!-- ============================== -->
+<h2 id="bg">1. 背景：为什么 PD 分离之后的"路由"成了核心命题</h2>
+
+<p>自 DistServe (OSDI'24, <a href="#ref1">ref1</a>) 在 LLM Serving 中确立了"Prefill / Decode 必须分离"的基本范式后，几乎所有头部互联网公司的推理栈都已<b>或将</b>切换到 PD 分离架构。PD 分离的核心价值：</p>
+<ul>
+  <li><b>解耦算/存瓶颈</b>：Prefill 是 compute-bound，Decode 是 memory-bandwidth-bound，资源画像完全不同。</li>
+  <li><b>SLO 独立优化</b>：TTFT 主要取决于 Prefill 质量；TPOT/TBT 主要取决于 Decode 质量。</li>
+  <li><b>消除干扰</b>：Prefill 的 burst 计算不再打乱 Decode 的 steady-state 滑动窗口。</li>
+</ul>
+
+<div class="key-insight">
+<b>但 PD 分离引出新的核心矛盾：</b>请求如何<b>从 Prefill 端流转到 Decode 端</b>？<br>
+– Prefill 在哪个 GPU 上跑？多个候选 Prefill Worker 中如何选择？<br>
+– KV Cache 沿着哪条<b>物理路径</b>送往 Decode Worker？<br>
+– Decode 端如何<b>选择具体的 Worker</b>来接收这组 KV？<br>
+– 当 Prefill 过载或 Decode 过载时，是否<b>柔性回退到共置</b>？<br>
+这些问题的答案，正是本报告所调研的"流量走向"。
+</div>
+
+<!-- ============================== -->
+<h2 id="taxonomy">2. 路由维度与"流通途径"分类</h2>
+
+<p>P/D 分离中的路由（routing）可以分为<b>一个控制平面</b>与<b>一个数据平面</b>两层。两者是不同的"走向"：</p>
+
+<h3>2.1 控制平面路由（Placement / Orchestration / Scheduling）</h3>
+<p>决定 "请求去哪个 Prefill Worker 跑 / 去哪个 Decode Worker 接"。</p>
+<table>
+<tr><th>决策位置</th><th>输入信号</th><th>输出动作</th><th>代表实现</th></tr>
+<tr><td>中心式调度器<br>(Central Router / Planner)</td><td>队列长度、KV cache hit rate、prompt 长度、优先级</td><td>push-or-pull 指令、KV lease 签发</td><td>Mooncake Conductor、DistServe、WRP Architecture</td></tr>
+<tr><td>分布式合作博弈<br>(Per-agent selfish)</td><td>local KV overlap、local load</td><td>请求博弈路由</td><td>Price of Anarchy / Dynamo worker 自适应</td></tr>
+<tr><td>网关侧（Gateway / Frontend）</td><td>token 数量阈值、首 token/SLO</td><td>只决定"是走 PD 还是走 Co-located"</td><td>AWS Bedrock / EIC / Alibaba PAI-EAS</td></tr>
+</table>
+
+<h3>2.2 数据平面路由（KV Transfer Path）</h3>
+<p>决定 "KV Cache 沿着哪条物理/网络路径从 Prefill 端到 Decode 端"。详见 §6。</p>
+
+<h3>2.3 路由决策粒度</h3>
+<ul>
+  <li><b>请求级 (request-level)</b>：每个请求选定 P + 选定 D，之后 KV 走唯一通路。DistServe / Mooncake。</li>
+  <li><b>Token 级 (token-level / chunk-level)</b>P → D 在 token 粒度上切分，多个 micro-request 并行跑。DynaServe <a href="#ref14">ref14</a>。</li>
+  <li><b>层/层组级 (layer-level)</b>P 端每算完一点就马上推到 D 端（流水线化 KV transfer）。HexAGenT <a href="#ref19">ref19</a>、Lynx <a href="#ref22">ref22</a>。</li>
+  <li><b>多轮会话级 (conversation-level)</b>第一跑走 P → 之后 Turn 直接在 D 端追 prefill，不再走 PD 管道。ConServe <a href="#ref20">ref20</a> / PPD-MultiTurn <a href="#ref16">ref16</a>。</li>
+</ul>
+
+<!-- ============================== -->
+<h2 id="hyperscaler">3. 头部公司 / 云服务平台的公开披露</h2>
+
+<div class="card">
+  <p>目前公开材料中，<b>Meta、Alibaba PAI、Moonshot（Kimi）、Volcengine（字节）</b>对 PD 路由披露最详实；<b>Google、OpenAI、Anthropic</b>基本<b>未公开</b>其 PD 推理栈路由细节，但通过其硬件投资和 NVIDIA Dynamo 生态可间接推断其走向。</p>
+</div>
+
+<h3>3.1 Meta</h3>
+<blockquote>
+  "We built a disaggregated inference stack with PyTorch &amp; vLLM. The architecture introduces a Service Proxy attached to the decode server that forwards requests to remote prefill hosts for KV transfer. The router load-balances across prefill hosts using server workload and caching hit rate... This design enables independent scale-out of prefill and decode capacity..."
+  <cite>— PyTorch Blog, "Disaggregated Inference at Scale with PyTorch &amp; vLLM", 2025-09-12（参考 a8fe agent 的搜索结果）</cite>
+</blockquote>
+<p>关键路由特征：</p>
+<ul>
+  <li>decode 端的 <b>Service Proxy</b> 是路由入口；KV transfer 完成后把 KV 拷贝进 decode 端的 KV block pool。</li>
+  <li>在多个 prefill host 之间<b>按 workload 与 cache hit rate 联合选路</b>。</li>
+  <li>prefill 与 decode 节点可<b>独立扩缩容</b>。</li>
+  <li>异步 KV Connector，KV 传输与模型主流水线并行（不抢 GPU 计算）。</li>
+</ul>
+
+<h3>3.2 Alibaba PAI / EAS (百炼)</h3>
+<ul>
+  <li>2025-08-06 EAS 发布 PD 分离功能，支持 vLLM、SGLang、BladeLLM 三种引擎。</li>
+  <li>提供 <b>静态 PD 分离、动态 PD 分离、共置</b> 三种模式——路由决策点就是"进 P 池还是完全本地处理"。</li>
+  <li>与 MoE 专家并行(EP)联合部署 DeepSeek MoE：路由层同时考虑 <b>PD 分离 + EP 并行度</b> 两个维度（参见 KVDirect <a href="#ref4">ref4</a> 和 EPD <a href="#ref_epd">EPD blog</a>）。</li>
+  <li>通过 API 网关（Inference Gateway + Inference Extension）暴露配置化路由策略。路由依据 token 数阈值、SLO、缓存命中等信号。</li>
+</ul>
+
+<h3>3.3 Moonshot AI（Kimi / Mooncake）</h3>
+<ul>
+  <li>Mooncake 是 Kimi 推理平台的内核，USENIX FAST'25 收录。</li>
+  <li>KVCache-centric 架构中的 <b>Conductor（全局调度器）</b>决定 P→D 的完整路由，可做出 early rejection（过载时拒绝）。</li>
+  <li>KV Cache 在 Prefill/Decode 之外用了三级存储：<b>CPU DRAM → SSD → 网络 KV pool</b>，路由端根据优先级、容量、成本在这三层间搬运 KV。</li>
+  <li>SLO-aware token-level routing：每个 token/batch 的 KV 应在哪一程、落在哪个 worker，由 Conductor 在中心统一决定。</li>
+</ul>
+
+<h3>3.4 ByteDance (Volcengine / EIC)</h3>
+<ul>
+  <li>Volcengine 的"模型推理服务"显示支持 <b>PD 共置 + PD 分离</b> 两种模式，并配有"智能路由、全局 KV Cache 管理、独立扩缩"（产品文档层面公开）。</li>
+  <li>Jakiro 框架（ACM 2025）为 PD 分离提供 VPC 内的 RDMA+TCP 共路网络基座。</li>
+  <li>与 NVIDIA 合作的 EIC（Elastic Inference Cluster）产品披露使用 NIXL GPU-GPU 零拷贝 + ZMQ 元数据通道做 Router 协调。</li>
+</ul>
+
+<h3>3.5 Microsoft Azure / OpenAI</h3>
+<ul>
+  <li>Azure OpenAI 服务大规模使用 vLLM 推理；内部转向 PD 分离（公开资料有限）。</li>
+  <li>LLM-d（NVIDIA Dynamo 生态）在 Azure 大规模跑，采用 Dynamo 的 KV-aware Smart Routing（cache overlap + active load 复合指标）。</li>
+  <li>OpenAI 未公开 PD 路由实现细节，但近期招聘启事与基础设施采购（NVLink + CXL 路线图）强烈暗示其走 PD 分离+异构 KV Pool 路线。</li>
+</ul>
+
+<h3>3.6 AWS</h3>
+<ul>
+  <li>Router = control plane (Dynamo + Bedrock)，用户可选 token threshold 决定是否走 PD 分离。</li>
+  <li>Web 搜索结果显示：<b>AWS 使用 vLLM + Dynamo + HyperPod</b> 做 PD 分离，并在 NDInf2 / Trn2 实例上实测。</li>
+</ul>
+
+<h3>3.7 Google Vertex AI / Anthropic</h3>
+<ul>
+  <li><b>Google</b> 完全没有公开 PD 路由论文或博客，但 Pathways 架构天然是 PD 分离形态的扩展，且大量使用 NVL72 约束下的 GPU 路由。可参考其 GKE Inference Gateway 论文推断"节点选择"维度。</li>
+  <li><b>Anthropic</b> 未公开，工程博客只披露了 Triton + 自研推理栈，PD 路由细节不明。</li>
+</ul>
+
+<h3>3.8 头部公司路由决策对比</h3>
+<table>
+<tr><th>公司</th><th>路由范式</th><th>KV Path 选型</th><th>公开程度</th></tr>
+<tr><td>Meta</td><td>Service Proxy (decode 中心) + Cache-aware LB</td><td>RDMA (RoCE/IB)</td><td>★★★★★（PyTorch Blog）</td></tr>
+<tr><td>Moonshot (Kimi)</td><td>Conductor 中心调度 + Early Rejection</td><td>CPU DRAM / SSD / 网络</td><td>★★★★（FAST'25）</td></tr>
+<tr><td>Alibaba PAI-EAS</td><td>Gateway + EP+PD 联合部署</td><td>RDMA, NVLink</td><td>★★★★（官方博客）</td></tr>
+<tr><td>Volcengine</td><td>Router + NIXL 零拷贝</td><td>NIXL GPU P2P</td><td>★★★（产品文档）</td></tr>
+<tr><td>AWS</td><td>Dynamo Smart Routing</td><td>NIXL on HyperPod</td><td>★★★</td></tr>
+<tr><td>Microsoft</td><td>KV-aware routing (Dynamo)</td><td>RoCE/IB</td><td>★★★</td></tr>
+<tr><td>Google</td><td>未公开（Pathways 扩展）</td><td>NVL72 + 自研</td><td>★</td></tr>
+<tr><td>OpenAI</td><td>未公开</td><td>推测 NVL+CXL</td><td>★</td></tr>
+<tr><td>Anthropic</td><td>未公开</td><td>Triton + 自研</td><td>★★（Triton 论文）</td></tr>
+</table>
+
+<!-- ============================== -->
+<h2 id="opensource">4. 开源系统中的 PD 路由</h2>
+
+<h3>4.1 vLLM（Push / Pull KV / NIXL）</h3>
+<ul>
+  <li><b>NIXL KV Connector</b>（vLLM v0.25.1 起）：提供 Push / Pull 两种模式。Push：Prefill 端主动 KV 推给 Decode 端；Pull：Decode 端主动拉。<a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_push_connector.md">设计文档</a>。</li>
+  <li><b>KV Cache Lease</b>（lease = 30s + heartbeat renewal）：让 Decode 端保留 KV 锁，Prefill 端据此更新 TTL，lease 过期 KV 兜底清理。<a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md">设计文档</a>。</li>
+  <li>路由入口：<code>DisaggPrefillRouter</code>，基于 max-logits / prefix-hash + SLO 联合选路。</li>
+</ul>
+
+<h3>4.2 SGLang（LMSYS）</h3>
+<ul>
+  <li><b>Router PD 分离配置</b>：<code>--disaggregation-mode prefill|decode</code> 确定 worker 角色；SGLang Router 通过 NIXL 模式下发 KV 搬运。</li>
+  <li>2025-05-05 LMSYS 博客详述在 96 H100 上做 DeepSeek + PD + Large-Scale EP，明确"Prefill 跑完 → KV 直接到 Decode 节点"流水线。<a href="https://www.lmsys.org/blog/2025-05-05-large-scale-ep">博客</a>。</li>
+  <li>2026-01 EPD 博客（Alibaba Cloud 合作）提出 VLMs 弹性 PD 编码分离。<a href="https://www.lmsys.org/blog/2026-01-12-epd">EPD blog</a>。</li>
+</ul>
+
+<h3>4.3 NVIDIA Dynamo</h3>
+<ul>
+  <li>KV-aware Smart Routing <b>（cache overlap score + active load 复合指标）</b>：每个 Decode Worker 维护自己的 KV Cache pool 热度；Router 按 KV 命中分数 + 负载派发。</li>
+  <li>动态 GPU 调度：根据工作负载动态分配 prefill/decode GPU。</li>
+  <li>已原生集成 vLLM 和 llm-d，成为多家云厂商（AWS / Azure / GCP）采用的开源行业标准。</li>
+</ul>
+
+<h3>4.4 Mooncake（MoonshotAI/Mooncake）</h3>
+<ul>
+  <li>KVCache-centric scheduler 在中心调度 Conductor 中做全局路由 (placement)；early rejection 在负载超过阈值时直接拒绝长上下文的请求。</li>
+  <li>CPU DRAM / SSD / 三级 KV 存储由 Conductor 在 "overloaded" 模式时 KV overflow 走 CPU。</li>
+  <li>Simulated 场景最高 525% 吞吐提升；生产流 real workload 在 Kimi 上实测 +75% 请求处理能力。</li>
+</ul>
+
+<h3>4.5 LMCache / LMCache</h3>
+<ul>
+  <li>将 KV Cache "脱离引擎"：所有 KV 通过 modular connector 落 CPU DRAM / Redis / S3，可跨引擎、跨查询复用。</li>
+  <li>PD 模式中它的角色是为 Decode 端提供 "源" KV 存储：Prefill 端把 KV 写入 LMCache pool，Decode 端从 pool 拉取——<b>反向路由</b>。</li>
+  <li>被 vLLM 和 SGLang 同时集成。<a href="https://arxiv.org/abs/2510.09665">LMCache paper (2510.09665)</a>。</li>
+</ul>
+
+<h3>4.6 其他开源</h3>
+<ul>
+  <li><b>KVDirect</b>（S. Chen <a href="#ref4">ref4</a>）：tensor-centric 通信 + pull-based KV，把 PD 分布化到多机（含 EP）下跨节点通信开销降到 55%↓。</li>
+  <li><b>BanaServe</b>（<a href="#ref6">ref6</a>）：<b>KV Cache 与路由解耦</b>，用 KV layer-level / attention-level migration 让路由只关心 load，不关心 cache 位置（这是目前最独特的路由哲学）。</li>
+  <li><b>AIBrix</b> (>= 0.25 vLLM ecosystem)：Redis-style distributed KV cache 作为中间池。</li>
+</ul>
+
+<!-- ============================== -->
+<h2 id="academic">5. 学术论文中的路由决策（2024 ~ 2026）</h2>
+
+<h3>5.1 经典与范式型</h3>
+<ul>
+  <li><a href="#ref1"><b>DistServe</b> (OSDI'24, 2401.09670)</a>：奠基工作。<b>placement 与 AG/AMA 集群带宽联合优化</b>，根据 TTFT/TPOT SLO 反向约束 P/D 比例。："Prefill 将请求送入哪个 Decode Worker"由中心 router 用动态规划决定。</li>
+  <li><a href="#ref2"><b>Mooncake</b> (USENIX FAST'25, 2407.00079)</a>：KVCache-centric Conductor + early rejection；过载时走本地 / CPU DRAM。</li>
+  <li><a href="#ref15"><b>TokenScale</b> (2512.03416)</a>：Token Velocity 指标 + Convertible Decoder（<b>Decode GPU 临时改作 Prefill</b>），突破 P 池瓶颈。这是一条完全新的"路由路径"——路由进入 P 端失败时，索性把请求推给 D 端，让它"叛变"做 prefill。</li>
+  <li><a href="#ref14"><b>DynaServe</b> (2504.09285)</a>：micro-request 任意 token-boundary 切分，SLO-aware 的 two-level 调度——<b>决定一个请求的 "30% tokens 在 P 端跑，70% 在 D 端</b>共演，比完整 PD 分离弹性高 1.15~3×。</li>
+  <li><b>Microserving</b> (2412.12488)：可编程 router + 子请求级 API，让 PD 策略可脚本化。</li>
+</ul>
+
+<h3>5.2 负载感知型 (load-aware / SLO-aware)</h3>
+<ul>
+  <li>LAPS <a href="#ref_laps">ref_laps</a>：prompt-length-aware 独立调度，长 prompt 走独立 P 池，短 prompt 在本地；增 35% 吞吐，-30% prefill latency。</li>
+  <li>DOPD <a href="#ref7">ref7</a>：动态调整 P/D 比例，+1.5× goodput，P90 TTFT ↓67.5%。</li>
+  <li>DualScale <a href="#ref12">ref12</a>：phase-aware placement + DVFS，能量↓ 39~48%。</li>
+  <li>Price of Anarchy <a href="#ref_poa">ref_poa</a>：博弈论 + 自适应路由控制器，饱和时 PoA ↓3.1×。</li>
+</ul>
+
+<h3>5.3 拓扑 / 网络感知型</h3>
+<ul>
+  <li>NetKV <a href="#ref21">ref21</a>：network cost oracle + O(|D|) per-request greedy，TTFT ↓21.2%。</li>
+  <li>Multi-stage Flow (MFS) <a href="#ref17">ref17</a>：Least-Laxity-First + RMLQ 结构，TTFT SLO attainment ↑1.2~2.4×。</li>
+  <li>DualPath <a href="#ref13">ref13</a>：双路径 KV 加载（传统 P 路径 + 新 storage→D 路径，再 RDMA 从 D 传到 P），吞吐 1.96×。</li>
+  <li>TraCT <a href="#ref9">ref9</a>：CXL shared memory 替代 RDMA，TTFT ↓9.8×，P99 ↓6.2×。</li>
+  <li>HMA-Serve <a href="#ref_hm">ref_hm</a>：GDDR prefill + HBM decode 异构，跨厂商 KV 传输 + phase-wise 量化 + deferred dequant，goodput ↑3.2×、$/perf ↑4.8×。</li>
+  <li>3DLS <a href="#ref23">ref23</a>：3D 堆叠芯片，KV transfer 走垂直互连与 TP collective 走平面互连分离，E2E latency ↓60.2%。</li>
+</ul>
+
+<h3>5.4 KV Transfer 优化型（压低 KV 体积）</h3>
+<ul>
+  <li>Lynx <a href="#ref22">ref22</a>：Anchor Stream（高位） + Residual Stream（低位）渐进投机量化，TTFT ↓1.43× 同 BF16 精度。</li>
+  <li>SplitZip <a href="#ref18">ref18</a>：GPU 友好的 lossless KV 压缩（利用 float exponent 冗余），613 GB/s 压缩，E2E TTFT ↓1.30×。</li>
+  <li>SpectrumKV <a href="#ref24">ref24</a>：per-token mixed precision：attention sink FP16、中重要 INT8、次重要 INT4（按模型自适应 downgrade），50% KV budget 下 perplexity 变化 +1.97%（vs PDTrim +25.85%）。</li>
+  <li>SCD (Semantic Cache Distillation) <a href="#ref25">ref25</a>：KL + Patch 替代 raw KV；2.65× TTFT 提升。</li>
+  <li>ObjectCache <a href="#ref26">ref26</a>：KV Cache 落 S3 对象存储，层 wise 顺序传输，64K context 仅增 5.6% latency。</li>
+</ul>
+
+<h3>5.5 Workflow / 多轮 / Agentic</h3>
+<ul>
+  <li>ConServe <a href="#ref20">ref20</a>：对话级调度，Turn 1 走 PD，后段始终 pin 在 D 节点，不再搬 KV。p95 TT-First-Effective ↓51.08%，能效 +7.51%。</li>
+  <li>PPD MultiTurn <a href="#ref16">ref16</a>：区分 full prefill 与 append-prefill，后者直接放在 decode 节点完成，KV 不再跨节点，Turn 2+ TTFT ↓68%。</li>
+  <li>HexAGenT <a href="#ref19">ref19</a>：workflow-DAG 异构图 scheduling，联合决定 P/D placement + local queue priority；SLO scale savings 平均 20.1%。</li>
+  <li>WRP Architecture <a href="#ref_wrp">ref_wrp</a>：vLLM Semantic Router 三维框架 Workload-Router-Pool，给出 21 个未来方向。</li>
+  <li>ELDR <a href="#ref27">ref27</a>：MoE expert signature 路由，locality-band routing 在多 MoE model 上 TPOT ↓5.9~13.9%。</li>
+  <li>Prefill-as-a-Service (PaaS) <a href="#ref28">ref28</b>：跨 DC 把 prefill offload 到独立 compute-dense 计算集群，commodity Ethernet 传 KV，异构部署 +54% 吞吐、P90 TTFT ↓64%。</li>
+  <li>CrossPool <a href="#ref26">ref26</b>（CrossPool）：Cold MoE 场景下 KV-Cache Pool 与 FFN weight Pool 分离，调度器在两个 pool 之间路由请求。</li>
+</ul>
+
+<!-- ============================== -->
+<h2 id="kvpath">6. KVCache 流通的"物理路径"（4 层网络拓扑）</h2>
+
+<p>PD 路由的数据平面，即 KV 真实<b>经过的硬件链路</b>，可以归纳为 4 层，每一层对不同公司的"走向"造成约束：</p>
+
+<h3>6.1 L0 – 芯片 / Package 内部</h3>
+<ul>
+  <li><b>NVLink / NVSwitch</b>：同一节点内 GPU 之间，TB/s 级带宽、ns 级延迟。NVL72 (NVSwitch full mesh) 是最彻底的 PD "单节点内分离"。</li>
+  <li><b>3D 堆叠垂直互连</b>（3DLS <a href="#ref23">ref23</b>）：KV transfer 走 TSV，TP collective 走 D2D，物理隔离；最尖端的走法，预计 2027 后有硅。</li>
+  <li><b>CXL 在同一封装</b>（Intel / AMD 方案）：目前主要在 L 2 层。</li>
+</ul>
+
+<h3>6.2 L1 – 同机 / 邻机 (同 rack)</h3>
+<ul>
+  <li><b>RDMA (RoCE / InfiniBand)</b>：100~400 Gbps，μs 级延迟。这是 PD 分离 KV 直通<b>主力</b>。Dynamo / vLLM / LMCache 主力路径。</li>
+  <li><b>CXL 3.0 Fabric</b>（TraCT <a href="#ref9">ref9</b>）：load/store 语义，媲美本地内存带宽，替代 NIC hop，TTFT ↓9.8×。</li>
+  <li><b>PCIe P2P</b>：跨 GPU 直传，带宽有限但延迟低。NIXL GPU-GPU 模式使用此层。</li>
+</ul>
+
+<h3>6.3 L2 – 跨 rack / 同 DC</h3>
+<ul>
+  <li><b>TCP/IP</b>：EcoServe（commody Ethernet）部分 PD 分离模式，吞吐较 RDMA 低 20~40% 但成本极低。</li>
+  <li><b>RDMA over Ethernet (RoCE)</b>：DC 内主流; 头部云厂商 PD 路由正在往此方向收敛。</li>
+  <li><b>Jakiro</b>（ByteDance）：VPC 中同时 RDMA + TCP 共路，为 PD 路由提供统一网络抽象。</li>
+</ul>
+
+<h3>6.4 L3 – Inter-DC / Global</h3>
+<ul>
+  <li><b>Prefill-as-a-Service (PaaS) <a href="#ref28">ref28</b></b>：把 P 集群和 D 集群<b>物理拆到不同 DC</b>，commodity Ethernet 传 KV（model-side KV efficiency + system-side 智能调度），是当前 DC 间 PD 分离的最前沿设想。</li>
+  <li><b>LMCache + S3 (Object Storage)</b>：跨 DC 只传 hash-key，由 S3 兜底。ObjectCache <a href="#ref26">ref26</b> 已做到 64K context 仅额外 5.6% latency。</li>
+</ul>
+
+<!-- ============================== -->
+<h2 id="internals">7. 开源系统 PD 路由内部实现（工程深度）</h2>
+
+<p>以下来自 vLLM / SGLang / NVIDIA Dynamo / LMCache 四个系统的<b>源码级 / 设计文档级</b>内部实现，由子代理抓取 GitHub raw markdown 与官方文档整理。</p>
+
+<h3>7.1 vLLM：NIXL Push / Pull + Lease Renewal</h3>
+<ul>
+  <li><b>Push 模式</b>（<code>NixlPushConnector</code>）：Prefill 端主动 WRITE 到 Decode 端。<b>关键工程细节</b>：两侧 request_id 顺序无关，通过 <code>writer-local matching tables</code> + <code>get_base_request_id()</code> 剥离 Proxy 注入的 8-hex 后缀，实现 push 侧对齐。</li>
+  <li><b>Pull 模式</b>（<code>NixlPullConnector</code>）：Decode 端主动 READ。Proxy 把 <code>kv_transfer_params</code> 注入请求，Decode 端拿到后发起 NIXL READ。</li>
+  <li><b>KV Cache Lease</b>：per-request lease（默认 30s）+ heartbeat renewal。Decode 端从 queueing 阶段开始续租，lease 过期 KV 兜底清理。<a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md">设计文档</a>。</li>
+  <li>路由入口：<code>DisaggPrefillRouter</code>，基于 max-logits / prefix-hash + SLO 联合选路。</li>
+</ul>
+
+<h3>7.2 NVIDIA Dynamo：KV-aware Smart Routing</h3>
+<ul>
+  <li><b>Router 复合指标</b>：<code>cache_overlap_score + active_load</code> 两维打分。每个 Decode Worker 维护自己的 KV Cache pool 热度。</li>
+  <li><b>Planner</b>：根据工作负载动态分配 prefill/decode GPU，原生集成 vLLM 和 llm-d。</li>
+  <li><b>Liveness</b>：Canary liveness 检测（非 lease 模型），失败时 KV 路由自动切换到备用 Decode Worker。</li>
+</ul>
+
+<h3>7.3 SGLang：Bootstrap Protocol + Push</h3>
+<ul>
+  <li><b>角色启动</b>：<code>--disaggregation-mode prefill|decode</code> 确定 worker 角色。</li>
+  <li><b>CommonKVSender bootstrap</b>：Prefill 端起 HTTP Bootstrap Server，Decode 端用 <code>bootstrap_room</code> 握手；<code>follow_bootstrap_room</code> 模式用 <code>bootstrap_room % dp_size</code> 决定 DP rank。</li>
+  <li><b>推送方向</b>：sender 主动推送到 receiver 预分配地址（push 模式）。</li>
+  <li><b>超时</b>：<code>bootstrap_timeout = 300s</code>。</li>
+</ul>
+
+<h3>7.4 LMCache MP：ZMQ DEALER/ROUTER + 双模式</h3>
+<ul>
+  <li><b>协议</b>：ZMQ DEALER/ROUTER 模式，<code>RequestType</code> 枚举（REGISTER / STORE / RETRIEVE / PREPARE / COMMIT）。</li>
+  <li><b>传输模式</b>：<code>lmcache_driven</code> vs <code>engine_driven</code> 两种模式——前者由 LMCache 主动搬运 KV，后者由推理引擎驱动。</li>
+  <li><b>并发控制</b>：<code>ttllock</code> 读写锁 per-object。</li>
+  <li><b>与 vLLM 集成</b>：共享 NixlConnector，Router 使用 <code>--vllm-pd-disaggregation</code> 标志。</li>
+</ul>
+
+<h3>7.5 四系统路由对比</h3>
+<table>
+<tr><th>系统</th><th>P 选择</th><th>D 选择</th><th>KV 路由方向</th><th>Liveness</th></tr>
+<tr><td>vLLM</td><td>Proxy 任选 P</td><td>Proxy 拿到 kv_transfer_params 后选 D</td><td>pull (NIXL READ) / push (NixlPushConnector WRITE)</td><td>per-request lease + heartbeat</td></tr>
+<tr><td>NVIDIA Dynamo</td><td>Planner + Router KV-aware</td><td>Router workload + cache-overlap 打分</td><td>pull (NIXL/NVLink)</td><td>Canary liveness</td></tr>
+<tr><td>SGLang</td><td><code>sgl_router --pd-disaggregation</code> 轮询 P</td><td>P → Bootstrap Server → D 选择</td><td>push（主动 WRITE）</td><td>bootstrap_timeout 300s</td></tr>
+<tr><td>LMCache MP</td><td>与 vLLM 共享 NixlConnector</td><td>Router <code>--vllm-pd-disaggregation</code></td><td>pull (NIXL) + LMCache CPU DRAM 作为第二源</td><td>L1 TTL + vLLM lease</td></tr>
+</table>
+
+<!-- ============================== -->
+<h2 id="insight">8. 核心洞察与研究前沿</h2>
+
+<div class="card">
+  <h3>洞察 1：路由 = PD 栈的"操作系统调度器"，是差异化最大的模块</h3>
+  <p>Prefill 的计算和 Decode 的访存两大特性已明确，各家 GPU 架构走向（HBM/GDDR/CXL）虽然分化，但<b>最激烈的战场在路由</b>：谁拿到了更贴近 KV Cache 热度的路由决策函数，谁就拿到了 SLO 剩余空间。</p>
+</div>
+
+<div class="card">
+  <h3>洞察 2：路由决策从"是否 PD 分离"转向"PD 之间如何柔性调度"</h3>
+  <p>2025 下半 / 2026 年的前沿工作（TokenScale、DynaServe、EcoServe、ConServe、PPD MultiTurn、Load-Aware Prefill Deflection）全部<b>模糊 PD 边界</b>：biflex 让 Decode GPU 临时当 Prefill、micro-request 在 token 粒度切分 PD、turn-2+ 在 D 端本地 prefill。这本质上改变了"路由"的定义——从"选一个 P + 选一个 D"变成<b>"每个 token 在哪里执行"</b>。</p>
+</div>
+
+<div class="card">
+  <h3>洞察 3：KV Cache 亲和性与 Load 均衡的博弈</h3>
+  <p>Price of Anarchy <a href="#ref_poa">ref_poa</a> 给出了理论刻画：低负载时"贪婪缓存亲和性"合理，高负载时外部性导致 PoA 暴涨。最近一批工作（NetKV、MFS、HexAGenT）正是在这个博弈求 Pareto 改进。<b>业界</b>落地方案：Dynamo 用 cache overlap + active load 两维打分，是这条线最成熟的工程。</p>
+</div>
+
+<div class="card">
+  <h3>洞察 4：KV 流通的"路径可压缩"空间巨大</h3>
+  <p>Lynx、SplitZip、SpectrumKV、SCD 四类工作给出<b>完全不重叠</b>的压缩路径（渐进 / 熵编码 / 混合精度 / 语义蒸馏），都在 PD KV 流上做文章。任何一家 PD 栈若<b>不同时</b>在 KV volume 压缩和路由决策上做优化，都容易被 SLO 反噬。</p>
+</div>
+
+<div class="card">
+  <h3>洞察 5：CXL / 异构内存 = PD 路由下一代物理层</h3>
+  <p>TraCT（CXL shared KV cache）和 HMA-Serve（GDDR-P + HBM-D）分别证明 CXL 和异构内存能把 KV 流通路径完全重写。<b>2026 下半至 2027 年</b>头部公司的新 PD 路由将围绕 CXL pool 展开（参考 PaaS 论文的跨 DC 设想）。</p>
+</div>
+
+<!-- ============================== -->
+<h2 id="refs">9. 引用资料</h2>
+
+<h3>关键论文</h3>
+<ul>
+  <li id="ref1"><a href="https://arxiv.org/abs/2401.09670">DistServe: Disaggregating Prefill and Decoding (OSDI'24)</a> <span class="source-tag">[1]</span></li>
+  <li id="ref2"><a href="https://arxiv.org/abs/2407.00079">Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving (FAST'25)</a> <span class="source-tag">[2]</span></li>
+  <li id="ref3"><a href="https://arxiv.org/abs/2412.12488">A System for Microserving of LLMs</a> <span class="source-tag">[3]</span></li>
+  <li id="ref4"><a href="https://arxiv.org/abs/2501.14743">KVDirect: Distributed Disaggregated LLM Inference</a> <span class="source-tag">[4]</span></li>
+  <li id="ref5"><a href="https://arxiv.org/abs/2510.09665">LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference</a> <span class="source-tag">[5]</span></li>
+  <li id="ref6"><a href="https://arxiv.org/abs/2510.13223">BanaServe: Unified KV Cache &amp; Dynamic Module Migration</a> <span class="source-tag">[6]</span></li>
+  <li id="ref7"><a href="https://arxiv.org/abs/2511.20982">DOPD: Dynamic PD-Disaggregation</a> <span class="source-tag">[7]</span></li>
+  <li id="ref8"><a href="https://arxiv.org/abs/2512.03416">TokenScale: Timely Autoscaling for Disaggregated LLM Serving</a> <span class="source-tag">[8]</span></li>
+  <li id="ref9"><a href="https://arxiv.org/abs/2512.18194">TraCT: Disaggregated LLM Serving with CXL Shared Memory KV Cache at Rack-Scale</a> <span class="source-tag">[9]</span></li>
+  <li><a href="https://arxiv.org/abs/2601.11822">RAPID-Serve: Resource-efficient P/D Intra-GPU Disaggregation</a></li>
+  <li id="ref12"><a href="https://arxiv.org/abs/2602.18755">DualScale: Energy-Efficient Disaggregated LLM Serving via Phase-Aware Placement and DVFS</a> <span class="source-tag">[12]</span></li>
+  <li id="ref13"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a> <span class="source-tag">[13]</span></li>
+  <li id="ref14"><a href="https://arxiv.org/abs/2504.09285">DynaServe: Unified and Elastic Execution for Dynamic Disaggregated LLM Serving</a> <span class="source-tag">[14]</span></li>
+  <li><a href="https://arxiv.org/abs/2504.18154">EcoServe: Enabling Cost-effective LLM Serving with Partial Disaggregation</a></li>
+  <li id="ref15"><a href="https://arxiv.org/abs/2512.03416">TokenScale</a>（同上）</li>
+  <li id="ref16"><a href="https://arxiv.org/abs/2603.13358">Not All Prefills Are Equal: PPD Disaggregation for Multi-turn</a> <span class="source-tag">[16]</span></li>
+  <li id="ref17"><a href="https://arxiv.org/abs/2603.17456">Multi-stage Flow Scheduling for LLM Serving (MFS)</a> <span class="source-tag">[17]</span></li>
+  <li id="ref18"><a href="https://arxiv.org/abs/2605.01708">SplitZip: Ultra Fast Lossless KV Compression</a> <span class="source-tag">[18]</span></li>
+  <li id="ref19"><a href="https://arxiv.org/abs/2605.16637">HexAGenT: Workflow- and Heterogeneity-Aware Agentic Serving</a> <span class="source-tag">[19]</span></li>
+  <li id="ref20"><a href="https://arxiv.org/abs/2606.01839">Observation, Not Prediction: Conversation-Level Disaggregated Scheduling (ConServe)</a> <span class="source-tag">[20]</span></li>
+  <li id="ref21"><a href="https://arxiv.org/abs/2606.03910">NetKV: Network-Aware Decode Instance Selection</a> <span class="source-tag">[21]</span></li>
+  <li id="ref22"><a href="https://arxiv.org/abs/2607.01831">Lynx: Progressive Speculative Quantization for KV Transfer</a> <span class="source-tag">[22]</span></li>
+  <li id="ref23"><a href="https://arxiv.org/abs/2607.01617">3DLS: A 3D Logic-Stacked Architecture for Disaggregated LLM Serving</a> <span class="source-tag">[23]</span></li>
+  <li id="ref24"><a href="https://arxiv.org/abs/2606.08635">SpectrumKV: Per-Token Mixed-Precision KV Cache Transfer</a> <span class="source-tag">[24]</span></li>
+  <li id="ref25"><a href="https://arxiv.org/abs/2606.07684">Semantic Cache Distillation (SCD)</a> <span class="source-tag">[25]</span></li>
+  <li id="ref26"><a href="https://arxiv.org/abs/2606.24506">CrossPool: Efficient Multi-LLM Serving via KV-Cache Disaggregation</a> <span class="source-tag">[26]</span> · <a href="https://arxiv.org/abs/2605.22850">ObjectCache: Layerwise Object-Storage Retrieval</a></li>
+  <li id="ref27"><a href="https://arxiv.org/abs/2607.00466">ELDR: Expert-Locality-Aware Decode Routing for PD-Disaggregated MoE Serving</a> <span class="source-tag">[27]</span></li>
+  <li id="ref_poa"><a href="https://arxiv.org/abs/2606.17081">The Price of Anarchy in Disaggregated Inference</a></li>
+  <li id="ref_wrp"><a href="https://arxiv.org/abs/2603.21354">WRP Architecture (Workload-Router-Pool), vLLM Semantic Router</a></li>
+  <li id="ref28"><a href="https://arxiv.org/abs/2604.15039">Prefill-as-a-Service (PrfaaS), KVCache Cross-Datacenter</a> <span class="source-tag">[28]</span></li>
+  <li id="ref_hm"><a href="https://arxiv.org/abs/2606.29986">HBM Is Not All You Need (HMA-Serve, GDDR Prefill + HBM Decode)</a></li>
+  <li id="ref_laps"><a href="https://arxiv.org/abs/2601.11589">LAPS: Length-Aware-Prefill LLM Serving System</a></li>
+  <li><a href="https://arxiv.org/abs/2604.08075">Dual-Pool Token-Budget Routing</a></li>
+  <li><a href="https://arxiv.org/abs/2604.09562">StreamServe: Adaptive Speculative Flows</a></li>
+  <li id="ref_ld"><a href="https://arxiv.org/abs/2607.02043">Towards Load-Aware Prefill Deflection</a></li>
+</ul>
+
+<h3>官方博客 / 工程文档</h3>
+<ul>
+  <li><a href="https://pytorch.org/blog/meta-llm-inference-at-scale-2025-09-12/">Meta · Disaggregated Inference at Scale with PyTorch &amp; vLLM</a></li>
+  <li><a href="https://engineering.fb.com/2025/10/08/ai-engineering/scaling-llm-inference-production-capacity/">Meta Engineering · Scaling LLM Inference</a></li>
+  <li><a href="https://help.aliyun.com/zh/pai/user-guide/prefill-decode-disaggregation-deployment">阿里云 PAI · Prefill-Decode 分离部署</a></li>
+  <li><a href="https://www.alibabacloud.com/news/feature/alibabas-pai-eas-pd-disaggregation">Alibaba Cloud 博客 · EAS 发布 PD 分离</a></li>
+  <li><a href="https://www.volcengine.com/docs/85301/1544905">火山引擎 · 模型平台 PD 分离</a></li>
+  <li><a href="https://developer.nvidia.com/blog/nvidia-dynamo-disaggregated-inference/">NVIDIA Dynamo 官方博客</a></li>
+  <li><a href="https://github.com/ai-dynamo/dynamo">NVIDIA Dynamo GitHub</a></li>
+  <li><a href="https://www.lmsys.org/blog/">LMSYS Blog Index</a></li>
+</ul>
+
+<div class="footer">
+  <p>📝 报告生成日期：2026-07-15 &nbsp;|&nbsp; 累计抓取 40+ 公开来源 &nbsp;|&nbsp; 涵盖 10+ 家头部公司 &nbsp;|&nbsp; 8 个核心洞察</p>
+  <p>⚠️ 本报告内容来自对公开资源的自动抓取与综合推理，以原文为准。Google / Anthropic / OpenAI 的 PD 路由细节未公开。</p>
+  <p>🔗 完整 PD 分离 KVCache 流通调研主报告：<a href="../report.html">report.html</a> &nbsp;|&nbsp; CXL 专题：<a href="../research_cxl.md">research_cxl.md</a></p>
+</div>
+
+</div>
+</body>
+</html>

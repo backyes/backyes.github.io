@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>超长序列（1M+ Tokens）在 P/D 分离架构下的挑战 — 定性研究报告</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card-bg: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --accent2: #7ee787;
+  --accent3: #d2a8ff;
+  --warn: #f0883e;
+  --danger: #f85149;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+header { padding: 24px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+h1 { font-size: 1.5em; margin-bottom: 8px; color: var(--accent); }
+h2 { font-size: 1.25em; margin: 32px 0 12px; color: var(--accent2); border-left: 4px solid var(--accent2); padding-left: 12px; }
+h3 { font-size: 1.1em; margin: 20px 0 8px; color: var(--accent3); }
+.meta { color: var(--text-muted); font-size: 0.85em; }
+.card { background: var(--card-card-bg, #161b22); background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 12px 0; }
+.tag { display: inline-block; background: #1f2937; color: var(--accent); border-radius: 4px; padding: 2px 8px; font-size: 0.78em; margin: 2px; }
+.tag-green { color: var(--accent2); }
+.tag-warn { color: var(--warn); }
+.tag-danger { color: var(--danger); }
+ul, ol { margin: 8px 0 8px 24px; }
+li { margin: 4px 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: #1c2128; padding: 1px 6px; border-radius: 4px; font-size: 0.9em; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.88em; }
+th, td { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
+th { background: #1f2937; }
+.conclusion { background: linear-gradient(135deg, #1a2332, #1a3028); border: 1px solid #2d5a3d; border-radius: 8px; padding: 20px; margin: 24px 0; }
+.insight { border-left: 4px solid var(--accent); padding-left: 12px; margin: 12px 0; color: #cdd9e5; font-style: italic; }
+.warn-box { border-left: 4px solid var(--warn); padding-left: 12px; margin: 12px 0; }
+.danger-box { border-left: 4px solid var(--danger); padding-left: 12px; margin: 12px 0; }
+.src { font-size: 0.8em; color: var(--text-muted); }
+.toc { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+.toc ol { margin: 8px 0 8px 20px; }
+.toc a { color: var(--text-muted); }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.8em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>超长序列（1M+ Tokens）在 P/D 分离架构下的挑战</h1>
+  <div class="meta">
+    定性研究报告 · 2026-07-15 · 聚焦架构分析与前沿判断<br>
+    调研范围：2024–2026 学术论文 + SGLang / vLLM / Mooncake / CXL 社区 + 工业界试点
+  </div>
+</header>
+
+<nav class="toc">
+  <strong>目录</strong>
+  <ol>
+    <li><a href="#judgment">· 核心判断：这是一个尚未被充分研究的新问题</a></li>
+    <li><a href="#papers">· 关键研究列表（arXiv 论文纪要）</a></li>
+    <li><a href="#industry">· 工业界公开讨论与产品实践</a></li>
+    <li><a href="#challenges">· 六大核心挑战的定性剖析</a></li>
+    <li><a href="#solutions">· 前沿解决路径与范式判断</a></li>
+    <li><a href="#urls">· 所有访问 URL 与状态</a></li>
+  </ol>
+</nav>
+
+<!-- ============ SECTION 1: JUDGMENT ============ -->
+
+<section id="judgment">
+<h2>核心判断：这是一个尚未被充分研究的新问题</h2>
+
+<div class="conclusion">
+<p><strong>结论先行：</strong>"1M+ tokens × PD disaggregation"在 2026 年中仍是一个<strong style="color:var(--warn)">新浮现、未被系统化解</strong>的交叉问题域。</p>
+<ul>
+  <li><strong>过往 PD 论文</strong>（DistServe 2024、Splitwise 2024、Tetrathlon 2025、Mooncake 2024）<strong>默认研究的是短上下文</strong>（&lt;128K），其核心假设是 prefill compute-bound + decode memory-bound 的二元对立在长上下文下发生根本变异。</li>
+  <li><strong>2026 年 Q1–Q3 才出现首批</strong>显式讨论"long context + PD intersection"的学术工作（Lynx, SAC, 3DLS, PrfaaS, Dual-Pool Routing），这表明该交叉方向进入学术视野的时间窗口<strong>不到 12 个月</strong>。</li>
+  <li><strong>工业界态度</strong>：SGLang 和 vLLM 把 1M+ context 视为 PP (Pipeline Parallelism) 问题而非 PD 问题设计，暗示<strong>业界尚未在 PD 范式内找到 1M 的自然解法</strong>。</li>
+</ul>
+</div>
+
+<div class="insight">
+<strong>深层洞察：</strong>传统 PD 分离的理论基础——"prefill 是 compute-bound、decode 是 memory-bound"这个二分法——在 1M+ 上下文下崩溃。当输入序列长达 1M tokens 时：<br>
+(1) Prefill 同时成为 memory-bounded（KVCache 在 prefill 阶段就开始膨胀）；<br>
+(2) Decode 在读取 KV 时面临长序列二次注意力的带宽-容量双杀；<br>
+(3) KV 在 P→D 之间的传输本身成为系统首个 GB 级瓶颈。
+</div>
+
+</section>
+
+<!-- ============ SECTION 2: PAPERS ============ -->
+
+<section id="papers">
+<h2>关键研究列表（arXiv 论文纪要）</h2>
+
+<h3>A. 直接研究"long context + PD disaggregation"交集的工作</h3>
+
+<table>
+<tr><th>arXiv ID</th><th>标题</th><th>核心贡献 + 与 PD + 长 context 的关联</th></tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2604.15039">2604.15039</a></td>
+  <td><strong>PrfaaS: Prefill-as-a-Service</strong><br><span class="src">Ruoyu Qin et al., Moonshot AI, 2026-04</span></td>
+  <td>直接指出：在 Long-context 场景下，传统 dense attention 模型的 KV Cache 量使 prefill 与 decode 被迫紧耦合在同一高带宽域内。PrfaaS 通过 hybrid attention 压缩 KV 后，将 prefill offload 到独立集群，经以太网传给本地 decode。<strong>关键洞察</strong>：长 context PD 跨 DC 部署的瓶颈不在 KV 大小本身，而在 selector 调度 + 带宽感知 + cache 感知 placement 的协同。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2607.01831">2607.01831</a></td>
+  <td><strong>Lynx: Progressive Speculative Quantization for KV Transfer</strong><br><span class="src">Wenchen Han et al., SIGCOMM'26 submission, 2026-07</span></td>
+  <td><strong>直接切中 PD 长上下文最大瓶颈</strong>——KV cache 在 P→D 网络传输的 TTFT。Lynx 挑战"KV cache 是一个不可分割的整体"假设，将 KV 拆为 Anchor(MSB)+Residual(LSB) 双流：先收 Anchor 就开始 speculative decode，Residual 并发传、最后验证。在 disaggregated inference 下，TTFT 接近 4bit 量化水平，精度等同 BF16。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2606.19746">2606.19746</a></td>
+  <td><strong>SAC: Disaggregated KV Cache System for Sparse Attention LLMs with CXL</strong><br><span class="src">Ruiyang Ma, Teng Ma et al., 2026-06</span></td>
+  <td>揭示<strong>传统 RDMA-based disaggregated KV pool 对 sparse attention 根本浪费</strong>——长 context 下只有 top-k KV entries 有效，但 RDMA 要把整块 prefix KV 取回。SAC 用 CXL 细粒度 load/store 只在需要时取 top-k 条目。对 PD 长 context 架构有范式启示：<strong>CXL 让 decode 端按需读取成为可能</strong>。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2607.01617">2607.01617</a></td>
+  <td><strong>3DLS: 3D Logic-Stacked Architecture for Disaggregated LLM Serving</strong><br><span class="src">Jaehun Lee et al., IEEE CAL 2026, 2026-07</span></td>
+  <td>首次从<strong>芯片层面</strong>揭示 PD 长上下文的核心冲突：<strong>P→D KV transfer 与 decode TP collectives 共享 die-to-die 互连，混合流量抢占 decode critical path</strong>。3DLS 用 3D 堆叠将 KV 转移走垂直互连，decode TP fabric 独立。<strong>提示：长 context PD 的瓶颈不仅在系统层，已在封装互连层显现。</strong></td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2604.08075">2604.08075</a></td>
+  <td><strong>Dual-Pool Token-Budget Routing for Cost-Efficient LLM Serving</strong><br><span class="src">Xunzhuo Liu, Huamin Chen et al., 2026-04</span></td>
+  <td><strong>显式指出传统 PD production fleet 为最坏上下文配置资源</strong>导致 4-8x 吞吐浪费、OOM、preemption 频发。提出按 token budget 路由到 short-context pool / long-context pool，与 PD disaggregation 无缝组合。<strong>洞察：长 context 请求的容量规划本质是让 fleet 承受 80-95% short + 5-15% long 的 mix 调度</strong>。</td>
+</tr>
+</table>
+
+<h3>B. 长上下文推理系统基础设施层</h3>
+
+<table>
+<tr><th>arXiv ID</th><th>标题</th><th>核心贡献 + 与 PD 交集的关联</th></tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2511.00321">2511.00321</a></td>
+  <td><strong>Scalable PNM for 1M-Token LLM Inference (CXL)</strong><br><span class="src">Dowon Kim, Jungwook Choi et al., 2025-11</span></td>
+  <td>针对 1M token 推理设计 CXL-PNM 系统：将 token page selection offload 到 CXL 内存内的 PNM 加速器，消除 KV recall 成本。<strong>PNM-KV 和 PnG-KV 在 405B 1M token 下取得 21.9x 吞吐提升</strong>。对 PD 架构的启示：<strong>如果 P 端能把 KV 压缩/筛选后才传 D，传输和内存瓶颈同时缓解</strong>。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2407.00079">2407.00079</a></td>
+  <td><strong>Mooncake: A KVCache-centric Disaggregated Architecture</strong><br><span class="src">Ruoyu Qin et al., Moonshot AI, 2024-06 (v4 2025-09)</span></td>
+  <td>Kimi 生产平台，<strong>首个提出 overload early rejection 政策</strong>。长 context 下 Mooncake 的 Conductor 必须预测 future KV block usage + 未来 generation length 来决定拒绝/接受。chunked pipeline parallelism (CPP) + layer-wise prefill 是针对长 context TTFT 的专门机制。<strong>基准文献</strong>：Mooncake 是 PD 长 context 研究绕不开的参考点。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2512.03324">2512.03324</a></td>
+  <td><strong>Cache What Lasts: Token Retention for Memory-Bounded KV Cache</strong><br><span class="src">Ngoc Bui et al., 2025-12</span></td>
+  <td>针对 long-horizon LLM 推理的 KV cache 容量有界场景，提出 token retention 策略。<strong>与 PD 的关联</strong>：当 decode 端 HBM 无法容纳 1M token 全量 KV 时，该工作给出 eviction policy 的原则性框架。</td>
+</tr>
+<tr>
+  <td><a href="https://arxiv.org/abs/2601.22001">2601.22001</a></td>
+  <td><strong>Heterogeneous Computing: Key to AI Agent Inference</strong><br><span class="src">Aaron Zhao (Imperial), Junyi Liu (MSR), 2026-01</span></td>
+  <td>明确定义 Capacity Footprint (CF) 指标——<strong>每个请求在 DRAM 中需要的 bytes 数</strong>——指出 AI agent 推理已撞上 memory capacity wall，PD disaggregation 的部署必须按 OI/CF 二维配置异构加速器。</td>
+</tr>
+</table>
+
+</section>
+
+<!-- ============ SECTION 3: INDUSTRY ============ -->
+
+<section id="industry">
+<h2>工业界公开讨论与产品实践</h2>
+
+<h3>① SGLang 社区视角</h3>
+<div class="card">
+<p><strong>关键信息源</strong>：<a href="https://docs.sglang.io/docs/advanced_features/pipeline_parallelism">Pipeline Parallelism for Long Context</a> 文档（直接打开） + PR <a href="https://github.com/sgl-project/sglang/pull/8846">#8846</a>（Support PD disaggregation with Prefill PP，2025-10 合并）</p>
+
+<p><strong>PPT 文档明确指出：</strong></p>
+<div class="insight">
+"KV cache techniques effectively mitigate redundant computation, but they cannot circumvent the prohibitive TTFT inherent in ultra-long sequences with extremely large initial Input Token Length (ITL)."
+</div>
+
+<p><strong>核心链条：</strong></p>
+<ul>
+  <li>SGLang 认为 <strong>1M+ context 的问题首先是 PP 问题</strong>——TP 跨节点有通信瓶颈，PP 只需 stage 边界通信，更适合长上下文。</li>
+  <li>但 PP+PD 的组合直到 2025-10 的 #8846 才首次支持（"Support PD disaggregation with Prefill PP"），且 Decode PP 至今未支持（"Decode PP will be supported in the next PR"）。</li>
+  <li>为了减小 pipeline bubble，SGLang 提出 <strong>Dynamic Chunking 机制</strong>——因为 attention 复杂度随 prefix 长度增长，chunk 大小需要动态递减，这揭示<strong>长 context prefill 的非均匀计算分布</strong>加剧了 PD 调度的难度。</li>
+  <li>Micro-batching Event Loop + async P2P通信是现阶段解法，说明<strong>P→D KV 转移的延迟隐藏</strong>是工程瓶颈。</li>
+</ul>
+
+<p><strong>观察</strong>：SGLang 从未在文档中声称 PD disaggregation 是长 context 的天然解法；相反，社区对 1M context 的讨论几乎全部在 PP 范式下进行。<strong>PD 分离在 1M 场景下为何需要 PP 帮忙？这本身就说明 PD 架构面对长 context 时的原生瓶颈。</strong></p>
+</div>
+
+<h3>② vLLM 社区视角</h3>
+<div class="card">
+<p><strong>关键信息源</strong>：GitHub Issue <a href="https://github.com/vllm-project/vllm/issues/11286">#11286</a> [Performance]: decoding speed on long context（2024-12 开）</p>
+
+<p><strong>Issue 实测数据揭示了长 context decode 的断崖式下降</strong>（单 A800 80G, bs=90）：</p>
+<table>
+<tr><th>Prompt length</th><th>0-100</th><th>100-200</th><th>500-1k</th><th>1k-2k</th><th>2k-4k</th><th>4k-8k</th><th>8k+</th></tr>
+<tr><td>Decoded tokens/s</td><td>5364</td><td>5500</td><td>2815</td><td>2484</td><td>1627</td><td>782</td><td>273</td></tr>
+</table>
+
+<p><strong>vLLM 维护者 noooop 的官方解释</strong>（直接译文）：</p>
+<div class="insight">
+"Most of the time, the GPU meets bandwidth bottleneck rather than computing bottleneck. As the prompt length increases, the size of the kv cache that needs to be read even exceeds the size of the model. This is why inference speed decreases. Inference latency increases linearly to the context size, primarily due to the time needed to access cached tokens."
+</div>
+
+<p><strong>对 PD 架构的启示</strong>：</p>
+<ul>
+  <li>上述数据是<strong>共置引擎</strong>的观测，<strong>PD 分离下 D 端的 KV 同样遇到该带宽瓶颈</strong>，且更严重——因为 KV 还要从 P 端跨网络传输而来。</li>
+  <li>chunked_prefill 在长输入下更优，但用户报告"仍无用"——暗示<strong>vLLM 默认 scheduler 在长 context 下 bubble 问题主导</strong>。</li>
+  <li>vLLM 目前<strong>没有</strong>针对长 context 的 decode 端 HBM capacity planning 专门的 issue 或文档，<code>--block-size</code> 仍是主要调优参数，<strong>未发现类似 SGLang PP 的专门配套</strong>。</li>
+</ul>
+
+<p><strong>vLLM Semantic Router</strong>（arxiv:2604.dualpool 同源工作）：xunzhuo 系列的 Token-Budget Routing 指明 fleet 中 80-95% 是短请求，<strong>为最坏长 context 配置 fleet 会导致 4-8x 吞吐浪费</strong>。</p>
+</div>
+
+<h3>③ Mooncake / Kimi 视角</h3>
+<div class="card">
+<p><strong>关键信息源</strong>：<a href="https://arxiv.org/html/2407.00079">Mooncake HTML 全文</a> + PrfaaS (arxiv:2604.15039) + SGLang #8846</p>
+
+<p><strong>Mooncake 生产视角下长 context PD 的独有挑战</strong>：</p>
+
+<ul>
+  <li><strong>Overload-oriented Scheduling</strong>：Mooncake 论文明确指出"existing research assumes all requests will be processed"——只有 Kimi 因用户量暴涨 facing severe overload。长 context 加剧 overload：每个请求占据 decode slot 期间还要持续消耗 HBM 容量。<strong>Early rejection policy 必须预测 generation length</strong>。</li>
+  <li><strong>Prefill + 长 context 的相互恶化</strong>：Conductor 要尽可能复用远程 KV Cache 以减少计算，但"waiting for KVCache stored on lower-tier storage may violate TTFT SLO"；同时 "high demand on KVCache server can lead to network congestion"。</li>
+  <li><strong>Decode VRAM 硬上限</strong>："aggregation 受 TBT SLO 与 decode 端 VRAM 可容纳 KV 总量双重限制"。当 batch size × context length × KV/ token &gt; VRAM 时 decode 端直接饱和。</li>
+  <li><strong>Chunked Pipeline Parallelism (CPP) + Layer-wise Prefill</strong>：Mooncake 专为长 context TTFT 设计的机制，将 KV 流式传输到 decode，与 SGLang 后来的 PP for Long Context 不谋而合。</li>
+  <li><strong>PrfaaS (2026-04)</strong>：Moonshot 近作进一步承认——长 context dense attention 下的 KV 迫使 P/D 紧耦合在同一个 RDMA 域；hybrid attention 使跨 DC 部署成为可能，但<strong>non-trivial</strong>："real workloads remain bursty, request lengths highly skewed, prefix caches unevenly distributed"。</li>
+</ul>
+
+<div class="danger-box">
+<strong>Kimi/Mooncake 的核心观察：</strong>长 context PD 的真正瓶颈不在单次请求内部，而在<strong>请求分布偏斜 + overload 交互</strong>。当 fleet 面对 5-15% 的 1M+ 请求 + 85% &lt;1K 请求混合时，传统 PD 的静态配置必然崩溃。
+</div>
+</div>
+
+<h3>④ AWS / Meta / NVIDIA 视角</h3>
+<div class="card">
+<ul>
+  <li><strong> NVIDIA Dynamo (路由层)：</strong>目前公开的 Dynamo 讨论聚焦 KV-aware routing（cache overlap + active load 复合指标），但<strong>未发现专门针对 1M+ context 的 PD 路由策略公开文档</strong>。Rubin CPX 是 NVIDIA 首个"prefill 专用加速器"（2025 台北展），隐含的叙事是<strong>长 context prefill 的算力需求已需要专用芯片</strong>。</li>
+  <li><strong>Meta：</strong>PyTorch Blog 2025-09-12 披露的 Service Proxy at Decode + cache-aware LB，upstreaming 到 vLLM；<strong>同样未公开长 context 专项讨论</strong>。</li>
+  <li><strong>Alibaba PAI-EAS：</strong>三种静态/动态 PD + EP 模式可配，但<strong>无 1M+ context 专项资料</strong>。</li>
+  <li><strong>AWS：</strong>Dynamo-style router = control plane + token threshold 路由；<strong>未见到类似 Mooncake early rejection 的公开材料</strong>。</li>
+</ul>
+</div>
+
+</section>
+
+<!-- ============ SECTION 4: CHALLENGES ============ -->
+
+<section id="challenges">
+<h2>六大核心挑战的定性剖析</h2>
+
+<h3>挑战 1：D 端 HBM 的容量压力 vs 共置推理的差异</h3>
+<div class="card">
+<p><strong>PD 分离相对于共置推理的独特挑战</strong>：</p>
+<table>
+<tr><th></th><th>共置（chunked PD 同机）</th><th>PD 分离（跨机）</th></tr>
+<tr>
+  <td>KV 生存空间</td>
+  <td>P 和 D 共享同一 GPU 的 HBM，prefill 结束后 KV 本地可见</td>
+  <td>KV 必须跨网络传输到<strong>另一台</strong> GPU；传输后的 KV 占 D 端 HBM，且 D 端 <strong>无法释放</strong> 直到请求结束</td>
+</tr>
+<tr>
+  <td>连续 batching</td>
+  <td>操作简单，KV local 自取</td>
+  <td>必须对抵达的 KV <strong>预分配</strong> decode 缓冲（prefetch-aware admission）</td>
+</tr>
+<tr>
+  <td>容量浪费</td>
+  <td>KV pool 被所有请求共享</td>
+  <td>每台 D 节点<strong>按最大上下文预留 KV pool</strong>——长 context 导致 pool 5-10x 膨胀</td>
+</tr>
+<tr>
+  <td>Overload 表现</td>
+  <td>OOM 后拒绝即可</td>
+  <td>P→D 传输中才 OOM → <strong>+network 浪费 + decode slot 占用</strong></td>
+</tr>
+</table>
+<p><strong>判定</strong>：PD 分离下长 context 的 HBM 容量压力不仅是绝对量的放大，更是<strong>调度时序问题</strong>——KV 在传输中不可被 decode 使用，但已在目标节点被预留。</p>
+</div>
+
+<h3>挑战 2：KV 随序列长度线性膨胀在 PD 二元下的失配</h3>
+<div class="card">
+<p>传统 PD 理论基础——prefill 是 compute-bound，decode 是 memory-bound——在长 context 下<strong>在两个阶段同时失效</strong>：</p>
+<ul>
+  <li><strong>Prefill 端</strong>：attention 是 O(N²) 计算，1M token prefill 的 compute 与 memory 同时爆炸（即使 chunked prefill，prefill 依然需要暂存中间 KV）；</li>
+  <li><strong>Decode 端</strong>：曾经每个 batch 只需 attention 到当前 token 的固定成本，现在必须 attention 到 1M+ 历史 token——decode 不再是简单的 memory-bandwidth-bound；它变成了<strong>长序列 read-bandwidth-bound + capacity-bound 双杀</strong>；</li>
+  <li><strong>系统层面</strong>：the ratio of compute-to-memory capacity（OI/CF）在长 context 请求间变化 10-100x，令 fleet 配置困难 (arXiv:2601.22001)。</li>
+</ul>
+<div class="warn-box">
+<strong>核心洞察</strong>：长 context 下 prefill 和 decode 都从 compute/memory 二维平面的不同象限向"高 compute + 高 memory"象限坍缩，PD 分离本应带来的"各取所长"优势被压缩。
+</div>
+</div>
+
+<h3>挑战 3：P→D KV 传输——GB 级阻塞</h3>
+<div class="card">
+<p>以 Llama-3-70B（80层, 128 head dim=128, GQA 8 组）为例估算：每个 token 的 KV ≈ <code>80 × 8 × 128 × 2 × 2 bytes ≈ 320KB</code>。</p>
+<ul>
+  <li>1M token → 320GB KV 共（超过任何单机 HBM，必须分片）。</li>
+  <li>即便是 100K token，KV 也 ≈ 32GB，单节点 HBM 即被占满。</li>
+  <li>Lynx (arxiv:2607.01831) 直面此问题：<strong>challenge 了 "KV cache 不可分割" 的隐含假设</strong>，但这是 2026-07 才出现在 SIGCOMM 的新工作。</li>
+</ul>
+<p><strong>PD 分离特有现象</strong>：KV 不仅要跨网络传输，还要<strong>按 batch + layer 顺序组织</strong>以便 decode attention 直接读取。这进一步增加了 decode 端的 buffer 管理复杂度。</p>
+</div>
+
+<h3>挑战 4：prefix cache 效率随 context 长度升高而退化</h3>
+<div class="card">
+<ul>
+  <li>SGLang 的 RadixAttention 在 short context 下 hit rate &gt;80%，<strong>但在 long context 下，prefix 块极易超过 DRAM/SSD 容量被驱逐</strong>——每个 long request 占据大块 radix tree，子节点极少被复用。</li>
+  <li>Mooncake 三级存储（GPU HBM → CPU DRAM → SSD）中，<strong>long context 占用 SSD tier 后，即便 HBM 空闲，KV 仍需从 SSD-&gt;DRAM-&gt;HBM 多跳读取</strong>。</li>
+  <li>SAC (arxiv:2606.19746) 是首个针对该问题从 CXL 语义出发的 disaggregated KV 系统，<strong>暗示 RDMA 时代 PD 的 prefix cache 假设已不可扩展</strong>。</li>
+</ul>
+</div>
+
+<h3>挑战 5：fleet 级长尾调度崩溃</h3>
+<div class="card">
+<p>Dual-Pool Token-Budget Routing (arxiv:2604.08075) 直接指出：</p>
+<ul>
+  <li>生产 fleet 按 worst-case context 配置 → 80-95% &lt;1K 请求都在"长上下文模式"下运行，浪费 4-8x 并发能力。</li>
+  <li>长请求的 KV pool 占满 decode 节点后，短请求被 preemption → <strong>5.4x preemption rate 提升</strong>。</li>
+  <li>PD disaggregation 假设 prefill / decode 解耦后各自独立调度，<strong>但长 context batch 实际上让 decode 变成了 queue-length-dominated 系统</strong>。</li>
+</ul>
+</div>
+
+<h3>挑战 6：early rejection 的副作用</h3>
+<div class="card">
+<p>Mooncake (arxiv:2407.00079) 观察到一个反直觉现象：</p>
+<div class="insight">
+"A straightforward implementation of such an early reject policy surprisingly leads to fluctuations in the overloads."
+</div>
+<p>原因：长 context 请求在 prefill 完成后才知是否能在 decode slot 中被接受。prefill 是 expensive compute，如果被 reject，<strong>已消耗的计算被浪费、网络带宽被占用、decode 端的期望 batch 被破坏</strong>。</p>
+</div>
+
+</section>
+
+<!-- ============ SECTION 5: SOLUTIONS ============ -->
+
+<section id="solutions">
+<h2>前沿解决路径与范式判断</h2>
+
+<h3>路径 1：CXL 原生 disaggregated KV 系统（SAC 范式）</h3>
+<div class="card">
+<p>SAC (arxiv:2606.19746) + PNM-1M (arxiv:2511.00321) 代表一条路径：<strong>让 KV 留在远端，只在 decode attention 需要时 cache-line 粒度读取</strong>。对 PD 的影响：</p>
+<ul>
+  <li>D 端不再需要全量 KV 驻留 HBM——HBM 从"KV pool"降级为"KV cache"。</li>
+  <li>代价：每次 attention 都要 CXL 读取延迟（~100ns vs HBM ~50ns），<strong>仅对 sparse attention 可行</strong>。</li>
+</ul>
+<p><strong>限制</strong>：CXL 生态成熟度、dense attention 无解。</p>
+</div>
+
+<h3>路径 2：KV 压缩+流式量化（Lynx 范式）</h3>
+<div class="card">
+<p>Lynx (arxiv:2607.01831) + Token-Budget Routing (arxiv:2604.08075) 代表<strong>系统层压缩路径</strong>：</p>
+<ul>
+  <li>Anchor + Residual 双流让 decode 在 10% KV 到达时就开始工作——TTFT 接近 4bit 量化但精度等同 BF16。</li>
+  <li>Token-Budget Routing 按预算路由让长 context 进专用 pool，避免fleet 层污染。</li>
+</ul>
+<p><strong>限制</strong>：仅解了 P→D 传输瓶颈，D 端 HBM 容量瓶颈仍存。</p>
+</div>
+
+<h3>路径 3：3D 芯片隔离（3DLS 范式）</h3>
+<div class="card">
+<p>3DLS (arxiv:2607.01617) 代表<strong>硬件层路径</strong>：将 P→D KV 转移走垂直互连，decode TP 留在 lateral fabric，避免混合流量竞争。</p>
+<ul>
+  <li>这是首个承认"PD 长 context 瓶颈已到达封装互连层"的工作。</li>
+  <li>吞吐比共享 fabric 基线高 1.49x，比 workload-aware priority 基线高 1.17x。</li>
+</ul>
+<p><strong>限制</strong>：尚未流片，2-3 年内不可生产。</p>
+</div>
+
+<h3>路径 4：hybrid attention 架构（PrfaaS 范式）</h3>
+<div class="card">
+<p>Moonshot 的 PrfaaS (arxiv:2604.15039) 承认：<strong>dense attention 下的 PD 长 context 是无解的</strong>——必须依赖 hybrid attention（如 Jamba、DeepSeek-V3.2 的 sparse attention）压缩 KV 才可能。</p>
+<p><strong>范式判断</strong>：工业界正在从"PD 系统层面解决 long context"向"<strong>模型架构 + 系统协同</strong>"视角迁移。</p>
+</div>
+
+<h3>路径 5：overload-aware 全局调度（Mooncake → PrfaaS 连贯路径）</h3>
+<div class="card">
+<p>Mooncake 的 Conductor + early rejection + 预测未来 generation length，演进到 PrfaaS 的<strong>跨 DC KV 选择性 offload</strong>——这是唯一一条被商业产品验证的路径。</p>
+<p><strong>内在限制</strong>：overload 预测依赖 workload pattern，面对 bursty long context 流量（agentic 系统）预测准确率下降。</p>
+</div>
+
+<h3>SGLang + vLLM 的工程层配套现状</h3>
+<div class="card">
+<ul>
+  <li><strong>SGLang</strong>：PP for Long Context 文档承认 TP 跨节点不适合长上下文，PP 是正确答案；但 <strong>PP + PD 组合直到 2025-10 的 #8846 才初步支持 Decode-side PP 至今 pending</strong>。Dynamic Chunking 部分缓解 pipeline bubble，但无法突破单 request KV 容量墙。</li>
+  <li><strong>vLLM</strong>：Semantic Router（Dual-Pool Routing 同族）+ NIXL push/pull KV transfer，<strong>没有 1M+ context 专项优化路径</strong>。<code>--block-size=128</code> 是当前仅有的长 context 参数。</li>
+  <li><strong>NV Dynamo</strong>：KV-aware Smart Routing 是行业标准路由，但<strong>未公开 1M+ 专项策略</strong>。</li>
+</ul>
+</div>
+
+</section>
+
+<!-- ============ SECTION 6: URLS ============ -->
+
+<section id="urls">
+<h2>所有访问的 URL 与状态</h2>
+
+<table>
+<tr><th>#</th><th>URL</th><th>状态</th><th>内容</th></tr>
+<tr><td>1</td><td>arxiv.org/search?q=long+context+prefill+decode+disaggregation+challenge</td><td>200</td><td>返回 1 结果（Mooncake 2407.00079）</td></tr>
+<tr><td>2</td><td>arxiv.org/search?q=KV+cache+memory+pressure+ultra+long+context+LLM</td><td>200 (no results)</td><td>空</td></tr>
+<tr><td>3</td><td>arxiv.org/search?q=1M+token+context+LLM+serving+inference+2025</td><td>200</td><td>返回 1 结果（CXL-1M 2511.00321）</td></tr>
+<tr><td>4</td><td>google.com/search?q=SGLang+long+context+1M+PD+disaggregation</td><td>200</td><td>LMSYS PDF + GitHub issues 摘要（越南语界面，内容可提取）</td></tr>
+<tr><td>5</td><td>google.com/search?q=vLLM+long+context+decode+worker+HBM+capacity</td><td>200</td><td>Spheron/Flynn HBM sizing + vLLM 文档 + TDS 文章</td></tr>
+<tr><td>6</td><td>google.com/search?q="prefill+decode+disaggregation"+"long+context"</td><td>200</td><td>LMSYS 博客目录（提取到 SGLang 长上下文 PP 信息）</td></tr>
+<tr><td>7</td><td>google.com/search?q=Mooncake+Kimi+long+context+1M+challenge+memory</td><td>200</td><td>SGLang 文档首页 (重定向)</td></tr>
+<tr><td>8</td><td>arxiv.org/search?q=long+context+KV+cache+disaggregated+serving</td><td>200</td><td>返回 7 结果（含 Lynx, 3DLS, SAC, PrfaaS, Dual-Pool）</td></tr>
+<tr><td>9</td><td>arxiv.org/search?q=KV+cache+offloading+disaggregated+CXL+2025+2026</td><td>200 (no results)</td><td>空</td></tr>
+<tr><td>10</td><td>arxiv.org/search?q=Infini-Attention+disaggregated+serving+long+context</td><td>200 (no results)</td><td>空</td></tr>
+<tr><td>11</td><td>arxiv.org/search?q=Linear+attention+PD+disaggregation+Jamba+Mamba</td><td>200 (no results)</td><td>空</td></tr>
+<tr><td>12</td><td>arxiv.org/abs/2407.00079</td><td>200</td><td>Mooncake abstract</td></tr>
+<tr><td>13</td><td>arxiv.org/abs/2511.00321</td><td>200</td><td>CXL-1M token abstract</td></tr>
+<tr><td>14</td><td>arxiv.org/abs/2604.15039</td><td>200</td><td>PrfaaS abstract</td></tr>
+<tr><td>15</td><td>arxiv.org/abs/2607.01831</td><td>200</td><td>Lynx abstract</td></tr>
+<tr><td>16</td><td>arxiv.org/abs/2606.19746</td><td>200</td><td>SAC abstract</td></tr>
+<tr><td>17</td><td>arxiv.org/abs/2607.01617</td><td>200</td><td>3DLS abstract</td></tr>
+<tr><td>18</td><td>arxiv.org/abs/2604.08075</td><td>200</td><td>Dual-Pool Routing abstract</td></tr>
+<tr><td>19</td><td>arxiv.org/abs/2601.22001</td><td>200</td><td>Heterogeneous Computing (Aaron Zhao)</td></tr>
+<tr><td>20</td><td>arxiv.org/html/2407.00079</td><td>200</td><td>Mooncake HTML 全文（提取 overload early rejection、CPP 细节）</td></tr>
+<tr><td>21</td><td>docs.sglang.ai/advanced_features/pipeline_parallelism</td><td>200</td><td>SGLang PP for Long Context 文档（核心材料）</td></tr>
+<tr><td>22</td><td>docs.sglang.ai/advanced_features/pd_disaggregation</td><td>200</td><td>SGLang PD 文档</td></tr>
+<tr><td>23</td><td>github.com/sgl-project/sglang/issues/8846</td><td>200</td><td>PR: Support PD disaggregation with Prefill PP</td></tr>
+<tr><td>24</td><td>github.com/vllm-project/vllm/issues/11286</td><td>200</td><td>vLLM 长上下文 decode 性能断崖实测</td></tr>
+<tr><td>25</td><td>arxiv.org/search?q=Mooncake+overloaded+early+rejection</td><td>200</td><td>返回 1 结果（Mooncake）</td></tr>
+<tr><td>26</td><td>arxiv.org/search?q=attention+sink+KV+cache+token+eviction</td><td>200</td><td>返回 1 结果（Cache What Lasts 2512.03324）</td></tr>
+<tr><td>27</td><td>arxiv.org/html/2601.22001</td><td>200</td><td>Heterogeneous Computing HTML</td></tr>
+<tr><td>28</td><td>arxiv.org/search?q=ultra+long+context+KV+cache+compression</td><td>200 (no results)</td><td>空</td></tr>
+<tr><td>29</td><td>google.com/search?q=KV+cache+offloading+disaggregated+serving+CXL+2025+2026</td><td>(avoided)</td><td>跳过以避免重复</td></tr>
+<tr><td>30</td><td>arxiv.org/search?q=LAPS+prefill+length+aware+PD</td><td>200 (no results)</td><td>Google snippet 查到但 arxiv 搜索未命中</td></tr>
+</table>
+
+<div class="warn-box">
+<strong>时间预算</strong>：完成时间约 8 分钟（含 30+ 网页导航 + 10 个 arxiv abstract 提取 + HTML 报告生成）。
+</div>
+
+</section>
+
+<!-- ============ FOOTER ============ -->
+
+<footer>
+<p><strong>报告署名</strong>：Claude (LongCat-2.0) · 2026-07-15 · 项目目录 <code>pd-separation-kvcache-research/research/longcontext_pd/</code></p>
+<p><strong>保持链接</strong>：本项目相关报告——<a href="../report.html">主报告: PD KV Cache 流通</a> · <a href="../routing-report/report.html">路由深度调研</a> · <a href="../research_cxl.md">CXL 深度调研</a></p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P/D 分离架构下 KVCache 流通方式：系统性深度调研报告</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a2e;
+    --muted: #555;
+    --accent: #2563eb;
+    --accent2: #059669;
+    --accent3: #d97706;
+    --accent4: #dc2626;
+    --card: #f8fafc;
+    --border: #e2e8f0;
+    --hbg: #eff6ff;
+    --pre-bg: #f1f5f9;
+    --tag-bg: #dbeafe;
+    --tag-clr: #1e40af;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #60a5fa;
+      --accent2: #34d399;
+      --accent3: #fbbf24;
+      --accent4: #f87171;
+      --card: #1e293b;
+      --border: #334155;
+      --hbg: #172554;
+      --pre-bg: #111827;
+      --tag-bg: #1e3a8a;
+      --tag-clr: #bfdbfe;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.75;
+    margin: 0; padding: 16px;
+    font-size: 15px;
+    max-width: 900px; margin: 0 auto;
+  }
+  h1 { font-size: 1.7rem; margin: 24px 0 8px; color: var(--accent); }
+  h2 { font-size: 1.35rem; margin: 32px 0 12px; padding-bottom: 6px;
+       border-bottom: 2px solid var(--border); color: var(--accent2); }
+  h3 { font-size: 1.1rem; margin: 20px 0 8px; color: var(--accent3); }
+  h4 { font-size: 1rem; margin: 16px 0 6px; }
+  p { margin: 8px 0 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { background: var(--pre-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.9em; }
+  pre { background: var(--pre-bg); padding: 14px; border-radius: 8px; overflow-x: auto; font-size: 0.85em; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.9em; }
+  th, td { padding: 8px 10px; border: 1px solid var(--border); text-align: left; }
+  th { background: var(--hbg); }
+  .tag { display: inline-block; background: var(--tag-bg); color: var(--tag-clr);
+         padding: 2px 8px; border-radius: 4px; font-size: 0.78em; margin: 2px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 16px; margin: 14px 0; }
+  .card-title { font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+  .source { font-size: 0.82em; color: var(--muted); margin-top: 4px; }
+  .source a { font-size: 0.95em; }
+  .key-insight { background: var(--hbg); border-left: 4px solid var(--accent);
+                 padding: 12px 16px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+  .warn { border-left-color: var(--accent3); }
+  .danger { border-left-color: var(--accent4); }
+  .nav-toc { background: var(--card); border: 1px solid var(--border);
+             border-radius: 10px; padding: 16px 18px; margin: 14px 0; }
+  .nav-toc a { display: block; padding: 3px 0; font-size: 0.92em; }
+  .update { font-size: 0.85em; color: var(--muted); border-bottom: 1px dashed var(--border);
+            padding-bottom: 10px; margin-bottom: 16px; }
+  .footer { font-size: 0.8em; color: var(--muted); border-top: 1px solid var(--border);
+            padding-top: 14px; margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<h1>P/D 分离架构下 KVCache 流通方式：系统性深度调研报告</h1>
+<p class="update">📅 调研时间：2026-07-15 &nbsp;|&nbsp; 受众：AI 系统 / 芯片架构研究人员 &nbsp;|&nbsp; 覆盖：SGLang · vLLM · NVIDIA Dynamo · Mooncake · LMCache · arxiv 前沿（2024-2026）&nbsp;|&nbsp; 主题：挑战 · 流通模式 · CXL 影响分析 &nbsp;|&nbsp; 📎 续篇：<a href="routing-report/report.html">PD 路由调研</a> · <a href="long-context-pd-challenges-report/report.html">长序列 PD 挑战</a>（含 4 项子报告）</p>
+
+<div class="nav-toc">
+<b>📋 目录</b>
+<a href="#bg">1. 背景与动机：为什么需要 P/D 分离</a>
+<a href="#kvflow">2. KVCache 流通的核心模式</a>
+<a href="#sglang">3. SGLang 的实现路径</a>
+<a href="#vllm">4. vLLM 的 NIXL 连接器体系</a>
+<a href="#mooncake-lmcache">5. 第三方关键系统：Mooncake · LMCache · FlexKV</a>
+<a href="#nv-dynamo">6. NVIDIA Dynamo 如何看待 KV</a>
+<a href="#challenges">7. 共性技术挑战（带宽 · 调度 · 一致）</a>
+<a href="#papers">8. 论文观点速览（DistServe → NetKV → 3DLS）a>
+<a href="#cxl">9. CXL 对 KVCache 管理的潜在颠覆</a>
+<a href="#reflow">10. 趋势判断：研究前沿流向何方</a>
+<a href="#refs">附录 · 引用资料集</a>
+</div>
+
+<!-- 1. Background -->
+<h2 id="bg">1. 背景与动机：为什么需要 P/D 分离</h2>
+
+<p>LLM 推理两阶段本质不对称：<strong>Prefill</strong> 对 prompt 做一次大矩阵乘，算力强但时间短；<strong>Decode</strong> 每次只生成一个 token，访存密集、对延迟敏感。传统统一调度把两者放在同一组 GPU 上，产生三类干扰：</p>
+
+<ul>
+  <li><b>Prefill Interference</b>：新 prompt 的长 prefill 打断正在进行的 decode → TTFT/TPOT 恶化</li>
+  <li><b>DP Attention Imbalance</b>：不同 DP rank 在不同阶段 → 等最慢的那张卡</li>
+  <li><b>模式冲突</b>：DeepEP 的 Normal / Low-Latency 两种 dispatch 无法在同一 group 共存</li>
+</ul>
+
+<div class="card">
+  <div class="card-title">📊 DistServe (OSDI'24) 的关键数据</div>
+  <p>在 5 种 LLM 上，统一调度相对于分离调度的 goodput 下降 3.4×–8.3×，因为 TTFT SLO 与 ITL SLO 无法同时满足。来源：<code>arxiv 2401.09670</code></p>
+</div>
+
+<p>解决路径：<strong>把 Prefill 和 Decode 拆成独立实例池</strong>，中间通过高速网络把 Prefill 产生的 KVCache 传给 Decode。传输行为 = 整个系统的新瓶颈与新战场。</p>
+
+<!-- 2. KV Flow Patterns -->
+<h2 id="kvflow">2. KVCache 流通的核心模式</h2>
+
+<h3>2.1 数据路径的三种基本拓扑</h3>
+
+<table>
+  <tr><th>模式</th><th>数据流向</th><th>代表系统</th><th>核心特征</th></tr>
+  <tr>
+    <td>Pull（拉取）</td>
+    <td>D 主动 RDMA READ P 端的 KV</td>
+    <td>vLLM NixlConnector (默认)</td>
+    <td>D 拥有调度主动权；P 被动“扣块”持有 lease</td>
+  </tr>
+  <tr>
+    <td>Push（推送）</td>
+    <td>P 主动 RDMA WRITE 到 D 预分配的内存</td>
+    <td>vLLM NixlPushConnector</td>
+    <td>D 提前注册 block 信息；P 在 forward 结束后立即发</td>
+  </tr>
+  <tr>
+    <td>Peer-to-Peer 共享池</td>
+    <td>KV 写 → 多级缓存（GPU/CPU/SSD）→ 任何实例可取</td>
+    <td>Mooncake · LMCache MP 模式</td>
+    <td>KVCache 成为"一等公民"持久化对象；跨会话复用</td>
+  </tr>
+</table>
+
+<h3>2.2 流通的"时域"层级</h3>
+
+<p>KVCache 流通并非只在 P→D 请求级发生，按时间粒度可分为四层：</p>
+
+<ol>
+  <li><b>Layer-level</b>：逐层搬（边算边传，已在 HMA-Serve 提出）</li>
+  <li><b>Sequence / request-level</b>：一个请求的整条 prompt在 P 算完后一次性推送</li>
+  <li><b>Block-level</b>：PagedAttention 切块后按 block 推，适配 prefix cache</li>
+  <li><b>Cache-line / token-level</b>：CXL 时代提出，粒度更细的随机访问（3DLS 论文提出）</li>
+</ol>
+
+<div class="key-insight">
+  <b>💡 Insight 1</b>：当前工业界主流流通粒度是 <i>Block-level（Paged 块）+ Request-level（请求一束）</i>，是因为块级与 NCCL/Mooncake 的语义最契合。Layer-level 可隐藏 TTFT 但要求双向同步；token-level 更适合即将出现的 CXL pooled memory 场景。
+</div>
+
+<!-- 3. SGLang -->
+<h2 id="sglang">3. SGLang 的实现路径</h2>
+
+<h3>3.1 SGLang v0.4 起的 PD 分离设计</h3>
+
+<p>来源：<a href="https://www.lmsys.org/blog/2025-05-05-large-scale-ep">SGLang Blog（Deploying DeepSeek with PD Disaggregation, The SGLang Team, 2025-05）</a></p>
+
+<p>核心设计：<strong>Prefill Server 与 Decode Server 通过本地 sender/receiver 配对握手</strong>，Decode 侧先预分配 KV cache 后通知 Prefill 发起 forward；forward 后数据通过非阻塞 RDMA 直传。</p>
+
+<ul>
+  <li><b>非阻塞传输</b>：send/receive 在 background thread，不占用 scheduler event loop</li>
+  <li><b>RDMA 路径</b>：Queue Pair + Scatter-Gather Element (SGE)，支持非连续内存块</li>
+  <li><b>传输引擎可插拔</b>：统一 API 适配 Mooncake、NIXL 等第三方传输库</li>
+</ul>
+
+<h3>3.2 GB200 NVL72 时代的变迁</h3>
+<p>来源：<a href="https://www.lmsys.org/blog/2025-06-16-gb200-part-1">Deploying DeepSeek on GB200 NVL72 (Part I): 2.7× Higher Decoding Throughput, SGLang Team, 2025-06</a></p>
+
+<p>在 GB200 NVL72 上最大的变化：</p>
+<ul>
+  <li><b>纯 NVLink 域</b>：跨节点不再依赖 RDMA/IB，通信延迟显著降低</li>
+  <li><b>Two-Batch Overlap 被关闭</b>：因为 NVLink 带宽下计算≥通信，overlap 反而是浪费</li>
+  <li><b>Blackwell Mooncake</b>：承载 KV cache 传输任务，采用与 DeepEP 类似的远程 GPU 显存映射技术</li>
+  <li><b>实测</b>：单 GPU 7,583 tok/s decode，相对 H100 提升 2.5×–3.4×</li>
+</ul>
+
+<h3>3.3 SGLang Router 视角</h3>
+
+<p>来源：<a href="https://github.com/sgl-project/sglang">SGLang GitHub</a> · <a href="https://www.lmsys.org/blog/2025-07-20-k2-large-scale-ep">Kimi K2 在 128 H200 上的部署</a></p>
+
+<p>SGLang Router 在 PD 分离中承担"轻量调度"：基于 label 自动发现 P/D 节点，支持 least-privilege routing 与 decode-partition 定制化负载均衡。Kimi K2 (1T MoE, 384 experts) 实测 decode 288k tok/s，成本 $0.21 / 1M output。</p>
+
+<!-- 4. vLLM -->
+<h2 id="vllm">4. vLLM 的 NIXL 连接器体系</h2>
+
+<h3>4.1 总体架构（vLLM v0.25.1 状态）</h3>
+<p>来源：<a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">Disaggregated Prefilling (experimental) - vLLM Official Docs</a> · vLLM GitHub <code>docs/design/nixl_kv_push_connector.md</code></p>
+
+<table>
+  <tr><th>连接器</th><th>后端</th><th>适用场景</th></tr>
+  <tr><td>NixlConnector</td><td>UCX (IB/RoCE), GDS (GPUDirect Storage), TCP</td><td>通用 P→P2P KV 传输</td></tr>
+  <tr><td>NixlPushConnector</td><td>NIXL WRITE 直写 D 的显存</td><td>降低 D 等待延迟、绕过 D 侧调度排队</td></tr>
+  <tr><td>MooncakeConnector</td><td>Mooncake 传输引擎</td><td>跨节点 GPU 直接 KV 搬运</td></tr>
+  <tr><td>LMCacheConnectorV1</td><td>LMCache 后台的 NIXL 通道</td><td>跨会话 KV 持久化 + P/D 分离</td></tr>
+  <tr><td>OffloadingConnector</td><td>CPU DRAM</td><td>KV 溢出 CPU 卸载</td></tr>
+  <tr><td>FlexKVConnectorV1</td><td>分布式 KV Store</td><td>超大规模多 LLM 共享</td></tr>
+  <tr><td>MoRIIOConnector</td><td>ROCm 生态</td><td>AMD 平台专用</td></tr>
+</table>
+
+<h3>4.2 Push vs Pull 的模式对比</h3>
+<p>来源：<code>vllm/docs/design/nixl_kv_push_connector.md</code> © vLLM Authors</p>
+
+<div class="card">
+  <div class="card-title">🔄 Pull（默认） vs Push（新）</div>
+  <p><b>Pull 路径：</b>P 完成 forward 后等待 D 主动 READ → D 获得控制权；P 端需 lock block（做 lease）防被提前 evict。</p>
+  <p><b>Push 路径：</b>D 在 allocate block 后主动发 <code>PUSH_REG:msgpack</code> 通知 P 端的物理地址，<code>NixlPushWorker</code> 在 P 端以 <code>NIXL WRITE</code> 把 block 直接写进去，再发完成通知给 D。</p>
+  <p><b>Push 优势：</b>P 端紧接 forward 立即发 → TTFT 更小；D 端只需支持后台 completion 入队，不消耗主循环。</p>
+</div>
+
+<h3>4.3 Lease Renewal + Heartbeat 故障恢复</h3>
+<p>来源：<code>vllm/docs/design/nixl_kv_cache_lease.md</code></p>
+
+<ul>
+  <li>P 端在请求完成的 block 上加 <code>kv_lease_duration=30s</code></li>
+  <li><b>D 端调度器在入队即跟踪请求</code>：即使尚未调度，亦发心跳（心跳间隔 ≈5s，租约延展 ≈20s）</li>
+  <li>D crash 时，P 在 ~20s 而非原来的 480s 自动回收 block</li>
+  <li>心跳复用 <code>send_notif/get_new_notifs</code> 通道，支持 IB/RoCE→TCP 自动 fallback</li>
+</ul>
+
+<div class="key-insight">
+  <b>💡 Insight 2</b>：传统 RDMA lease 的问题是"持有太久"（崩了也占着）或"太短"（还在排队就被 evict）。vLLM 给出的答案是<b>heartbeat-driven per-request lease renewal</b>——只要在工作就续，崩了也秒降。这是一个重要的工程突破，已经被 vLLM 主仓库合入主线。
+</div>
+
+<!-- 5. Mooncake / LMCache / FlexKV -->
+<h2 id="mooncake-lmcache">5. 第三方关键系统：Mooncake · LMCache · FlexKV</h2>
+
+<h3>5.1 Mooncake — KVCache 为中心的调度</h3>
+<p>来源：<code>arxiv 2407.00079</code> "Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving"（Moonshot AI, 2024-06） · <a href="https://github.com/MoonshotAI/Mooncake">Mooncake GitHub</a></p>
+
+<p>Kimi 在线推理平台 Mooncake：<strong>Prefill 集群 + Decode 集群 + CPU/DRAM/SSD 的 KVCache 三层级分离式 cache</b>。核心调度策略是<b>"KVCache-centric"</b>：不再是先请求后分配，而是先找 KVCache（抢占/迁移）再决定放哪里 prefill。</p>
+
+<p>关键结论：在模拟高负载场景下，KVCache-centric<b> 比 prefill-centric 策略提升 525% throughput</b>（同时满足 SLO）。同时 Mooncake 采用<b>prediction-based early rejection</b>：过负载时提早丢掉不会在 SLO 内完成的请求。</p>
+
+<h3>5.2 LMCache — 把 KV 持久化脱离引擎</h3>
+<p>来源：<code>arxiv 2510.09665</code> "LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference"（IBM Research 等） · <a href="https://docs.lmcache.ai/">LMCache Docs</a></p>
+
+<p>LMCache 的三大贡献：</p>
+<ol>
+  <li><b>引擎无关</b>：独立于 vLLM/SGLang 的 daemon 进程，KV 数据可跨 engine 共享</li>
+  <li><b>分层 KV 存储</b>：GPU → CPU RAM → SSD/NVMe → S3/Redis/Valkey/NIXL/GDS</li>
+  <li><b>MP 模式</b>：多个 vLLM 实例通过一个 LMCachd daemon 进程共享 KV Cache</li>
+</ol>
+
+<div class="card">
+  <div class="card-title">🔑 LMCache 关键数据点</div>
+  <ul>
+    <li>2026-07：Cloud Bigtable L2 Adapter + Layer-Group Sharding 上线</li>
+    <li>支持 NIXL 作为 KV 传输后端 → 作为 vLLM NixLConnector 的上游 provider</li>
+    <li>Source：<a href="https://github.com/LMCache/LMCache">github.com/LMCache/LMCache</a></li>
+  </ul>
+</div>
+
+<h3>5.3 FlexKVConnectorV1 — 分布式 KV Store</h3>
+<p>vLLM 最近引入的另一种反方向思路：<b>不流传 KV block，而是把 KV 放在一个全局 KV Store，Decode Worker 按需 fetch</b>。适合 ultra-large-scale 多模型场景。</p>
+
+<!-- 6. NVIDIA Dynamo -->
+<h2 id="nv-dynamo">6. NVIDIA Dynamo 如何看待 KV</h2>
+<p>来源：<a href="https://github.com/ai-dynamo/dynamo">NVIDIA Dynamo GitHub</a> (2026-07)</p>
+
+<table>
+  <tr><th>能力</th><th>角色</th></tr>
+  <tr><td>Disaggregated P/D</td><td>把 P 池 / D 池独立扩缩</td></tr>
+  <tr><td>KV-Aware Routing</td><td>按 worker 负载 + KV cache overlap 路由，消除冗余 prefill（2× TTFT 提升实测）</td></tr>
+  <tr><td>KV Block Manager (KVBM)</td><td>GPU → CPU → SSD → Remote Store 多级 offload</td></tr>
+  <tr><td>ModelExpress</td><td>NIXL/NVLink 权重流：7× 更快拉起新副本</td></tr>
+  <tr><td>Planner + AIConfigurator</td><td>10K + 部署配置模拟；SLA-driven autoscale；80% SLA breach ↓</td></tr>
+  <tr><td>Grove</td><td>K8s topology-aware 调度，NUMA/NVL72-aware</td></tr>
+</table>
+
+<p>Dynamo 的哲学：<b>KV Cache 不再是 engine 内部概念，而是 data center 一级的资产</b>。KVBM 让 KV Store 脱离任何单一 vLLM/SGLang 实例，这是与 LMCache 思路的融合。</p>
+
+<!-- 7. Challenges -->
+<h2 id="challenges">7. 共性技术挑战</h2>
+
+<h3>7.1 带宽瓶颈与 TTFT 预算</h3>
+<p>一个 100K token 的 prompt，按 DeepSeek-V3 的 MLA 参数，<b>prefill KV 就有几个 GB</b>。在 400Gbps RDMA 下仅传输就占 ~0.1–0.3s，这是 TTFT 中的大块。</p>
+<p>最新论文已证明（Towards Load-Aware Prefill Deflection, arxiv 2607.02043, 2026-07）：<b>production 集群 P95 TTFT 中，仅 2-23% 真正在做 prefill 计算，其余都是排队 + KV 搬移</b>。结论：<b>调度器必须把网络拓扑代价纳入目标函数</b>（NetKV, 2606.03910）。</p>
+
+<h3>7.2 拥塞与"关键路径上的带宽争夺"</h3>
+<p>3DLS 论文（arxiv 2607.01617, 2026-07）指出芯片级问题：在 2D/2.5D chiplet 芯片上，<b>P→D KV cache transfer 与 Decode-side TP allreduce 争夺同一条横向 Die-to-Die 互连带宽</b>，混合流量干扰 decode critical path。3DLS 提出用垂直互连把这两类流量解耦。</p>
+
+<h3>7.3 KV Cache 的"幽灵问题"——分布异构</h3>
+<p>HMA-Serve（arxiv 2606.29986, 2026-06）：用 <b>GDDR 卡做 prefill + HBM 卡做 decode</b>（AMD MI355X + H100），跨厂商导致：</p>
+<ul>
+  <li>KV format 不兼容（MLA/GQA/头数不同）→ 需要 phase-wise quantization</li>
+  <li>软件栈不互通 → 需要 vendor 中立传输路径</li>
+  <li>但收益显著：4.8× goodput-per-dollar vs. 同构部署</li>
+</ul>
+
+<h3>7.4 Multi-turn 重复搬移</h3>
+<p>Kimi K2 部署（128 H200, Mooncake team, arxiv 2407.00079）：实测 agentic 场景 input length 常在 30K–50K，每轮 P→D 搬一次 + D→P 再搬回 → 带宽轻松打满。PPD Disaggregation（arxiv 2603.13358, 2026-03）提出<b>区分 append-prefill vs prefix-prefill，只搬 diff</b>。</p>
+
+<h3>7.5 KV 精度 vs 带宽折中</h3>
+<table>
+  <tr><th>方法</th><th>思路</th><th>论文</th></tr>
+  <tr><td>SplitZip</td><td>无损 KV 压缩后传输</td><td>arxiv 2605.01708</td></tr>
+  <tr><td>SpectrumKV</td><td>Attention sink FP16 + 中位 INT8 + 低位 INT4 per-token</td><td>arxiv 2606.08635</td></tr>
+  <tr><td>Lynx</td><td>渐进式 speculative quantization</td><td>arxiv 2607.01831</td></tr>
+  <tr><td>SCD</td><td>语义码本替代原始 KV</td><td>arxiv 2606.07684</td></tr>
+</table>
+
+<!-- 8. Papers -->
+<h2 id="papers">8. 论文观点速览（DistServe → NetKV → 3DLS）</h2>
+
+<h3>DistServe (OSDI'24) — 奠基工作</h3>
+<p>arxiv 2401.09670. 首次系统化证明 separated PD 在 goodput 维度压倒统一调度；指出 KV transfer 在单节点可通过 NVLink 低成本完成，但 cross-node 的代价决定全局部署拓扑。</p>
+
+<h3>Mooncake (2024-06) — KVCache 一等公民</h3>
+<p>arxiv 2407.00079. 提出 KVCache-centric scheduler：把 KV Cache pool 大小作为调度核心约束；过载时主动 early rejection。预测："KVCache-centric 将成为未来 LLM serving 的 default 范式" <a href="https://www.lmsys.org/blog/2025-07-20-k2-large-scale-ep">Mooncake Team, 2025 LMSYS Blog</a>。</p>
+
+<h3>SplitServe (2024-11) — 训练时 P/D 分离</h3>
+<p>注：SplitServe（另一分支方向）讨论离线训练 + 推理的共存，属于不同问题；本文不展开。</p>
+
+<h3>CrossPool (2026-06) — Cold MoE 共享 KV Pool</h3>
+<p>arxiv 2606.24506. 解决多 LLM + 稀疏 MoE 的静态 KV 浪费：cold model 峰值 KV 重叠概率低，共享 pool 可显著降低 reserve 成本。</p>
+
+<h3>NetKV (2026-06) — 网络感知 Decode 选路</h3>
+<p>arxiv 2606.03910. 提出 thin operator-scheduler 接口 + network cost oracle。关键结论：<b>仅考虑 prefix-cache hit 的调度在上下文变长时任意次优</b>（可证明）。NetKV 在 64 GPU 集群 5 类模型上提升 30-55% goodput。</p>
+
+<h3>RAPID-Serve (2026-01) — 单 GPU 上 P/D 分离</h3>
+<p>arxiv 2601.11822. 在单 GPU 内部通过硬件时间 multiplex 模拟 PD 分离，消除 prologue/epilogue 开销；不需要跨节点 KV transfer。</p>
+
+<h3>Towards Load-Aware Prefill Deflection (2026-07)</h3>
+<p>arxiv 2607.02043. 结论：<b>在 D 端穿插 chunk-prefill 对冲 P 节点饱和</b>，让 P 池和 D 池互为冗余。P 池利用率可从 22% 提升到 60%+。</p>
+
+<h3>3DLS (2026-07) — 芯片级 KV Cache 传输重构</h3>
+<p>arxiv 2607.01617. 首个在芯片架构层面把 P-KV transfer 与 D-collectives 用垂直 die 分离的研究；提出"KV-cache 专用的 die-to-die channel 将来可能是必需"。</p>
+
+<h3>Towards Load-Aware Prefill Deflection (2026-07) 与 TokenScale (2025-12)</h3>
+<p>TokenScale（arxiv 2512.03416）提出 "Token Velocity" 自指标，<b>利用 token 产出速率作为领先信号替代 lagging GPU 利用率</b> 驱动 autoscale。两者共同指向：PD 分离的动态调度必须进入<em>毫秒级反馈</em>时代。</p>
+
+<!-- 9. CXL -->
+<h2 id="cxl">9. CXL 对 KVCache 管理的潜在颠覆</h2>
+
+<p><b>背景延伸：</b>前述结论来自 /tmp/research_cxl.md（本调研的子代理已完成 CXL 专项）。本节结合调研收集的最新进展给出系统判断。</p>
+
+<h3>9.1 CXL 的技术属性</h3>
+<table>
+  <tr><th>属性</th><th>意义</th></tr>
+  <tr><td>Memory Pooling</td><td>跨主机共享 TB 级内存；GPU 可直接 load/store 远端 CXL memory</td></tr>
+  <tr><td>Cache-line 粒度</td><td>与 GPU 按 page 搬 KV 块不同，CXL 语义是 64B–256B 随机访问</td></tr>
+  <tr><td>带宽延迟</td><td>CXL 3.0 ~64 GT/s × 16 lanes ≈ 256 GB/s（单向）；延迟 hundreds ns（~1μs）</td></tr>
+  <tr><td>协议兼容</td><td>CXL 在 PCIe 物理层之上，与现有 I/O 生态兼容</td></tr>
+</table>
+
+<h3>9.2 CXL-native KVCache 系统（已浮现）</h3>
+<p>来源：/tmp/research_cxl.md（已通过 arxiv / IEEE 等检索验证）</p>
+
+<table>
+  <tr><th>系统</th><th>CXL 用法</th><th>效果</th></tr>
+  <tr><td>ITME</td><td>SK Hynix CMM (CXL Memory Module)</td><td>吞吐 ↑35.7%</td></tr>
+  <tr><td>SAC</td><td>Sparse attention → CXL 随机取 KV</td><td>2.1× ttput, 9.7× TTFT</td></tr>
+  <tr><td>Beluga</td><td>CXL Switch GPU-direct + KV 本地缓存</td><td>7.35×</td></tr>
+  <tr><td>TraCT</td><td>Rack-scale CXL pooled memory 作为 KV Store</td><td>9.8× TTFT</td></tr>
+  <tr><td>PNM-CXL</td><td>Processing-near-memory + CXL</td><td>21.9× ttput, 60× 能耗↓, 7.3× TCO</td></tr>
+</table>
+
+<h3>9.3 CXL 对 PD 分离 KVCache 流通的范式影响</h3>
+
+<div class="key-insight warn">
+  <b>关键判断 1：CXL 让 "KV 既在 P 也在 D" 成为可能</b><br>
+  过去 KV 产生的速率（prefill 一次几 GB/μs）远超 RDMA 网络搬移速率，所以 KV 必然是“搬过去”才能用。CXL pooled memory 给了一种新选项：<b>把 CXL memory 作为 KV 的统一池，P 写 D 读都通过 cache-line load/store</b>；省掉了 GB 级的整块传输。
+</div>
+
+<div class="key-insight warn">
+  <b>关键判断 2：CXL 的 cache-line 语义 天然适配 sparse attention</b><br>
+  LLaMA-Qwen 等标准 attention 必须全量 KV，但 MoE/SSM/Hybrid attention（Jamba、Zamba、SWA+LongLite）只访问 KV 的 5-15%。过去必须全量传 → CXL 随机取 3-5 token 页 成本可忽略。这种"稀疏 access → 远端 memory 反客为主"的范式将深刻影响模型设计。
+</div>
+
+<div class="key-insight warn">
+  <b>关键判断 3：当前最大障碍——NVIDIA 没有 CXL 接口</b><br>
+  NVIDIA 尚未在 GPU 上原生支持 CXL（预计 Rubin/后续）。验证平台：AMD MI300X（有限）、Intel GPU、SK Hynix CMM。AMD 路线在 MI400 有望更完整支持。</div>
+
+<h3>9.4 CXL vs RDMA/Mooncake：不是替代，是分层</h3>
+
+<p>判断：<b>CXL pooled memory 最可能作为 "KV 持久共享层"</b>——NIXL/Mooncake 继续承担跨数据中心 KV 迁移与热路径层间搬移；CXL 承担"冷 KV 远程缓存在内存池里随用随取"。这与 Dynamo KVBM / LMCache 的三级分层是同一个方向。</p>
+
+<h3>9.5 arxiv 2512.18194 (TraCT) 给的具体数据</h3>
+
+<p>TraCT 实测：在 rack-scale 8 节点、H100 作 P、CXL 内存池作 KV Store，<b>长上下文（128K）的 TTFT 提升 9.8×</b>；关键 trick：P prefill 后的 KV 不经网络挂到 D，而是写到 CXL Pool；D decode 直接 CXL load。进一步佐证了上述判断。</p>
+
+<!-- 10. Trends -->
+<h2 id="reflow">10. 趋势判断：研究前沿流向何方</h2>
+
+<ol>
+  <li><b>从 "传 KV 块" 到 "用 KV Store"</b>：Mooncake · Dynamo KVBM · LMCache · FlexKV 四种系统都指向 KV Cache 从 per-request 状态 → 持久化、可共享、可观测的一级资产。</li>
+  <li><b>P/D 分离 → P/D/E 三分</b>：Heterogeneous CPU + GPU EPD Disaggregation（Intel + SGLang, LMSYS 2026-06 blog）证明 vision encoding 也应独立出来。</li>
+  <li><b>网络感知调度成为标配</b>：NetKV（代价 oracle） + Multi-stage Flow Scheduling（调度冲突避免） + TokenScale（领先指标）；下一个 SOTA 必须把网络视为一等约束。</li>
+  <li><b>KV 精度可调将成为 PD 分离链路基础</b>：SpectrumKV、SCD、Lynx 给的是 per-token 多精度；PD 链路上 "传输精度 ≠ 计算精度" 会被松绑。</li>
+  <li><b>CXL 在近 12-24 个月将从 paper 走到原型部署</b>：SK Hynix CMM / Beluga CXL switch / PNM-CXL 已到 demo 阶段；等待 Rubin / MI400。</li>
+  <li><b>芯片级 KV 传输专道将被提上日程</b>：3DLS 论文虽新但方向确定；未来 GPU 可能原生提供 "KV-cache die-to-die channel"。</li>
+<li><b>路由 = PD 栈的"OS 调度器"</b>：下一段最激烈的战场在路由决策（load-aware、network-aware、expert-aware、conversation-level），而非单纯传输。本报告续篇 <a href="routing-report/report.html">📎 PD 分离请求路由深度调研</a> 已单独覆盖 40+ 来源、头部公司实践与前沿论文。</li>
+</ol>
+
+<h2 id="refs">附录 · 引用资料集</h2>
+
+<p class="source">完整链接列表详见本地 <a href="./references.md">references.md</a>（含访问失败链接）。下方列出本节文的全部超链接。</details></p>
+
+<h3>A. 博客与官方文档</h3>
+<ul>
+  <li><a href="https://www.lmsys.org/blog/2025-05-05-large-scale-ep">Deploying DeepSeek with PD Disaggregation and Large-Scale EP on 96 H100 GPUs — LMSYS, 2025-05</a></li>
+  <li><a href="https://www.lmsys.org/blog/2025-06-16-gb200-part-1">Deploying DeepSeek on GB200 NVL72 with PD (Part I): 2.7× Higher Decoding — LMSYS, 2025-06</a></li>
+  <li><a href="https://www.lmsys.org/blog/2025-07-20-k2-large-scale-ep">Deploying Kimi K2 with PD Disaggregation on 128 H200 GPUs — Mooncake Team, 2025-07</a></li>
+  <li><a href="https://www.lmsys.org/blog/2026-01-12-epd">EPD Disaggregation: Elastic Encoder Scaling for VLMs in SGLang — Alibaba Cloud, 2026-01</a></li>
+  <li><a href="https://www.lmsys.org/blog/2026-06-01-hetero-epd">Heterogeneous CPU+GPU EPD Disaggregation to Boost VLM Serving — Intel & SGLang, 2026-06</a></li>
+  <li><a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">Disaggregated Prefilling (experimental) - vLLM Official Docs</a></li>
+  <li>vLLM 设计文档：<a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_push_connector.md">NIXL push-mode KV transfer</a> · <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md">NIXL KV Cache Lease Renewal</a></li>
+  <li><a href="https://github.com/ai-dynamo/dynamo">NVIDIA Dynamo GitHub（Apache-2.0）</a></li>
+  <li><a href="https://github.com/MoonshotAI/Mooncake">Mooncake GitHub (Apache-2.0)</a></li>
+  <li><a href="https://github.com/LMCache/LMCache">LMCache GitHub</a></li>
+</ul>
+
+<h3>B. 关键论文（按年代）</h3>
+<ul>
+  <li><a href="https://arxiv.org/abs/2401.09670">DistServe: Disaggregating Prefill and Decoding (OSDI'24)</a></li>
+  <li><a href="https://arxiv.org/abs/2407.00079">Mooncake: A KVCache-centric Disaggregated Architecture</a></li>
+  <li><a href="https://arxiv.org/abs/2412.12488">A System for Microserving of LLMs</a></li>
+  <li><a href="https://arxiv.org/abs/2501.14743">KVDirect: Distributed Disaggregated LLM Inference</a></li>
+  <li><a href="https://arxiv.org/abs/2510.09665">LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference</a></li>
+  <li><a href="https://arxiv.org/abs/2510.13223">BanaServe: Unified KV Cache & Dynamic Module Migration</a></li>
+  <li><a href="https://arxiv.org/abs/2511.20982">DOPD: Dynamic PD-Disaggregation</a></li>
+  <li><a href="https://arxiv.org/abs/2512.03416">TokenScale: Timely Autoscaling for Disaggregated LLM Serving</a></li>
+  <li><a href="https://arxiv.org/abs/2512.18194">TraCT: Disaggregated LLM Serving with CXL Shared Memory KV Cache at Rack-Scale</a></li>
+  <li><a href="https://arxiv.org/abs/2601.11822">RAPID-Serve: Resource-efficient P/D Intra-GPU Disaggregation</a></li>
+  <li><a href="https://arxiv.org/abs/2602.18755">DualScale: Energy-Efficient Disaggregated LLM Serving</a></li>
+  <li><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></li>
+  <li><a href="https://arxiv.org/abs/2603.13358">Not All Prefills Are Equal: PPD Disaggregation for Multi-turn</a></li>
+  <li><a href="https://arxiv.org/abs/2603.17456">Multi-stage Flow Scheduling for LLM Serving</a></li>
+  <li><a href="https://arxiv.org/abs/2605.01708">SplitZip: Ultra Fast Lossless KV Compression</a></li>
+  <li><a href="https://arxiv.org/abs/2605.16637">HexAGenT: Workflow- and Heterogeneity-Aware Agentic Serving</a></li>
+  <li><a href="https://arxiv.org/abs/2605.22850">ObjectCache: Layerwise Object-Storage Retrieval for KV Cache Reuse</a></li>
+  <li><a href="https://arxiv.org/abs/2606.01839">Observation, Not Prediction: Conversation-Level Disaggregated Scheduling</a></li>
+  <li><a href="https://arxiv.org/abs/2606.03910">NetKV: Network-Aware Decode Instance Selection</a></li>
+  <li><a href="https://arxiv.org/abs/2606.07684">Semantic Cache Distillation: Efficient State Transfer</a></li>
+  <li><a href="https://arxiv.org/abs/2606.08635">SpectrumKV: Per-Token Mixed-Precision KV Cache Transfer</a></li>
+  <li><a href="https://arxiv.org/abs/2606.24506">CrossPool: Efficient Multi-LLM Serving via KV-Cache Disaggregation</a></li>
+  <li><a href="https://arxiv.org/abs/2606.29986">HBM Is Not All You Need: MemHA</a></li>
+  <li><a href="https://arxiv.org/abs/2607.01617">3DLS: A 3D Logic-Stacked Architecture for Disaggregated LLM Serving</a></li>
+  <li><a href="https://arxiv.org/abs/2607.01831">Lynx: Progressive Speculative Quantization for KV Transfer</a></li>
+  <li><a href="https://arxiv.org/abs/2607.02043">Towards Load-Aware Prefill Deflection</a></li>
+  <li><a href="https://arxiv.org/abs/2604.15039">Prefill-as-a-Service: KVCache Cross-Datacenter</a></li>
+</ul>
+
+<h3>C. 专题 CXL 论文</h3>
+<ul>
+  <li><a href="https://arxiv.org/abs/2512.18194">TraCT (2025-12) · Rack-scale CXL shared KV cache</a></li>
+  <li><a href="https://arxiv.org/abs/2607.01831">Lynx (2026-07) · speculative quantization (borderline)</a></li>
+  <li>CXL-native KVCache system indexing top-5: ITME / SAC / Beluga / TraCT / PNM-CXL（含详细数据见本地 <code>research_cxl.md</code>）</li>
+</ul>
+
+<h3>D. 中文关联资料</h3>
+<ul>
+  <li>阿里云 PAI / TorchInfer：SGLang EPD Disaggregation 合作 See <a href="https://www.lmsys.org/blog/2026-01-12-epd">2026-01 LMSYS blog</a></li>
+  <li>字节跳动 Volcengine / 火山引擎 MLV Engine（间接提及：vLLM Cited in production, 见 NVIDIA GTC 2026）</li>
+  <li>DeepSeek PD 分离 + DeepEP 技术博客：<a href="https://github.com/deepseek-ai/DeepEP">github.com/deepseek-ai/DeepEP</a></li>
+  <li><a href="https://github.com/LMCache/LMCache/blob/main/docs/design/">LMCache 文档目录</a> · io_uring + NVMe 直通</li>
+</ul>
+
+<div class="footer">
+  <p>📝 报告生成日期：2026-07-15 &nbsp;|&nbsp; 调研时段：2026-07-14~15 &nbsp;|&nbsp; 累计抓站 ~25 个 arxiv/博客 &nbsp;|&nbsp; 引用 ~33 个公开来源</p>
+  <p>⚠️ 本报告内容来自于对公开资源的自动抓取与综合推理，部分引用结论以原文为准。CXL 章节的"判断"基于论文报告数字，并不代表NVIDIA / AMD 官方产品路线图。</p>
+</div>
+
+</body>
+</html>

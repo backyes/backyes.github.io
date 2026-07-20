@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>nixl_kv_cache_lease.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">nixl_kv_cache_lease.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/nixl_kv_cache_lease.md</span> <span class="src-tag">10137 chars</span></div>
+
+<h1>NIXL KV Cache Lease Renewal</h1>
+
+<p>In disaggregated prefill/decode deployments, the Prefill instance (P) must hold KV cache blocks in GPU memory after completing a prefill, waiting for the Decode instance (D) to read them via RDMA. A mechanism is needed to determine when those blocks can safely be freed when D isn&#x27;t able to retrieve them. This mechanism was introduced in [PR #41383](https://github.com/vllm-project/vllm/pull/41383).</p>
+
+<h2>Motivation</h2>
+
+<h3>The single-timeout problem</h3>
+
+<p>The original design used a single, large timeout (`VLLM_NIXL_ABORT_REQUEST_TIMEOUT`, default 480s) to control how long P retains KV blocks. When D crashed or disconnected, P would hold onto potentially several GBs of &quot;dead&quot; blocks for up to 8 minutes before reclaiming them. During this window, subsequent requests hitting P would find reduced cache capacity and experience degraded performance.</p>
+
+<h3>The overloading problem</h3>
+
+<p>Simply lowering the timeout introduces a different failure mode. Under traffic surges, requests can sit in D&#x27;s waiting queue for a long time before being scheduled. If the fixed timeout on P is too short, blocks get freed before D ever has a chance to read them --- causing unnecessary recomputation and wasted prefill work.</p>
+
+<h3>Solution: lease renewal via heartbeats</h3>
+
+<p>The lease renewal mechanism addresses both problems simultaneously. P grants a **short initial lease** (default 30s) when prefill completes. While a request is **queued or in-flight** on D, D **periodically sends heartbeats** to P extending the lease. If D crashes and stops heartbeating, P reclaims blocks within seconds of the last heartbeat rather than waiting minutes. If D is merely overloaded, the heartbeats keep the blocks alive for as long as needed.</p>
+
+<h2>How It Works</h2>
+
+<h3>Lease lifecycle</h3>
+
+<p>When P finishes a prefill, it pins the KV blocks with an initial lease duration (`kv_lease_duration`, default 30s). From that point, the blocks are held until either:</p>
+
+<p>1. **D completes the KV transfer** --- P receives a read-completion notification and frees the blocks immediately.</p>
+<p>2. **D keeps heartbeating** --- each heartbeat extends the lease by `lease_duration * 2/3` (~20s), keeping blocks alive indefinitely while D is healthy.</p>
+<p>3. **No heartbeat arrives** --- the lease expires and P reclaims the blocks.</p>
+
+<h3>Piggybacking on NIXL notifications</h3>
+
+<p>Rather than introducing a new transport channel, heartbeats reuse NIXL&#x27;s existing notification system (`send_notif` / `get_new_notifs`). The notification medium is backend-specific, with automatic fallback from IB/RoCE to TCP already handled by NIXL. Each single heartbeat message sent from D to a particular P renews all requests pinned in P on behalf of that D --- in other words, a single batched message per iteration renews the lease of multiple requests.</p>
+
+<h3>Scheduler-side tracking (D)</h3>
+
+<p>A critical insight is that heartbeating must start **as soon as a request enters D&#x27;s scheduler** --- not when it gets scheduled for execution. Under heavy load, a request may sit in the waiting queue for much longer than the initial lease duration, and the gap between arrival and scheduling is unbounded.</p>
+
+<p>To achieve this, D&#x27;s connector (`NixlConnectorScheduler`) hooks into the scheduler via `on_new_request()`. When a request with `do_remote_prefill=True` arrives, the connector immediately starts tracking it for heartbeats. Requests are grouped by `remote_engine_id` for efficient batching. On each scheduler step, heartbeat metadata is packaged into `NixlConnectorMetadata` and sent to the worker, throttled by a heartbeat interval of `lease_duration // 6` (~5s).</p>
+
+<p>Tracking stops when either the KV transfer completes (via `update_connector_output`) or the request finishes/aborts (via `request_finished`).</p>
+
+<h3>Timing and simplicity</h3>
+
+<p>Heartbeat sending and processing happen **in the forward loop**, not in a background thread. This means timing is not millisecond-precise --- a long model forward pass will delay heartbeats. However, the lease durations are configured with sufficient margin: with default settings, the heartbeat interval (~5s) and lease extension (~20s) are at least an order of magnitude larger than a typical forward pass. This avoids lock complexity between threads while keeping the design simple and extensible.</p>
+
+<h2>Happy Path</h2>
+
+<pre>sequenceDiagram
+    participant R as Routing Proxy
+    participant P as Prefill Instance
+    participant D as Decode Instance
+
+    R-&gt;&gt;P: Request (do_remote_decode=True)
+    P-&gt;&gt;P: Run prefill
+    P-&gt;&gt;P: Grant lease (30s)
+    P-&gt;&gt;R: Response (with kv_transfer_params)
+
+    R-&gt;&gt;D: Request (do_remote_prefill=True)
+    note over D: Request enters waiting queue
+    D-&gt;&gt;D: on_new_request() starts tracking
+
+    loop Every ~5s (heartbeat interval)
+        D-&gt;&gt;P: Heartbeat (extend lease)
+        P-&gt;&gt;P: Lease extended by ~20s
+    end
+
+    note over D: Request scheduled for execution
+    D-&gt;&gt;P: KV transfer (RDMA read)
+    P--&gt;D: Transfer complete
+    D-&gt;&gt;D: Stop heartbeating
+    P-&gt;&gt;P: Free KV blocks</pre>
+
+<h2>Decode Instance Crash</h2>
+
+<pre>sequenceDiagram
+    participant R as Routing Proxy
+    participant P as Prefill Instance
+    participant D as Decode Instance
+
+    R-&gt;&gt;P: Request (do_remote_decode=True)
+    P-&gt;&gt;P: Run prefill (holds onto KVs with lease)
+    P-&gt;&gt;R: Response
+
+    R-&gt;&gt;D: Request (do_remote_prefill=True)
+    D-&gt;&gt;P: Heartbeat (extend lease)
+    D-&gt;&gt;P: Heartbeat (extend lease)
+    note over D: D crashes
+    note over P: No heartbeat received
+    P-&gt;&gt;P: Lease expires (~20s, not 480s)
+    P-&gt;&gt;P: Free KV blocks</pre>
+
+<h3>Worker-side sending and receiving</h3>
+
+<p>**On D (sending):** During `start_load_kv()` (called every forward pass), the worker reads `metadata.heartbeat_by_engine` and sends batched heartbeat notifications to each remote P engine. If D hasn&#x27;t yet handshaked with P for a given engine (common for requests still in the waiting queue), it triggers a **proactive handshake** in a background thread.</p>
+<p>The heartbeat is deferred to the next step once the handshake completes --- the early handshake also **speeds up the eventual KV transfer.**</p>
+
+<p>**On P (receiving):** In `_get_new_notifs()`, P&#x27;s worker checks incoming NIXL notifications. Messages starting with `&quot;HB:&quot;` are routed to `_handle_heartbeat()`, which extends the lease expiry for each referenced request using `max(old_expiry, now + lease_extension)`. This ensures leases are never accidentally shortened.</p>
+
+<h2>Bidirectional KV Transfer</h2>
+
+<p>For multi-turn conversations, [bidirectional KV transfer](../features/disagg_prefill.md) allows D to cache KV blocks that P can pull from on subsequent turns. Since the timing of the next conversational turn is **client-dependent** (not controlled by the system), the heartbeat-based lease mechanism does not apply here. Instead, a separate `decoder_kv_blocks_ttl` (default 480s) provides a simple fixed timeout for blocks cached on D. If the client takes too long to continue the conversation, the blocks expire. D communicates back the expiry time so P can know when blocks are expired and recompute. Because the deadline is a `perf_counter` value produced on D and the two engines run in separate processes (with unrelated clocks), P estimates the clock offset to D from the handshake round-trip and applies it before comparing the deadline against its own `perf_counter`. Future work may extend a symmetric heartbeat mechanism to this case.</p>
+
+<h2>Key Design Decisions</h2>
+
+<p>- **Per-request leasing, not per-instance.** P has no notion of which D its KV blocks belong to --- block ownership is only resolved after prefill completes and the router selects a D. Leasing at the request level avoids coupling P/D selection in the load balancer. In practice, D batches lease extensions toward the same P by grouping requests with the same `remote_engine_id`.</p>
+
+<p>- **NIXL notifications as transport.** Heartbeats reuse the existing `send_notif`/`get_new_notifs` system rather than adding ZMQ connections or API changes. The notification medium is backend-specific with IB/RoCE-to-TCP fallback already handled, making heartbeats work across any NIXL-supported transport.</p>
+
+<p>- **No background thread.** Heartbeat sending and processing happen in the forward loop (`start_load_kv` / `get_finished`). This avoids lock complexity between threads. Lease durations provide sufficient margin over forward-pass latency (seconds vs. milliseconds).</p>
+
+<p>- **Proactive handshake.** When D needs to heartbeat a P engine it hasn&#x27;t connected to yet (common for requests still in the waiting queue), it triggers an early handshake in a background thread. This also speeds up the eventual KV transfer.</p>
+
+<p>- **Heterogeneous TP support.** When P TP &gt; D TP (e.g., P TP=4, D TP=2), a single D worker pulls from multiple P workers. Heartbeats must be sent to all P workers for a given engine. Conversely, when D TP &gt; P TP, a single P receives notifications from multiple Ds, which simply refreshes the TTL multiple times with no downside.</p>
+
+<h2>Configuration</h2>
+
+<p>The lease mechanism is controlled through `kv_connector_extra_config` in `--kv-transfer-config`:</p>
+
+<p>| Parameter               | Default | Description                                                                                                                                                   |</p>
+<p>|-------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|</p>
+<p>| `kv_lease_duration`     | 30s     | Initial lease duration on P. Heartbeat interval and extension amount are derived automatically (`interval = duration // 6`, `extension = duration * 2 // 3`). |</p>
+<p>| `decoder_kv_blocks_ttl` | 480s    | TTL for KV blocks cached on D in bidirectional transfer mode. Simple fixed timeout, not renewed via heartbeats.                                               |</p>
+
+<pre>vllm serve &lt;MODEL&gt; \
+  --kv-transfer-config &#x27;{
+    &quot;kv_connector&quot;: &quot;NixlConnector&quot;,
+    &quot;kv_role&quot;: &quot;kv_producer&quot;,
+    &quot;kv_connector_extra_config&quot;: {&quot;kv_lease_duration&quot;: 60}
+  }&#x27;</pre>
+
+<p>For full NixlConnector configuration details, see the [NixlConnector Usage Guide](../features/nixl_connector_usage.md).</p>
+
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>
