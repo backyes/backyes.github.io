@@ -11,52 +11,53 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 POSTS_DIR = os.path.join(REPO, 'posts')
 
 # ──── 报告元数据 (与 sync_reports.sh 的 PROJECTS 数组保持同步) ────
+# visual = 卡片上的大字 (提取标题关键词)
 REPORTS = [
-    {"dst":"vllm_research/vllm_analysis","entry":"index.html","emoji":"📘",
+    {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
      "desc":"12 章统一分析 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 合并 spine+L4 agent+源码+社区 90d pulse · 每节 source 溯源锚点",
      "cat":"inference","priority":"p0"},
-    {"dst":"pd-separation","entry":"report.html","emoji":"🔀",
+    {"dst":"pd-separation","entry":"report.html","visual":"P/D",
      "title":"P/D 分离 KVCache 流通",
      "desc":"vLLM / SGLang / LMCache / Mooncake / Dynamo 五大框架的 Prefill-Decode 分离 + KV Cache 路由内部实现源码级拆解 · BootstrapQueue→WaitingQueue→InflightQueue 全生命周期",
      "cat":"inference","priority":"p0"},
-    {"dst":"mlsys2026","entry":"index.html","emoji":"🎓",
+    {"dst":"mlsys2026","entry":"index.html","visual":"MLSys",
      "title":"MLSys 2026 深度综合",
      "desc":"Keynote + 19 篇论文逐篇深度解读后的跨论文战略综合 · 6 条主轴: 同步税 / 存储层级重定义 / P2P 转移 / Superchip 冲击 / 批判性转向 / 训练路线分叉",
      "cat":"mixed","priority":"p0"},
-    {"dst":"deepseek-mtp","entry":"index.html","emoji":"⚡",
+    {"dst":"deepseek-mtp","entry":"index.html","visual":"MTP",
      "title":"DeepSeek MTP 算力影响",
      "desc":"dspark MTP 算法对算力与总线系统行业的深度影响分析 · 算法设计者视角的范式推演",
      "cat":"inference","priority":"p1"},
-    {"dst":"moe-clos","entry":"report.html","emoji":"🕸",
+    {"dst":"moe-clos","entry":"report.html","visual":"CLOS",
      "title":"Sparse CLOS × MoE 推理",
      "desc":"MoE 专家并行推理在 Sparse CLOS 网络上的效率与成本收益深度分析 · MegaScale / MixNet / UBEP / SpecMoE 多篇对比",
      "cat":"network","priority":"p1"},
-    {"dst":"generative-rec","entry":"generative_recommendation_report.html","emoji":"🎯",
+    {"dst":"generative-rec","entry":"generative_recommendation_report.html","visual":"RecSys",
      "title":"生成式推荐研究热点",
      "desc":"2026 年 Generative Recommendation 最新研究热点调查报告 · 算法 + 系统 + 工业落地",
      "cat":"mixed","priority":"p1"},
-    {"dst":"sparse-clos","entry":"sparse_clos_report.html","emoji":"🌐",
+    {"dst":"sparse-clos","entry":"sparse_clos_report.html","visual":"CLOS",
      "title":"Sparse Clos 组网深度调研",
      "desc":"Sparse Clos / SlimFly / Jupiter 等无阻塞组网技术的深度调研 · 来源: 论文 + 厂商 + 学术会议",
      "cat":"network","priority":"p1"},
-    {"dst":"ai-supernode-bus","entry":"report.html","emoji":"🔗",
+    {"dst":"ai-supernode-bus","entry":"report.html","visual":"SuperNode",
      "title":"AI 超节点总线调研",
      "desc":"2026H1 AI 超节点总线技术市场调研 · NVLink / UALink / PCIe 6 / 光互联 + 产业格局",
      "cat":"chip","priority":"p1"},
-    {"dst":"supernode-metrics","entry":"supernode_metrics_report.html","emoji":"📐",
+    {"dst":"supernode-metrics","entry":"supernode_metrics_report.html","visual":"Metric",
      "title":"超节点指标定义",
      "desc":"超节点行业指标定义深度调研 · 制造商(NVIDIA/华为/Google) / 云商 / 学术 三视角 + 量化指标体系",
      "cat":"mixed","priority":"p1"},
-    {"dst":"mtp-survey","entry":"MTP_DSpark_Survey.html","emoji":"🧭",
+    {"dst":"mtp-survey","entry":"MTP_DSpark_Survey.html","visual":"MTP",
      "title":"MTP 算法 Survey",
      "desc":"大模型推理 MTP (Multi-Token Prediction) 算法 Survey · 围绕 DeepSeek DSpark 的全景调研",
      "cat":"inference","priority":"p1"},
-    {"dst":"3dls","entry":"3DLS_analysis_report.html","emoji":"🧊",
+    {"dst":"3dls","entry":"3DLS_analysis_report.html","visual":"3DLS",
      "title":"3DLS 论文深度分析",
      "desc":"3DLS 论文深度分析报告 · 芯片 / 系统 / AI 推理架构 交叉视角",
      "cat":"chip","priority":"p2"},
-    {"dst":"space-ecom","entry":"report.html","emoji":"🚀",
+    {"dst":"space-ecom","entry":"report.html","visual":"Space",
      "title":"太空经济联盟调研",
      "desc":"联盟首批意向成员 + 初创企业调研报告 · 含 306 家深度分析",
      "cat":"mixed","priority":"p2"},
@@ -141,9 +142,9 @@ def md_to_html(text):
     if in_ul: out.append('</ul>')
     return '\n'.join(out)
 
-# ──── SVG 占位图 — Lil'Log: muted greyscale, no rainbow ────
-def svg_placeholder(emoji, cat):
-    # 统一的低调灰阶配色,仅明暗微差
+# ──── 卡片视觉: 大字标题 (SVG 渲染, 不依赖外部图片) ────
+def svg_placeholder(visual, cat):
+    # 灰阶配色 + 微差, 大字用稍亮的灰
     shades = {
         "inference":("#2a2f38","#1a1e24"),
         "system":    ("#2d323c","#1c2026"),
@@ -152,11 +153,19 @@ def svg_placeholder(emoji, cat):
         "mixed":     ("#2c313b","#1c2027"),
     }
     c1, c2 = shades.get(cat,("#2a2f38","#1a1e24"))
+    # 根据文字长度调整字号
+    txt = visual or ""
+    n = len(txt)
+    if n <= 3: size = 44
+    elif n <= 5: size = 34
+    elif n <= 8: size = 26
+    else: size = 20
     return (f'<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">'
             f'<rect width="200" height="120" fill="{c1}"/>'
             f'<rect x="0" y="84" width="200" height="36" fill="{c2}"/>'
-            f'<text x="100" y="68" text-anchor="middle" fill="rgba(255,255,255,.55)" '
-            f'font-size="40">{emoji}</text></svg>')
+            f'<text x="100" y="62" text-anchor="middle" fill="rgba(255,255,255,.62)" '
+            f'font-family="Inter,sans-serif" font-weight="600" '
+            f'font-size="{size}">{txt}</text></svg>')
 
 # ──── 生成报告卡片 ────
 def gen_cards():
@@ -167,7 +176,7 @@ def gen_cards():
             dst, entry = r["dst"], r["entry"]
             if not os.path.isfile(os.path.join(REPO, dst, entry)): continue
             cat = CATS.get(r["cat"], CATS["mixed"])
-            svg = svg_placeholder(r["emoji"], r["cat"])
+            svg = svg_placeholder(r.get("visual",""), r["cat"])
             cards += f'''<a class="card" href="{dst}/{entry}" data-cat="{r['cat']}">
   <div class="card-img"><div class="ph">{svg}</div><span class="tag {cat['color']}">{cat['label']}</span></div>
   <div class="card-body">
