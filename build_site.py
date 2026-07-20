@@ -159,31 +159,90 @@ def load_posts():
             posts.append(p)
     return posts
 
-# ──── 简易 markdown → HTML ────
+# ──── Markdown → HTML (完整支持表格/引用/代码/链接/加粗) ────
 def md_to_html(text):
     lines = text.split('\n')
     out = []
+    i = 0
     in_ul = False
-    for line in lines:
-        s = line.strip()
-        if s.startswith('# '):
-            if in_ul: out.append('</ul>'); in_ul = False
-            out.append(f'<h1>{s[2:]}</h1>')
-        elif s.startswith('## '):
-            if in_ul: out.append('</ul>'); in_ul = False
-            out.append(f'<h2>{s[3:]}</h2>')
-        elif s.startswith('### '):
-            if in_ul: out.append('</ul>'); in_ul = False
-            out.append(f'<h3>{s[4:]}</h3>')
-        elif s.startswith('- ') or s.startswith('* '):
-            if not in_ul: out.append('<ul>'); in_ul = True
-            out.append(f'<li>{s[2:]}</li>')
-        elif s == '':
-            if in_ul: out.append('</ul>'); in_ul = False
-        else:
-            if in_ul: out.append('</ul>'); in_ul = False
-            out.append(f'<p>{s}</p>')
-    if in_ul: out.append('</ul>')
+    def close_ul():
+        nonlocal in_ul
+        if in_ul:
+            out.append('</ul>')
+            in_ul = False
+    def inline(s):
+        # 代码 `code`
+        s = re.sub(r'`([^`]+)`', r'<code>\1></code>', s)
+        # 加粗 **text**
+        s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
+        # 链接 [text](url)
+        s = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank" rel="noopener">\1</a>', s)
+        return s
+
+    while i < len(lines):
+        s = lines[i].strip()
+        # 代码块 ```
+        if s.startswith('```'):
+            lang = s[3:].strip()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith('```'):
+                code_lines.append(lines[i])
+                i += 1
+            close_ul()
+            out.append(f'<pre><code>{"<br>".join(code_lines)}</code></pre>')
+            i += 1
+            continue
+        # 表格 | ... | ... |
+        if '|' in s and s.startswith('|') and s.endswith('|') and i+1 < len(lines) and re.match(r'^[\s|:-]+$', lines[i+1].strip()):
+            header = [c.strip() for c in s.strip('|').split('|')]
+            i += 2  # skip header + separator
+            rows = []
+            while i < len(lines) and '|' in lines[i] and lines[i].strip().startswith('|'):
+                row = [c.strip() for c in lines[i].strip().strip('|').split('|')]
+                rows.append(row)
+                i += 1
+            close_ul()
+            th = ''.join(f'<th>{inline(c)}</th>' for c in header)
+            out.append(f'<table><thead><tr>{th}</tr></thead><tbody>')
+            for row in rows:
+                td = ''.join(f'<td>{inline(c)}</td>' for c in row)
+                out.append(f'<tr>{td}</tr>')
+            out.append('</tbody></table>')
+            continue
+        # 标题
+        hm = re.match(r'^(#{1,3})\s+(.*)', s)
+        if hm:
+            close_ul()
+            level = len(hm.group(1))
+            out.append(f'<h{level}>{inline(hm.group(2))}</h{level}>')
+            i += 1; continue
+        # 引用 >
+        if s.startswith('>'):
+            close_ul()
+            quote = s[1:].strip()
+            out.append(f'<blockquote><p>{inline(quote)}</p></blockquote>')
+            i += 1; continue
+        # 分隔线 ---
+        if s == '---':
+            close_ul()
+            out.append('<hr>')
+            i += 1; continue
+        # 无序列表
+        if s.startswith('- ') or s.startswith('* '):
+            if not in_ul:
+                out.append('<ul>'); in_ul = True
+            out.append(f'<li>{inline(s[2:])}</li>')
+            i += 1; continue
+        # 空行
+        if s == '':
+            close_ul()
+            i += 1; continue
+        # 普通段落
+        close_ul()
+        out.append(f'<p>{inline(s)}</p>')
+        i += 1
+    close_ul()
     return '\n'.join(out)
 
 # ──── 卡片视觉: 大字标题 (HTML 文字, 响应式字号匹配首页 hero) ────
@@ -314,6 +373,16 @@ def gen_post_page(post):
         content = f.read()
     m = re.match(r'^---\s*\n.*?\n---\s*\n(.*)$', content, re.S)
     body = m.group(1).strip() if m else content
+    # 跳过 body 中第一个 # 标题(与文章标题重复)
+    body_lines = body.split('\n')
+    start = 0
+    for idx, line in enumerate(body_lines):
+        if line.strip().startswith('# '):
+            start = idx + 1
+            break
+        elif line.strip() and not line.strip().startswith('---'):
+            break
+    body = '\n'.join(body_lines[start:]).strip()
     body_html = md_to_html(body)
     tags_html = "".join(f'<span class="ptag">{t}</span>' for t in post.get("tags",[]))
     return f'''<!doctype html>
@@ -335,6 +404,18 @@ def gen_post_page(post):
 .article-body p{{margin:0 0 1.2em}}
 .article-body ul{{padding-left:1.4em;margin:0 0 1.2em}}
 .article-body li{{margin-bottom:.4em}}
+.article-body table{{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.9em;display:block;overflow-x:auto}}
+.article-body th,.article-body td{{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top}}
+.article-body th{{background:var(--surface);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.03em}}
+.article-body tr:nth-child(even) td{{background:rgba(24,27,32,.3)}}
+.article-body blockquote{{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0;color:var(--fg2)}}
+.article-body blockquote p{{margin:0}}
+.article-body pre{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;overflow-x:auto;font-size:.82em;line-height:1.55;margin:1.2em 0}}
+.article-body code{{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:'JetBrains Mono',monospace}}
+.article-body pre code{{background:none;border:none;padding:0}}
+.article-body a{{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent;transition:border-color .15s}}
+.article-body a:hover{{border-bottom-color:var(--accent)}}
+.article-body hr{{border:none;border-top:1px solid var(--border-soft);margin:2em 0}}
 .back{{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}}
 </style>
 </head>
