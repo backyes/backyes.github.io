@@ -141,20 +141,21 @@ def md_to_html(text):
     if in_ul: out.append('</ul>')
     return '\n'.join(out)
 
-# ──── SVG 占位图 ────
+# ──── SVG 占位图 — Lil'Log: muted greyscale, no rainbow ────
 def svg_placeholder(emoji, cat):
-    colors = {
-        "inference":("#58a6ff","#1f6feb"), "system":("#a371f7","#8957e5"),
-        "network":("#3fb950","#2ea043"), "chip":("#d29922","#9e6a03"),
-        "mixed":("#f778ba","#bf4b8a"),
+    # 统一的低调灰阶配色,仅明暗微差
+    shades = {
+        "inference":("#2a2f38","#1a1e24"),
+        "system":    ("#2d323c","#1c2026"),
+        "network":   ("#2b303a","#1b1f25"),
+        "chip":      ("#2e333e","#1d2128"),
+        "mixed":     ("#2c313b","#1c2027"),
     }
-    c1, c2 = colors.get(cat,("#58a6ff","#1f6feb"))
+    c1, c2 = shades.get(cat,("#2a2f38","#1a1e24"))
     return (f'<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">'
-            f'<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
-            f'<stop offset="0" stop-color="{c1}"/><stop offset="1" stop-color="{c2}"/>'
-            f'</linearGradient></defs>'
-            f'<rect width="200" height="120" fill="url(#g)"/>'
-            f'<text x="100" y="68" text-anchor="middle" fill="rgba(255,255,255,.9)" '
+            f'<rect width="200" height="120" fill="{c1}"/>'
+            f'<rect x="0" y="84" width="200" height="36" fill="{c2}"/>'
+            f'<text x="100" y="68" text-anchor="middle" fill="rgba(255,255,255,.55)" '
             f'font-size="40">{emoji}</text></svg>')
 
 # ──── 生成报告卡片 ────
