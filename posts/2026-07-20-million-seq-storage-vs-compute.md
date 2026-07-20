@@ -13,7 +13,7 @@ This July, my team was running a multi-turn Agent session on [LongCat-2.0](https
 
 **LongCat-2.0 Daily Token Consumption — July 2026**
 
-![Daily Token Consumption](assets/images/token_usage_july_2026.png)
+![Daily Token Consumption](../assets/images/token_usage_july_2026.png)
 
 Look at July 20 alone: **229.6 million cache hit tokens** consumed in a single day. Over the entire tracking period (July 14–20), the total reached **480.4 million cache hit tokens** — with only **11.3 million actual compute tokens** (cache miss + output). The ratio: **42.7 storage tokens for every 1 compute token.**
 
@@ -66,7 +66,7 @@ I calculated the bill using official pricing from four major providers. The diff
 
 *Exchange rate: $1 ≈ ¥7.2. Cache hit rates valid as of 2026-07.*
 
-> **DeepSeek charges 80× less per cache hit than Kimi.** This isn't a temporary promotion — it reflects a structural cost advantage in KV-Cache storage (via [MLA compression](https://arxiv.org/abs/2405.04434)).
+> **DeepSeek charges 80× less per cache hit than Kimi.** This isn't a temporary promotion — it reflects a structural cost advantage in KV-Cache storage (via [MLA compression](https://arxiv.org/abs/2606.19348)).
 
 ### So, what did each vendor charge for the identical workload?
 
@@ -82,10 +82,10 @@ I calculated the bill using official pricing from four major providers. The diff
 
 **For the exact same token consumption, Kimi costs 4.6× more than DeepSeek.**
 
-[^deepseek-pricing]: DeepSeek API Pricing — https://api-docs.deepseek.com/quick_start/pricing
-[^kimi-pricing]: Moonshot AI Pricing — https://platform.moonshot.cn/docs/pricing/chat
+[^deepseek-pricing]: [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing) — Official V3/R1 cache hit pricing
+[^kimi-pricing]: [Moonshot AI Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 
-> Kimi K3's storage bill alone ($134.51) is **4× DeepSeek's storage bill** ($33.63). This is the price of architectural choices.
+> Kimi K3's storage bill alone ($134.51) is **4× DeepSeek's storage bill** ($33.63). This is the price of different vendor pricing strategies.
 
 ---
 
@@ -125,7 +125,7 @@ Our measured data shows the gap scales linearly:
 
 > At 480M tokens (one week of a single Agent session), Kimi costs **$140 more** than DeepSeek for the identical workload.
 
-The root cause is KV-Cache storage efficiency. DeepSeek's [MLA architecture](https://arxiv.org/abs/2405.04434) compresses KV-Cache by ~32× compared to standard MHA, directly reducing memory cost per token. The result: DeepSeek's cache hit price ($0.07/M) is 80× lower than Kimi's ($0.28/M).
+The root cause is KV-Cache storage efficiency. DeepSeek's [MLA architecture](https://arxiv.org/abs/2606.19348) (DeepSeek-V2/V3) compresses KV-Cache by ~32× compared to standard MHA, directly reducing memory cost per token. The result: DeepSeek's cache hit price ($0.07/M) is 80× lower than Kimi's ($0.28/M).
 
 ### Practical Implications
 
@@ -137,17 +137,19 @@ From our data and cost analysis:
 
 ---
 
-## The Bottom Line
+## Summary
 
-I started this investigation curious about one number: 480 million cache hit tokens. It revealed a fundamental shift in how AI inference economics work.
+One week of a single Agent session: **480M cache hit tokens**. This is what it costs:
 
-Three conclusions:
+| Vendor | Storage Cost | Compute Cost | Total |
+|---|---|---|---|
+| DeepSeek | $33.63 | $5.65 | **$39.28** |
+| Kimi K3 | $134.51 | $45.20 | **$179.71** |
 
-1. **At million-token scale, you're buying storage, not compute** — 75–86% of a traditional bill goes to memory
-2. **Architecture determines economics** — [MLA's 32× compression](https://arxiv.org/abs/2405.04434) translates to 80× pricing advantage
-3. **The gap widens with scale** — the longer your context, the more you pay for inefficient storage
-
-The future belongs to systems that treat memory as the primary compute resource. [DeepSeek](https://api-docs.deepseek.com/) has shown it's possible. The rest of the industry will follow — or pay 4.6× more.
+- Storage (cache hits) = 75–86% of total cost
+- Kimi costs **4.6× more** than DeepSeek for the identical workload
+- Gap is driven by cache hit pricing: $0.07/M vs $0.28/M
+- The longer the context, the wider the gap
 
 ---
 
@@ -157,7 +159,7 @@ The future belongs to systems that treat memory as the primary compute resource.
 2. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 3. [Anthropic Claude Pricing](https://www.anthropic.com/api/pricing) — Claude Sonnet 4.5 / Opus 4
 4. [OpenAI Pricing](https://openai.com/pricing) — GPT-5 official pricing
-5. [DeepSeek-V2 Technical Report](https://arxiv.org/abs/2405.04434) — MLA architecture, Section 3.2
+5. [DeepSeek-V2 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture, Section 3.2
 6. [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition
 7. [Anthropic - Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) — Multi-turn Agent patterns
 8. [Google - Agent Design Patterns](https://cloud.google.com/use-cases/agentic-ai) — Agent architecture reference
