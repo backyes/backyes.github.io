@@ -74,6 +74,33 @@ REPORTS = [
      "desc":"联盟首批意向成员 + 初创企业调研报告 · 含 306 家深度分析",
      "cat":"mixed","priority":"p2",
      "tags":["太空经济","航天","初创企业","产业调研"]},
+
+    # ── 以下为新规模化添加 ──
+    {"dst":"pd-routing","entry":"report.html","visual":"Routing",
+     "title":"PD 分离 Request Routing 内部实现",
+     "desc":"PD 分离架构下请求路由的源码级拆解 · SGLang / Mooncake / LMCache 内部队列生命周期 · 与 P/D KVCache 流通互补视角",
+     "cat":"inference","priority":"p1",
+     "tags":["P-D分离","请求路由","SGLang","LMCache","队列","源码分析"]},
+    {"dst":"trillium","entry":"Trillium_vs_NVIDIA_LPX_架构分析.html","visual":"Trillium",
+     "title":"Trillium vs NVIDIA LPX 微架构分析",
+     "desc":"Groq Trillium 与 NVIDIA LPX 微架构 / 集群架构深度对比 · 芯片设计范式 · 互联拓扑",
+     "cat":"chip","priority":"p1",
+     "tags":["Trillium","NVIDIA","LPX","微架构","Groq","芯片对比"]},
+    {"dst":"spacex","entry":"太空经济与SpaceX深度分析报告.html","visual":"SpaceX",
+     "title":"SpaceX 深度分析 (全球视野·AI算力视角)",
+     "desc":"SpaceX 全版图深度分析 · 产品布局 / 财务数据 / 政府合同 / 技术迭代 · 中国太空经济对比 · AI 算力交叉视角",
+     "cat":"mixed","priority":"p0",
+     "tags":["SpaceX","太空经济","产业调研","财务分析","AI算力","全球视野"]},
+    {"dst":"hbm-cxl","entry":"report.html","visual":"HBM",
+     "title":"HBM / CXL / Memory 市场调研",
+     "desc":"HBM CXL NAND 内存层级市场深度调研 · 三星 / SK海力士 / 美光 · 技术路线与竞争格局",
+     "cat":"chip","priority":"p1",
+     "tags":["HBM","CXL","存储","内存层级","三星","SK海力士","美光"]},
+    {"dst":"inference-community","entry":"web/sources/coreweave_inference.html","visual":"InferCom",
+     "title":"推理社区 2026 前沿动态",
+     "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
+     "cat":"inference","priority":"p1",
+     "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
 ]
 
 CATS = {
