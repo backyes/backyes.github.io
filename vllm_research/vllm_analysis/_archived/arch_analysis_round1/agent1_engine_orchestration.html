@@ -1,0 +1,493 @@
+<!doctype html><html lang="head"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>L1 引擎/编排 · vLLM Arch</title><link rel="stylesheet" href="report.css"></head>
+<body><div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>L1 引擎/编排</h1><div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
+<article><h1 id="layer-1-entrypoints-engine-core-executor-orchestration">Layer 1 — Entrypoints, Engine Core, Executor, Orchestration</h1>
+<blockquote>
+<p>vLLM upstream repo: <code>/vllm</code> · vLLM-Ascend: <code>/vllm-ascend</code> · Focus: how a request enters vLLM, becomes
+scheduled work, runs a forward pass, and returns tokens. Audience: senior systems/engineer readers.</p>
+</blockquote>
+<hr />
+<h2 id="0-a-note-on-v0-vs-v1">0. A note on v0 vs v1</h2>
+<p>The <code>vllm/engine/</code>, <code>vllm/core/</code>, <code>vllm/worker/</code>, <code>vllm/attention/</code>, <code>vllm/spec_decode/</code> tree is the <strong>legacy
+v0</strong> code. As of this checkout it is functionally empty:</p>
+<ul>
+<li><code>vllm/engine/llm_engine.py</code> (7 lines) — <code>LLMEngine = V1LLMEngine</code>, a plain alias to the v1 class.</li>
+<li><code>vllm/engine/async_llm_engine.py</code> — same, aliases <code>vllm.v1.engine.async_llm.AsyncLLM</code>.</li>
+<li><code>vllm/core/</code>, <code>vllm/worker/</code>, <code>vllm/attention/</code>, <code>vllm/spec_decode/</code> — <strong>zero</strong> <code>.py</code> files.</li>
+</ul>
+<p>All real logic lives under <strong><code>vllm/v1/</code></strong>. The v1/v0 distinction therefore matters less as "two engines"
+and more as <strong>two public surface shapes</strong>: the synchronous <code>LLM</code> API (offline, kept for back-compat) and the
+async-first <code>AsyncLLM</code> (the real serving path). Both now route to the same v1 core.</p>
+<hr />
+<h2 id="1-request-lifecycle-end-to-end">1. Request lifecycle (end-to-end)</h2>
+<p>Two top-level entry stacks share one engine core:</p>
+<ul>
+<li><strong>HTTP</strong> — <code>vllm.entrypoints.openai.api_server</code> (FastAPI) → <code>AsyncLLM</code></li>
+<li><strong>Offline</strong> — <code>vllm.entrypoints.llm.LLM</code> (synchronous, batches prompts) → <code>LLMEngine</code></li>
+<li><strong>gRPC / custom</strong> — <code>vllm.entrypoints.grpc_server</code> builds an <code>AsyncLLM</code>-delegating thread pool, so the
+  engine-side path is identical and omitted below for brevity.</li>
+</ul>
+<h3 id="object-graph-references">Object graph (references)</h3>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Type</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Public offline API</td>
+<td><code>LLM</code></td>
+<td><code>vllm/entrypoints/llm.py:66</code></td>
+</tr>
+<tr>
+<td>Public async API</td>
+<td><code>AsyncLLM(EngineClient)</code></td>
+<td><code>vllm/v1/engine/async_llm.py:70</code></td>
+</tr>
+<tr>
+<td>Engine wrapper (sync)</td>
+<td><code>LLMEngine</code></td>
+<td><code>vllm/v1/engine/llm_engine.py:48</code></td>
+</tr>
+<tr>
+<td>Inner loop</td>
+<td><code>EngineCore</code></td>
+<td><code>vllm/v1/engine/core.py:98</code></td>
+</tr>
+<tr>
+<td>Inner loop (multiproc process)</td>
+<td><code>EngineCoreProc(EngineCore)</code></td>
+<td><code>vllm/v1/engine/core.py:995</code></td>
+</tr>
+<tr>
+<td>Wire protocol</td>
+<td><code>EngineCoreRequest</code>, <code>EngineCoreOutput</code>, <code>EngineCoreOutputs</code></td>
+<td><code>vllm/v1/engine/__init__.py:88 …</code></td>
+</tr>
+<tr>
+<td>Planner</td>
+<td><code>SchedulerInterface</code></td>
+<td><code>vllm/v1/core/sched/interface.py:37</code></td>
+</tr>
+<tr>
+<td>Unit of work</td>
+<td><code>SchedulerOutput</code></td>
+<td><code>vllm/v1/core/sched/output.py:191</code></td>
+</tr>
+<tr>
+<td>Executor (abstract)</td>
+<td><code>Executor</code></td>
+<td><code>vllm/v1/executor/abstract.py:37</code></td>
+</tr>
+<tr>
+<td>Client connecting wrapper ↔ core</td>
+<td><code>EngineCoreClient</code> (Inproc / SyncMP / AsyncMP)</td>
+<td><code>vllm/v1/engine/core_client.py:71 276 467+</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="numbered-flow">Numbered flow</h3>
+<ol>
+<li><strong>HTTP request arrives.</strong> FastAPI route decodes the OpenAI-style JSON in
+   <code>vllm/entrypoints/openai/api_server.py:156+</code>. <code>build_async_engine_from_engine_args</code>
+   builds the engine once at startup.</li>
+<li><strong>Engine bootstrap.</strong> <code>api_server.py:156</code> → <code>AsyncLLM.from_vllm_config(...)</code> →
+   <code>async_llm.py:203</code>, which itself constructs <code>LLMEngine(from_engine_args→...)</code> and an <strong>async</strong>
+   <code>EngineCoreClient</code> (typically <code>AsyncMPClient</code>). The async client's <code>__init__</code> spawns the engine
+   worker process(es) via <code>launch_core_engines</code> and opens ZMQ sockets
+   (<code>core_client.py:480+</code>).</li>
+<li><strong>Input normalization.</strong> The FastAPI app wraps the raw prompt through the <code>Renderer</code>
+   (<code>chat_utils</code>) → <code>InputProcessor.process_inputs</code> (<code>vllm/v1/engine/input_processor.py:242</code>), which
+   validates params, tokenizes, hashes, and produces an <code>EngineCoreRequest</code> (a <code>msgspec.Struct</code>,
+   zero-copy-serializable over ZMQ/shm).</li>
+<li><strong>Admission to the engine wrapper.</strong> Async handler calls <code>AsyncLLM.add_request</code>, which delegates to
+   <code>LLMEngine.add_request</code> (<code>llm_engine.py:218</code>), which (a) registers a <code>RequestState</code> in the
+   <code>OutputProcessor</code>, (b) forwards the request to the <code>EngineCoreClient</code>.</li>
+<li><strong>Transport over the client boundary.</strong> Depending on the mode:
+   - <em>multiprocess</em> (<code>AsyncMPClient</code> / <code>SyncMPClient</code>): the request is serialized (msgspec+cloudpickle)
+     and pushed through a ZMQ <strong>ROUTER</strong> socket to the engine process
+     (<code>core_client.py:660+</code>), where <code>EngineCoreProc._process_input_queue</code> (<code>core.py:1368</code>) pulls it off.
+   - <em>inproc</em> (<code>InprocClient</code>): <code>add_request</code> calls straight into <code>EngineCore</code> synchronously —
+     same code path, no IPC.</li>
+<li><strong>Dispatch to <code>EngineCore</code>.</strong> <code>_handle_client_request</code> (<code>core.py:1471</code>) converts the raw
+   <code>EngineCoreRequest</code> into a domain <code>Request</code> via <code>preprocess_add_request</code> (<code>core.py:954</code>), then
+   <code>engine_core.add_request</code> (<code>core.py:431</code>) hands it to the <code>Scheduler</code>, which places it in the
+   <code>WAITING</code> queue (<code>RequestStatus.WAITING</code> → … → <code>RUNNING</code>).</li>
+<li><strong>The engine busy loop (inside <code>EngineCoreProc</code>).</strong> <code>run_busy_loop</code> (<code>core.py:1358</code>):</li>
+</ol>
+<p><code>python
+   while self._handle_shutdown():
+       self._process_input_queue()     # drain ZMQ → scheduler
+       self._process_engine_step()     # one schedule/execute/output cycle (or yield if idle)</code>
+8. <strong>One step — the heart of it.</strong> <code>EngineCore.step</code> (<code>core.py:576</code>):</p>
+<p><code>python
+   scheduler_output = self.scheduler.schedule(throttle_prefills)
+   future = self.model_executor.execute_model(scheduler_output, non_block=True)
+   grammar_output = self.scheduler.get_grammar_bitmask(scheduler_output)
+   model_output = future.result()                      # runs THROUGH the Executor
+   model_output = model_output or self.model_executor.sample_tokens(grammar_output)
+   self._process_aborts_queue()
+   engine_core_outputs = self.scheduler.update_from_output(scheduler_output, model_output)</code>
+   <code>schedule()</code> returns a <code>SchedulerOutput</code> describing, per request id, how many tokens to compute
+   (<code>num_scheduled_tokens</code>). The executor call is non-blocking in <em>pipelined</em> mode; otherwise it
+   blocks for the forward pass.
+9. <strong>Executor does the forward.</strong> <code>execute_model</code> (<code>executor/abstract.py:210</code>) is the only contract a
+   "runner" must fulfill. For the default <code>MultiprocExecutor</code> it fans out <code>collective_rpc("execute_model",
+   scheduler_output)</code> over shared-memory message queues to each TP worker process
+   (<code>executor/multiproc_executor.py:310, 343</code>); the driver worker runs the model and returns a
+   <code>ModelRunnerOutput</code>.
+10. <strong>Scheduler retires the step.</strong> <code>update_from_output</code> (<code>SchedulerInterface</code>, <code>interface.py:78</code>)
+    consumes draft tokens, detects finished requests, and emits a per-client-index map of
+    <code>EngineCoreOutputs</code> — the unit of output returned to the wrapper.
+11. <strong>Wrapper pulls output.</strong> In the Sync path <code>LLMEngine.step</code> (<code>llm_engine.py:296</code>) calls
+    <code>engine_core.get_output()</code> to receive <code>EngineCoreOutputs</code>. The Async path runs <code>_run_output_handler</code>
+    (<code>async_llm.py:637</code>) — a long-lived <code>asyncio.Task</code> that awaits <code>engine_core.get_output_async()</code> in a
+    loop and slices the batch (<code>VLLM_V1_OUTPUT_PROC_CHUNK_SIZE</code>) so no single chunk blocks the event
+    loop.
+12. <strong>Detokenization → API reply.</strong> <code>OutputProcessor.process_outputs</code> (<code>engine/output_processor.py:584</code>)
+    is the <strong>only loop over the full batch</strong> (per its docstring) — it updates iteration stats,
+    runs the per-request <code>IncrementalDetokenizer</code> (<code>engine/detokenizer.py:30</code>) to turn raw token ids
+    into text + stop-string checks, computes logprobs, and either returns a <code>RequestOutput</code> (sync) or
+    pushes it into the per-request queue (async → streamed by the FastAPI route).</p>
+<hr />
+<h2 id="2-enginecore-architecture">2. EngineCore architecture</h2>
+<p><code>EngineCore</code> is the <em>single inner loop</em>. It owns: <code>executor_class → model_executor</code>, the <code>Scheduler</code>,
+a <code>StructuredOutputManager</code>, KV-cache derived state, a per-step futures deque (pipeline parallelism),
+and an aborts queue. Everything is hidden from the "serving" layer by the <code>EngineCoreClient</code> seam.</p>
+<h3 id="class-hierarchy">Class hierarchy</h3>
+<pre><code>EngineClient (ABC)                            vllm/engine/protocol (serving contract)
+  └─ AsyncLLM                                 vllm/v1/engine/async_llm.py:70
+  └─ LLMEngine                                vllm/v1/engine/llm_engine.py:48
+  └─ *no-op base* EngineClient (shared)
+
+EngineCoreClient (ABC)                        vllm/v1/engine/core_client.py:71
+  ├─ InprocClient         (no IPC)            vllm/v1/engine/core_client.py:276
+  └─ MPClient             (ZMQ, common)       vllm/v1/engine/core_client.py:467
+       ├─ SyncMPClient                        vllm/v1/engine/core_client.py:779
+       ├─ AsyncMPClient                       vllm/v1/engine/core_client.py:~660
+       ├─ DPAsyncMPClient    (data-parallel)  (dedicated, scales the bus out)
+       └─ DPLBAsyncMPClient  (DP + LB)
+
+  └─ EngineCoreActorMixin  (Ray actor veneer) vllm/v1/engine/core.py:2224
+
+EngineCore                                    vllm/v1/engine/core.py:98
+  └─ EngineCoreProc         (engine-in-a-proc) vllm/v1/engine/core.py:995
+       └─ DPEngineCoreProc   (DP)               vllm/v1/engine/core.py:1844
+</code></pre>
+<h3 id="hot-path-main-loop-call-order">Hot path / main loop (call order)</h3>
+<pre><code>LLMEngine.step / AsyncLLM._run_output_handler
+  ▸ EngineCoreClient.get_output()
+     ├ InprocClient        -&gt; EngineCore.step_fn() + post_step()               core.py:576
+     └ MPClient            -&gt; read ZMQ PULL (EngineCoreOutputs) populated by
+                              EngineCoreProc._process_engine_step()             core.py:1399
+  └─ OutputProcessor.process_outputs()                                          output_processor.py:584
+  └─ detokenize via IncrementalDetokenizer                                     detokenizer.py:30
+
+EngineCore.step                                                              core.py:576
+  ├ scheduler.schedule()       -&gt; SchedulerOutput                              interface.py:62
+  ├ model_executor.execute_model(non_block=True) -&gt; Future
+  │    └─ (MultiprocExecutor) collective_rpc over shm mq                      multiproc_executor.py:343
+  ├ future.result() + sample_tokens()
+  ├ scheduler.update_from_output() -&gt; {client_idx: EngineCoreOutputs}          interface.py:78
+  └─ (post_step) take_draft_token_ids for speculative decode                  core.py:608
+
+EngineCoreProc (separate process)                                            core.py:995
+  run_busy_loop                                                            core.py:1358
+    ├ _process_input_queue()         &lt;- ZMQ ROUTER                          core.py:1368
+    │    └─ _handle_client_request(ADD|ABORT|UTILITY|WAKEUP|...)            core.py:1471
+    └─ _process_engine_step()  -&gt;  EngineCore.step_fn()  -&gt; output_queue      core.py:1399
+</code></pre>
+<h3 id="key-request-state-request">Key request state — <code>Request</code></h3>
+<p>Defined at <code>vllm/v1/request.py:59</code>. Status is a <code>RequestStatus</code> enum (<code>IntEnum</code>) in the same file, line 343,
+partitioned into <em>live</em> (WAITING / WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR / WAITING_FOR_REMOTE_KVS /
+WAITING_FOR_STREAMING_REQ / RUNNING / PREEMPTED) and <em>finished</em> (&gt; PREEMPTED):
+<code>FINISHED_{STOPPED,LENGTH_CAPPED,ABORTED,IGNORED,ERROR,REPETITION}</code>. Finishing is one-way: every status
+after <code>PREEMPTED</code> is terminal, mapped to a <code>FinishReason</code> via <code>_FINISHED_REASON_MAP</code>
+(<code>request.py:376</code>). Internally the scheduler tracks <code>Request</code> objects; the OutputProcessor tracks a mirror
+<code>RequestState</code> (<code>engine/output_processor.py:129</code>) — that pairing lets the wrapper stay detached from
+the scheduler's bookkeeping.</p>
+<h3 id="wire-formats-ipc">Wire formats (IPC)</h3>
+<ul>
+<li><code>EngineCoreRequest</code> — <code>msgspec.Struct(array_like=True, omit_defaults=True, gc=False)</code> with
+  <code>request_id</code>, <code>prompt_token_ids</code>, <code>mm_features</code>, <code>sampling_params</code>/<code>pooling_params</code>, <code>arrival_time</code>,
+  <code>data_parallel_rank</code>, <code>client_index</code>, <code>current_wave</code> (<code>__init__.py:88</code>). The <code>gc=False</code>/<code>array_like</code>
+  flags are chosen for zero-copy over ZMQ / shared memory.</li>
+<li><code>EngineCoreOutput</code>, <code>EngineCoreOutputs</code> — per-request token payload side, same struct policy.</li>
+<li>Utility/control messages (<code>UtilityOutput</code>, <code>EngineCoreRequestType</code>, <code>EngineCoreReadyResponse</code>) ride
+  the same socket stream, multiplexed by an enum tag.</li>
+</ul>
+<h3 id="async-boundaries-where-concurrency-actually-lives">Async boundaries — where concurrency actually lives</h3>
+<p>There are <strong>three</strong> concurrent surfaces a researcher must distinguish (a common source of bugs when
+porting to a new device):</p>
+<ol>
+<li><strong><code>EngineCoreProc</code> OS process</strong> — runs the Python busy loop (<code>coroutine-free</code>, thread-free in the
+   hot path). Communication is +1 ZMQ ROUTER socket per client direction, + shared-memory message
+   queues for model I/O. <em>This is where the device lives.</em></li>
+<li><strong><code>asyncio</code> layer</strong> — <code>AsyncLLM._run_output_handler</code> + per-request <code>generate()</code> taskgraph. Pure
+   bytes-in / bytes-out; never touches the device. It is allowed to block only in small slices
+   (<code>VLLM_V1_OUTPUT_PROC_CHUNK_SIZE</code>) ; between slices it <code>await asyncio.sleep(0)</code>.</li>
+<li><strong>TP worker processes / the device</strong> — driven by <code>MultiprocExecutor.collective_rpc</code>. The GPU
+   executes the forward; the engine loop is deliberately <strong>not</strong> inside that process.</li>
+</ol>
+<p>The cleanest line to read: <em>the engine loop is synchronous; concurrency is at the edges
+(ZMQ processes + asyncio)</em>. Hardware backends only ever see (1), via the <code>Executor</code> interface.</p>
+<hr />
+<h2 id="3-v0-vs-v1-divergence">3. v0 vs v1 divergence</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>v0 (now dropped)</th>
+<th>v1 (current)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Where the loop lived</td>
+<td><code>AsyncLLMEngine</code> owned tokenization + scheduling + HTTP + metrics in one huge class.</td>
+<td><code>EngineCore</code> is the inner loop; <code>LLMEngine</code>/<code>AsyncLLM</code> are thin wrappers; <code>OutputProcessor</code> handles detokenization.</td>
+</tr>
+<tr>
+<td>Scheduling model</td>
+<td>Iteration-centric scheduler; speculative decode, chunked prefill bolted onto a sequential loop.</td>
+<td>Same <code>SchedulerInterface</code>, but the loop is <strong>continuous-decode-friendly</strong>; chunked prefill / streaming</td>
+</tr>
+<tr>
+<td>are first-class.</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Serving/RL coupling</td>
+<td><code>LLM</code> subclassed <code>AsyncLLMEngine</code>; offline, HTTP, and research entry points shared a tangled class hierarchy.</td>
+<td><code>EngineCore</code> is decoupled from any serving infra; <code>AsyncLLM</code> exposes it cleanly for orchestration/RL use.</td>
+</tr>
+<tr>
+<td>Multi-process story</td>
+<td>Worker processes combined model execution <strong>and</strong> bootstrap; hard to swap launchers.</td>
+<td><code>MultiprocExecutor</code> = "run one TP group"; <code>EngineCoreProc</code> = event loop in its own process; Ray-actor</td>
+</tr>
+<tr>
+<td>(<code>EngineCoreActorMixin</code>) is a thin veneer.</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>State</td>
+<td><code>SequenceGroup</code>/<code>Sequence</code> model living partly in core partly in worker.</td>
+<td><code>Request</code> (core) + <code>RequestState</code> (wrapper) split so the core is agnostic to detokenization.</td>
+</tr>
+<tr>
+<td>Public APIs</td>
+<td><code>LLM</code>, <code>AsyncLLMEngine</code> divergent.</td>
+<td>Single v1 core + thin sync/async wrappers; legacy names are aliases.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="architectural-motivations-distilled">Architectural motivations distilled</h3>
+<ol>
+<li><strong>Continuous-decode-friendly loop.</strong> <code>EngineCore.step</code> was factored out so the scheduler's work can
+   overlap with model execution, enabling chunked prefill and speculative decode as first-class paths
+   rather than branches bolted onto a sequential <code>add_next_token</code> loop. The <code>StepFuture</code> future allows
+   schedule/forward overlap.</li>
+<li><strong>Decouple inference from serving/RL.</strong> The v0 <code>LLM</code> simultaneously owned tokenization,
+   scheduling, and HTTP — a dependency tangle that blocked RL researchers (who wanted the <em>engine</em> but
+   not one specific HTTP shim). The v1 <code>EngineCoreClient</code> seam is the fix: swap <code>InprocClient</code> ↔
+   <code>AsyncMPClient</code> ↔ Ray actor without changing the inner loop.</li>
+<li><strong>Single-process-oriented engine loop.</strong> v0 scattered work across worker processes; v1 pushes all
+   the bookkeeping into the <code>EngineCoreProc</code> process and lets the executor only "do one TP group".
+   This makes device adapters (e.g. Ascend) plug in once via the <code>Executor</code> interface.</li>
+</ol>
+<hr />
+<h2 id="4-executor-abstraction">4. Executor abstraction</h2>
+<p><strong><code>Executor</code> (<code>vllm/v1/executor/abstract.py:37</code>) abstracts "how to invoke a model forward across a TP group."</strong></p>
+<h3 id="class-hierarchy_1">Class hierarchy</h3>
+<pre><code>Executor (ABC)                                            vllm/v1/executor/abstract.py:37
+  ├─ UniProcExecutor         (single process, no TP)        vllm/v1/executor/uniproc_executor.py:45
+  │    └─ ExecutorWithExternalLauncher                     uniproc_executor.py:150
+  ├─ MultiprocExecutor       (TP via spawned procs)        vllm/v1/executor/multiproc_executor.py:103
+  │    └─ MultiprocExecutor -&gt; RayDistributedExecutor ?   (ray_executor.py:64)
+  ├─ RayDistributedExecutor  (Ray actor model workers)     vllm/v1/executor/ray_executor.py:64
+  │    └─ RayExecutorV2                                   vllm/v1/executor/ray_executor_v2.py
+  └─ ExecutorWithExternalLauncher                         uniproc_executor.py:150
+</code></pre>
+<h3 id="the-executor-interface-the-contract-the-engine-calls">The Executor interface (the contract the engine calls)</h3>
+<p>From <code>abstract.py:146+</code>:</p>
+<ul>
+<li><code>get_class(vllm_config)</code> — choose the impl:</li>
+<li>explicit <code>distributed_executor_backend</code> → <code>RayExecutorV2</code> (≥2 nodes),</li>
+<li><code>RayDistributedExecutor</code> (single node but &gt;1 device),</li>
+<li><code>MultiprocExecutor</code> (multi-process, default),</li>
+<li><code>UniProcExecutor</code> (1 device),</li>
+<li><code>ExecutorWithExternalLauncher</code> (external launcher / Ascend-style).</li>
+<li><code>execute_model(scheduler_output)</code> → <code>ModelRunnerOutput | None | Future</code>
+  (chain with <code>sample_tokens</code>) — the <strong>only</strong> call that actually touches hardware.</li>
+<li><code>initialize_from_config(kv_cache_configs)</code>, <code>determine_available_memory()</code>, <code>get_kv_cache_specs()</code>,
+  <code>collective_rpc</code>, <code>execute_dummy_batch</code>, <code>profile</code>, <code>add_lora/remove_lora/pin_lora/list_loras</code>,
+  <code>save_sharded_state</code>, <code>sleep/wake_up</code> (for C10d sleep-level power mgmt).</li>
+<li><code>supports_async_scheduling()</code> — whether the executor can return a future and overlap scheduling.</li>
+</ul>
+<h3 id="multiproc-path-default">Multiproc path (default)</h3>
+<p><code>MultiprocExecutor._init_executor</code> (<code>multiproc_executor.py:110</code>):</p>
+<ul>
+<li>reads <code>tp_size × pp_size × pcp_size</code>, stores <code>self.workers: list[WorkerProc]</code>.</li>
+<li>Allocates N <code>WorkerProc</code> processes (<code>WorkerProc.make_worker_process</code>, <code>multiproc_executor.py:597+</code>);
+  each calls <code>WorkerProc.worker_main</code>, builds the device <code>ModelRunner</code>, and enters its own
+  <code>worker_busy_loop</code>.</li>
+<li>For I/O it uses <strong>shared-memory <code>MessageQueue</code></strong> (<code>self.rpc_broadcast_mq</code> to scatter a batch of tasks;
+  N <code>response_mqs</code> to gather results) — not sockets inside a single TP group.</li>
+<li><code>execute_model</code> → <code>collective_rpc("execute_model", scheduler_output,
+  unique_reply_rank=self.output_rank)</code> (<code>multiproc_executor.py:310</code>): a fan-out to all workers, fan-in
+  of a single reply. Index <code>self.output_rank</code> = the only rank that replies to minimize traffic
+  (<code>_get_output_rank</code>, line 498).</li>
+<li>Heartbeat via <code>death_writers</code> / <code>monitor_death_pipe</code>; on failure, <code>register_failure_callback</code> fires
+  back into the engine loop.</li>
+</ul>
+<p><code>Executor.execute_model</code> is therefore decoupled from worker creation: the executor is <em>only</em> a
+scatter/gather primitive around a fixed pool of workers that already hold the device and model.</p>
+<h3 id="uniproc-path-single-device-external-launcher">UniProc path (single device / external launcher)</h3>
+<p><code>UniProcExecutor</code> (<code>uniproc_executor.py:45</code>) keeps a single <code>WorkerWrapperBase</code> (<code>rpc_rank=0</code>) and
+synchronously calls <code>run_method(self.driver_worker, "execute_model", ...)</code>. <code>ExecutorWithExternalLauncher</code>
+(layer at line 150) overrides <code>_init_executor</code> to skip <code>load_model</code> (the external launcher owns it) and
+returns a <code>determine_available_memory()</code> that hands control to the launcher — this is exactly the
+shape an Ascend-style external-harness adapter would take.</p>
+<h3 id="ray-path">Ray path</h3>
+<p><code>RayDistributedExecutor</code> (<code>ray_executor.py:64</code>) runs model workers as <strong>Ray actors</strong>, builds a
+compiled Ray DAG (<code>_compiled_ray_dag</code>, line 527) for <code>execute_model</code>, and <code>reinitialize_distributed</code>
+(line 380) re-assigns a communication group when the set of actors changes. <code>sample_tokens</code> is a sibling
+<code>collective_rpc("sample_tokens")</code> so the TP/PP group proposal (line 409) lets the DAG carry tokens
+across without returning through the loop between steps.</p>
+<h3 id="so-what-exactly-does-the-executor-isolate">So what exactly does the Executor <em>isolate</em>?</h3>
+<p>It isolates <strong>"how we run one TP group"</strong> from <strong>"how we orchestrate"</strong>:</p>
+<pre><code>                SchedulerOutput          ModelRunnerOutput
+  EngineCore ─────────────────────── Executor ──────────────────&gt; device workers / ray
+    (orch)       scheduler_output        (dispatch)                (device)
+</code></pre>
+<ul>
+<li>"how we orchestrate" = scheduler, KV-cache planning, multimodal, abort/token bookkeeping, output
+  chunking, stop-string detection — all in <code>EngineCore</code> / <code>EngineCoreClient</code> / <code>OutputProcessor</code>.</li>
+<li>"how we run one TP group" = allocation of N workers, the RPC primitive, failure handling, model
+  loading — all inside <code>Executor</code> + the driver worker.</li>
+</ul>
+<p>This split means the EngineCore never imports a <code>torch</code> device, a <code>WorkerProc</code>, or a Ray runtime.</p>
+<hr />
+<h2 id="5-design-insights-for-an-inference-architect">5. Design insights for an inference architect</h2>
+<p>These are the <strong>patterns a hardware vendor or systems team must internalize</strong> when adapting vLLM
+(e.g. the Ascend port in <code>/vllm-ascend</code>) — not code trivia, but the <em>load-bearing</em> ideas.</p>
+<h3 id="a-the-engine-loop-is-aggressively-single-threaded-the-author-expects-all-device-time-to-be">(a) The engine loop is aggressively single-threaded; the author expects <em>all device time</em> to be</h3>
+<p>hidden behind the executor</p>
+<p>Read <code>EngineCore.step</code> (<code>core.py:576</code>) again: <code>future = execute_model(...)</code> is the only non-trivial
+call inside the loop, and <code>update_from_output</code> is pure bookkeeping. vLLM assumes the scheduler can
+run every model step — <em>including with zero requests, to hide stalls</em> — and that the only
+non-deterministic latency is the device. <strong>Implication for a port:</strong> the device path must be
+throughput-bound and not futex-loop the engine thread; any device-side collective that doesn't return
+a future will directly stall the entire serving pipeline. Use <code>supports_async_scheduling()</code> to ask the
+engine to run schedule-and-execute concurrently (<code>step_with_batch_queue</code>, <code>core.py:617</code>) — the moment
+your device admits a future return, you get pipeline overlap for free.</p>
+<h3 id="b-enginecoreclient-is-the-seam-pick-it-deliberately-and-implement-the-right-one">(b) <code>EngineCoreClient</code> is the seam; pick it deliberately, and implement the right one</h3>
+<p><code>make_client</code> (<code>core_client.py:83</code>) is chosen by two booleans — <code>multiprocess_mode</code> and
+<code>asyncio_mode</code>. The four combinations are:</p>
+<table>
+<thead>
+<tr>
+<th>multiprocess</th>
+<th>asyncio</th>
+<th>impl</th>
+<th>use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F</td>
+<td>F</td>
+<td><code>InprocClient</code></td>
+<td>offline <code>LLM</code> (tests / notebooks)</td>
+</tr>
+<tr>
+<td>T</td>
+<td>F</td>
+<td><code>SyncMPClient</code></td>
+<td>the sync <code>LLMEngine</code>, useful when you <em>control the loop</em></td>
+</tr>
+<tr>
+<td>T</td>
+<td>T</td>
+<td><code>AsyncMPClient</code> / DP variants</td>
+<td>production serving</td>
+</tr>
+<tr>
+<td>F</td>
+<td>T</td>
+<td>unsupported</td>
+<td>–</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Implication:</strong> a research/RL consumer wants <code>sync_mp</code> so it can call <code>step()</code> as a coroutine-free
+RPC loop. A production server wants <code>async_mp</code>. The Ascend port should not fork <code>EngineCore</code>; it should
+pick the right client class (or add a <code>client_addresses</code>-driven client whose sockets are injected by the
+launcher).</p>
+<h3 id="c-two-process-separation-keeps-the-device-hot-treat-it-as-invariant">(c) Two-process separation keeps the device hot; treat it as invariant</h3>
+<p><code>EngineCoreProc</code> (<code>core.py:995</code>) ≠ the device-worker process. The engine process runs Python + ZMQ;
+device workers run in <code>WorkerProc</code> (<code>multiproc_executor.py:557+</code>) and own the NPU/GPU. They are born
+before the engine accepts requests, talk over shared-memory <code>MessageQueue</code>, and never re-enter the
+engine loop. <strong>Implication:</strong> a port that wants the existing CUDA-free benefits must keep the
+same process topology. Changing the relationship between "engine proc" and "device proc" (e.g.
+merging them) breaks <code>InputProcessor</code>/test tooling that assumes the two can live apart.</p>
+<h3 id="d-the-scheduler-is-a-pure-decision-function-not-a-state-of-the-world">(d) The scheduler is a <em>pure decision function</em>, not a state-of-the-world</h3>
+<p><code>SchedulerInterface</code> (<code>interface.py:37</code>) promises: given vague <code>throttle_prefills</code>, return a
+<code>SchedulerOutput</code>; given a <code>ModelRunnerOutput</code>, return <code>{client_idx: EngineCoreOutputs}</code>. It owns the
+KV-cache bookkeeping, but it has <strong>no concept of the transport or the executor</strong>. The engine calls the
+scheduler before and after the executor call, and nothing in between. <strong>Implication for a port:</strong> you
+never need to touch the scheduler to support a new device. All that's required is a working
+<code>Executor</code> that understands <code>SchedulerOutput</code> and emits <code>ModelRunnerOutput</code> in the expected shape.</p>
+<h3 id="e-output-processing-is-the-one-batch-wide-pass-and-its-deliberately-detached">(e) Output processing is the one batch-wide pass — and it's deliberately detached</h3>
+<p><code>OutputProcessor.process_outputs</code> (<code>output_processor.py:584</code>) is explicitly documented as <em>"the only
+function that should loop over EngineCoreOutputs … if you need to touch every element of the batch,
+do it from within this loop."</em> It lives in the <strong>wrapper</strong>, not in the engine core, precisely so a
+serving shim can stream tokens via asyncio queues while the heavy per-request detokenization and stats
+stay off the engine thread. <strong>Implication:</strong> device-specific post-processing (e.g. logits soft-cap,
+sampling adjustments) belongs either in the model runner (returns a <em>built</em> <code>ModelRunnerOutput</code>) or as
+a hook inside this batch-loop, <em>never</em> inside <code>EngineCore.step</code>.</p>
+<h3 id="f-the-futures-queue-enables-pipeline-parallelism-at-the-engine-core-level">(f) The futures-queue enables pipeline parallelism at the engine core level</h3>
+<p>If <code>vllm_config.max_concurrent_batches &gt; 1</code>, <code>EngineCore.step_fn</code> is swapped to
+<code>step_with_batch_queue</code> (<code>core.py:617</code>) and the deque holds <code>(Future, SchedulerOutput, grammar_future)</code>
+triples. This is how vLLM removes pipeline bubbles: one batch executes while the next is scheduling.
+<strong>Implication for a port:</strong> when your hardware supports async scheduling, <em>don't</em> pretend to be
+synchronous. Return a true <code>Future</code> and let the queue overlap what would otherwise be idle stages.</p>
+<h3 id="g-control-messages-ride-the-same-bus-as-data-the-utilityoutput-pattern">(g) Control messages ride the same bus as data — the <code>UtilityOutput</code> pattern</h3>
+<p><code>_handle_client_request</code> (<code>core.py:1471</code>) multiplexes <code>ADD | ABORT | UTILITY | WAKEUP | EXECUTOR_FAILED</code>.
+The <code>UTILITY</code> branch lets the client call an arbitrary <code>EngineCore</code> method through a lambda and
+receive the result bounded into a single <code>EngineCoreOutputs</code>. This is how stats, sharded-state save,
+distributed re-init, and pause/resume travel without dedicated sockets. <strong>Implication:</strong> a port that
+needs to add a new engine-level control knob (e.g. Ascend-specific warm-up, profiling toggle, or SWA
+weight sync) would often add a <code>UTILITY</code> method rather than a new wire type.</p>
+<hr />
+<h2 id="a-key-fileline-index">A. Key file/line index</h2>
+<ul>
+<li><code>AsyncLLM</code> — <code>vllm/v1/engine/async_llm.py:70</code> · output loop <code>async_llm.py:637</code></li>
+<li><code>LLMEngine</code> (sync wrapper) — <code>vllm/v1/engine/llm_engine.py:48</code> · <code>add_request</code> <code>:218</code> · <code>step</code>
+  <code>:296</code></li>
+<li><code>EngineCore</code> / <code>EngineCoreProc</code> / <code>DPEngineCoreProc</code> — <code>vllm/v1/engine/core.py:98 / 995 / 1844</code></li>
+<li><code>EngineCore.step</code> — <code>core.py:576</code> · busy loop <code>core.py:1358</code> · dispatch <code>core.py:1471</code></li>
+<li>Client family — <code>vllm/v1/engine/core_client.py:71 (ABC), 276 (Inproc), 467 (MP), 779 (Sync)</code></li>
+<li><code>Executor</code> abstract — <code>vllm/v1/executor/abstract.py:37</code> · <code>get_class</code> <code>:48</code></li>
+<li><code>MultiprocExecutor</code> — <code>vllm/v1/executor/multiproc_executor.py:103</code> · <code>execute_model</code> <code>:310</code></li>
+<li><code>UniProcExecutor</code> / <code>ExecutorWithExternalLauncher</code> —
+  <code>vllm/v1/executor/uniproc_executor.py:45 / 150</code></li>
+<li><code>RayDistributedExecutor</code> — <code>vllm/v1/executor/ray_executor.py:64</code></li>
+<li><code>EngineCoreRequest</code> / <code>EngineCoreOutput</code> — <code>vllm/v1/engine/__init__.py:88+</code></li>
+<li><code>SchedulerInterface</code> / <code>Scheduler</code> / <code>SchedulerOutput</code> —
+  <code>vllm/v1/core/sched/interface.py:37</code> · <code>scheduler.py:70</code> · <code>output.py:191</code></li>
+<li><code>Request</code> / <code>RequestStatus</code> — <code>vllm/v1/request.py:59 / 343</code></li>
+<li><code>IncrementalDetokenizer</code> — <code>vllm/v1/engine/detokenizer.py:30</code></li>
+<li><code>InputProcessor</code> — <code>vllm/v1/engine/input_processor.py:36</code></li>
+<li><code>OutputProcessor</code> — <code>vllm/v1/engine/output_processor.py:424</code> · <code>process_outputs</code> <code>:584</code></li>
+<li>Data-parallel coordinator — <code>vllm/v1/engine/coordinator.py:23 / 145</code></li>
+<li>Legacy aliases — <code>vllm/engine/llm_engine.py</code> (pure alias)</li>
+</ul></article>
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div></body></html>

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>vLLM 架构第一性原理反思</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;
+  --a:#58a6ff;--b:#7ee787;--c:#d2a8ff;--d:#ff7b72;--e:#ffa657;--m:#8b949e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.7}
+header{background:linear-gradient(135deg,#161b22 0%,#121826 100%);
+  padding:32px 24px 28px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.45rem;color:var(--b);margin-bottom:8px;letter-spacing:.2px}
+header .sub{color:var(--m);font-size:.83rem;max-width:780px}
+.wrap{max-width:900px;margin:0 auto;padding:20px 22px 60px}
+nav{position:sticky;top:0;background:var(--bg);z-index:50;border-bottom:1px solid var(--border);
+  overflow-x:auto;white-space:nowrap;padding:0 16px}
+nav a{display:inline-block;padding:10px 12px;color:var(--m);text-decoration:none;
+  font-size:.78rem;border-bottom:2px solid transparent}
+nav a:hover{color:var(--a)}
+h2{font-size:1.18rem;color:var(--c);margin:38px 0 14px;padding-bottom:6px;
+  border-bottom:1px solid var(--border)}
+h3{font-size:1rem;color:var(--e);margin:22px 0 8px}
+h4{font-size:.9rem;color:var(--a);margin:14px 0 5px}
+p{margin:9px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+.card h3{margin-top:0}
+.pbox{border-left:3px solid var(--b);background:rgba(126,231,135,.07);
+  padding:14px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+.pbox strong{color:var(--b)}
+.pbox .why{display:block;margin-top:8px;color:var(--m);font-size:.85rem}
+.pbox .why::before{content:"为什么成立：";color:var(--d);font-weight:600}
+.pbox .test{display:block;margin-top:5px;color:var(--m);font-size:.85rem}
+.pbox .test::before{content:"可证伪条件：";color:var(--e);font-weight:600}
+code{background:#0d1117;padding:1px 5px;border-radius:4px;font-size:.8em;
+  color:var(--e);border:1px solid var(--border)}
+pre{background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:14px;
+  overflow-x:auto;font-size:.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:.78rem;margin:10px 0;
+  display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--b)}
+tr:nth-child(even) td{background:#0d1117}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.tag{display:inline-block;background:rgba(88,166,255,.15);color:var(--a);
+  padding:2px 7px;border-radius:10px;font-size:.68rem;margin:2px}
+.src{color:var(--a);font-size:.76rem;margin-top:4px;display:block}
+.src::before{content:"↳ 代码证据："}
+.footnote{color:var(--m);font-size:.78rem;border-top:1px solid var(--border);
+  margin-top:40px;padding-top:16px;line-height:1.8}
+quote{display:block;border-left:3px solid var(--e);background:rgba(255,166,87,.06);
+  padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-style:italic}
+@media(max-width:600px){header h1{font-size:1.15rem}nav a{padding:8px 8px;font-size:.72rem}
+  th,td{padding:5px 6px;font-size:.72rem}}
+</style>
+</head>
+<body>
+
+<header>
+<div class="wrap">
+<h1>vLLM 架构的第一性原理</h1>
+<div class="sub">
+  基于 vllm-ascend（vllm-project/vllm-ascend, commit b266da5d）代码事实的反思，结合大模型推理系统的设计约束。<br>
+  不是功能清单，而是“如果这条不成立，整个架构就要改写”意义上的第一性原理。<br>
+  每条原理都给出代码证据与一句话可证伪条件。
+</div>
+</div>
+</header>
+
+<nav>
+<a href="#p1">P1 · 内存是硬约束</a>
+<a href="#p2">P2 · 服务即连续批调度</a>
+<a href="#p3">P3 · Python 控制面 + kernel 数据面</a>
+<a href="#p4">P4 · 算子融合 = 带宽倍增器</a>
+<a href="#p5">P5 · 硬件抽象必须零成本</a>
+<a href="#p6">P6 · 并行度是调度维度</a>
+<a href="#synthesis">综合推论</a>
+</nav>
+
+<div class="wrap">
+
+<!-- ==================== P1 ==================== -->
+<section id="p1">
+<h2>P1. KV 缓存是整个系统的一切 —— 内存容量是硬约束，算力不是</h2>
+
+<p>自注意力在序列长度 <i>L</i> 上是 O(<i>L</i>²) 计算、O(<i>L</i>) 内存（每个 token 产出一对 K/V 写入缓存）。这句话在训练侧只是一条复杂度注释，在服务侧却变成整个软件栈的塑造力。**服务系统面对的根本问题不是「算得多快」，而是「一块卡上能同时装多少个请求的 KV，同时不击穿延迟预算」**。</p>
+
+<div class="pbox">
+<strong>原理表述。</strong>若 HBM 无限大且带宽无限，则 PagedAttention、prefix caching、sleep mode、recompute scheduler、compressed KV、KV offload 都不会存在。这些模块存在的唯一原因是：<b>在不丢吞吐的前提下，让有限 HBM 装进尽可能多的并发上下文</b>，或者在「装不下」时以最小代价换出。
+<span class="why">算力瓶颈通过 batch 即可缓解；内存瓶颈不能—— decode 单步已经是带宽受限（权重全量读入仅为 1 token），再堆 batch 也不会让容量线性扩大，因为 KV 线性吃掉 HBM。</span>
+<span class="test">若 HBM 单卡容量 ≫ 最大模型的权重 + 所有 in-flight 请求的 KV 总和，则内存调度层退化为 no-op，整条 PagedAttention 技术路线失效。当前 Hopper 80 GB 对 MoE 大模型恰恰不满足此条件。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b>1. CompressAttentionManager 把 block 数除以 <code>compress_ratio</code>。</b>这是一条直白的「内存即硬约束」推论：如果内存不是约束，缓存侧的任何压缩都不会带来收益，只会白白损失精度。</p>
+<pre><code># vllm_ascend/worker/block_table.py:49
+max_num_blocks_per_req = max(cdiv(max_num_blocks_per_req, compress_ratio), 1)</code></pre>
+
+<p><b>2. ProfilingChunkScheduler 不是「算力调度器」，而是「内存准入控制器」。</b>它用闭式二次模型把 chunk 大小定下来，语义目标是 <i>让 prefill 速率与 decode 速率匹配，不击穿时间预算</i>——时间预算的本质是「在这个时间内能消化多少 KV 增量」。token_budget 与 time_budget 双循环（§Scheduler hot-loop）是在用时间约束约束内存增长速率。</p>
+<pre><code># vllm_ascend/core/scheduler_profiling_chunk.py  (RUNNING loop)
+while req_index &lt; len(self.running) and token_budget > 0 and time_budget > 0:
+    ...
+    predicted_chunk = self.profiling_chunk_manager.predict_chunk_size(
+        num_computed_tokens=request.num_computed_tokens, target_time=time_budget)
+    num_new_tokens = min(predicted_chunk, num_new_tokens)
+    ...
+    if request.num_computed_tokens &lt; request.num_prompt_tokens:   # only prefill burns time
+        time_budget -= self.profiling_chunk_manager.predict_time(num_new_tokens, ...)</code></pre>
+<span class="src">vllm_ascend/core/scheduler_profiling_chunk.py — schedule() 双预算循环</span>
+
+<p><b>3. CaMemAllocator sleep mode 整个是「KV 临时让位给新请求」。</b>它的机制不是计算优化，而是把整份模型权重 ACL-memcpy 到 CPU pinned backup、unmap device handle—— 相当于操作系统把一整个进程 swap 到磁盘。之所以做这种粗粒度 swap，正是因为 KV 缓存不像 CPU 内存那样有 4KB 页粒度的 LRU 基础设施：一个 KV block 是 MB 级，无法逐「页」驱逐。</p>
+<pre><code># vllm_ascend/device_allocator/camem.py:85-91
+def create_and_map(allocation_handle: HandleType) -> None:
+    python_create_and_map(*allocation_handle)
+
+def unmap_and_release(allocation_handle: HandleType) -> None:
+    python_unmap_and_release(*allocation_handle)
+# AllocationData 结构：handle + tag + cpu_backup_tensor
+# sleep(offload_tags) → tagged tensors memcpy 到 CPU pinned backup → unmap device</code></pre>
+<span class="src">vllm_ascend/device_allocator/camem.py — sleep-mode 真就是 OS swap 的加速器版</span>
+
+<p><b>4. RecomputeScheduler 把「抢占后恢复」这件事从「保留 KV 块」翻转为「丢弃 KV 块 + 回炉 prefill」。</b>这是 P1 最激进的表达：如果内存的所有权比 V2调度器的 KV 块还贵，那就不要拥有内存。</p>
+<pre><code># vllm_ascend/core/recompute_scheduler.py:246-258
+else:
+    self.kv_cache_manager.free(recomputed_req)            # 直接放掉 KV
+    recomputed_reqs.append(RecomputeReqInfo(
+        recomputed_req_id, recomputed_req.output_token_ids, ...))
+    # → update_from_output emits EngineCoreOutput(stop_reason="recomputed")
+    # → 该请求被重新 prefill 而非 resume</code></pre>
+<span class="src">vllm_ascend/core/recompute_scheduler.py — 宁可不拥有 KV，也不要为分配失败买单</span>
+
+<h3>P1 的推论</h3>
+<ul>
+<li>调度器 ≠ 调度器；它是内存准入 + 延迟预算的联合优化器。</li>
+<li>KV 块粒度（128 token/block）是「内存管理单元 (MMU) 页大小」的类比，选大浪费内存在 prefix caching，选小则 block table 内存和 kernel 索引成本爆炸。128 是工程甜点，不是理论最优。</li>
+<li>任何「在 HBM 里省内存」的技术路线（量化压缩、稀疏注意力、prefix 共享、跨层 KV 共享）的收益上限都由 P1 决定。</li>
+</ul>
+</section>
+
+<!-- ==================== P2 ==================== -->
+<section id="p2">
+<h2>P2. 推理服务 = 连续批处理调度，不是「跑一个模型」</h2>
+
+<p>换个角度看同一个事实：LLM 单步 decode 是极端 memory-bandwidth-bound —— 读取全部权重只为产出 1 个 token。如果 batch = 1，H100 的利用率趋近于零。<b>要吃饱算力必须 batch。</b>可一旦 batch，请求就不再是"进来 → 跑完 → 退出"的静态形状，而是一个持续进出、长度互异、内存互不相同的动态集合。<b>vLLM 架构从 Scheduler 往后的全部复杂性，是在服务这个事实：推理系统本质是一个持续接纳请求、持续在有限内存里腾挪的动态调度器，model executor 只是它的一个执行后端。</b></p>
+
+<div class="pbox">
+<strong>原理表述。</strong>如果 LLM decode 是 compute-bound（像训练那样），vLLM 只需要一个静态 graph + NCCL all-reduce。PagedAttention、continuous batching、chunked prefill、async scheduling 的合理性全部来自 decode 的带宽绑定性 + 请求的动态性。
+<span class="why">roofline：decode 单 token 的 arithmetic intensity ≈ model_flops / model_params ≈ 6 (7B) ~ 60 (405B) FLOP/byte，落在 roofline 左侧（带宽受限区）。打破此状态的唯一方法是「把多个请求的 decode step 合并」，即 batch。</span>
+<span class="test">若未来 HBM 带宽 ~10×today（如光学/3D 互联成熟），decode 单 token 进入 compute 受限区 → batch 必要性下降，serving 架构退化为单请求流式执行，就像今天的图像分类服务。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b>1. <code>Compillation / fusion_pass</code> 不是为训练设计的，而是为 batch 的连续解码服务。</b>AscendCompiler 的 <code>compute_hash</code> 把 <code>torch_npu_version</code>、<code>enable_npugraph_ex</code>、<code>enable_static_kernel</code> 都放进去——这说明 compiled graph 是 per-ABI、per-batch-size、per-编译选项缓存的；decode 的图是按 capture size bucket 存好的。</p>
+<pre><code># vllm_ascend/compilation/compiler_interface.py:236-249
+def compute_hash(self, vllm_config: VllmConfig) -> str:
+    factors = {
+        "torch_npu_version": torch_npu.__version__,
+        "enable_npugraph_ex": ascend_compilation_config.enable_npugraph_ex,
+        "enable_static_kernel": ascend_compilation_config.enable_static_kernel,
+    }
+    return sha256(str(factors).encode(), ...).hexdigest()[:10]</code></pre>
+
+<p><b>2. PCP/DCP 的 block_table 交错映射 —— 并行也是批调度的一部分。</b>Context parallel 把一个请求的 KV 按 token 交错分散到多个 rank，每个 rank 只做自己的 slice；单个 rank 的 block table 索引必须跟随 dcp_rank = i % pcp_world_size 这张交错表。这是把「并行」纳入「批处理调度」的显存视图的典型例子。</p>
+<pre><code># vllm_ascend/worker/block_table.py:240-285
+def _compute_pcp_dcp_slot_mapping(...):
+    virtual_block = physical_block_size * cp_world_size
+    per-rank mask: virtual_block_offsets // cp_kv_cache_interleave_size % total_cp == current_rank
+    # token i 所在的 NPU = dcp_rank == i % pcp_world_size</code></pre>
+<span class="src">vllm_ascend/worker/block_table.py — CP 不是独立模块，而是 block_table 调度策略的一种</span>
+
+<p><b>3. NPUInputBatch 的 gpu/cpu/numpy 三元组 + copy_snapshot_to_gpu 是「CPU 调度与 GPU 执行解耦」的典型。</b>Scheduler 在 CPU 端完成调度决策（memcpy‑free）、拷贝一份 pinned snapshot、然后 async H2D —— batch 既是执行概念，也是 CPU↔GPU 的流水线概念。</p>
+<pre><code># vllm_ascend/worker/utils.py:15-18
+def copy_snapshot_to_gpu(self, vllm_config, new_block_ids, ...):
+    # pinned snapshot → async GPU upload; used to overlap CPU compute with GPU H2D</code></pre>
+
+<h3>P2 的推论</h3>
+<ul>
+<li>Chunked prefill 的存在 ≡ 承认 prefill 与 decode 争夺同一块 HBM 和 bandwidth；chunk 大小 = 对「prefill 吃掉多少带宽/时间」的预算。</li>
+<li>Speculative decoding 把 K 个 token 压进同一个 forward，是<b>在 decode 这个带宽受限区人为注入计算密度</b>，把 batch 从「很多用户的 1 token」偷换成「1 个用户的 K token」。</li>
+<li>Scheduler 的每次 schedule() 输出不是「选哪几个请求」，选 batch，选 chunk 大小，选抢占，选 KV 分配——这是一个微观的「OS 进程调度 + 内存管理」，不是 ML 里的 batch_size 超参。</li>
+</ul>
+
+<div class="warn">
+<strong>社区文档对 ProfilingChunk 定位的纠正（重要）。</strong>原分析把 <code>ProfilingChunkScheduler</code> 归为「内存准入控制」（P1 工具）。官方设计文档 <code>design_dcpp.md</code> 给出更准确的主目的：<b>消除 PP 流水线气泡</b>。O(n²) self-attention 使<b>同 size chunk 越往后越慢</b>（prefix 历史增长）-> PP stage 间 bubble -> GPU 利用率下降。闭式求解的目标是<b>让每 chunk 时间相等</b>（不等 size、等时间），而非等内存增量。所以 ProfilingChunk 本质是 <b>P6（并行度调度）的工具，借 P2 的 batch 调度回路实现</b>，不是 P1 的工具。约束也印证：PP>1 必须、与 balance scheduling 互斥。借鉴 SGLang dynamic chunking + 增加 online calibration <code>f(C,H)=a·C(C+H)+b·(C+H)+c</code>。
+<span class="src">docs/source/developer_guide/Design_Documents/dynamic_chunked_pipeline_parallel.md</span>
+</div>
+
+<div class="insight">
+<strong>社区演进：调度器家族在壮大（P2 的活体演化）。</strong>近期 PR 显示 vllm-ascend 的调度器不止 ProfilingChunk/Recompute/SRF 三种，还在扩张：
+<ul>
+<li><b>#12240 Batch-Job-Aware Scheduler</b>（merged）— 离线批 LPT 调度，从已完成请求采样预测 job 的 decode 长度。</li>
+<li><b>#12292 NonBSP</b>（open）— 跨 DP rank load-aware 调度，打破 BSP 假设，优化通信气泡。</li>
+<li><b>Balance scheduling</b>（design_balance_schedule_refactor）— 语义明确为「leader-at-cap ⇒ 全局冻结准入」的<b>全局准入门</b>，<b>不是</b>主动重平衡（该语义被显式拒绝）。</li>
+</ul>
+这印证 P2：serving 系统的调度器是「请求作为动态物体的接纳控制」，不同工作负载（在线混合/离线批/PP/DP）催生不同调度策略，但都服务于「在有限内存+带宽下填饱算力」这一 P2 内核。
+</div>
+</section>
+
+<!-- ==================== P3 ==================== -->
+<section id="p3">
+<h2>P3. Python 控制面 + kernel 数据面，Forward Context 是唯一的桥</h2>
+
+<p>vLLM 在两个世界之间做了一次职责切分，而且切得相当干净：<b>所有与「下一步做什么」相关的逻辑跑在 Python（调度、batching、路由、抢占、工具调用解析）</b>；<b>所有与「这个 tensor 怎么算」相关的逻辑跑在 C++/CUDA/Triton/CANN kernel</b>。这两个世界之间只有一种正经的通信方式：<b>Forward Context</b>。</p>
+
+<p>这个切分之所以是一项「第一性原理」级的设计决策，是因为它要同时满足两件矛盾的事：</p>
+<ul>
+<li>控制面的逻辑（调度、抢占、工具调用、投机解码候选筛选）<b>变化剧烈、模型相关、业务相关</b>，因此必须用 Python 快速迭代。</li>
+<li>数据面的计算（attention、GMM、all-reduce）<b>一个 kernel launch 只在微秒级</b>，任何 Python-level 调度、字典查找、分支判断都是不可承受的—— 特别是 graph capture 要求整段 forward 没有任何 Python 副作用。</li>
+</ul>
+
+<div class="pbox">
+<strong>原理表述。</strong>LLM serving 系统的两层必须按「变化速率」而非「性能」来切分：控制面一周改十次，数据面一年代码不动但 ABI 跟着 CANN 大版本走。这两层唯一的桥必须是一个「per-layer capability descriptor」—— forward context。
+<span class="why">如果 control plane 也用 C++ kernel 写（像 TF1 static graph），vLLM 两周一次的功能迭代速度直接死掉；如果 data plane 也用 Python/Triton 写（像 PyTorch eager），decode 延迟涨一个数量级。所以这不是性能分工，是「演化速率解耦」。</span>
+<span class="test">若 Python GIL + dispatch 开销 ≪ kernel launch 开销（比如未来 accelerator 自带 scheduling coprocessor），把 Scheduler 和 model forward 都下沉到 firmware 也可能成立——此时 Python 控制面会被整个旁路。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b>Forward Context 是一座谈判桌：scheduler 意图 ↔ hardware capability。</b>在 vllm-ascend 里，<code>set_ascend_forward_context</code> 一次性把 10+ 个二元属性绑上去（mmrs_fusion、flash_comm_v1/v2、pad_size、mc2_mask、sinks、layer_idx、is_draft_model 等）。<b>每个 flag 都是「device gen × token 数 × EP world size × quant type」四维空间上的一个 capability probe 结果</b>。它很像硬件驱动里的 capability descriptor（比如 Vulkan 的 <code>VkPhysicalDeviceFeatures</code>），只是每层都要重新 negotiate，因为同一个模型在不同 token-count bucket 上最优 kernel 不一样。</p>
+<pre><code># vllm_ascend/ascend_forward_context.py:107-134
+mmrs_fusion = tp_world_size &lt;= 8              # 设备能力 × TP 规模
+is_context_moe_model = ...
+if is_context_moe_model:
+    flash_comm_v1_enabled = enable_sp(vllm_config) and num_tokens is not None
+    mmrs_fusion = False                        # MoE 模型里强制关闭
+elif is_draft_model:
+    flash_comm_v1_enabled = False
+else:
+    flash_comm_v1_enabled = enable_sp(vllm_config) and \
+        num_tokens is not None and num_tokens > 1000   # 1000 是工程阈值
+</code></pre>
+<span class="src">ascend_forward_context.py — forward context 是一条 per-layer capability negotiation，不是简单 flag 传递</span>
+
+<p><b>FusedMoE 在 forward context 里查 <code>moe_comm_method</code>，不自己决策。</b>这体现了控制面/数据面分离决策的彻底性：MoE 这个「tensor 怎么算」的数据面，通信策略由 Python 侧的 forward_context 注入，kernel 自己不感知 device gen。</p>
+<pre><code># vllm_ascend/ascend_forward_context.py:95-101
+from vllm_ascend.ops.fused_moe.moe_comm_method import get_moe_comm_method
+max_num_tokens = int(num_tokens_across_dp.max().item()) if ... else num_tokens
+moe_comm_type = select_moe_comm_method(max_num_tokens, vllm_config, is_draft_model)
+forward_context.moe_comm_type = moe_comm_type
+forward_context.moe_comm_method = get_moe_comm_method(moe_comm_type)
+# → ops/fused_moe/token_dispatcher.py 里每个 layer 直接 ctx.moe_comm_method.dispatch(...)</code></pre>
+
+<p><b>Graph capture 为什么需要「Python 面完全不进入 forward」。</b><code>ACLGraphWrapper.__call__</code> 把 <code>forward_context.capturing = True</code> 设下去，capture 期间所有 kernel 不再做 Python 分派—— 这是 P3 的终极形态：整段 forward 变成一个干 graph replay，Python 控制面退出关键路径。</p>
+<pre><code># vllm_ascend/worker/aclgraph.py (referenced from model_runner_v1 patch)
+with torch.npu.graph(aclgraph, pool=self.graph_pool):
+    output = self.runnable(*args, **kwargs)
+    get_offloader().join_after_forward()
+    output = weak_ref_tensors(output)     # last-graph memory saving
+entry.aclgraph = aclgraph</code></pre>
+<span class="src">compilation/aclgraph.py — capture 态下 Python 退出，整段 forward ⊆ replay</span>
+
+<h3>P3 的推论</h3>
+<ul>
+<li><code>register_custom_ops</code> / <code>meta_registration</code> 存在的理由是：C++ kernel 面需要 PyTorch meta function 做 shape inference，但 shape inference 本身又必须「不真跑 kernel」——这是控制面对数据面的另一类介入。</li>
+<li>vllm-ascend 里 <code>patch_profiling_chunk</code> 要同时介入 <code>EngineCore.__init__</code>、<code>Scheduler.update_from_output</code>、<code>Scheduler.schedule</code>、子进程入口点，正是因为它要实现「Python 控制面 → kernel 数据面 → Python 控制面」的跨层反馈回路。这是 P3 的边界案例：反馈打破了单向桥。</li>
+</ul>
+</section>
+
+<!-- ==================== P4 ==================== -->
+<section id="p4">
+<h2>P4. 算子融合 = 内存带宽倍增器 —— serving 优化的天花板由 roofline 左侧决定</h2>
+
+<p>在 LLM serving 这个 arithmetic intensity 极低的场景下，绝大多数 kernel launch 都是「读整张权重、写整张 activation」。在这种 roofline 左侧工作点上<b>，唯一有效的性能手段是减少 HBM round-trip</b>，即把多次「读 → 算 → 写」合并成「一次读 → 多次算 → 一次写」。</p>
+
+<p>但融合不是免费的。融合的前提是「前后两个 kernel 之间的数据流形状是<b>提前可知的</b>（graph capture bucket 内）或者<b>被 forward context 静态确定</b>」。这就把 P4 锁死在 P1（内存约束）和 P3（forward context 提供静态属性）两个前提上：</p>
+<ul>
+<li>没有 P1（内存约束），没人需要融合——单独买一张更贵的卡就行了。</li>
+<li>没有 P3（forward context 静态化每个 layer 的 token/parallel 属性），融合 kernel 在 runtime 无法选择正确的 branch，融合反而要每次分支，得不偿失。</li>
+</ul>
+
+<div class="pbox">
+<strong>原理表述。</strong>在 roofline 左侧（bandwidth-bound）工作负载里，性能 = 可用带宽 / 每 token HBM transaction 数。算子融合是唯一能改变「每 token transaction 数」的杠杆。
+<span class="why">roofline 简化：perf = min(peak_compute, peak_bandwidth × arithmetic_intensity)。decode 的 intensity 极低（≈ 6~60 FLOP/byte vs H100 峰值 ≈ 2000 FLOP/byte），故 perf ≈ bandwidth × intensity，唯一可优化项是 intensity。融合把相邻的 S 次 HBM read+write 合并为 1 次，强度 S 倍提升。</span>
+<span class="test">若 HBM 带宽 10×today 或 on-package HBM 像 SRAM 一样便宜，大部分 decode kernel 进入 compute 受限区 → 融合收益消逝，profiling 不再是关键路径。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b>8 个 Ascend 编译 pass，每一个都是 explicit bandwidth reduction。</b></p>
+<table>
+<tr><th>Pass</th><th>省了哪次 HBM round-trip</th><th>Ascend 专有意义</th></tr>
+<tr><td>AddRMSNormQuantFusionPass</td><td>残差加 + RMSNorm + quant 三次→一次 ACL op</td><td>W4A4 显式 disable 因为融合 pattern 没覆盖</td></tr>
+<tr><td>QKNormRopeFusionPass</td><td>QKV split + per-head RMSNorm + RoPE（2×reshape + 2×norm + 1×rope）→ 1 个 ACL op</td><td>条件苛刻：head_dim=128, eps∈{1e-5,1e-6}</td></tr>
+<tr><td>MatmulAllReduceAddRMSNormPass</td><td>matmul + TP AllReduce + add + RMSNorm → 一次 op，<b>内部把 AllReduce 替换为 ReduceScatter + AllGather，流量减半</b></td><td>阈值：compile_range.start > 512 才开，避免小 batch 负优化</td></tr>
+<tr><td>SequenceParallelismPass</td><td>dense 的 AllReduce epilogue → ReduceScatter + AllGather intro</td><td>dense 阈值 1000 token，MoE 阈值 1 token（1000 这条线就是 §P3 那个工程阈值）</td></tr>
+<tr><td>SequenceParallelismMoePass</td><td>MoE 的 AllGather epilogue → AllGather 挪到 RMSNorm 之后，避免 mid-layer shape 爆炸</td><td>AllGatherChunkNoOpCleanup 把冗余的 all_gather+chunk fold 成 identity</td></tr>
+</table>
+<span class="src">vllm_ascend/compilation/passes/ — 每个 pass 都是 roofline 左侧的 explicit bandwidth reduction</span>
+
+<p><b>MLAPO (MLA preprocess) 是 P4 在 attention 上的极限表达。</b>把 Q/KV projections + LayerNorm + RoPE + cache write 一次 CANN 自定义 op 做完 —— 把 attention「前置流水线」从 ~5 次 HBM 访问压到 1 次。这条路径之所以存在，是因为 A5 的 <code>npu_mla_prolog_{v2,v3}</code> 把 FP8 量化也吃进去了：从 input 到 FIA-readable latent-cache，全程一次 op。</p>
+<pre><code># attention/mla_v1.py:108 — A2/A3
+torch.ops._C_ascend.mla_preprocess(... wd_qkv, deq_scale_qkv,
+    gamma1, beta1, wu_q, qb_deq_scl, gamma2, cos, sin,
+    W_UK_T, k_nope, k_pe, slot_mapping,
+    quant_scale0/1, ..., cache_mode="nzcache|krope_ctkv", ...)
+
+# attention/mla_v1.py A5 路径
+npu_mla_prolog_v2 / npu_mla_prolog_v3      # FP8 / MXFP prolog</code></pre>
+<span class="src">attention/mla_v1.py — MLAPO 把 attention preproc 压到 1 次 HBM round-trip</span>
+
+<p><b>FusionPass 与 NpuGraphEx 二选一的本质是 fusion 发生在哪里。</b><code>AscendCompiler.compile</code>：<code>enable_npugraph_ex</code> 时走 FX→Ascend IR→ACL（在 NPU 的图 IR 上做融合），否则走 Inductor/Triton pattern matcher（在 PyTorch FX IR 上做）。两条路用同一个 pass manager，因为「融合机会」跟 IR 表示无关。</p>
+<pre><code># compilation/compiler_interface.py:283-301
+if ascend_compilation_config.enable_npugraph_ex:
+    return npugraph_ex_compile(graph, example_inputs, compiler_config, ...)
+else:
+    return fusion_pass_compile(graph, example_inputs, compiler_config, ...)</code></pre>
+
+<h3>P4 的推论</h3>
+<ul>
+<li>CUDAGraph / NPUGraph / Xlite 是 P4 的极限：把<b>整段</b> forward 融合成一次 launch。graph capture 的前提（P3：forward context 静态化）越不满足，capture 的 piecewise 越碎，退化为 eager，收益越小。这是 vllm-ascend 仍在填 <code>patch_cudagraph</code>、多种 piecewise fallback 的根本原因。</li>
+<li>MLAPO 这类「只对特定 head_dim、特定 eps、特定 quant」生效的深度融合，验证了 P4 的一个重要边界：<b>融合收益被其适用条件反向约束</b>——越深的融合越窄，需要在代码里显式 guard（head_dim=128、eps∈{1e-5,1e-6}、compile_range.start > 512）。</li>
+</ul>
+
+<div class="warn">
+<strong>P4 的 lifecycle 修正：优化技术会过时，不是永恒真理。</strong>本文 P4 范例里引用的 <code>MatmulAllReduceAddRMSNormPass</code>（matmul+AllReduce+AddRMSNorm 融合，内部 ReduceScatter+AllGather 减半流量）正在被 <b>PR #12119 删除</b>（"Remove matmulallreduce and pass optimization techniques"）。同期 <b>#12120 删除 async_exponential 采样优化</b>。这揭示 P4 的一个隐含边界：<b>融合 pass 有生命周期</b>--当 upstream 改了语义、或更优 kernel 出现、或维护成本超过收益时，融合 pass 会被移除。所以 P4 不是「融合越多越好」，而是「在当前 ABI + kernel 覆盖度下的临时最优」。读这份文档时应把每个 pass 视为「快照」而非「恒久设计」。
+<span class="src">PR #12119 / #12120 + docs/.../performance_and_debug/optimization_and_tuning.md</span>
+</div>
+
+<div class="insight">
+<strong>P4 的全栈延伸：带宽优化不止在算子层。</strong>官方 <code>optimization_and_tuning.md</code> 性能手册显示，P4（减少 HBM round-trip / 带宽倍增）在 vllm-ascend 代码层之下还有几层：
+<ul>
+<li><b>HCCL AIV 模式</b>（<code>HCCL_OP_EXPANSION_MODE=AIV</code>）- 通信由 AI vector core 直接用 RoCE 调度，而非 AI CPU。这是 P4 思想在通信栈的体现：把通信调度从慢路径（CPU）移到快路径（vector core）。</li>
+<li><b>HCCL_INTRA_ROCE_ENABLE</b> - 8P 间用 RDMA 替代 SDMA；<b>HCCL_BUFFSIZE</b> 控制 NPU 间共享缓存。</li>
+<li><b>jemalloc / TCMalloc</b> - 替换 glibc malloc，减少多线程锁竞争（CPU 侧带宽/延迟）。</li>
+<li><b>OS 级</b> - CPU governor=performance、disable swap、disable NUMA balancing、<code>sched_migration_cost_ns=50000</code>。</li>
+</ul>
+P4 的内核是「带宽是瓶颈，减少无谓 round-trip」--这个原理从 NPU 算子一直延伸到 CPU malloc 和 OS 调度器，是一个全栈原理，不只是「写融合 kernel」。
+</div>
+</section>
+
+<!-- ==================== P5 ==================== -->
+<section id="p5">
+<h2>P5. 硬件抽象必须零成本 —— 否则插件就是 fork 的另一个名字</h2>
+
+<p>vLLM 的「硬件可插拔 RFC」目标是为每种新后端写一个 Platform，无缝替换 CUDA。vllm-ascend 的工程现实揭示了这条路的<b>真实成本结构</b>：<code>NPUPlatform</code> 一个文件覆盖了 PlatformBase 大约 20 处 override，这之外却还有 ~60 个 monkey-patch。<b>换言之，「干净 hook」只是入口；系统的真正语义散落在 scheduler、config validator、torch.distributed、torch.accelerator、FusedMoE 工厂、tool-call parser 等数十处没有 hook 的地方。</b></p>
+
+<p>P5 不是承认失败，而是揭示了一条第一性原理：<b>硬件抽象的「覆盖度」决定插件的产权维护成本</b>。覆盖度 100% → 纯插件、升级 vLLM main 零成本；覆盖度 < 100% → 每个 upstream 版本都要重新审计 patch 兼容性。vllm-ascend 的 ~60 个 patch 就是这条原理的「技术债快照」。</p>
+
+<div class="pbox">
+<strong>原理表述。</strong>Any heterogeneous plugin for a fast-moving upstream = (clean hooks) + (pragmatic patches)。patch 数量 ≈ upstream 对硬件的隐式假设（CUDA-NCCL-FlashAttn-UDA）尚未被 hook 暴露的部分。
+<span class="why">vLLM main 更新频繁（0.7→0.22 走了 18 个月），每个 main 版本都可能移动被 patch 的 symbol，导致 patch break。如果 hook 覆盖不足，每个版本需要人工审计数十个 patch —— 此时「插件」退化为「延迟 fork」。</span>
+<span class="test">若未来 VLLM 所有 config validator / scheduler / collective / torch.accelerator 都被 hook 化（即「Hardware Pluggable RFC」完成），patch 理想的命运是被删除。每一条带 "Future Plan: Remove this patch when upstream merges #XXXX" 注释的 patch，都是 P5 的一个活证据。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b><code>adapt_patch(is_global_patch=)</code> 是极简主义的极致：一整套硬件适配用一个 import-for-side-effects 调度。</b>这份极简刻意为之——它不想引入 decorator/registry 框架，因为 patch 本身就要跟着 upstream symbol move。</p>
+<pre><code># vllm_ascend/utils.py:537
+def adapt_patch(is_global_patch: bool = False):
+    if is_global_patch:
+        from vllm_ascend.patch import platform   # ordered import list
+    else:
+        from vllm_ascend.patch import worker
+# patch/platform/__init__.py 和 patch/worker/__init__.py 就是 ordered import list
+# 每个 module 顶部: _original = SomeClass.method; SomeClass.method = _replacement</code></pre>
+<span class="src">utils.py — 一整套装配被一个 import-for-side-effects 接管</span>
+
+<p><b>spawn-mode re-patch 问题是 P5 最深的坑：纯 Python 级别的 monkey-patch 跨不过 fork。</b>这个现象本身就说明「import-time rebind」不是一种能被系统正确管理的 hook 机制，hack 味道重。<code>_ensure_global_patch()</code> + wrap <code>EngineCoreProc.run_engine_core</code> 是工程 workaround。</p>
+<pre><code># vllm_ascend/__init__.py:20-35 — 必须在每个 plugin hook 里重放 patch
+_GLOBAL_PATCH_APPLIED = False
+def _ensure_global_patch():
+    global _GLOBAL_PATCH_APPLIED
+    if _GLOBAL_PATCH_APPLIED: return
+    from vllm_ascend.utils import adapt_patch
+    adapt_patch(is_global_patch=True)
+    _GLOBAL_PATCH_APPLIED = True
+
+# patch/platform/patch_profiling_chunk.py:221-229 — 子进程入口也得 wrap
+_original_run_engine_core = EngineCoreProc.run_engine_core
+def _patched_run_engine_core(*args, **kwargs):
+    _apply_profiling_patches()          # 子进程里重放一遍
+    return _original_run_engine_core(*args, **kwargs)
+</code></pre>
+<span class="src">__init__.py + patch_profiling_chunk.py — patch 机制的「技术债快照」</span>
+
+<p><b>为什么必须 patch 的具体例子：310P tensor alignment 必须改 <code>torch.distributed.all_reduce</code>。</b>这是一个「上游通过一个 concrete symbol 做了 collected op」的典型 —— 干净 hook 应该提供一个 <code>collective_fn_factory()</code> 让后端注入，但上游直接把 <code>torch.distributed.all_reduce</code> 写死在 runtime。</p>
+<pre><code># patch/platform/patch_distributed.py
+# Why: tensor alignment for 310p
+# How: rewrite all_reduce and broadcast in torch.distributed</code></pre>
+<span class="src">patch/platform/patch_distributed.py — 60 个 patch 中的一个的具体样子</span>
+
+<h3>P5 的推论</h3>
+<ul>
+<li>XP（Expert Parallelism）的 <code>redundant_expert + log2phy</b> 是硬件抽象层<b>没有</b>覆盖的另一个例子：它既不是「CUDA→NPU 替换」问题，也不是「kernel 实现」问题，而是一个 vLLM 代码里尚未专家并行的纯算法调度问题。这条「P5 覆盖不到的算法层」是 vllm-ascend 最有独立的社区贡献价值的地方。</li>
+<li>TPU / AMD / Intel 如果各自 fork，会在同样的 60 个位置撞墙；若都走 vLLM plugin，则能合力把这些 hook 向上游推进。这个「正向飞轮」正是 P5 的设计动力。</li>
+</ul>
+
+<div class="insight">
+<strong>官方政策原文验证 P5（从「我的观察」升级为「项目政策」）。</strong>官方文档 <code>docs/.../Design_Documents/patch.md</code> 把 P5 写成明确的项目原则：
+<quote>"Patch is not the best way to make vLLM Ascend compatible. It's just a temporary solution. The best way is to contribute the change to vLLM to make it compatible initially."</quote>
+三原则：<b>(1) Less is more</b> - 除非别无他法不要 patch；<b>(2) 每个 patch 必须写移除计划</b>（"describe the future plan for removing the patch"）；<b>(3) 随时欢迎清理 patch</b>。这把 P5 从「分析者的洞察」变成「上游-插件协作的契约」。
+</div>
+
+<div class="highlight">
+<strong>P5 的活体证据：patch 真在被偿还。</strong>近期 PR 直接展示 patch 的生命周期：
+<ul>
+<li><b>#11453 Remove obsolete parser patches</b> - 删除 <code>patch_glm47_tool_call_parser</code> / <code>patch_glm_tool_call_streaming</code> / <code>patch_tool_choice_none_content</code>，因为 upstream vLLM 已合并 #45915（GLM streaming parser）+ #44105（empty tool_calls fix）。<b>patch 被删除 = P5 债务被偿还</b>。</li>
+<li>vLLM 主仓 RFC #11162（Hardware Pluggable）已 <b>closed</b>（2025-06），插件系统落地（#7131 generic plugin Done），但 RFC 自承「what object can be pluggable is not fully defined」--这正是 ~60 patch 仍存在的根因，也是 P5 的边界。</li>
+</ul>
+</div>
+</section>
+
+<!-- ==================== P6 ==================== -->
+<section id="p6">
+<h2>P6. 并行度是调度维度，不只是执行模式</h2>
+
+<p>多数推理框架把 TP/EP/PP/CP 当成「执行层面告诉 runtime 怎么切分 tensor」的事情。vllm-ascend 的代码事实揭示了更深的耦合：<b>并行度不是一个下游模块的输入，而是贯穿调度器、block table、forward context、attention backend、allocator 的一等维度</b>。因为它同时影响：</p>
+<ul>
+<li>KV 缓存的物理布局（PCP 交错、DCP 倍率、HMA 多类型组的块分配）；</li>
+<li>通信模式的选择（AllGather / MC2 / AllToAll / FusedMC2 是「device gen × token count × EP × quant」的 4D 查表）；</li>
+<li>forward context 里的 pad / chunk / flashcomm 决策；</li>
+<li>编译 pass 的开/关（SP pass 的 <code>fuse_allreduce_rms</code> 需要 TP size）；</li>
+<li><code>EPLB</code> 的 expert-to-rank 映射。</li>
+</ul>
+
+<div class="pbox">
+<strong>原理表述。</strong>并行度在 LMLLM serving 里不是纯「runtime 后端」问题，在多请求动态 batch + 有限 HBM + 慢速 decode 场景下，它改变 KV cache 形状、权重分配形状、通信形状—— 因此必须作为<b>一等调度维度</b>贯穿整个栈。
+<span class="why">对比训练：训练 batch 固定、sequence 固定，并行度可以静态确定后冻结；serving 里每步 request 集合不同、token 数随 chunk 动态变化、decode 触发 bandwidth 瓶颈 —— 同一个模型的最优并行配置在不同 token-count bucket 上根本不同（MC2 切换阈值 <code>mc2_tokens_capacity</code> 就是证据）。静态 bind 并行度 → 整体次优。</span>
+<span class="test">若出现「单卡装不下带宽但装得下模型」的场景（光学互联 / 3D 封装成熟），并行会从「带宽驱动」切换到「容量驱动」，通信量不再是首要指标 → MC2/AllToAll 选型逻辑退化为简单的 TP=1 全部 local。</span>
+</div>
+
+<h3>代码证据</h3>
+<p><b>MoECommType 的 4D 选择是 P6 最浓缩的代码。</b><code>select_moe_comm_method</code> 用 device gen、token 数、EP world size、quant type、spec/draft 五维做判断树 —— 这是把并行度当成调度维度的最显眼证据。</p>
+<pre><code># ascend_forward_context.py:select_moe_comm_method (简化)
+# A2: MC2 if experts_per_device<=24 && ep>=16 && tokens<=capacity else ALLGATHER
+# A3: FUSED_MC2 / MC2 / ALLTOALL by fused_decode_enable, EP<=32, w8a8
+# A5: MC2 / ALLGATHER / ALLTOALL by capacity + topK
+# 310P: 永远 ALLGATHER         # ← 硬件能力直接否定 MC2 的可能性</code></pre>
+<span class="src">ascend_forward_context.py — 并行通信模式 = f(device_gen, tokens, ep, quant, spec)</span>
+
+<p><b>Forward context 把并行度「翻译」成每个 layer 能读懂的属性。</b><code>pad_size = (tp_world_size - (num_tokens % tp_world_size)) % tp_world_size</code> 是一次把「TP 并行度」翻译成「每层必须 pad 到 TP 倍数」的显式映射。没有这个翻译，attention kernel 拿到的 tensor shape 跟它的并行布局不匹配。</p>
+<pre><code># ascend_forward_context.py:141-144
+if forward_context.flash_comm_v1_enabled or forward_context.flashcomm_v2_enabled:
+    pad_size = (tp_world_size - (num_tokens % tp_world_size)) % tp_world_size
+    forward_context.pad_size = pad_size
+</code></pre>
+
+<p><b>EPLB 把「专家到 rank 的映射」纳入动态调度。</b><code>log2phy_map</code> 是 parallel state 之上的算法层，但它的状态演进（每 <code>num_moe_layers × algorithm_execution_interval</code> 步一次）服从 forward context 里的 <code>eplb_heat_collection_status</code>——并行度、调度时域、热收集在一个环路里。</p>
+<pre><code># eplb/eplb_updator.py — 三阶段循环
+[heat_collection_interval] → [algorithm_execution_interval] → [num_moe_layers (D2D migrate)]
+   ↑ all_gather moe_load        ↑ 子进程 policy.rebalance_experts      ↑ batch_isend_irecv 逐层</code></pre>
+<span class="src">eplb/eplb_updator.py — 并行度 + 调度时域 + 热收集是同一个环路的三个相位</span>
+
+<h3>P6 的推论</h3>
+<ul>
+<li>未来要并入的并行维度（如 <b>PP disaggregation</b>、<b>sequence parallelism 在 decode 上的应用</b>）<b>必须</b>作为调度维度进入 forward context，而不是关在某个「parallel backend」里。</li>
+<li><code>flash_comm_v2_enabled = flashcomm2_enable() and tp_world_size > 1</code> 这条简单判断覆盖了<b>所有未来可能出现的 sequence parallel 变体</b>—— forward context 是 P6 的「维度注册中心」。</li>
+</ul>
+
+<div class="insight">
+<strong>社区演进：并行度维度在主动扩张（P6 的活体证据）。</strong>近期 PR 不是「并行度配置选项变多」，而是在<b>创造全新的并行维度</b>，且每个都回溯进入调度层：
+<ul>
+<li><b>#11976 Virtual Pipeline Parallelism (VPP)</b>（open）- V 形折回拓扑（even stage rank 0→N-1，odd stage N-1→0），纯 Python monkey-patch、零 upstream 修改、DeepSeek-V3.1 上 <b>性能超过 CPP</b>。这是一个被 P5（patch 机制）<b>创造出来的全新并行维度</b>，而不是上游 hook 化的结果。VPP 把「一个 logical forward 切 vp_size 个 virtual stage」注入 PP 调度回路。</li>
+<li><b>#12292 NonBSP</b>（open）- 打破 Bulk Synchronous Parallel 假设，跨 DP rank load-aware 调度，优化「通信气泡」。bubble_threshold=5.0、long_req_block_threshold=700。这是 DP 维度从「静态对等」演进到「动态负载感知」的信号。</li>
+<li><b>#8497 Elastic EP Milestone 2</b>（open）- EPLB 从「静态重平衡」升级到「动态专家并行扩缩容」：<code>AscendElasticEPScalingExecutor</code>、MC2 通信组从 <code>GroupCoordinator</code> 切到 <code>StatelessGroupCoordinator</code>、<code>standby_state.py</code> 待命通信组。<b>EP world size 变成运行时可变量</b>。</li>
+<li><b>#8961 auto-scaling load balance proxy</b>（open）- PD 分离演进成完整自动扩缩容系统（e-p-d / e-pd / p-d 部署模式自动检测、<code>/instances/add|remove</code> API、<code>monitor_and_scale</code> 0.5s 间隔），PD 比例成为运行时调度维度。</li>
+</ul>
+这四个扩张的共同模式：<b>并行度不是「执行前静态选定」的超参，而是「运行时调度回路的一等输入」</b>--这正是 P6 的核心主张。VPP 尤其值得注意：它证明 vllm-ascend 不只在「配置已有并行度」，而是在<b>创造新的并行范式</b>（V 形折回），且靠 P5 的 patch 机制零成本实现。
+<span class="src">PR #11976 / #12292 / #8497 / #8961</span>
+</div>
+</section>
+
+<!-- ==================== 综合 ==================== -->
+<section id="synthesis">
+<h2>综合推论：六条原理如何咬合成一个系统</h2>
+
+<p>六条原理不是彼此独立的公理，它们之间存在<b>强约束关系</b>——每一条的存在都以另外一条为前提，去掉任何一条其他几条都要崩塌。这张依赖图才是「第一性原理」真正该长成的样子：</p>
+
+<pre class="card" style="font-family:monospace;font-size:.82rem;line-height:1.6">
+  P1 内存是硬约束
+   ├─ 需要 batch 来填饱算力 ──────────────► P2 服务 = 连续批调度
+   │    ├─ batch 每种请求变化太快 ────────► P3 Python 控制面 + kernel 数据面
+   │    │    └─ kernel 选择需要静态化 ───► P3 推论：forward context = capability negotiation
+   │    └─ 带宽是唯一可用杠杆 ────────────► P4 算子融合 = 带宽倍增器
+   │         └─ 融合条件静态化 ←─────────── P3 forward context
+  P1 内存是硬约束
+   └─ 多种后端不能各 fork ───────────────► P5 硬件抽象必须零成本
+        └─ 覆盖度 < 100% 时退化为延迟 fork
+  P1 × P2 交叉
+   └─ 并行度是连续调度的调度维度 ───────► P6 并行度是调度维度
+        └─ 每一层决策依赖 ←────────────── P3 forward context
+</pre>
+
+<h3>推论 1：三个「架构级必然模块」</h3>
+<p>从六条原理可必然地推出 LLM serving 系统必须存在三个模块，vLLM 都实现了，而且三个模块彼此不重叠：</p>
+<table>
+<tr><th>必然模块</th><th>被哪条原理强制</th><th>vLLM 的对应</th></tr>
+<tr><td><b>Cache manager</b></td><td>P1</td><td>PagedAttention / block_table / CompressAttentionManager / prefix cache</td></tr>
+<tr><td><b>Continuous batcher / scheduler</b></td><td>P2 + P1</td><td>Scheduler / SchedulerOutput / ProfilingChunk / Recompute / SRF</td></tr>
+<tr><td><b>Operator fusion + kernel dispatch layer</b></td><td>P4 + P3</td><td>compilation passes / ACLGraph / forward_context capability negotiation</td></tr>
+<tr><td><b>Hardware abstraction layer</b></td><td>P5 + P6</td><td>PlatformBase / NPUPlatform / register_* hooks</td></tr>
+</table>
+
+<h3>推论 2：「未来工作」的位置</h3>
+<p>每条原理的「可证伪条件」反向给出了未来扩张的优先级：</p>
+<ul>
+<li><b>P1 证伪</b>：HBM 单卡 1 TB+ → KV cache manager 可以简化，但在此之前 prefix caching / quantization / recompute / sleep mode 仍是主战场。</li>
+<li><b>P2 证伪</decode 单 token 进入 compute 区</b>：当前不存在，故 continuous batching 在可预见的未来都成立。</li>
+<li><b>P3 证伪</b>：accelerator-driven scheduling coprocessor 不存在，故 Python 控制面会长期存在；但 torch.multiprocessing 与 patch 机制的摩擦可能以「kernel 下沉调度」方式局部打破 P3。</li>
+<li><b>P4 证伪</b>：HBM 成熟 → 消融实验显示 fusion 在 decode 上仍有 10-30% 收益的原因是权重本身要读，这部分省不掉。</li>
+<li><b>P5 证伪</b>：VLLM「Hardware Pluggable RFC」完成 → 这是 vllm-ascend 最直接的贡献方向。</li>
+<li><b>P6 证伪</b>：单卡大带宽成熟 → TP/EP/CP 的复杂选择树可以简化，全局化并行度配置。</li>
+</ul>
+
+<h3>推论 3：真正的工作不在 kernel，在调度与抽象</h3>
+<quote>
+vllm-ascend 这个代码库给我最深的感受是：<b>真正决定一个 LLM serving 系统是不是「能用、好用、通用」的，不是某个 kernel 跑多快，而是三件事有没有想清楚：(1) 内存的「所有权」如何分配与回收（P1）；(2) 请求作为「动态物体」如何被调度（P2+P6）；(3) Python 控制面与 kernel 数据面之间那条桥够不够静态、够不够窄（P3+P4）。</b> 如果这三件事没想透，再好的 kernel 都会被调度层的二次污染吃掉；想透了，每个 kernel 的优化空间才是干净的。
+
+vllm-ascend 的 8 个编译 pass、MLAPO prolog、四层 MoECommType、rew 三阶段 EPLB、CaMemAllocator sleep mode、ProfilingChunkScheduler 闭式 chunk solver —— 每一个都是某一组原理在一个特定硬件（Ascend NPU, A2/A3/A5/310P）上的具体投影。理解原理不会让你直接写出这些模块，但能让你判断<b>在哪里写、为什么在这个位置写、不写会破坏哪条原理</b>。
+</quote>
+
+<h3>一句话总结</h3>
+<div class="pbox">
+<b>vLLM 架构的第一性原理是：在 HBM 容量这个硬约束下，用连续批化填满带宽、用 forward context 静态化控制面与数据面、用算子融合在 roofline 左侧叠加带宽利用率、用最小化的 Platform hook 把这一切向零成本硬件抽象方向推进——其中任何一条失效，整个工程现实都会从「可维护插件」退化为「持续审计的延迟 fork」。</b>
+</div>
+
+</section>
+
+<div class="footnote">
+文档基于 vllm-ascend main 分支 commit b266da5d (2026-07-18) 代码事实 + 大模型推理系统 roofline / 调度理论综合反思。<br>
+每条原理均在 <code>vllm_ascend/</code> 目录下给出可定位的代码文件与行号，「可证伪条件」一栏给出该原理失效的技术前提。<br>
+配套子报告：主报告 <code>../final_report/vllm_ascend_architecture.html</code>、6 份子系统报告 <code>../report_pages/0N_*.html</code>。
+</div>
+
+</div>
+</body>
+</html>

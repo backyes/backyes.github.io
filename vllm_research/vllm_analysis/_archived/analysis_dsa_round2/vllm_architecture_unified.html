@@ -1,0 +1,344 @@
+<!doctype html><html lang="zh"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM Unified Architecture Report · Software-Architecture First Principles</title>
+<style>:root{--bg:#0e1116;--fg:#e6e9ef;--muted:#9aa4b2;--accent:#6ea8fe;--card:#161b22;--line:#2a3038;--callout:#1b2330}
+@media(prefers-color-scheme:light){--bg:#fafafa;--fg:#1a1a1a;--accent:#2563eb;--card:#f3f4f6;--callout:#eef2ff}}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--fg);line-height:1.7}
+#shell{display:grid;grid-template-columns:240px 1fr;gap:18px;max-width:1300px;margin:0 auto;padding:12px}
+#nav{position:sticky;top:12px;align-self:start;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.86rem;max-height:90vh;overflow:auto}
+#nav ol{margin:6px 0;padding-left:18px}#nav a{color:var(--fg);text-decoration:none}#nav a:hover{color:var(--accent)}
+article{padding:0 10px 80px}h1{font-size:1.55rem;border-bottom:2px solid var(--accent);padding-bottom:8px}
+h2{font-size:1.28rem;color:var(--accent);border-bottom:1px solid var(--line);margin-top:2.2em;padding-bottom:4px}
+h3{font-size:1.06rem;margin-top:1.4em}p,li{font-size:.96rem}code{background:var(--card);border:1px solid var(--line);padding:1px 5px;border-radius:4px;font-size:.86em}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:.83em;line-height:1.55}
+pre code{background:none;border:none;padding:0}
+blockquote{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:14px 0}
+table{border-collapse:collapse;margin:12px 0;width:100%}th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}th{background:var(--card)}
+.tag{display:inline-block;background:#2563eb;color:#fff;font-size:65%;padding:1px 6px;border-radius:9px;margin-right:5px}
+.srcband{background:var(--callout);border-left:3px solid var(--accent);padding:5px 12px;margin:0 0 14px;font-size:.83rem}
+.src{color:var(--muted);font-size:.8rem;margin-left:8px}
+.callout{border-left:4px solid var(--accent);background:var(--callout);padding:8px 14px;margin:12px 0;font-size:.9rem}
+.inv{background:linear-gradient(90deg,#1b2330,#0e1116);border-left:4px solid var(--accent);padding:10px 14px;margin:14px 0;font-style:italic}
+@media(max-width:940px){#shell{grid-template-columns:1fr}#nav{position:static;max-height:none}
+</style>
+</head><body>
+<div id="shell">
+
+<nav id="nav">
+<b>vLLM Unified Architecture Report</b>
+<ol start="0">
+<li><a href="#s_0">0. Overview & v0→v1</a></li>
+<li><a href="#s_1">1. Software-Architecture First Principles</a></li>
+<li><a href="#s_2">2. Architecture Layers</a></li>
+<li><a href="#s_3">3. Execution Hot Path</a></li>
+<li><a href="#s_4">4. KV-Cache (4-layer)</a></li>
+<li><a href="#s_5">5. Parallel & Distributed</a></li>
+<li><a href="#s_6">6. Compilation & Graph</a></li>
+<li><a href="#s_7">7. Ascend Overlay</a></li>
+<li><a href="#s_8">8. Performance Handbook</a></li>
+<li><a href="#s_9">9. Generic HW-Adaptation Playbook</a></li>
+<li><a href="#s_10">10. Community Pulse</a></li>
+<li><a href="#s_11">11. References & Anchors</a></li>
+</ol>
+</nav>
+
+</nav><article>
+<h1>vLLM Unified Architecture Report</h1>
+<p style="font-size:1.05rem;color:var(--muted)">一份文档,合并了此前所有报告:
+<b>spine</b> + <b>L1–L4 agent</b> + <b>第一性原理(软件+物理双视角)</b>
++ <b>Performance Handbook</b> + <b>Ascend 官方设计文档</b> + <b>community 90 天 pulse</b>。
+每个 section 顶部标注 <code>source:</code> 溯源锚点。全部原始报告保存在
+<code>/vllm_research/vllm_analysis_raw/</code>,1:1 可回溯。
+阅读顺序: §0 Overview → §1 软件架构第一性原理 → §2 分层 → §3 热点路径 → §4–§10 深度 → §11 引用。</p>
+<h2 id="s_0">0. Overview &amp; v0→v1 Synthesis</h2>
+<p>This single document merges all prior analyses (spine, L1–L4 agents,
+first-principles software+physical, performance handbook, community
+pulse, Ascend official design docs) into one navigable report without
+losing any file:line source anchor. All original raw reports are
+preserved in <code>/vllm_research/vllm_analysis_raw/</code> for 1:1
+traceability. Each section carries a source band (source: …).
+Reading order: this overview → §1 first-principles → §2 architecture
+layers → §3 execution hot path → §4–§10 deep dives → §11 references.</p>
+<h3>0.1 v0 的两条缠结 → v1 的解法</h3>
+<table>
+<tr><th>v0 症状</th><th>根因 (v0 结构)</th><th>v1 解法</th></tr>
+<tr><td>调度策略改动必须同时改 Worker+Scheduler+ModelRunner</td><td>三者按“功能”分区，没按“变化速率”分区</td><td>Scheduler 独立 + EngineCore 单线程事件循环</td></tr>
+<tr><td>长 prefill 卡死 decode，TTFT/TTIT 不可同时优化</td><td>prefill phase + decode phase 两阶段模型</td><td>单一 token-budget 循环，无阶段之分</td></tr>
+<tr><td>加新硬件需碰 200+ 个模型文件</td><td>attention kernel 嵌在模型代码里</td><td>AttentionBackend + Builder + Impl + KVCacheSpec 家族</td></tr>
+<tr><td>prefix cache / CUDA graph / offload 改动互相传染</td><td>单一 BlockSpaceManager 耦合请求生命周期+分配+缓存+swap</td><td>拆 KV-Stack 为 Manager/Coordinator/BlockPool/Connector 四层</td></tr>
+</table>
+
+<h2 id="s_1">1. Software-Architecture First Principles</h2>
+<div class="inv"><b>PRINCIPLE #0 — The single axiom:</b> "A module boundary should be drawn where the <i>rate of change</i> changes." If A's code changes every day and B's every year, splitting them means "A's daily changes never touch B." If A and B always change together, they belong in the same module.</div>
+<h3>1.1 The axiom applied — rates → modules</h3>
+<table><tr><th>Rate</th><th>vLLM code element</th><th>Isolated into module</th></tr>
+<tr><td><b>daily</b> — policy, schedule order, threshold</td><td>recompute / SRF / chunked / FCFS / profiling-chunk</td><td><b>Scheduler</b></td></tr>
+<tr><td><b>weekly</b> — new models</td><td>200+ models (DeepSeek/Qwen/GLM/Gemma/Kimi/MiniMax…)</td><td><b>models/</b> directory</td></tr>
+<tr><td><b>monthly</b> — new HW / new kernel variants</td><td>FA3 / FlashInfer / Triton / CANN / ROCm</td><td><b>AttentionBackend + ops/</b></td></tr>
+<tr><td><b>quarterly</b> — topology, comm layout</td><td>TP/PP/DP/EP/CP combinations</td><td><b>Worker + distributed/</b></td></tr>
+<tr><td><b>yearly</b> — execution paradigm</td><td>CUDA Graph / torch.compile / ACL Graph</td><td><b>Compilation</b></td></tr>
+<tr><td><b>never</b> — inference math</td><td>"1 step = schedule → forward → sample"</td><td><b>EngineCore.step</b></td></tr></table>
+<h3>1.2 Each module — its ONE job and what it never touches</h3>
+<table><tr><th>Module</th><th>Owns</th><th>Does NOT touch</th></tr>
+<tr><td><b>EngineCore</b><br><code>v1/engine/core.py:101</code></td><td>Time-line (the <code>step()</code> loop), request lifecycle, pause/resume/sleep/wake, DP coordination, LoRA hot-plug</td><td>device, model, tensor, scheduling strategy</td></tr>
+<tr><td><b>Scheduler</b><br><code>v1/core/sched/scheduler.py:418</code></td><td>PURE decision fn: request state + blocks -&gt; SchedulerOutput</td><td>device, model, kernels, comm</td></tr>
+<tr><td><b>Worker</b><br><code>v1/worker/worker_base.py</code>+<code>gpu_worker.py</code></td><td>The device, weights in HBM, KV-cache tensors, load/determine_memory/sleep/health</td><td>scheduling decisions, request state</td></tr>
+<tr><td><b>ModelRunner</b><br><code>v1/worker/gpu/model_runner.py:1134</code></td><td>Translates SchedulerOutput -&gt; kernel dispatch (5 stages)</td><td>request admission, scheduling, device discovery</td></tr>
+<tr><td><b>AttentionBackend</b><br><code>v1/attention/backend.py</code></td><td>Common attn metadata -&gt; HW-private metadata</td><td>model structure, scheduling, KV-cache ownership</td></tr>
+<tr><td><b>KV 4-layer stack</b></td><td>Manager (request↔block) / Coordinator (multi-group) / BlockPool (free-list+hash) / Connector (cross-worker tiering)</td><td>scheduling dispatch, model execution</td></tr>
+<tr><td><b>Compilation</b><br><code>compilation/</code></td><td>Kernel launches -&gt; graph replay (FULL/PIEWISE/NONE)</td><td>model semantics, scheduling</td></tr>
+<tr><td><b>Platform</b><br><code>platforms/</code></td><td>Device-specific assumptions behind 6 mandatory methods</td><td>everything above</td></tr></table>
+<h3>1.3 Cross-module contracts — why they are cut this way</h3>
+<table><tr><th>Contract</th><th>Producer → Consumer</th><th>Design decision</th><th>Why</th></tr>
+<tr><td><b>SchedulerOutput</b><code>v1/core/sched/output.py</code></td><td>Scheduler → ModelRunner</td><td>only decisions (block ids + token counts), no tensors</td><td>Scheduler runs CPU-only; enables cross-node transport (PD disagg)</td></tr>
+<tr><td><b>ForwardContext</b><code>forward_context.py:132</code></td><td>ModelRunner → model</td><td>model reads ForwardContext only; never sees SchedulerOutput</td><td>changing scheduling/graph-mode/parallelism never touches 200+ model files</td></tr>
+<tr><td><b>block_tables + slot_mappings</b></td><td>ModelRunner → AttentionBackend</td><td>ONE translation shared by N backends</td><td>avoids N copies of page-table-walk logic</td></tr>
+<tr><td><b>KVCacheBlocks</b><code>kv_cache_manager.py:30</code></td><td>Scheduler → Worker</td><td>only block ids, no tensors</td><td>cross-node transport (PD disagg)</td></tr>
+<tr><td><b>allocate_slots → None</b></td><td>KVCacheManager → Scheduler</td><td>returns None instead of raising on OOM</td><td>"allocation failure" → normal control flow; one while-loop handles both allocate &amp; preempt</td></tr></table>
+<h3>1.4 First-principles meta-judgement — forced vs chosen</h3>
+<blockquote>Among all vLLM's layers, a few are <b>forced by physics</b>: paged-KV, Attention-as-separable-backend, Communication-via-Connector, Platform-as-interface — these are stable across HW generations. Others are <b>engineering choices</b> a v2 may freely redesign: the Python front-end, the shm-RPC executor, capability-dispatched sampling, the patch layer. Every heavily-patched subsystem is a gap in vLLM's abstraction surface.</blockquote>
+
+<h2 id="s_2">2. Architecture Layers</h2>
+<div class="srcband"><span class="tag">§2</span><b>Architecture Layers</b><span class="src">source: first_principles_software_arch §2-9 + agent1-3</span></div>
+<h3>2.1 EngineCore — the time-line owner</h3>
+<p><code>v1/engine/core.py:101 EngineCore</code>. The heartbeat (<code>core.py:576</code>):</p>
+<pre><code>def step(self):
+    scheduler_output = self.scheduler.schedule()          # 1. decide
+    future = self.executor.execute_model(scheduler_output, non_block=True)  # 2. async dispatch
+    model_output = future.result()                        # 3. wait
+    engine_core_outputs = self.scheduler.update_from_output(scheduler_output, model_output)</code></pre>
+<p>EngineCore also owns: add/abort, pause/resume, sleep/wake, LoRA hot-plug, cache reset (<code>reset_prefix_cache/reset_encoder_cache</code>), DP coordination (<code>step_with_batch_queue</code>), spec-draft collection (<code>post_step → take_draft_token_ids</code>). It <b>holds NO device/model/tensor</b> — runs CPU-only, the ultimate control/data-plane split.</p>
+<h3>2.2 Scheduler — the pure decision function</h3>
+<p><code>v1/core/sched/scheduler.py:418</code>. The design axiom (<code>scheduler.py:420</code>):</p>
+<pre><code># There's no "decoding phase" nor "prefill phase" in the scheduler.
+# Each request just has num_computed_tokens and num_tokens_with_spec …
+# At each step, the scheduler tries to assign tokens to the requests so
+# that each request's num_computed_tokens can catch up its
+# num_tokens_with_spec. This is general enough to cover chunked prefills,
+# prefix caching, speculative decoding, and "jump decoding."</code></pre>
+<p>Unified token-budget loop over RUNNING then WAITING, chunked via <code>long_prefill_token_threshold</code>, preemption when <code>allocate_slots</code> returns None. Holds no device/model/comm.</p>
+<h3>2.3 Worker — the device owner</h3>
+<p><code>v1/worker/worker_base.py</code>+<code>gpu_worker.py</code>. One Worker per GPU/NPU. Responsibilities: init_device, load_model/reload_weights, determine_available_memory, kv_caches tensors, sleep/wake, LoRA add/remove/pin, execute_model, sample_tokens, health check. <b>Does NOT hold Scheduler, makes no scheduling decisions, holds no request state</b> — consumes SchedulerOutput statelessly. Worker holds ModelRunner but the two are separate: same device can run different models; same model can run on different devices (Ascend <code>NPUWorker(NPUModelRunner)</code> subclasses but keeps the interface).</p>
+<h3>2.4 ModelRunner — the forward executor</h3>
+<table><tr><th>#</th><th>stage</th><th>input → output</th><th>meaning</th></tr>
+<tr><td>1</td><td>Request bookkeeping</td><td>SchedulerOutput → req_states</td><td>decisions → local state</td></tr>
+<tr><td>2</td><td>prepare_inputs</td><td>req_states → InputBatch{input_ids, positions, q_start_loc, seq_lens, logits_indices}</td><td>request state → model input tensors</td></tr>
+<tr><td>3</td><td>prepare_attn</td><td>req_states+pool → block_tables[groups,reqs,blocks] + slot_mappings[groups,tokens]</td><td>block ids → page-table walk</td></tr>
+<tr><td>4</td><td>model_state.prepare_attn</td><td>common_attn_metadata → attn_metadata[per-backend]</td><td>common → HW-private metadata</td></tr>
+<tr><td>5</td><td>model forward / cudagraph replay</td><td>inputs → hidden/logits</td><td>tensors → compute</td></tr></table>
+<h3>2.5 AttentionBackend — the only HW-sensitive op</h3>
+<p>Attention is the ONLY op whose memory-access pattern depends on sequence length + KV layout (GEMM/Norm/MoE/RoPE are all regular (N,d)→(N,d)). The triple: register_backend + Builder.build(common) + Impl.forward + KVCacheSpec family (<code>FullAttentionSpec / MLASpec / RSWASpec / RaggedSpec</code>). ModelRunner only sees KVCacheSpec, not concrete model — this decouples "model structure change" from "KV management".</p>
+<h3>2.6 Platform — device as interface</h3>
+<p><code>platforms/</code>. 6 mandatory methods. Holds device capability/memory/stream/attn-backend-selection/graph-pool. Ascend <code>NPUPlatform</code> overrides only identity+backend-map+memory+compile hooks; its <code>get_device_total_memory</code> raises <code>NotImplementedError</code> (torch_npu global-init-only) — a canonical "interface promise vs device capability" mismatch.</p>
+<h3>2.7 Compilation — "record once, replay many"</h3>
+<p><code>compilation/</code>+<code>v1/worker/gpu/cudagraph_utils.py</code>. Platform injects <code>ACLGraphWrapper</code> via <code>get_static_graph_wrapper_cls()</code>. See §6 for the 3-mode trade-off and ACL-specific constraints.</p>
+
+<h2 id="s_3">3. Execution Hot Path (Scheduler → ModelRunner → Sample)</h2>
+<div class="srcband"><span class="tag">§3</span><b>Hot Path</b><span class="src">source: arch_spine §4 + agent1+agent2 + dsa_analysis</span></div>
+<h3>3.1 The page-table walk (slot_mapping kernel)</h3>
+<pre><code>v1/worker/gpu/block_table.py:283 (_compute_slot_mappings_kernel)
+block_indices  = positions // (block_size * CP_SIZE)
+block_offsets  = positions %  (block_size * CP_SIZE)
+block_numbers  = tl.load(block_table_ptr + req_state_idx*stride + block_indices)
+slot_ids = block_numbers * block_size + block_offsets   &lt;- physical address</code></pre>
+<div class="inv">This line is isomorphic to OS <code>phys = ppn * PAGE_SIZE + page_offset</code>: <code>block_table</code>=page table, <code>block_id</code>=PFN, <code>slot_id</code>=linear address. PAD_SLOT_ID = "invalid PTE". vLLM doing virtual-memory management on GPU HBM, formalised.</div>
+<h3>3.2 The 3-line heartbeat</h3>
+<pre><code>def step(self):
+    scheduler_output = self.scheduler.schedule()
+    future = self.executor.execute_model(scheduler_output, non_block=True)
+    engine_core_outputs = self.scheduler.update_from_output(scheduler_output, future.result())</code></pre>
+<h3>3.3 SchedulerOutput — the Scheduler↔Worker contract</h3>
+<p><code>v1/core/sched/output.py</code>: scheduled_new/resumed/running/preempted reqs, req_to_new_blocks, num_scheduled_tokens, scheduled_spec_decode_tokens, scheduled_encoder_inputs, finished_req_ids. Carries ONLY decisions (block ids + token counts) — no tensors — so it crosses process/node boundaries (PD disagg relies on this). 4 explicit categories (new/resumed/running/preempted) let Worker use simple if-else. Block allocation done in Scheduler side — Worker only consumes block ids.</p>
+<h3>3.4 ForwardContext — the model↔framework firewall</h3>
+<p><code>forward_context.py:132</code>: attn_metadata[per-layer], slot_mapping[per-layer], dp_metadata, cudagraph_runtime_mode, batch_descriptor, is_padding, skip_compiled, +all_moe_layers/moe_layer_index (torch.compile string workaround). Model code (200+ files) reads <b>only</b> ForwardContext — changing scheduling/graph-mode/parallelism never touches model files.</p>
+<h3>3.5 allocate_slots → None — control-flow unification</h3>
+<pre><code>while True:
+    new_blocks = kv_cache_manager.allocate_slots(request, num_new_tokens)
+    if new_blocks is not None: break
+    preempted = self.running.pop()   # reclaim budget
+    self._preempt_request(preempted)</code></pre>
+<p>Returning None (not raising) keeps preempt logic in the same while-loop as allocate logic.</p>
+
+<h2 id="s_4">4. KV-Cache Management — why 4 layers, not 1</h2>
+<div class="srcband"><span class="tag">§4</span><b>KV 4-layer stack</b><span class="src">source: arch_spine §2 + agent2 + dsa_analysis + community_deep_dive §4</span></div>
+<table><tr><th>Layer</th><th>File</th><th>Owns</th><th>Rate of change</th></tr>
+<tr><td><b>KVCacheManager</b></td><td><code>v1/core/kv_cache_manager.py:114</code></td><td>request-lifecycle ↔ block allocation (allocate_slots/free/get_computed_blocks)</td><td>daily (policy)</td></tr>
+<tr><td><b>KVCacheCoordinator</b></td><td><code>v1/core/kv_cache_coordinator.py:60</code></td><td>multi-group (MLA+GQA+SWA): logical block id → per-group physical block ids</td><td>weekly (model structure)</td></tr>
+<tr><td><b>BlockPool</b></td><td><code>v1/core/block_pool.py:143</code></td><td>free-list + content-hash cache (get_new_blocks/free_blocks/touch/evict)</td><td>monthly (algorithm)</td></tr>
+<tr><td><b>KVConnector</b></td><td><code>distributed/kv_transfer/kv_connector/v1/base.py:171</code></td><td>cross-worker KV movement (PD disagg / offload / KV Pool)</td><td>quarterly (topology)</td></tr></table>
+<h3>4.1 BlockPool — pure metadata, content-hash</h3>
+<p><code>v1/core/block_pool.py:162</code>: <code>blocks = [KVCacheBlock(idx) for idx in range(num_gpu_blocks)]</code>, <code>free_block_queue</code>, <code>cached_block_hash_to_block = BlockHashToBlockMap()</code>. KVCacheBlock (<code>kv_cache_utils.py:117</code>) is <b>pure metadata</b> — no tensor. The actual bytes live in <b>Worker-side</b> <code>kv_caches: list[torch.Tensor]</code> (<code>model_runner.py:490</code>). This two-layer split lets prefix-cache/swap/sliding-window/compressed-MLA all renumber the same <code>block_id</code>s without touching the pool.</p>
+<h3>4.2 Coordinator subclasses</h3>
+<p><code>UnitaryKVCacheCoordinator</code> (single group), <code>HybridKVCacheCoordinator</code> (MLA+GQA mixed, e.g. DeepSeek-V3), <code>KVCacheCoordinatorNoPrefixCache</code>. MLA's <code>storage_block_size ≠ block_size</code> mapping is encapsulated here — Manager only calls Coordinator's interface.</p>
+<h3>4.3 Why 4 layers — the MLA forcing function</h3>
+<blockquote>v0 had a single <code>BlockSpaceManager</code>. MLA's <code>storage_block_size ≠ block_size</code> added a logical→physical mapping that would have scattered across allocate/free/prefix-cache. After the split, this mapping is encapsulated in Coordinator. "Multi-group mapping" changes are isolated to one layer.</blockquote>
+<p>Splitting manager↔coordinator: new KV layout (MLA) changes Coordinator only. Splitting coordinator↔blockpool: prefix-cache/eviction changes BlockPool only. Splitting manager↔connector: PD disagg/offload changes Connector only.</p>
+
+<h2 id="s_5">5. Parallel &amp; Distributed (TP/PP/DP/EP/CP/EPLB)</h2>
+<div class="srcband"><span class="tag">§5</span><b>Parallel</b><span class="src">source: arch_spine §6b + agent4 + community_deep_dive §4-5</span></div>
+<table><tr><th>Strategy</th><th>Split</th><th>Comm</th><th>Bubble/cost</th><th>vLLM location</th></tr>
+<tr><td><b>TP</b></td><td>per-layer matmul (hidden/head)</td><td>per-layer all-reduce</td><td>2M/rank</td><td>TP_GROUP + ColumnParallelLinear</td></tr>
+<tr><td><b>PP</b></td><td>layer segments</td><td>P2P [b,h,d]</td><td>(p-1)/p</td><td>PP_GROUP + IntermediateTensors</td></tr>
+<tr><td><b>DP</b></td><td>replica</td><td>batch-desc sync</td><td>linear scale, CUDA-graph sync needed</td><td>dp_utils + cudagraph_sync_dp</td></tr>
+<tr><td><b>EP</b></td><td>MoE by expert</td><td>all-to-all routing</td><td>imbalance=hotspot</td><td>eplb/ + distributed/moe/</td></tr></table>
+<p>These compose (production runs TP8+EP64+PP4+DP32 simultaneously). Scheduler does <b>NOT</b> know TP/EP — its granularity is "request", not "token on which card". Worker handles via model-internal <code>ColumnParallelLinear/MoEDispatch</code>; ModelRunner never calls comm directly. Ascend HCCL via <code>distributed/pyhccl.py PyHcclCommunicator</code>.</p>
+<h3>5.1 Context Parallel (PCP/DCP)</h3>
+<table><tr><th>Variant</th><th>When</th><th>Comm domain</th><th>Goal</th></tr>
+<tr><td><b>PCP</b> (Prefill-CP)</td><td>prefill phase</td><td><b>independent</b></td><td>split sequence across devices; reduce TTFT</td></tr>
+<tr><td><b>DCP</b> (Decode-CP)</td><td>decode / chunked-prefill</td><td><b>reuses TP domain</b> (no extra devices)</td><td>eliminate TP-domain KV redundancy → free HBM → more concurrency</td></tr></table>
+<p><code>cp_size = pcp_size × dcp_size</code>; token-interleave storage via <code>cp_kv_cache_interleave_size</code> (default 1); <code>block_size % cp_kv_cache_interleave_size == 0</code> required.</p>
+<h3>5.2 EPLB — Ascend's original MoE contribution</h3>
+<p>Expert-migration stack: <code>EplbUpdator</code> → policy (<code>FlashLB</code> Hungarian + numba tree-search, <code>FlashTree</code>, <code>SwiftBalance</code>) → <code>D2DExpertWeightLoader</code> → <code>VllmEplbAdaptor</code>. The only net-new subsystem from Ascend to upstream vLLM.</p>
+<h3>5.3 PD disagg — cutting the Worker boundary, no new module</h3>
+<p>P node owns Scheduler+Worker(P)+KVConnector(P→D); D node owns Scheduler+Worker(D)+KVConnector(D←P). Scheduler only sees KVCacheBlocks (ids), not which node holds the block — "request lifecycle ⟷ KV physical location" decoupling, the direct payoff of KVCacheManager being independent of Scheduler.</p>
+
+<h2 id="s_6">6. Compilation &amp; Graph (CUDA/ACL Graph, Fusion, Quant)</h2>
+<div class="srcband"><span class="tag">§6</span><b>Compilation &amp; Graph</b><span class="src">source: arch_spine §8 + agent3 + community_deep_dive §2 + stripped asci_docs</span></div>
+<h3>6.1 Three execution modes</h3>
+<table><tr><th>Mode</th><th>Dynamic dims</th><th>HBM</th><th>TTFT</th><th>Use</th></tr>
+<tr><td><b>FULL</b></td><td>fully fixed (2^k pad)</td><td>high</td><td>slow (first-token record)</td><td>pure decode, max throughput</td></tr>
+<tr><td><b>PIECEWISE</b></td><td>dynamic shapes</td><td>medium</td><td>fast</td><td>mixed prefill+decode, long context</td></tr>
+<tr><td><b>Eager (NONE)</b></td><td>fully dynamic</td><td>low</td><td>fastest</td><td>debug, encoder-decoder (cross-attn changes every step)</td></tr></table>
+<p>Dispatch: <code>v1/worker/gpu/cudagraph_utils.py CudagraphDispatcher</code>, candidate key <code>(rounded_num_tokens, num_active_loras)</code>; each recorded at warm-up, runtime looks up nearest case.</p>
+<h3>6.2 ACL Graph — why Ascend cannot just port CUDA Graph</h3>
+<p>Source: official <code>docs/source/developer_guide/Design_Documents/ACL_Graph.md</code></p>
+<p><b>Diff A — full replay needs backend-side <code>update_graph_params()</code> hook</b> (NPU-only). Capture phase records per-graph task handle/event/workspace; replay frontend calls <code>update_full_graph_params()</code> → backend runs parameter refresh on update stream via <code>torch.npu.graph_task_update_begin/end()</code>; <code>ExternalEvent</b> enforces ordering. <b>Key fact: an attn backend WITHOUT this hook CANNOT do full-graph replay.</b> Implemented in <code>vllm_ascend/attention/attention_v1.py, mla_v1.py, context_parallel/attention_cp.py, mla_cp.py</code>.</p>
+<p><b>Diff B — ACL capture can still be rejected by runtime resources</b>. Capture sizes are measured, not estimated from CUDA. Tune <code>cudagraph_capture_sizes / max_cudagraph_capture_size</code>.</p>
+<h3>6.3 Mode normalization (stricter than upstream)</h3>
+<p>encoder-decoder forced PIECEWISE; use_inductor disabled on graph path; ASCEND_LAUNCH_BLOCKING=1 rejected when graph enabled; Xlite can disable full mode / fall back to FULL_DECODE_ONLY.</p>
+<h3>6.4 Fusion &amp; Quant</h3>
+<p>70+ fusion passes in AscendCompiler/GraphFusionPassManager (AllReduce+RMSNorm, QK-Norm+Rope, AllGather-chunk-noop, NoOp, norm-quant). 10+ quant schemes (W4A4/W4A8/W8A8/PDmix/MXFP/FlatQuant). Rule of thumb: MoE→W4A8, dense→W8A8, extreme(EP off)→W4A4. W4A4∧EPLB incompatible = CANN kernel-coverage limit.</p>
+
+<h2 id="s_7">7. Ascend Overlay — DSA/SFA/KV Pool/PD/SRF/CPU-binding</h2>
+<div class="srcband"><span class="tag">§7</span><b>Ascend Overlay</b><span class="src">source: agent4 + community_deep_dive §3-5 + arch_ascend + stripped asci_docs + key_code/</span></div>
+<h3>7.1 Subsystem × mechanism map</h3>
+<table><tr><th>Subsystem</th><th>Mechanism</th><th>Key file</th></tr>
+<tr><td>Platform</td><td>subclass Platform + config injection</td><td><code>platform.py</code> NPUPlatform (1255L)</td></tr>
+<tr><td>Attention</td><td>5 backends (ASCEND/MLA/SFA/DS_A/FA3)</td><td><code>attention/*_v1.py</code></td></tr>
+<tr><td>Custom ops</td><td>CANN custom op + substitution</td><td><code>ops/</code> 86 files</td></tr>
+<tr><td>Quant</td><td>10+ QuantConfig subclasses</td><td><code>quantization/</code></td></tr>
+<tr><td>Compilation</td><td>ACL Graph + 70 fusion</td><td><code>acl_graph.py</code>, AscendCompiler</td></tr>
+<tr><td>Comm</td><td>HCCL wraps NCCL</td><td><code>pyhccl.py PyHcclCommunicator</code></td></tr>
+<tr><td>KV transport</td><td>P2P mooncake + ascend_store pool</td><td><code>kv_p2p/mooncake_connector</code> + <code>kv_pool/ascend_store</code></td></tr>
+<tr><td>Scheduler</td><td>recompute + SRF + profiling-chunk</td><td><code>core/recompute_scheduler.py</code></td></tr>
+<tr><td>EPLB</td><td>whole subsystem (Ascend original)</td><td><code>eplb/</code></td></tr>
+<tr><td>Patch</td><td>60+ setattr</td><td><code>patch/</code></td></tr></table>
+<h3>7.2 Three Ascend original innovations</h3>
+<ol>
+<li><b>Schedule-level (roofline NPU)</b>: <code>RecomputeScheduler (recompute_scheduler.py:98)</code> replaces preemption's offload-to-CPU with drop-and-recompute. Also SRF + profiling-chunk.</li>
+<li><b>EPLB — the net-new vLLB contribution</b>: FlashLB+FlashTree+SwiftBalance, 3-stage updator→policy→D2D migration.</li>
+<li><b>ACL Graph (§6.2)</b> with update_graph_params hook requirement; GraphFusionPassManager 70 passes.</li>
+</ol>
+<h3>7.3 KV Pool (Ascend Store) — the memory tier</h3>
+<p>3 backends: Mooncake (Distributed Store + SSD offload), Memcache (MemFabric), Yuanrong (openEuler etcd+HugeTLB). Plus NVMe SSD offload. Mirror of OS cache→DRAM→swapfile. Tuning: <code>kv_load_failure_policy=recompute</code> (hybrid-attn like DSV4 not yet supported); lease TTL ≥ ASCEND_CONNECT_TIMEOUT+TRANSFORM; fabric mem A3 1GB-aligned; <code>PYTHONHASHSEED</code> consistent across nodes; warm-up 2-3× device-count of 8K-input/1-output requests.</p>
+<h3>7.4 SRF + CPU-binding + Netloader</h3>
+<p>SRF: anti head-of-line on P-node; threshold=P70-P85 prompt-len, long_max_wait=long-req P90 under strict-short-first. CPU-binding: default-on ARM since v0.18 (uses npu-smi topo to pick NUMA). Netloader: HCCL send/recv weight transfer, register_model_loader API.</p>
+<h3>7.5 Patch layer = diagnostic of "missing extension points"</h3>
+<p>Canonical examples: <code>patch_fused_moe</code> (no FusedMoE-factory-swap iface), <code>patch_cudagraph</code> (CudagraphDispatcher assumes CUDA-graph-only), <code>patch_kv_cache_coordinator</code> (internal state not exposed), <code>patch_mla_prefill_backend</code> (no MLA prefill backend-switch iface). <b>Every heavily-patched subsystem is a candidate for a new upstream extension point.</b></p>
+
+<h2 id="s_8">8. Performance Optimisation Handbook (OS → allocator → HCCL → kernel → fusion)</h2>
+<div class="srcband"><span class="tag">§8</span><b>Perf Handbook</b><span class="src">source: community_deep_dive §1 + asci_docs/perf_*.md + docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md</span></div>
+<table><tr><th>Layer</th><th>Knob</th><th>Effect</th></tr>
+<tr><td><b>OS</b></td><td>governor→performance; swap=0; auto-NUMA-bal off; sched_migration_cost_ns=50000</td><td>host jitter ms→μs</td></tr>
+<tr><td><b>Allocator</b></td><td>jemalloc/TCMalloc</td><td>peak-throughput fragmentation reduced</td></tr>
+<tr><td><b>torch_npu env</b></td><td>memory/scheduling toggles</td><td>CANN best defaults</td></tr>
+<tr><td><b>HCCL comm</b></td><td><b>AIV mode</b> (AI vect core bypasses AI CPU); INTRA_ROCE_ENABLE; RDMA_TC/SL; BUFFSIZE</td><td><b>NPU-only layer</b>: comm ms→sub-ms</td></tr>
+<tr><td><b>Fusion</b></td><td>70+ passes</td><td>fewer launches + fewer intermediate HBM writes</td></tr></table>
+<div class="inv">"50% of the perf bottleneck is NOT in model forward — it is at the host ↔ NCCL/HCCL boundary."</div>
+<p>Test practice: unit tests (<code>tests/ut</code>, CPU-runnable) + E2E regression (<code>tests/e2e</code>) + nightly CI (<code>schedule_nightly_test_a2/a3.yaml</code>). Profiling chain: msprobe (NPU kernel timeline) → service_profiling_guide → service_benchmark (recommend 2-3× device-count warm-up of 8K-in/1-out).</p>
+<h3>Feature-matrix key exclusions</h3>
+<p>PIECEWISE ⟷ FULL: mutually exclusive. DP+CP: only DCP supports DP. Flashcomm: prefill-only. W4A4∧EPLB/TP: ❌. MLAPO: decode-only. MM input + ACLGraph Full: ❌.</p>
+<h3>Supported models</h3>
+<p>20+ mainstream on A2/A3 with full TP+EP+PD-Disagg+Full-Graph: DeepSeek V3→V4, Qwen3, GLM5, Kimi-K2, MiniMax-M2. Gemma4/950 experimental. See <code>docs/source/user_guide/support_matrix/</code>.</p>
+
+<h2 id="s_9">9. Generic vLLM Hardware-Adaptation Playbook</h2>
+<div class="srcband"><span class="tag">§9</span><b>Generic Playbook</b><span class="src">source: agent4 Part B</span></div>
+<h3>9.1 8-step workflow</h3>
+<table><tr><th>#</th><th>Goal</th><th>Extension point</th></tr>
+<tr><td>1</td><td>device discovery</td><td>Platform.get_device_* + get_attn_backend_cls</td></tr>
+<tr><td>2</td><td>paged KV</td><td>KVCacheSpec family + Manager + Coordinator + BlockPool (full I1 stack, reuse unchanged)</td></tr>
+<tr><td>3</td><td>attention</td><td>register_backend (the ONLY must-replace)</td></tr>
+<tr><td>4</td><td>other kernels</td><td>custom op (ascend uses 4 paths: direct_register / torch_npu / Triton / CANN)</td></tr>
+<tr><td>5</td><td>worker/runner</td><td>subclass GPUModelRunner (ascend has 3 runners: v1 ACL / v2 piecewise / Xlite)</td></tr>
+<tr><td>6</td><td>comm</td><td>Communicator wraps NCCL (ascend HCCL via ctypes)</td></tr>
+<tr><td>7</td><td>config injection</td><td>check_and_update_config + scheduler_cls string swap</td></tr>
+<tr><td>8</td><td>tests</td><td>tests/ut + tests/e2e</td></tr></table>
+<h3>9.2 MUST / SHOULD / NICE</h3>
+<p><b>MUST</b> (won't start): Platform / Attention / paged-KV / GEMM / comm / Worker.<br>
+<b>SHOULD</b> (halved without): ACL-graph / quant / Scheduler-tweak.<br>
+<b>NICE</b> (Ascend-tier): EPLB / KV-PD / recompute / Xlite.</p>
+<h3>9.3 Fork vs plugin vs patch</h3>
+<p>Fork when expansion &gt;25% upstream. Plugin when Platform/Attention/KVConnector/QuantConfig/scheduler_cls have registration points. Patch = workaround; every patch is a break-point each major release.</p>
+<h3>9.4 7 risk categories</h3>
+<p>API drift, patch fragility, name leakage, meta omission, config explosion, multi-runner, test gap. Patch layer = the single largest risk surface.</p>
+
+<h2 id="s_10">10. Community Pulse (2026 Q2–Q3)</h2>
+<div class="srcband"><span class="tag">§10</span><b>90-day pulse</b><span class="src">source: community_deep_dive §6 + appendix_community.md</span></div>
+<p>Window: <code>vllm-ascend</code> git log 2026-04-01..07-18, <b>~1060 commits</b>.</p>
+<table><tr><th>Topic</th><th>Commits</th><th>Signal</th></tr>
+<tr><td>kv</td><td>97</td><td>KV full-stack (PD/Pool/CPU-offload) — absolute focus</td></tr>
+<tr><td>A3</td><td>64</td><td>new-gen HW ramp</td></tr>
+<tr><td>quant</td><td>61</td><td>W4A4/W4A8/W8A8/MXFP diversity</td></tr>
+<tr><td>spec</td><td>53</td><td>spec decode family (Eagle3/DFlash/DSpark/MTP/PCP)</td></tr>
+<tr><td>310</td><td>53</td><td><b>310P is a separate HW line</b> (not A3 subset)</td></tr>
+<tr><td>PCP</td><td>35</td><td>prefill CP</td></tr>
+<tr><td>eplb</td><td>24</td><td>Ascend original</td></tr>
+<tr><td>MLA</td><td>15</td><td>DeepSeek compress</td></tr>
+<tr><td>recompute</td><td>14</td><td>roofline NPU-side</td></tr>
+<tr><td>Flashcomm</td><td>11</td><td>CANN fused-comm</td></tr>
+<tr><td>disagg</td><td>8</td><td>PD disagg engineering</td></tr></table>
+<h3>5 advanced principles (only visible in community activity)</h3>
+<ol>
+<li><b>P1</b> comp/bandwidth ratio decides swap vs recompute (NPU recompute, GPU swap)</li>
+<li><b>P2</b> PD disagg projects roofline inter-node (chunked prefill vs PD disagg = two implementations of same insight)</li>
+<li><b>P3</b> KV-cache evolves cache → memory tier (HBM → extended pool → SSD offload, mirrors OS)</li>
+<li><b>P4</b> host-jitter = last 10% P99 after kernel fusion (CPU binding+msprobe+Netloader converge)</li>
+<li><b>P5</b> both ends of Python 95/5 compressed; eventual pressure to move scheduler to C++/Rust</li>
+</ol>
+<h3>Three-layer enforcement hierarchy</h3>
+<table><tr><th>Level</th><th>vLLM</th><th>Ascend</th></tr>
+<tr><td><b>L1 implement-to-exist</b></td><td>paged-KV / single-step scheduler / Platform</td><td>HCCL↔NCCL / Platform shim / ACL Graph</td></tr>
+<tr><td><b>L2 implement-to-compete</b></td><td>prefix cache / chunked prefill / CPython 95/5</td><td>recompute / KV Pool / SRF / quant diversity</td></tr>
+<tr><td><b>L3 implement-to-win</b></td><td>PD disagg / spec decode</td><td>CPU binding / profiling-chunk / Netloader / Flashcomm</td></tr></table>
+
+<h2 id="s_11">11. References &amp; Drill Anchors</h2>
+<div class="srcband"><span class="tag">§11</span><b>Refs &amp; Anchors</b><span class="src">source: synthesised from all reports + file_map + stripped asci_docs</span></div>
+<h3>11.1 Key source anchors (file:line)</h3>
+<table><tr><th>Anchor</th><th>What</th></tr>
+<tr><td><code>v1/engine/core.py:576</code></td><td>EngineCore.step (3-line heartbeat)</td></tr>
+<tr><td><code>v1/core/sched/scheduler.py:418</code></td><td>schedule() unified loop</td></tr>
+<tr><td><code>v1/core/kv_cache_manager.py:283</code></td><td>allocate_slots (returns None on OOM)</td></tr>
+<tr><td><code>v1/core/block_pool.py:283</code></td><td>slot_id = block_number*size+offset</td></tr>
+<tr><td><code>v1/worker/gpu/model_runner.py:1134</code></td><td>execute_model 5-stage</td></tr>
+<tr><td><code>v1/worker/gpu/block_table.py:283</code></td><td>_compute_slot_mappings_kernel</td></tr>
+<tr><td><code>v1/attention/backend.py</code></td><td>register_backend / Builder / Impl</td></tr>
+<tr><td><code>forward_context.py:132</code></td><td>ForwardContext (model↔framework firewall)</td></tr>
+<tr><td><code>compilation/cuda_graph.py</code></td><td>CUDAGraphRunner</td></tr>
+<tr><td><code>kv_connector/v1/base.py:171</code></td><td>KVConnectorBase_V1</td></tr>
+<tr><td><code>platforms/interface.py</code></td><td>Platform (6 mandatory methods)</td></tr>
+<tr><td><code>ascend/platform.py</code></td><td>NPUPlatform</td></tr>
+<tr><td><code>ascend/attention_v1.py @register_backend</code></td><td>ASCEND / ASCEND_MLA / DSA / SFA / FA3</td></tr>
+<tr><td><code>ascend/acl_graph.py</code></td><td>ACLGraphWrapper</td></tr>
+<tr><td><code>ascend/core/recompute_scheduler.py:98</code></td><td>RecomputeScheduler</td></tr>
+<tr><td><code>ascend/eplb/</code></td><td>EPLB stack (Ascend original)</td></tr>
+<tr><td><code>ascend/kv_p2p/mooncake_connector.py</code></td><td>MooncakeConnector</td></tr>
+</table>
+<h3>11.2 External links</h3>
+<ul>
+<li><a href="https://docs.vllm.ai/en/latest/usage/v1_guide.html">v1_guide</a> · <a href="https://blog.vllm.ai/2025/01/27/v1-alpha-release.html">v1-alpha-release blog</a></li>
+<li><a href="https://docs.vllm.ai/en/latest/design/arch_overview.html">arch_overview</a> · <a href="https://docs.vllm.ai/en/latest/design/attention_backends.html">attention_backends</a> · <a href="https://docs.vllm.ai/en/latest/design/cuda_graphs.html">cuda_graphs</a></li>
+<li><a href="https://docs.vllm.ai/projects/ascend/">Ascend docs</a> · <a href="https://github.com/vllm-project/vllm-ascend">Ascend github</a></li>
+</ul>
+<h3>11.3 Raw reports (1:1 traceability)</h3>
+<p>All original reports preserved in <code>/vllm_research/vllm_analysis_raw/</code> after this refactor.</p>
+<div class="meta">vLLM 2db39c704 — Ascend b266da5d (90-day window 04-07/2026) — 2026-07-18 — Unified</div>
+
+</article></div>
+<script>
+var nav=document.querySelectorAll("#nav a");
+for(var i=0;i<nav.length;i++){(function(a){a.addEventListener("click",function(e){
+  e.preventDefault();var t=document.querySelector(a.getAttribute("href"));
+  if(t)t.scrollIntoView({behavior:"smooth"});
+});})(nav[i]);}
+</script>
+</body></html>

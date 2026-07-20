@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>01 · Platform Entry + Core Scheduler — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Platform Entry + Core Scheduler</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="active">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">01 · Platform Entry + Core Scheduler</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-plugin-registration-sequence" class="">1. Plugin registration sequence</a>
+<a href="#2-npuplatform" class="">2. NPUPlatform</a>
+<a href="#check-and-update-config-the-central-config-surgery" class="l3">check_and_update_config — the central config surgery</a>
+<a href="#3-forward-context-extensions" class="">3. Forward context extensions</a>
+<a href="#moecommtype-taxonomy" class="l3">MoECommType taxonomy</a>
+<a href="#per-generation-selection-select-moe-comm-method-ascend-forward-context-py-303-367" class="l3">Per-generation selection (select_moe_comm_method, ascend_forward_context.py:303-367)</a>
+<a href="#set-ascend-forward-context-per-forward-metadata" class="l3">set_ascend_forward_context — per-forward metadata</a>
+<a href="#4-core-scheduler-innovations-deep-dive" class="">4. Core scheduler innovations (deep dive)</a>
+<a href="#4-1-innovation-taxonomy" class="l3">4.1 Innovation taxonomy</a>
+<a href="#4-2-deep-dive-profilingchunkscheduler-the-most-novel" class="l3">4.2 Deep dive — ProfilingChunkScheduler (the most novel)</a>
+<a href="#4-3-deep-dive-recomputescheduler-stateless-kv-via-recompute" class="l3">4.3 Deep dive — RecomputeScheduler (stateless KV via recompute)</a>
+<a href="#4-4-shortrequestfirst-compressedkv-notes" class="l3">4.4 ShortRequestFirst + CompressedKV notes</a>
+<a href="#5-supporting-infra" class="">5. Supporting infra</a>
+<a href="#6-how-the-scheduler-innovations-compose" class="">6. How the scheduler innovations compose</a>
+<a href="#key-file-references" class="">Key file references</a>
+</div>
+<h1 id="vllm-ascend-platform-entry-core-scheduler-plugin-infrastructure">vllm-ascend: Platform Entry / Core Scheduler &amp; Plugin Infrastructure</h1>
+<blockquote>
+<p>Architecture analysis — plugin registration, NPUPlatform, forward-context extensions, and Ascend&rsquo;s in-house scheduler innovations. Target audience: AI-systems / engine researchers.</p>
+</blockquote>
+<hr />
+<h2 id="1-plugin-registration-sequence" id="1-plugin-registration-sequence">1. Plugin registration sequence</h2>
+<p>vLLM exposes a set of named plugin hooks (<code>register</code>, <code>register_connector</code>, <code>register_model_loader</code>, …). vllm-ascend implements these in <code>vllm_ascend/__init__.py</code> to inject NPU behavior at four well-defined seams.</p>
+<div class="highlight"><pre><span></span><code>             ┌──────────────────────────────────────────────────────────┐
+             │            vllm_ascend/__init__.py  (entry points)       │
+             └──────────────────────────────────────────────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────────────┐
+          ▼                           ▼                               ▼
+   register() ★ first        register_connector()            register_model_loader()
+   &quot;vllm_ascend.platform     │  _ensure_global_patch()  ──►   │  _ensure_global_patch()
+    .NPUPlatform&quot;             │  kv_transfer.register_          │  netloader.register
+    (platform string          │  connector()                    │  rfork.register_rforkloader()
+     resolved by vLLM)        │  weight_transfer.register_      │
+                              │  engine()                       │
+                              ▼                                 ▼
+                    register_service_profiling()      register_model()
+                     _ensure_global_patch()            hunyuan_vl compat +
+                    profiling_config.generate_         models.register_model()
+                     service_profiling_config()
+</code></pre></div>
+<p><strong>The canonical sequence and the role of each hook:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Hook</th>
+<th>Returns / side-effect</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>register()</code></td>
+<td><code>"vllm_ascend.platform.NPUPlatform"</code> (string)</td>
+<td>The <em>only</em> hook called automatically on the <strong>main process</strong>, before engine-core spawns. It returns the platform class name; vLLM resolves it lazily and puts <code>NPUPlatform</code> in place as <code>current_platform</code>. This is the bootstrap domino — without it, none of the NPU overrides (device, KV cache, worker, attention backend, compile backend, etc.) ever wire up. Crucially it does <strong>not</strong> call <code>_ensure_global_patch()</code>, because it runs in the main process where e2e conftest patches might run instead.</td>
+</tr>
+<tr>
+<td><code>register_connector()</code></td>
+<td>calls <code>kv_transfer.register_connector()</code> + <code>weight_transfer.register_engine()</code></td>
+<td>Registers the Ascend KV/WD connectors (KV-offload / P-D disaggregation / weight broadcast). Requires global patch first because connector code references Ascend-patched kernels.</td>
+</tr>
+<tr>
+<td><code>register_model_loader()</code></td>
+<td><code>register_netloader()</code> + <code>register_rforkloader()</code></td>
+<td>Hooks in Ascend&rsquo;s net/rfork model-load paths. Also under <code>_ensure_global_patch()</code>.</td>
+</tr>
+<tr>
+<td><code>register_service_profiling()</code></td>
+<td><code>generate_service_profiling_config()</code></td>
+<td>Emits <code>service_profiling_symbols.*.yaml</code> for ms_service_profiler tracing hooks.</td>
+</tr>
+<tr>
+<td><code>register_model()</code> <code>(import-time)</code></td>
+<td>installs HunyuanVL compat + registers model classes</td>
+<td><code>register_model()</code> is invoked <strong>at import time</strong> of the package (last lines of <code>__init__.py</code>), not via a plugin hook.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why <code>_ensure_global_patch()</code> guards the connector/loader hooks</strong> (<code>__init__.py:20-35</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="n">_GLOBAL_PATCH_APPLIED</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ensure_global_patch</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">_GLOBAL_PATCH_APPLIED</span>
+    <span class="k">if</span> <span class="n">_GLOBAL_PATCH_APPLIED</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">vllm_ascend.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">adapt_patch</span>
+    <span class="n">adapt_patch</span><span class="p">(</span><span class="n">is_global_patch</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">_GLOBAL_PATCH_APPLIED</span> <span class="o">=</span> <span class="kc">True</span>
+</code></pre></div>
+<p>The docstring is explicit: <em>&ldquo;vLLM loads general plugins in engine-core subprocesses. E2E test conftest hooks do not run there, so global patches that affect scheduler and engine code must also be applied through these plugin entry points.&rdquo;</em> In other words, the conftest that normally monkey-patches vLLM for Ascend is <strong>test-only</strong> code; in production the worker subprocess is spawned without it, so <code>adapt_patch(is_global_patch=True)</code> must run itself through these hooks. The module-level boolean reuses the main-process patch if already applied, so it is idempotent across hooks. The patch rewrites scheduler/utils/worker code ahead of any <code>import vllm.…</code> in the forks — without it the scheduler subclasses and Ascend kernels referenced in recompute / profiling-chunk / SRF paths would resolve to their vanilla CUDA implementations.</p>
+<p><code>import vllm_ascend.logger  # noqa</code> at the bottom of <code>__init__.py</code> is a load-time side effect that installs Ascend&rsquo;s logger configuration (handlers, formatter) before any other module logs.</p>
+<hr />
+<h2 id="2-npuplatform" id="2-npuplatform">2. NPUPlatform</h2>
+<p><code>NPUPlatform(Platform)</code> (<code>platform.py:128</code>) implements vLLM&rsquo;s <code>PlatformBase</code> out-of-tree via <code>_enum = PlatformEnum.OOT</code>. It overrides the interface almost exhaustively because Ascend&rsquo;s device lifecycle differs from CUDA. Map of overrides and their lifecycle significance:</p>
+<table>
+<thead>
+<tr>
+<th>Override</th>
+<th>Value / Behavior</th>
+<th>Why it matters for Ascend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity</td>
+<td><code>device_name="npu"</code>, <code>device_type="npu"</code>, <code>dispatch_key="PrivateUse1"</code>, <code>ray_device_key="NPU"</code>, <code>device_control_env_var="ASCEND_RT_VISIBLE_DEVICES"</code></td>
+<td>Swaps the CUDA runtime, device enumeration, and Ray device key for NPU. <code>VLLM_DISABLE_SHARED_EXPERTS_STREAM=1</code> is force-set at module import (<code>platform.py:32</code>) because Ascend&rsquo;s shared-expert concurrent stream is unsupported.</td>
+</tr>
+<tr>
+<td><code>simple_compile_backend="eager"</code></td>
+<td>Disables <code>torch.compile()</code> globally.</td>
+<td>Ascend uses its own ACL-graph / compile pipeline, not inductor.</td>
+</tr>
+<tr>
+<td><code>pass_key</code> / <code>get_pass_manager_cls</code></td>
+<td><code>"graph_fusion_manager"</code> → <code>GraphFusionPassManager</code></td>
+<td>Ascend has its own Inductor pass key + pass manager for fusion (graph-fusion ML compiler style).</td>
+</tr>
+<tr>
+<td><code>get_compile_backend</code></td>
+<td><code>AscendCompiler</code></td>
+<td>Custom compiler backend for graph-fusion ops.</td>
+</tr>
+<tr>
+<td><code>is_sleep_mode_available</code> / <code>is_cumem_allocator_available</code></td>
+<td><code>True</code> / <code>True</code></td>
+<td>Unlocks vLLM&rsquo;s sleep-mode and <code>CaMemAllocator</code> (custom NPU memory allocator path).</td>
+</tr>
+<tr>
+<td><code>get_device_total_memory</code></td>
+<td>raises <code>NotImplementedError</code></td>
+<td><strong>Deliberately breaks</strong> the base contract: calling it would trigger <code>get_device_name()</code> and initialize <code>torch_npu</code> too early. NPU allows <strong>only one</strong> global init; duplicate init errors. This gates the device-lifecycle ordering carefully.</td>
+</tr>
+<tr>
+<td><code>num_compute_units</code></td>
+<td>reads <code>cube_core_num</code> (falls back to <code>vector_core_num</code>, then <code>24</code>)</td>
+<td>Analog of CUDA SM count, feeds layernorm kernel launch heuristics.</td>
+</tr>
+<tr>
+<td><code>get_attn_backend_cls</code></td>
+<td><code>(use_mla, use_sparse, use_compress)</code> → <code>AscendMLABackend</code> / <code>AscendFABackend</code> / <code>AscendSFABackend</code> / <code>AscendDSABackend</code> / GQA backend</td>
+<td><strong>3D key</strong> (MLA, sparse, compress) selects among MLA / SFA / DSA / FA3 / GQA backends. FA3 is gated behind a training-inference-consistency scenario (<code>batch_invariant</code>).</td>
+</tr>
+<tr>
+<td><code>opaque_attention_op()</code></td>
+<td><code>True</code></td>
+<td>Ascend attention is opaque to vLLM&rsquo;s attention registry.</td>
+</tr>
+<tr>
+<td><code>get_static_graph_wrapper_cls</code></td>
+<td><code>ACLGraphWrapper</code></td>
+<td>Piecewise-graph backend (ACL graph replay, not CUDA graph).</td>
+</tr>
+<tr>
+<td><code>get_punica_wrapper</code></td>
+<td><code>PunicaWrapperNPU</code></td>
+<td>Ascend LoRA punica path.</td>
+</tr>
+<tr>
+<td><code>use_custom_op_collectives</code></td>
+<td><code>True</code></td>
+<td>Ascend&rsquo;s HCCL/LCCL collective custom ops, not NCCL.</td>
+</tr>
+<tr>
+<td><code>pre_register_and_update</code></td>
+<td><code>adapt_patch(is_global_patch=True)</code> + injects <code>"ascend"</code> into <code>--quantization</code> choices + per-device quantization imports</td>
+<td>Plugin registration-time step: patches vLLM and adds the Ascend quantization option to the argparse choices so <code>vllm serve --quantization ascend</code> works.</td>
+</tr>
+<tr>
+<td><code>apply_config_platform_defaults</code></td>
+<td>sets <code>sp_min_token_num</code>, injects default <code>max_cudagraph_capture_size = min(max_num_seqs * decode_query_len, 512)</code></td>
+<td><strong>Removes the CUDA-specific trailing <code>* 2</code></strong> from the capture-size cap — Ascend wants decode-bound caps.</td>
+</tr>
+<tr>
+<td><code>register_custom_kv_cache_specs</code></td>
+<td><code>register_ascend_kv_cache_specs()</code></td>
+<td>Registers <code>AscendMLAAttentionSpec</code> / <code>AscendSFAIndexerCacheSpec</code> / <code>AscendSlidingWindowMLASpec</code> with their managers.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="check_and_update_config-the-central-config-surgery" id="check-and-update-config-the-central-config-surgery"><code>check_and_update_config</code> — the central config surgery</h3>
+<p><code>check_and_update_config</code> (<code>platform.py:410</code>) is where the platform <strong>rewrites the VllmConfig</strong> in place. It is long but its structure is a sequence of surgical Ascend-specific passes:</p>
+<ol>
+<li><strong>Bail-early guards</strong>: skip if <code>device_type</code> isn&rsquo;t <code>npu</code> or model config is missing.</li>
+<li>Auto-detect quantization; validate DCP draft head-splitting; validate DP≠PCP mutual exclusion.</li>
+<li><code>_fix_incompatible_config</code> (<strong>§10 numbered blocks</strong>): resets ~30+ GPU-only knobs (<code>disable_cascade_attn</code>, <code>cpu_kvcache_space_bytes</code>, <code>mm_encoder_attn_backend</code>, <code>enable_layerwise_nvtx_tracing</code>, <code>max_num_partial_prefills</code>, speculative <code>quantization</code>, <code>kv_buffer_size</code>, <code>enable_permute_local_kv</code>, 7 attention flags, <code>flash_attn_version</code>, <code>ray_workers_use_nsight</code>, <code>numa_bind*</code>, <code>enable_dbo</code>, <code>ubatch_size</code>, <code>use_inductor_graph_partition</code>). Notably it <strong>converts</strong> <code>--numa-bind</code> into <code>--additional-config {"enable_cpu_binding": true}</code>, routing the user&rsquo;s intent to Ascend&rsquo;s native CPU binding.</li>
+<li><code>init_ascend_config(vllm_config)</code> → builds the <code>AscendConfig</code> singleton from <code>additional_config</code>.</li>
+<li><strong>Compilation-mode rewrite</strong>: xlite graph, <code>enforce_eager</code>, splitting ops, HDK-950 graph-size pruning (<code>prune_capture_sizes_for_950</code>), SP-aligned capture sizes, encoder-decoder PIECEWISE fallback, ASCEND_LAUNCH_BLOCKING conflict.</li>
+<li><strong>Worker selection</strong>: routes <code>worker_cls</code> to <code>NPUWorker</code> / <code>NPUWorker310</code> / <code>XliteWorker</code>.</li>
+<li><strong>Scheduler selection</strong> (see §4).</li>
+<li>Memory/affinity: sets <code>PYTORCH_NPU_ALLOC_CONF=expandable_segments:True</code>, enforces <code>enable_mc2_hierarchy_comm</code> XOR <code>enable_fused_mc2</code>.</li>
+</ol>
+<p>Two directives are loaded at import-time <em>before</em> any method: <code>VLLM_USE_BREAKABLE_CUDAGRAPH = False</code> (<code>platform.py:61</code>) — DeepSeek V4&rsquo;s PIECEWISE cudagraph is unsupported on Ascend.</p>
+<hr />
+<h2 id="3-forward-context-extensions" id="3-forward-context-extensions">3. Forward context extensions</h2>
+<p><code>ascend_forward_context.py</code> extends vLLM&rsquo;s per-step forward context with Ascend-specific MoE-comm dispatch and sequence-parallelism metadata.</p>
+<h3 id="moecommtype-taxonomy" id="moecommtype-taxonomy"><code>MoECommType</code> taxonomy</h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MoECommType</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">ALLGATHER</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># no expert parallel, local-gather path</span>
+    <span class="n">MC2</span> <span class="o">=</span> <span class="mi">1</span>         <span class="c1"># Matmul-Communication overlap v2 (fused dispatch/combine)</span>
+    <span class="n">ALLTOALL</span> <span class="o">=</span> <span class="mi">2</span>    <span class="c1"># standard expert-parallel dispatch/combine</span>
+    <span class="n">FUSED_MC2</span> <span class="o">=</span> <span class="mi">3</span>   <span class="c1"># dispatch_{ffn,gmm}_combine MC2 variant</span>
+</code></pre></div>
+<p><strong>Why vanilla vLLM assumes CUDA-graph + AllGather:</strong> upstream vLLM&rsquo;s MoE comm path is written around NCCL AllGather inside CUDA-graph-captured kernels, with a dense TP-shaped expert layout. Ascend has three divergences that force a runtime switch:</p>
+<ol>
+<li><strong>Expert parallelism is first-class</strong> — A2/A3/A5 support EP with AllToAll / MC2; the comm pattern depends on device generation, world size, token count vs the MC2 capacity, quant type, and whether the node is a P or D.</li>
+<li><strong>MC2 (Matmul-Comm-overlap)</strong> is an Ascend-specific fused &ldquo;dispatch + matmul + combine&rdquo; kernel with a bounded <code>mc2_tokens_capacity</code>; vLLM has no equivalent.</li>
+<li><strong>Hierarchy</strong> — <code>enable_mc2_hierarchy_comm</code> and fused MC2 are mutually exclusive (<code>platform.py:761</code>).</li>
+</ol>
+<h3 id="per-generation-selection-select_moe_comm_method-ascend_forward_contextpy303-367" id="per-generation-selection-select-moe-comm-method-ascend-forward-context-py-303-367">Per-generation selection (<code>select_moe_comm_method</code>, <code>ascend_forward_context.py:303-367</code>)</h3>
+<div class="highlight"><pre><span></span><code>select_moe_comm_method(num_tokens, vllm_config, is_draft_model)
+  ├─ non-MoE  → None
+  ├─ no EP    → ALLGATHER
+  ├─ A2       → _select_a2  (MC2 if experts_per_device≤24 ∧ EP≥16 ∧ tokens≤capacity, else ALLGATHER)
+  ├─ A3       → _select_a3  (FUSED_MC2 / MC2 / ALLTOALL by fused_decode_enable, EP≤32, w8a8)
+  ├─ A5       → _select_a5  (MC2 / ALLGATHER / ALLTOALL)
+  └─ 310P     → ALLGATHER
+</code></pre></div>
+<p>The type + a handle to the bound comm method (<code>get_moe_comm_method(moe_comm_type)</code>) are stamped onto the forward context (<code>forward_context.moe_comm_type</code>, <code>.moe_comm_method</code>), so each layer&rsquo;s <code>FusedMoE.forward</code> reads a single attribute to dispatch.</p>
+<h3 id="set_ascend_forward_context-per-forward-metadata" id="set-ascend-forward-context-per-forward-metadata"><code>set_ascend_forward_context</code> — per-forward metadata</h3>
+<p>This context manager binds everything that&rsquo;s <strong>execution-shape dependent</strong> into the current forward context so the ops compile/graph-capture see a stable set of flags:</p>
+<ul>
+<li><code>mmrs_fusion = tp_world_size &lt;= 8</code> (Matmul-AllReduce fusion kernel, currently disabled for TP&gt;16).</li>
+<li><code>flash_comm_v1_enabled</code> — sequence-parallelism comm, enabled for MoE always, for dense only when <code>num_tokens &gt; 1000</code> (empirical concurrency threshold).</li>
+<li><code>flashcomm_v2_enabled</code> — when <code>tp&gt;1</code>, with O-matrix TP group size from env.</li>
+<li><code>pad_size</code> / <code>padded_length</code> — padding num_tokens up to a TP multiple before the SP comm.</li>
+<li><code>padded_num_tokens</code>, <code>mc2_mask</code> — pre-baked boolean mask (<code>reserved_mc2_mask</code>) for MC2&rsquo;s padded dispatch.</li>
+<li><code>is_mtp_kv_consumer</code> branch, <code>prefetch_mlp_*</code>, <code>layer_idx</code>, <code>sinks</code>, <code>eplb_heat_collection_status</code>.</li>
+</ul>
+<p>The companion <code>_ExtraForwardContextProxy</code> exposes these via a v1/v2-model-runner-agnostic attribute accessor (<code>_EXTRA_CTX</code>), using <code>additional_kwargs</code> on the V2 path and <code>setattr</code> on the V1 path.</p>
+<hr />
+<h2 id="4-core-scheduler-innovations-deep-dive" id="4-core-scheduler-innovations-deep-dive">4. Core scheduler innovations (deep dive)</h2>
+<p>vllm-ascend ships <strong>four scheduler-side innovations</strong> in <code>vllm_ascend/core/</code>. These are not trivial tweaks; they address hardware-specific bottlenecks that the vanilla FCFS/chunked-prefill vLLM scheduler does not reason about.</p>
+<h3 id="41-innovation-taxonomy" id="4-1-innovation-taxonomy">4.1 Innovation taxonomy</h3>
+<table>
+<thead>
+<tr>
+<th>File (class)</th>
+<th>Problem on Ascend</th>
+<th>Core algorithm</th>
+<th>Contrast with upstream vLLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recompute_scheduler.py</code> — <code>RecomputeScheduler</code> / <code>AsyncRecomputeScheduler</code></td>
+<td>P-D disaggregation D-node: instead of P/D-stateful prefill-decode disaggregation, <strong>recompute the KV on the D side</strong> when memory pressure demands preemption. Avoids an expensive KV stream-back to P and keeps decode nodes stateless w.r.t. prefill position.</td>
+<td>Extends <code>Scheduler</code> with a <code>RecomputeSchedulerOutput</code> carrying <code>preempted_reqs</code> + <code>recomputed_reqs</code>. Preemption either offloads the KV (via <code>connector.update_state_before_preempt</code> hook → <code>PreemptedRequestData</code>) or <strong>frees and marks the request as &ldquo;must-recompute&rdquo;</strong> (<code>RecomputeReqInfo</code>). The output loop emits <code>EngineCoreOutput(stop_reason="recomputed")</code> so the request is sent back for recompute. MTP decode nodes fill <code>spec_token_ids</code> with <code>PLACEHOLDER_TOKEN_ID</code> to keep graph-friendly full-graphs while D pulls KV from P.</td>
+<td>Upstream Scheduler only ever pauses→resumes by reusing existing KV blocks. There is no concept of <em>give up KV, send request back to be recomputed</em>. This recompute policy is what allows Ascend D nodes to treat KV as disposable compute, not durable state. Activated only on <code>kv_role='kv_consumer'</code> (validated in <code>platform.py:648-668</code>).</td>
+</tr>
+<tr>
+<td><code>short_request_first_scheduler.py</code> — <code>ShortRequestFirstRequestQueue</code> + <code>ShortRequestFirstSchedulerMixin</code></td>
+<td>Long-prompt prefill can monopolize the engine and starve short requests → tail-latency blow-up in mixed-length workloads.</td>
+<td>Priority waiting queue split into <strong>immediate / short / long</strong> lanes. <code>_classify_queue</code> routes by <code>num_prompt_tokens &lt;= threshold</code>. Aging promotion forces a long request to the head after <code>long_max_wait_ms</code>, but only if short queue is empty-ish (avoids pathological promotion while shorts are pending). <code>_preempt_request</code> calls <code>mark_force_immediate</code> so preempted requests resume in the immediate lane. Only active under FCFS policy.</td>
+<td>Upstream waiting queue is a pure FCFS deque. vllm-ascend&rsquo;s three-lane queue is a lightweight SRF scheduler: short jobs jump ahead, long jobs get anti-starvation aging, preempted/recovery jobs get immediate priority. Implemented as a mixin so it composes with both <code>RecomputeScheduler</code> and vanilla <code>Scheduler</code>.</td>
+</tr>
+<tr>
+<td><code>scheduler_profiling_chunk.py</code> — <code>ProfilingChunkScheduler</code> / <code>profiling_chunk_predictor.py</code></td>
+<td>Fixed <code>max_num_scheduled_tokens</code> chunking wastes decode-time budget on Ascend (prefill latency scales non-linearly; a static chunk is either too small → many prefill steps or too large → decode stutter).</td>
+<td><strong>Offline profiling → online closed-form control.</strong> At init it runs up to 65 real <code>collective_rpc("profile_prefill_latency", chunk_size)</code> forward passes, collects <code>(seq_len, latency)</code>, then fits a <strong>quadratic model</strong> <code>f(l) = a·l² + b·l + c</code>. During scheduling, for each RUNNING/WAITING request it solves <code>f(L+x)−f(L) = target_latency</code> for the chunk <code>x</code> (quadratic formula), smooths it toward <code>base_chunk_size</code>, and aligns to <code>max(page_size, 64)</code>. A running <code>time_budget</code> (<code>target_latency</code> derived from base chunk) gates scheduling. Supports online refinement via <code>record_batch_execution_time</code> with a history-aware <code>f(C,H)=a·C·(C+H)+b·C+c·H</code> model.</td>
+<td>Upstream Scheduler only has a <strong>fixed</strong> chunk = <code>long_prefill_token_threshold</code> / <code>max_num_scheduled_tokens</code>. Here the chunk is <strong>dynamic per request, per position</strong>, predicted from a measured hardware latency curve. This is arguably the most novel module.</td>
+</tr>
+<tr>
+<td><code>single_type_kv_cache_manager.py</code> — <code>CompressAttentionManager</code></td>
+<td>Compressed-MLA (DSv4/DSA) groups store a quantized latent KV with a <code>compress_ratio &gt; 1</code>; block accounting assumes full tokens, causing wrong prefix-cache hits, wrong <code>max_memory_usage_bytes</code>, and stuck long-input requests (vLLM #40863).</td>
+<td>Subclasses <code>FullAttentionManager</code>, divides token counts by <code>compress_ratio</code> in <code>get_num_blocks_to_allocate</code>, <code>allocate_new_blocks</code>, <code>cache_blocks</code>. <code>find_longest_cache_hit</code> uses a <strong>logical block size</strong> <code>block_size * compress_ratio</code> and recomputes block hashes accordingly, with DPC/PCP alignment (<code>len * logical_block_size % alignment_tokens</code>) and Eagle last-block-drop. <code>get_manager_for_kv_cache_spec</code> injects <code>max_admission_blocks_per_request = cdiv(max_model_len // compress_ratio, block_size) + 1</code> to align admission with the pool&rsquo;s startup-size bound.</td>
+<td>Upstream <code>FullAttentionManager</code> only understands raw token-counts. The manager is the place where the compressed latent and the sparse indexer/KV relationship is made block-consistent, and where the <code>max_admission_blocks_per_request</code> cap is ported from vLLM PR #40946.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-deep-dive-profilingchunkscheduler-the-most-novel" id="4-2-deep-dive-profilingchunkscheduler-the-most-novel">4.2 Deep dive — ProfilingChunkScheduler (the most novel)</h3>
+<p><code>ProfilingChunkScheduler</code> (<code>scheduler_profiling_chunk.py:46</code>) subclasses <code>Scheduler</code> and overrides <strong>only</strong> <code>schedule()</code> plus adds <code>run_profiling_chunk_init</code>. The upstream <code>schedule()</code> is forked almost verbatim, with deltas clearly marked <code># &gt;&gt;&gt; PROFILING CHUNK &gt;&gt;&gt;</code> / <code># &lt;&lt;&lt; PROFILING CHUNK &lt;&lt;&lt;</code>. The changes reduce to three concepts.</p>
+<p><strong>Concept 1 — startup profile the hardware curve.</strong> <code>run_profiling_chunk_init</code> (<code>:108</code>) drives real model forwards across chunk sizes:</p>
+<div class="highlight"><pre><span></span><code><span class="n">base_chunk_size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profiling_chunk_manager</span><span class="o">.</span><span class="n">base_chunk_size</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_samples</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+    <span class="n">chunk_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">base_chunk_size</span> <span class="o">-</span> <span class="p">(</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">base_chunk_size</span> <span class="o">/</span> <span class="n">num_samples</span><span class="p">))</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">model_executor</span><span class="o">.</span><span class="n">collective_rpc</span><span class="p">(</span><span class="s2">&quot;profile_prefill_latency&quot;</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">chunk_size</span><span class="p">,),</span> <span class="o">**</span><span class="n">rpc_kwargs</span><span class="p">)</span>
+    <span class="c1"># ... collect (seq_lens, latencies) ...</span>
+<span class="n">predictor</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">seq_lens</span><span class="p">,</span> <span class="n">latencies</span><span class="p">)</span>          <span class="c1"># least-squares quadratic fit</span>
+<span class="n">predictor</span><span class="o">.</span><span class="n">set_target_latency</span><span class="p">(</span><span class="n">base_chunk_size</span><span class="p">)</span>
+<span class="n">predictor</span><span class="o">.</span><span class="n">is_ready</span> <span class="o">=</span> <span class="kc">True</span>
+</code></pre></div>
+<p>The quadratic model (<code>profiling_chunk_predictor.py:36</code>) is <code>f(l) = a·l² + b·l + c</code>. Its key predictive query (<code>predict</code>, <code>:212</code>) is: given already-computed tokens <code>L</code> and a target latency <code>T</code>, solve for next chunk size <code>x</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># f(L+x)-f(L) = a*x^2 + (2a*L+b)*x = target_latency</span>
+<span class="n">A</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">quadratic_coeff_a</span>
+<span class="n">B</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">quadratic_coeff_a</span> <span class="o">*</span> <span class="n">num_computed_tokens</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">linear_coeff_b</span>
+<span class="n">C</span> <span class="o">=</span> <span class="o">-</span><span class="n">target_latency</span>
+<span class="n">discriminant</span> <span class="o">=</span> <span class="n">B</span> <span class="o">*</span> <span class="n">B</span> <span class="o">-</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">A</span> <span class="o">*</span> <span class="n">C</span>
+<span class="n">x</span> <span class="o">=</span> <span class="p">(</span><span class="o">-</span><span class="n">B</span> <span class="o">+</span> <span class="n">sqrt</span><span class="p">(</span><span class="n">discriminant</span><span class="p">))</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">A</span><span class="p">)</span>
+<span class="n">smoothed</span> <span class="o">=</span> <span class="n">base_chunk_size</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">smooth_factor</span> <span class="o">*</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">base_chunk_size</span><span class="p">)</span>
+<span class="n">chunk_size</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">smoothed</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_chunk</span><span class="p">)</span>             <span class="c1"># clamp</span>
+<span class="n">align</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">page_size</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>
+<span class="n">chunk_size</span> <span class="o">=</span> <span class="p">((</span><span class="n">chunk_size</span> <span class="o">+</span> <span class="n">align</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">align</span><span class="p">)</span> <span class="o">*</span> <span class="n">align</span>    <span class="c1"># align</span>
+</code></pre></div>
+<p><em>Why a quadratic and not a linear fit?</em> Because prefill attention cost on Ascend grows super-linearly with sequence length (just like on GPU), so the marginal cost of adding a token grows with <code>L</code>. Solving <code>f(L+x)−f(L)=T</code> therefore yields a <strong>smaller</strong> chunk as <code>L</code> grows — exactly the behavior you want: early prefill steps are large (most KV still cheap), later steps shrink so you don&rsquo;t overshoot the decode-time budget. The closed-form solution makes this O(1) per request at schedule time.</p>
+<p><strong>Concept 2 — dual constraint loop (token budget + time budget).</strong> The RUNNING and WAITING loops gain a <code>time_budget</code> counter initialized from <code>predictor.target_latency</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">target_latency</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profiling_chunk_manager</span><span class="o">.</span><span class="n">predictor</span><span class="o">.</span><span class="n">target_latency</span>
+<span class="n">time_budget</span> <span class="o">=</span> <span class="n">target_latency</span> <span class="k">if</span> <span class="n">target_latency</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
+<span class="o">...</span>
+<span class="k">while</span> <span class="n">req_index</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">)</span> <span class="ow">and</span> <span class="n">token_budget</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">time_budget</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="o">...</span>
+    <span class="k">if</span> <span class="o">...</span> <span class="ow">in</span> <span class="n">prefill</span> <span class="ow">and</span> <span class="n">model</span> <span class="n">ready</span><span class="p">:</span>
+        <span class="n">predicted_chunk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profiling_chunk_manager</span><span class="o">.</span><span class="n">predict_chunk_size</span><span class="p">(</span>
+            <span class="n">num_computed_tokens</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">num_computed_tokens</span><span class="p">,</span> <span class="n">target_time</span><span class="o">=</span><span class="n">time_budget</span><span class="p">)</span>
+        <span class="n">num_new_tokens</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">predicted_chunk</span><span class="p">,</span> <span class="n">num_new_tokens</span><span class="p">)</span>
+    <span class="o">...</span>
+    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">num_computed_tokens</span> <span class="o">&lt;</span> <span class="n">request</span><span class="o">.</span><span class="n">num_prompt_tokens</span><span class="p">:</span>   <span class="c1"># only prefill burns time</span>
+        <span class="n">time_budget</span> <span class="o">-=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profiling_chunk_manager</span><span class="o">.</span><span class="n">predict_time</span><span class="p">(</span><span class="n">num_new_tokens</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+<p>The scheduler now reasons in <strong>time</strong>, not just token count. Decode requests (<code>num_new_tokens == 1</code>) have their latency skipped so they never starve. When <code>time_budget</code> hits zero the loop exits even if <code>token_budget</code> remains — it has used up its millisecond slice for this step.</p>
+<p><strong>Concept 3 — online refinement.</strong> <code>record_batch_execution_time(request_chunks, elapsed_time)</code> (<code>:401</code>) accumulates per-step <code>(Σ(C+H)·C, Σ(C+H), N, elapsed_ms)</code> points and refits the <strong>history-aware</strong> model <code>f(C,H) = a·C·(C+H) + b·C + c·H</code> once it has ≥5 points. After that the scheduler switches from <code>predict</code> to <code>predict_with_history</code>, which models how marginal cost depends on <em>both</em> chunk size and already-computed history. This lets the scheduler adapt to real batch-interference effects that the offline profile (run in isolation) cannot see.</p>
+<p><strong>Configuration</strong> (<code>AscendConfig.profiling_chunk_config</code>, <code>ascend_config.py:647</code>): <code>enabled</code>, <code>smooth_factor</code> (0,1], <code>min_chunk</code>, <code>max_fit_chunk</code> (≤30). Enabling it requires PP&gt;1 (validated). It is incompatible with <code>enable_balance_scheduling</code> and is wired in <code>platform.py:685-689</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">ascend_config</span><span class="o">.</span><span class="n">profiling_chunk_config</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+    <span class="n">vllm_config</span><span class="o">.</span><span class="n">scheduler_config</span><span class="o">.</span><span class="n">scheduler_cls</span> <span class="o">=</span> \
+        <span class="s2">&quot;vllm_ascend.core.scheduler_profiling_chunk.ProfilingChunkScheduler&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">vllm_ascend.patch.platform.patch_profiling_chunk</span>  <span class="c1"># noqa</span>
+</code></pre></div>
+<h3 id="43-deep-dive-recomputescheduler-stateless-kv-via-recompute" id="4-3-deep-dive-recomputescheduler-stateless-kv-via-recompute">4.3 Deep dive — RecomputeScheduler (stateless KV via recompute)</h3>
+<p><code>recompute_scheduler.py:98</code> <code>class RecomputeScheduler(ShortRequestFirstSchedulerMixin, Scheduler)</code> is the scheduler that decouples decode-KV from prefill-KV. The docstring at <code>schedule()</code> (<code>:195-204</code>) restates the upstream &ldquo;no prefill phase / no decode phase, just <code>num_computed_tokens</code> chasing <code>num_tokens_with_spec</code>&rdquo; model, but Ascend adds a radical policy: <strong>if a running request can&rsquo;t get its KV blocks, instead of just evicting an old request&rsquo;s blocks for reuse, it may FREE the blocks and send the original request back to be recomputed.</strong></p>
+<p>The pivotal preemption branch (<code>:320-374</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">new_blocks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">kv_cache_manager</span><span class="o">.</span><span class="n">allocate_slots</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">num_new_tokens</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">new_blocks</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">break</span>
+    <span class="c1"># Cannot allocate → preempt.</span>
+    <span class="n">transfer_config</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vllm_config</span><span class="o">.</span><span class="n">kv_transfer_config</span>
+    <span class="k">if</span> <span class="n">transfer_config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">transfer_config</span><span class="o">.</span><span class="n">is_kv_producer</span><span class="p">:</span>
+        <span class="n">recomputed_req</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>              <span class="c1"># victim</span>
+        <span class="n">recomputed_block_ids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">kv_cache_manager</span><span class="o">.</span><span class="n">get_block_ids</span><span class="p">(</span><span class="n">recomputed_req_id</span><span class="p">)</span>
+        <span class="c1"># Try to offload KV back to P via connector hook</span>
+        <span class="n">offloaded</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">preempt_hook</span><span class="p">(</span><span class="n">recomputed_req</span><span class="p">,</span> <span class="n">recomputed_block_ids</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span> <span class="o">...</span>
+        <span class="k">if</span> <span class="n">offloaded</span><span class="p">:</span>
+            <span class="n">preempted_req_data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">PreemptedRequestData</span><span class="p">(</span><span class="o">...</span><span class="p">))</span>   <span class="c1"># KV streamed out</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_preempt_request</span><span class="p">(</span><span class="n">recomputed_req</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">kv_cache_manager</span><span class="o">.</span><span class="n">free</span><span class="p">(</span><span class="n">recomputed_req</span><span class="p">)</span>            <span class="c1"># just drop KV</span>
+            <span class="n">recomputed_reqs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">RecomputeReqInfo</span><span class="p">(</span>
+                <span class="n">recomputed_req_id</span><span class="p">,</span> <span class="n">recomputed_req</span><span class="o">.</span><span class="n">output_token_ids</span><span class="p">,</span> <span class="o">...</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># upstream-style preempt reused blocks ...</span>
+</code></pre></div>
+<p>Two flavors:
+- <strong>Offload</strong> (<code>PreemptedRequestData</code>): the KV blocks stay valid and are streamed to a P node via the connector; the request resumes later as-if pre-empted in vanilla vLLM.
+- <strong>Recompute</strong> (<code>RecomputeReqInfo</code>): the KV is freed; <code>update_from_output</code> (<code>:918-928</code>) emits an <code>EngineCoreOutput</code> with <code>stop_reason="recomputed"</code> so the request is scheduled for re-prefill. This is the &ldquo;D node is stateless, P node owns the truth&rdquo; P-D disaggregation mode.</p>
+<p>MTP-KV-consumer bookkeeping (<code>add_request</code> <code>:152</code>, <code>_update_waiting_for_remote_kv</code> <code>:184</code>) fills <code>spec_token_ids</code> with <code>PLACEHOLDER_TOKEN_ID</code> so the decode graph stays full-shape while D is still pulling KV from P.</p>
+<p><code>AsyncRecomputeScheduler</code> (<code>:1170</code>) is a diamond-inheritance class <code>(AsyncScheduler, RecomputeScheduler)</code> that combines async scheduling with recompute.</p>
+<h3 id="44-shortrequestfirst-compressedkv-notes" id="4-4-shortrequestfirst-compressedkv-notes">4.4 ShortRequestFirst + CompressedKV notes</h3>
+<ul>
+<li>
+<p><code>ShortRequestFirstRequestQueue</code> (<code>:58</code>) is a <strong>three-lane</strong> deque queue. <code>_classify_queue</code> <code>:179</code> routes by the configured <code>threshold</code> of <code>num_prompt_tokens</code>. <code>_select_schedulable_queue</code> <code>:209</code> prefers <code>immediate</code> &gt; <code>short</code> &gt; <code>long</code>, but proactively promotes a long when it has waited longer than <code>long_max_wait_ms</code> <em>and</em> a short is waiting. It tracks <code>_aged_long_promotions</code> and warns (<code>:252</code>) if the scheduler is permanently degrading toward long-request priority. The <code>Mixin</code> (<code>ShortRequestFirstSchedulerMixin</code> <code>:374</code>) only installs itself under <strong>FCFS</strong> policy — a deliberate constraint that makes SRF a <em>waiting-queue</em> policy, not an arbitrary re-ordering. Preempted requests (<code>_preempt_request</code> <code>:431</code>) and recovery requests (<code>_is_recovery_request</code> <code>:380</code>, <code>PREEMPTED</code> / <code>num_computed_tokens&gt;0</code> / <code>num_output_tokens&gt;0</code>) are marked <code>force_immediate</code> so they don&rsquo;t re-contend in the long lane.</p>
+</li>
+<li>
+<p><code>CompressAttentionManager</code> (<code>single_type_kv_cache_manager.py:32</code>) has to undo the &ldquo;compressed latent looks like fewer tokens than it really represents&rdquo; illusion everywhere. <code>cache_blocks</code> (<code>:160</code>) caches at <code>block_size * compress_ratio</code>; <code>find_longest_cache_hit</code> (<code>:196</code>) walks block hashes at <strong>logical</strong> block size <code>block_size * compress_ratio</code> and trims to the <code>alignment_tokens</code> boundary required by PCP/DCP, dropping the last matched block when EAGLE spec decode is active. The registry hook <code>register_ascend_kv_cache_specs</code> (<code>kv_cache_interface.py:208</code>) maps these specs onto <code>CompressAttentionManager</code> / <code>FullAttentionManager</code> / <code>SlidingWindowManager</code>.</p>
+</li>
+</ul>
+<hr />
+<h2 id="5-supporting-infra" id="5-supporting-infra">5. Supporting infra</h2>
+<ul>
+<li><strong><code>envs.py</code></strong> — Ascend-specific env-var registry following vLLM&rsquo;s <code>__getattr__</code> lazy-env pattern. Key knobs worth knowing:</li>
+<li><code>VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE</code> — Matmul-AllReduce fusion TP kernel (A2 only, eager mode).</li>
+<li><code>VLLM_ASCEND_ENABLE_FLASHCOMM1</code> / <code>VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE</code> — FlashComm v1 (SP comm, concurrency≥1000) and v2 (O-matrix TP group size); the two sequence-parallelism comm protocols driving <code>flash_comm_v1_enabled</code> / <code>flashcomm_v2_enabled</code> in the forward context.</li>
+<li><code>VLLM_ASCEND_ENABLE_MLAPO</code> — MLAPO W8A8 optimization (default on, trades NPU memory for perf).</li>
+<li><code>VLLM_ASCEND_ENABLE_FUSED_MC2</code> (0/1/2) — <code>dispatch_ffn_combine</code> / <code>dispatch_gmm_combine_decode</code>; the depth knob behind <code>MoECommType.FUSED_MC2</code>.</li>
+<li><code>VLLM_ASCEND_ENABLE_NZ</code> — weight cast to FRACTAL_NZ layout (0/1/2).</li>
+<li><code>DYNAMIC_EPLB</code>, <code>VLLM_ASCEND_ENABLE_BATCH_MEMCPY</code> (KV-offload async memcpy), <code>VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK</code>.</li>
+<li><strong><code>cpu_binding.py</code></strong> — Ascend-native core affinity (replaces vLLM&rsquo;s <code>--numa-bind</code>, auto-converted in <code>_fix_incompatible_config</code>). Two topology modes (<code>:24-30</code>): <code>topo_affinity</code> on A2/310P/A5 (threads bound to NUMA cores adjacent to their NPU) vs <code>global_slice</code> on A3 (board/chip topology from <code>npu-smi info -m</code>). A5 additionally omits IRQ cores (<code>NO_IRQ_BINDING_DEVICE_TYPES</code>). Handles ARM (<code>aarch64</code>) detection and disables itself on x86.</li>
+<li><strong><code>memcache_comm_fence.py</code></strong> — <code>AttentionComputeStartGate</code> synchronizes compute stream and MemCache transfer threads: the attention path records an NPU event just before submitting attention; MemCache worker threads <code>wait()</code> for that event before issuing H2D/L2G transfers, ensuring transfers start when the compute stream is truly at the attention boundary (not just after Python called the kernel).</li>
+<li><strong><code>batch_invariant.py</code></strong> — registers NPU/Triton batch-invariant <code>addmm/bmm/softmax/mm/matmul/sum/rms_norm</code> overrides so that an op&rsquo;s output does <strong>not</strong> depend on batch shape. Required for training-inference consistency (deterministic FA3 path behind <code>use_batch_invariant</code>); sets <code>HCCL_DETERMINISTIC=strict</code>, <code>LCCL_DETERMINISTIC=1</code>, <code>torch.use_deterministic_algorithms(True)</code>.</li>
+<li><strong><code>meta_registration.py</code></strong> — utilities to register <strong>Python meta implementations</strong> of custom ops under the <code>"_C_ascend"</code> namespace (so <code>torch.compile</code> / aclgraph tracing and shape inference work): <code>register_meta_if_necessary(ns, op_name, fn)</code> and example <code>bgmv_expand_meta</code> / <code>sgmv_expand_meta</code> for SGMV/BGMV LoRA expand ops (skipped on 310P).</li>
+<li><strong><code>profiling_config.py</code></strong> — writes <code>service_profiling_symbols.{VLLM_VERSION}.yaml</code> to <code>~/.config/vllm_ascend/</code> defining ms_service_profiler tap points (<code>schedule</code>, <code>add_request</code>, KV cache alloc/free, sampler, executor, MTP propose, rejection sample, DP-engine init). Safe no-op on failure, enabling atomic write.</li>
+<li><strong><code>utils.py</code> (first 80 lines)</strong> — module constants (<code>COMPILATION_PASS_KEY</code>, quantization method names, <code>ACL_FORMAT_FRACTAL_ND/NZ</code>, shared-expert/CP comm stream placeholders) and the <code>AscendDeviceType</code> enum; exposes helpers used by platform/patch (<code>is_310p</code>, <code>enable_sp</code>, <code>flashcomm2_enable</code>, <code>is_moe_model</code>, <code>refresh_block_size</code>, <code>update_cudagraph_capture_sizes</code>, …). Shows the central helper surface that the platform/scheduler layers build on.</li>
+</ul>
+<hr />
+<h2 id="6-how-the-scheduler-innovations-compose" id="6-how-the-scheduler-innovations-compose">6. How the scheduler innovations compose</h2>
+<p>The scheduler features are <strong>not mutually exclusive alternatives</strong> — they compose via config in <code>check_and_update_config</code>:</p>
+<div class="highlight"><pre><span></span><code>additional_config:
+  recompute_scheduler_enable:true   →  RecomputeScheduler (+ AsyncRecomputeScheduler if async_scheduling)
+      └─ short_request_first_config.enabled
+            └─ ShortRequestFirstSchedulerMixin injected into the waiting queue
+  profiling_chunk_config.enabled    →  ProfilingChunkScheduler (PP&gt;1, overrides scheduler_cls)
+                                        + patch_profiling_chunk
+  (neither)                        →  upstream Scheduler
+</code></pre></div>
+<p><code>recompute_scheduler_enable</code> and <code>profiling_chunk_config.enabled</code> are on separate branches (<code>platform.py:648</code> <code>elif :685</code>), so recompute + profiling-chunk are wired as mutually exclusive top-level schedulers, but SRF is a waiting-queue mixin that recompute can carry as a passenger.</p>
+<p>On top of any scheduler, the KV layer is patched (<code>single_type_kv_cache_manager</code> + <code>kv_cache_interface</code>) so that compressed-MLA groups always route through <code>CompressAttentionManager</code>, and <code>NPUPlatform.register_custom_kv_cache_specs</code> ensures the Ascend MLA/SFA/sliding-window specs are registered before any scheduler runs.</p>
+<hr />
+<h2 id="key-file-references" id="key-file-references">Key file references</h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vllm_ascend/__init__.py</code></td>
+<td>Plugin entry points; <code>register()</code>/<code>register_connector()</code>/<code>register_model_loader()</code>/<code>register_service_profiling()</code>; <code>_ensure_global_patch()</code> global-patch guard.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/platform.py</code></td>
+<td><code>NPUPlatform(Platform)</code> — full <code>PlatformBase</code> implementation; <code>check_and_update_config</code> central config surgery; default capture-size, worker/routing, scheduler selection; <code>set_additional_forward_context</code> for v2 runner.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ascend_config.py</code></td>
+<td><code>AscendConfig</code> singleton compiled from <code>additional_config</code>; sub-configs <code>AscendCompilationConfig</code>, <code>AscendFusionConfig</code>, <code>XliteGraphConfig</code>, <code>ProfilingChunkConfig</code>, <code>RejectionSamplerConfig</code>, <code>EplbConfig</code>, <code>ShortRequestFirstConfig</code>, <code>FinegrainedTPConfig</code>.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/envs.py</code></td>
+<td>Ascend env-var registry (<code>MATMUL_ALLREDUCE</code>, <code>FLASHCOMM1/2</code>, <code>MLAPO</code>, <code>FUSED_MC2</code>, <code>NZ</code>, <code>DYNAMIC_EPLB</code>, …) via lazy <code>__getattr__</code>.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ascend_forward_context.py</code></td>
+<td><code>MoECommType</code> enum; <code>select_moe_comm_method</code> per-generation MoE-comm selection; <code>set_ascend_forward_context</code> binds SP/pad/MC2 metadata; <code>_ExtraForwardContextProxy</code> v1/v2 accessor.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/meta_registration.py</code></td>
+<td>Python meta-impl registry for <code>_C_ascend</code> custom ops (SGMV/BGMV), enabling aclgraph tracing.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/batch_invariant.py</code></td>
+<td>Batch-invariant op overrides + deterministic-comm env setup.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/cpu_binding.py</code></td>
+<td>Ascend-native core-affinity binding: <code>topo_affinity</code> (A2/310P/A5) vs <code>global_slice</code> (A3); ARM detection.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/memcache_comm_fence.py</code></td>
+<td><code>AttentionComputeStartGate</code> compute↔MemCache-transfer event fence.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/profiling_config.py</code></td>
+<td>ms_service_profiling symbol-yaml generator.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/recompute_scheduler.py</code></td>
+<td><code>RecomputeScheduler</code>/<code>AsyncRecomputeScheduler</code> — free-or-offload KV + &ldquo;recompute&rdquo; emission + MTP-placeholder bookkeeping.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/short_request_first_scheduler.py</code></td>
+<td><code>ShortRequestFirstRequestQueue</code> (immediate/short/long three-lane queue) + <code>ShortRequestFirstSchedulerMixin</code> (aging + force-immediate).</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/scheduler_profiling_chunk.py</code></td>
+<td><code>ProfilingChunkScheduler</code> — fork of upstream <code>schedule()</code> with dual token+time-budget loops.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/profiling_chunk_predictor.py</code></td>
+<td><code>ChunkSizePredictor</code> quadratic <code>f(l)=al²+bl+c</code> model + closed-form chunk solver + history-aware <code>f(C,H)</code> online refinement; <code>ProfilingChunkManager</code>.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/single_type_kv_cache_manager.py</code></td>
+<td><code>CompressAttentionManager</code> — compressed-MLA block accounting (<code>÷compress_ratio</code>) + logical-block prefix-cache hits with DPC/PCP alignment/Eagle drop.</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/core/kv_cache_interface.py</code></td>
+<td><code>AscendMLAAttentionSpec</code> / <code>AscendSFAIndexerCacheSpec</code> / <code>AscendSlidingWindowMLASpec</code>; <code>register_ascend_kv_cache_specs</code>.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<footer>Report 01 — source <code>agent_reports/01_platform_core.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

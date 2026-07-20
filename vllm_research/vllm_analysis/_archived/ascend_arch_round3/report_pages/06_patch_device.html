@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>06 · Patch System / Device / Xlite — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Patch System / Device / Xlite</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="active">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">06 · Patch System / Device / Xlite</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-patch-system-mechanics" class="">1. Patch system mechanics</a>
+<a href="#1-1-the-two-phase-hook-adapt-patch" class="l3">1.1 The two-phase hook: adapt_patch</a>
+<a href="#1-2-global-vs-targeted-worker-patches" class="l3">1.2 Global vs targeted (worker) patches</a>
+<a href="#1-3-the-multiprocess-spawn-re-patch-problem" class="l3">1.3 The multiprocess-spawn re-patch problem</a>
+<a href="#1-4-why-a-hardware-plugin-needs-this-many-patches" class="l3">1.4 Why a hardware plugin NEEDS this many patches</a>
+<a href="#2-patch-taxonomy" class="">2. Patch taxonomy</a>
+<a href="#2-1-the-most-important-category-ldquo-replace-cuda-semantics-rdquo-ldquo-enable-ascend-features-rdquo" class="l3">2.1 The most important category: &ldquo;Replace CUDA semantics&rdquo; + &ldquo;Enable Ascend features&rdquo;</a>
+<a href="#3-top-3-most-impactful-patches-deep-dive" class="">3. Top-3 most impactful patches — deep dive</a>
+<a href="#3-1-patch-mla-prefill-backend-py-the-cleanest-architectural-workaround" class="l3">3.1 patch_mla_prefill_backend.py — the cleanest architectural workaround</a>
+<a href="#3-2-patch-profiling-chunk-py-the-most-structurally-complex-patch" class="l3">3.2 patch_profiling_chunk.py — the most structurally complex patch</a>
+<a href="#3-3-patch-fused-moe-py-platform-the-highest-leverage-single-patch" class="l3">3.3 patch_fused_moe.py (platform) — the highest-leverage single patch</a>
+<a href="#4-device-amp-allocator" class="">4. Device &amp; allocator</a>
+<a href="#4-1-device-layer-device" class="l3">4.1 Device layer (device/)</a>
+<a href="#4-2-allocator-device-allocator" class="l3">4.2 Allocator (device_allocator/)</a>
+<a href="#5-profiler-profiler" class="">5. Profiler (profiler/)</a>
+<a href="#6-xlite-xlite" class="">6. Xlite (xlite/)</a>
+<a href="#6-1-what-xlite-is" class="l3">6.1 What xlite is</a>
+<a href="#6-2-architecture" class="l3">6.2 Architecture</a>
+<a href="#6-3-role-in-the-system" class="l3">6.3 Role in the system</a>
+<a href="#7-cpu-binding-cpu-binding-py" class="">7. CPU binding (cpu_binding.py)</a>
+<a href="#7-1-why-per-device-binding-matters-for-multi-npu" class="l3">7.1 Why per-device binding matters for multi-NPU</a>
+<a href="#7-2-topology-modes" class="l3">7.2 Topology modes</a>
+<a href="#7-3-role-split-and-irq-binding" class="l3">7.3 Role split and IRQ binding</a>
+<a href="#key-file-references" class="">Key file references</a>
+</div>
+<h1 id="06-patch-system-profiler-device-xlite-cpu-binding">06 — Patch system · Profiler · Device · Xlite · CPU binding</h1>
+<blockquote>
+<p><strong>Slice focus.</strong> How vllm-ascend bends vanilla vLLM to Ascend without forking it.
+The single most revealing fact: vllm-ascend maintains <strong>~60 active monkey-patch modules</strong>
+(~27 platform + ~33 worker) that rewrite vanilla vLLM symbols at import time. This is the
+&ldquo;Hardware pluggable RFC is not yet complete&rdquo; reality made code. The <code>patch/</code> tree is the
+engineering diary of every place vanilla vLLM assumed CUDA-NCCL-FlashAttn-UDA and had to be
+re-wired for Ascend-CANN-HCCL-FIA.</p>
+</blockquote>
+<hr />
+<h2 id="1-patch-system-mechanics" id="1-patch-system-mechanics">1. Patch system mechanics</h2>
+<h3 id="11-the-two-phase-hook-adapt_patch" id="1-1-the-two-phase-hook-adapt-patch">1.1 The two-phase hook: <code>adapt_patch</code></h3>
+<p>The entire patch system is a thin import-for-side-effects dispatcher in
+<code>vllm_ascend/utils.py:537</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">adapt_patch</span><span class="p">(</span><span class="n">is_global_patch</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">is_global_patch</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">vllm_ascend.patch</span><span class="w"> </span><span class="kn">import</span> <span class="n">platform</span>  <span class="c1"># noqa: F401</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">vllm_ascend.patch</span><span class="w"> </span><span class="kn">import</span> <span class="n">worker</span>  <span class="c1"># noqa: F401</span>
+</code></pre></div>
+<p><code>patch/platform/__init__.py</code> and <code>patch/worker/__init__.py</code> are <strong>ordered import lists</strong> —
+each line <code>import vllm_ascend.patch.&lt;area&gt;.patch_X</code> runs that module&rsquo;s top-level rebinding
+code. There is no decorator, no registry, no <code>apply_patch(fn)</code> helper. The mechanism is
+deliberately primitive:</p>
+<ol>
+<li><strong>Capture</strong> the real original at module top: <code>_original = SomeClass.method</code> /
+   <code>_original_FusedMoE = layer.FusedMoE</code>.</li>
+<li><strong>Define</strong> a replacement (function, lambda, or subclass).</li>
+<li><strong>Rebind</strong> the symbol: <code>SomeClass.method = _replacement</code> / <code>pkg.FusedMoE = _ascend_FusedMoE</code>.</li>
+</ol>
+<p>This is the classic &ldquo;import-time monkey-patch&rdquo;. The only sophistication is <strong>ordering</strong>:
+the <code>__init__.py</code> imports are sequenced so a patch that depends on another&rsquo;s rebinding runs
+after it (e.g. <code>patch_fused_moe</code> runs before model loading; <code>patch_profiling_chunk</code> wraps
+<code>EngineCore.__init__</code> and then wraps the multiprocess entry point).</p>
+<h3 id="12-global-vs-targeted-worker-patches" id="1-2-global-vs-targeted-worker-patches">1.2 Global vs targeted (worker) patches</h3>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>When</th>
+<th>Where called</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Global / platform</strong></td>
+<td>Once, before any worker/engine exists</td>
+<td><code>NPUPlatform.pre_register_and_update()</code> (<code>platform.py:184-188</code>); also re-armed through plugin entry points <code>register_connector/register_model_loader/register_service_profiling</code> via <code>_ensure_global_patch()</code> (<code>__init__.py:21-35</code>) with a <code>_GLOBAL_PATCH_APPLIED</code> guard</td>
+<td>Process-wide, affects scheduler, engine-core, config validation, platform APIs</td>
+</tr>
+<tr>
+<td><strong>Worker / targeted</strong></td>
+<td>Once per worker process, at the very top of <code>NPUWorker.__init__</code> (<code>worker.py:108-111</code>)</td>
+<td><code>adapt_patch()</code> (no arg = worker)</td>
+<td>Per-worker; affects model forward, attention, MoE, sampling, distributed comms, weight loading</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why two phases?</strong> Vanilla vLLM&rsquo;s <code>VllmConfig</code> validation, scheduler construction, and
+engine-core run loops happen <strong>before</strong> a worker exists, and some validations (quant, CUDA
+graph, speculative whitelist, KV cache block sizes) run at config-parse time. Those must be
+patched globally or the process crashes before the worker even starts. Worker-phase patches
+are the ones that need <code>local_rank</code>, device, or per-process state, or that must run <strong>after</strong>
+<code>ops.register_dummy_fusion_op()</code> / <code>_register_atb_extensions()</code>.</p>
+<h3 id="13-the-multiprocess-spawn-re-patch-problem" id="1-3-the-multiprocess-spawn-re-patch-problem">1.3 The multiprocess-spawn re-patch problem</h3>
+<p>A recurring motif (documented in <code>patch/__init__.py</code> and implemented in
+<code>patch_profiling_chunk.py</code>): in <code>spawn</code> mode the child process starts a fresh interpreter,
+so class-level monkey-patches applied in the <strong>parent</strong> are lost. The fix pattern is to wrap
+the subprocess entry point so unpickling re-imports the patch module:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># patch_profiling_chunk.py:221-229</span>
+<span class="n">_original_run_engine_core</span> <span class="o">=</span> <span class="n">EngineCoreProc</span><span class="o">.</span><span class="n">run_engine_core</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_patched_run_engine_core</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="n">_apply_profiling_patches</span><span class="p">()</span>          <span class="c1"># re-apply in the child</span>
+    <span class="k">return</span> <span class="n">_original_run_engine_core</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<span class="n">EngineCoreProc</span><span class="o">.</span><span class="n">run_engine_core</span> <span class="o">=</span> <span class="n">_patched_run_engine_core</span>
+</code></pre></div>
+<p>This is the same reason <code>_ensure_global_patch()</code> exists in <code>__init__.py</code> — vLLM loads
+general plugins inside engine-core subprocesses, so global patches must be re-applied there.</p>
+<h3 id="14-why-a-hardware-plugin-needs-this-many-patches" id="1-4-why-a-hardware-plugin-needs-this-many-patches">1.4 Why a hardware plugin NEEDS this many patches</h3>
+<p>Vanilla vLLM&rsquo;s platform abstraction (<code>vllm.platforms</code>) was historically CUDA-first. The
+&ldquo;Hardware pluggable&rdquo; RFC exposes clean hooks for only a subset of the stack. Everything else
+— the scheduler loop, the config validators, the <code>torch.distributed</code> collectives, the
+<code>torch.accelerator</code> memory API, the <code>FusedMoE</code> factory, the rejection sampler, the tool-call
+parsers — is still reached by direct imports of concrete symbols. Until every one of those
+becomes a backend hook, an Ascend plugin has exactly two choices: fork, or monkey-patch.
+vllm-ascend chose monkey-patch and keeps each patch small, documented, and tagged with a
+&ldquo;Future Plan: Remove this patch when upstream merges PR #XXXX&rdquo; — see the exhaustive
+<code>patch/__init__.py</code> registry (lines 29-1200), which is itself the canonical index of
+&ldquo;what is not yet pluggable in vLLM&rdquo;.</p>
+<hr />
+<h2 id="2-patch-taxonomy" id="2-patch-taxonomy">2. Patch taxonomy</h2>
+<p><code>patch/__init__.py</code> is the canonical index. Below is the structural taxonomy by <strong>WHY</strong> each
+patch exists. Paths are relative to <code>vllm_ascend/patch/</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Representative patches</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A. Replace CUDA / NCCL / CANN / HCCL semantics</strong></td>
+<td><code>platform/patch_torch_accelerator.py</code>, <code>platform/patch_distributed.py</code>, <code>platform/patch_multiproc_executor.py</code>, <code>worker/patch_distributed.py</code>, <code>worker/patch_cudagraph.py</code>, <code>worker/_hccl_pg_registry.py</code>, <code>platform/patch_weight_transfer_engine.py</code>, <code>worker/patch_v2/patch_uva.py</code></td>
+<td>Redirect <code>torch.accelerator.*</code> → <code>torch.npu.*</code>; fix 310P tensor alignment in <code>all_reduce</code>/<code>broadcast</code>; daemon=False for EPLB; HCCL process-group reuse registry; NCCL→HCCL weight transfer backend; UVA dummy (NPU has none); cudagraph FULL-mode fix</td>
+</tr>
+<tr>
+<td><strong>B. Enable Ascend-only features (MLA / MCA / DSA / FIA / sparse attn)</strong></td>
+<td><code>platform/patch_mla_prefill_backend.py</code>, <code>platform/patch_fused_moe.py</code>, <code>worker/patch_fused_moe.py</code>, <code>worker/patch_deepseek_mtp.py</code>, <code>worker/patch_deepseek_v2.py</code>, <code>worker/patch_gqa_c8.py</code>, <code>worker/patch_process_weights_after_loading.py</code>, <code>worker/patch_v2/patch_attn_utils.py</code>, <code>device/device_op.py</code></td>
+<td>Register no-op <code>AscendMLAPrefillBackend</code>; swap <code>FusedMoE</code>→<code>AscendMoERunner</code>; rotary-quant MTP weight loading; DSA attention + Indexer; C8 KV-cache scale handling; <code>AscendMLAAttentionSpec</code>; the whole <code>BaseDeviceAdaptor</code> op dispatch</td>
+</tr>
+<tr>
+<td><strong>C. Hot-fix vLLM main not yet pluggable</strong></td>
+<td><code>platform/patch_kv_cache_utils.py</code>, <code>platform/patch_speculative_config.py</code>, <code>platform/patch_minimax_m2_config.py</code>, <code>platform/patch_mamba_config.py</code>, <code>platform/patch_camem_allocator.py</code>, <code>platform/patch_use_v2_model_runner.py</code>, <code>platform/patch_pp_mtp.py</code>, <code>platform/patch_kv_cache_coordinator.py</code>, <code>worker/patch_qwen3_next_mtp.py</code>, <code>worker/patch_minimax_m2.py</code>, <code>worker/patch_minimax_m2_linear_attn.py</code>, <code>worker/patch_draft_quarot.py</code>, <code>worker/patch_mamba_utils.py</code>, <code>worker/patch_weight_utils.py</code></td>
+<td>Hybrid KV-cache block sizes + CP; speculative whitelist; MiniMax fp8/quant; Mamba block size 16→128; CaMem sleep-mode availability; force v2 runner off unless env set; PP+MTP spec-token plumbing; PD disaggregation Mamba hit; bind_kv_cache raise; MoE TP reduce + fused split-qkv-rmsnorm-rope; quarot drafter load; batch_memcpy block size; C8 kv scale remap</td>
+</tr>
+<tr>
+<td><strong>D. Performance (fusion / scheduling / sampling)</strong></td>
+<td><code>platform/patch_balance_schedule.py</code>, <code>platform/patch_profiling_chunk.py</code>, <code>worker/patch_rejection_sampler.py</code>, <code>worker/patch_triton.py</code>, <code>worker/patch_v2/patch_triton.py</code>, <code>worker/patch_qwen3_5.py</code>, <code>worker/patch_qwen3_next.py</code>, <code>worker/patch_step3p5.py</code>, <code>worker/patch_qwen3vl.py</code>, <code>worker/patch_idex_310.py</code>, <code>worker/patch_kimi_k25.py</code></td>
+<td>DP balance scheduling; profiling-based dynamic chunk sizing; npu_top_k_top_p + custom triton rejection; triton→Ascend op overrides; GDN fused recurrent/gating; split_qkv_rmsnorm_rope; deepstack flash comm v1; 310P GDN chunk index; Kimi interpolate fallback</td>
+</tr>
+<tr>
+<td><strong>E. Model / tool-call compat (version skew)</strong></td>
+<td><code>platform/patch_tool_choice_none_content.py</code>, <code>platform/patch_structured_output.py</code>, <code>platform/patch_glm_tool_call_streaming.py</code>, <code>platform/patch_glm47_tool_call_parser.py</code>, <code>platform/patch_deepseek_v4_tool_call_parser.py</code>, <code>platform/patch_minimax_m2_tool_call_parser.py</code>, <code>platform/patch_minimax_usage_accounting.py</code>, <code>hunyuan_vl_processor_compat.py</code></td>
+<td>Empty <code>tool_calls:[]</code> stripping; mixed xgrammar/guidance backend; GLM/DeepSeek/MiniMax incremental tool-call streaming; HunyuanVL processor migration compat</td>
+</tr>
+<tr>
+<td><strong>F. Device-family forks (A2/A3/310P/A5)</strong></td>
+<td><code>platform/patch_mamba_config_310.py</code>, <code>worker/patch_idex_310.py</code>, <code>worker/patch_npugraph_ex_triton.py</code>, <code>worker/patch_v2/*</code> (v2 runner only when <code>_V2_MODEL_RUNNER_SUPPORTED</code>)</td>
+<td>310P-specific Mamba config, GDN index, npugraph_ex triton; v2-runner-only patches gated on <code>not vllm_version_is("0.24.0")</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="21-the-most-important-category-replace-cuda-semantics-enable-ascend-features" id="2-1-the-most-important-category-ldquo-replace-cuda-semantics-rdquo-ldquo-enable-ascend-features-rdquo">2.1 The most important category: &ldquo;Replace CUDA semantics&rdquo; + &ldquo;Enable Ascend features&rdquo;</h3>
+<p>These two are the load-bearing core. Together they explain why vllm-ascend is a <strong>plugin, not
+a fork</strong>: rather than rewriting vLLM, it surgically replaces the CUDA-assuming leaves.</p>
+<ul>
+<li>
+<p><strong><code>patch_torch_accelerator.py</code></strong> is the cleanest example of the whole thesis. Vanilla vLLM
+  (commit 747b068) replaced <code>current_platform.memory_stats()</code> with
+  <code>torch.accelerator.memory_stats()</code>, which does <strong>not</strong> delegate to NPU. Four lines rebind
+  the entire memory-observation surface:
+  <div class="highlight"><pre><span></span><code><span class="n">torch</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">empty_cache</span> <span class="o">=</span> <span class="n">patch_empty_cache</span>            <span class="c1"># → torch.npu.empty_cache()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">memory_stats</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">memory_stats</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">memory_reserved</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">memory_reserved</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">get_memory_info</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">mem_get_info</span>    <span class="c1"># NPU caching allocator is not a DeviceAllocator</span>
+</code></pre></div>
+  The comment is the giveaway: <em>&ldquo;NPU&rsquo;s caching allocator is not a DeviceAllocator, so it
+  crashes with &lsquo;Allocator for npu is not a DeviceAllocator&rsquo;.&rdquo;</em> — a CUDA-specific assumption
+  baked into <code>torch.accelerator</code>.</p>
+</li>
+<li>
+<p><strong><code>patch_fused_moe.py</code></strong> (platform) is the single highest-leverage patch: it replaces the
+  <code>FusedMoE</code> factory in <strong>both</strong> <code>fused_moe.layer</code> and <code>fused_moe</code> package with a wrapper that
+  injects <code>AscendMoERunner</code> / <code>AscendMoERunner310</code> as the default <code>runner_cls</code>, and forwards
+  Ascend-only kwargs (<code>tid2eid</code>, drops DeepSeek <code>hash</code>). Every model that does
+  <code>from vllm.model_executor.layers.fused_moe import FusedMoE</code> (deepseek_v2, etc.) silently
+  gets the Ascend MoE path. The worker-side <code>patch_fused_moe.py</code> just re-imports the platform
+  one to guarantee the binding holds during worker init.</p>
+</li>
+<li>
+<p><strong><code>_hccl_pg_registry.py</code></strong> is the deepest &ldquo;replace CUDA semantics&rdquo; patch: a full
+  HCCL process-group <strong>reuse registry</strong> keyed by <code>(backend, ranks, normalized hccl_config,
+  reuse_domain)</code>, with refcounting and <code>acquire/release/clear</code>. This exists because HCCL groups
+  are expensive and vanilla vLLM creates a fresh NCCL group per <code>GroupCoordinator</code>; Ascend
+  reuses them. It even fail-closed on unknown non-default <code>pg_options</code> fields.</p>
+</li>
+</ul>
+<hr />
+<h2 id="3-top-3-most-impactful-patches-deep-dive" id="3-top-3-most-impactful-patches-deep-dive">3. Top-3 most impactful patches — deep dive</h2>
+<h3 id="31-patch_mla_prefill_backendpy-the-cleanest-architectural-workaround" id="3-1-patch-mla-prefill-backend-py-the-cleanest-architectural-workaround">3.1 <code>patch_mla_prefill_backend.py</code> — the cleanest architectural workaround</h3>
+<p><strong>Problem.</strong> vLLM PR #32623 introduced <code>MLAPrefillBackend</code>. <code>MLAAttention.__init__</code> calls
+<code>get_mla_prefill_backend()</code>, whose selector sees Ascend returns <code>None</code> for
+<code>get_device_capability()</code> and falls back to <code>FlashAttnPrefillBackend</code>, which asserts
+<code>flash_attn_varlen_func</code> is available — crashing on Ascend.</p>
+<p><strong>Why a patch is the right fix.</strong> Ascend&rsquo;s <code>AscendSFAImpl</code>/<code>AscendMLAImpl</code> handle the full
+forward (including prefill) via <code>impl.forward()</code>; <code>prefill_backend.run_prefill_*</code> is never
+called. So the correct backend is a <strong>no-op</strong> that exists only to satisfy the constructor.</p>
+<p><strong>The patch</strong> (<code>patch/platform/patch_mla_prefill_backend.py</code>):
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AscendMLAPrefillBackend</span><span class="p">(</span><span class="n">MLAPrefillBackend</span><span class="p">):</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_name</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="k">return</span> <span class="s2">&quot;ASCEND&quot;</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_available</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_prefill_new_tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">return_softmax_lse</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Ascend MLA prefill is handled by AscendSFAImpl/AscendMLAImpl&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_prefill_context_chunk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_idx</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Ascend MLA prefill is handled by AscendSFAImpl/AscendMLAImpl&quot;</span><span class="p">)</span>
+
+<span class="n">vllm</span><span class="o">.</span><span class="n">model_executor</span><span class="o">.</span><span class="n">layers</span><span class="o">.</span><span class="n">attention</span><span class="o">.</span><span class="n">mla_attention</span><span class="o">.</span><span class="n">get_mla_prefill_backend</span> <span class="o">=</span> \
+    <span class="k">lambda</span> <span class="n">vllm_config</span><span class="p">:</span> <span class="n">AscendMLAPrefillBackend</span>
+</code></pre></div></p>
+<p><strong>BEFORE</strong> (vanilla selector): <code>get_device_capability() is None</code> → <code>FlashAttnPrefillBackend</code>
+→ <code>assert flash_attn_varlen_func</code> → <strong>crash</strong>.</p>
+<p><strong>AFTER</strong> (patched): selector returns <code>AscendMLAPrefillBackend</code>, constructor completes, and
+the no-op methods are never invoked because the Ascend MLA impl owns the whole forward. This
+is the canonical &ldquo;vllm-ascend registers a backend stub so the upstream abstraction can run&rdquo;
+pattern.</p>
+<h3 id="32-patch_profiling_chunkpy-the-most-structurally-complex-patch" id="3-2-patch-profiling-chunk-py-the-most-structurally-complex-patch">3.2 <code>patch_profiling_chunk.py</code> — the most structurally complex patch</h3>
+<p>This is the one that touches <strong>three</strong> symbols and solves the spawn-mode re-patch problem. It
+implements <em>profiling-based dynamic chunk sizing</em>: a one-shot profiling pass after
+<code>model_executor</code> is ready, then per-step latency feedback to a <code>ProfilingChunkManager</code>.</p>
+<p><strong>BEFORE</strong> (vanilla <code>EngineCore</code>): <code>__init__</code> builds the scheduler and exits; <code>update_from_output</code>
+applies scheduler output; <code>run_engine_core</code> is the subprocess entry. No timing feedback exists.</p>
+<p><strong>AFTER</strong> (patched, <code>patch/platform/patch_profiling_chunk.py</code>):
+<div class="highlight"><pre><span></span><code><span class="c1"># 1) __init__ now boots the profiling pass and wraps two scheduler methods</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_patched_engine_core_init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="n">original_init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="p">,</span> <span class="s2">&quot;run_profiling_chunk_init&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">run_profiling_chunk_init</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model_executor</span><span class="p">)</span>
+    <span class="n">_ensure_update_from_output_wrapped</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="p">)</span>   <span class="c1"># record execution_time_ms</span>
+    <span class="n">_ensure_schedule_wrapped</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="p">)</span>             <span class="c1"># propagate timing-done flag</span>
+<span class="n">EngineCore</span><span class="o">.</span><span class="fm">__init__</span> <span class="o">=</span> <span class="n">_patched_engine_core_init</span>
+
+<span class="c1"># 2) Subprocess entry re-applies the above inside the child process</span>
+<span class="n">_original_run_engine_core</span> <span class="o">=</span> <span class="n">EngineCoreProc</span><span class="o">.</span><span class="n">run_engine_core</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_patched_run_engine_core</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="n">_apply_profiling_patches</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">_original_run_engine_core</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<span class="n">EngineCoreProc</span><span class="o">.</span><span class="n">run_engine_core</span> <span class="o">=</span> <span class="n">_patched_run_engine_core</span>
+</code></pre></div></p>
+<p>The wrapper <code>_record_execution_timing</code> reads <code>model_output.execution_time_ms</code> (set by the NPU
+model runner), decomposes <code>scheduler_output</code> into per-request <code>(chunk_size, hist_seq_len)</code>
+pairs, bootstraps a target latency from the first 3 samples, then feeds
+<code>ProfilingChunkManager.record_batch_execution_time</code> for online fitting of a history-aware
+latency model. Once calibrated it flips <code>need_timing=False</code> end-to-end via a
+<code>disable_profiling_timing</code> flag on <code>SchedulerOutput</code>. This is a cross-process, cross-class
+feedback loop that vanilla vLLM has no hook for — hence the triple patch.</p>
+<h3 id="33-patch_fused_moepy-platform-the-highest-leverage-single-patch" id="3-3-patch-fused-moe-py-platform-the-highest-leverage-single-patch">3.3 <code>patch_fused_moe.py</code> (platform) — the highest-leverage single patch</h3>
+<p><strong>BEFORE</strong> (vanilla): <code>deepseek_v2</code> does <code>from vllm.model_executor.layers.fused_moe import
+FusedMoE</code> and calls the upstream factory directly → CUDA MoE path.</p>
+<p><strong>AFTER</strong> (<code>patch/platform/patch_fused_moe.py</code>):
+<div class="highlight"><pre><span></span><code><span class="n">_original_FusedMoE</span> <span class="o">=</span> <span class="n">_fused_moe_layer</span><span class="o">.</span><span class="n">FusedMoE</span>
+<span class="n">_DefaultAscendMoERunner</span> <span class="o">=</span> <span class="n">AscendMoERunner310</span> <span class="k">if</span> <span class="n">is_310p</span><span class="p">()</span> <span class="k">else</span> <span class="n">AscendMoERunner</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ascend_FusedMoE</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">runner_cls</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">runner_args</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">runner_cls</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">runner_cls</span> <span class="o">=</span> <span class="n">_DefaultAscendMoERunner</span>
+    <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;hash&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>                          <span class="c1"># DeepSeek V4 flag, consumed earlier</span>
+    <span class="n">tid2eid</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;tid2eid&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>             <span class="c1"># Ascend-only → runner_args</span>
+    <span class="k">if</span> <span class="n">tid2eid</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">runner_args</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">runner_args</span> <span class="ow">or</span> <span class="p">{});</span> <span class="n">runner_args</span><span class="p">[</span><span class="s2">&quot;tid2eid&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tid2eid</span>
+    <span class="k">return</span> <span class="n">_original_FusedMoE</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">runner_cls</span><span class="o">=</span><span class="n">runner_cls</span><span class="p">,</span> <span class="n">runner_args</span><span class="o">=</span><span class="n">runner_args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<span class="n">_fused_moe_layer</span><span class="o">.</span><span class="n">FusedMoE</span> <span class="o">=</span> <span class="n">_ascend_FusedMoE</span>
+<span class="n">_fused_moe_pkg</span><span class="o">.</span><span class="n">FusedMoE</span> <span class="o">=</span> <span class="n">_ascend_FusedMoE</span>
+</code></pre></div></p>
+<p>Two subtle points make this load-bearing: (1) it patches <strong>both</strong> the layer module and the
+package binding, because different call sites import <code>FusedMoE</code> from different paths; (2) it
+translates Ascend-only kwargs (<code>tid2eid</code>) and drops CUDA-only ones (<code>hash</code>) so the upstream
+factory signature stays satisfied. The worker-side <code>patch_fused_moe.py</code> is just
+<code>import vllm_ascend.patch.platform.patch_fused_moe</code> to guarantee the rebinding survives into
+the worker process. This is the patch that makes DeepSeek V2/V3 MoE actually run on NPU.</p>
+<hr />
+<h2 id="4-device-allocator" id="4-device-amp-allocator">4. Device &amp; allocator</h2>
+<h3 id="41-device-layer-device" id="4-1-device-layer-device">4.1 Device layer (<code>device/</code>)</h3>
+<p><code>device/__init__.py</code> is empty; the real surface is <code>device/device_op.py</code> — a <strong>1000+ line
+<code>BaseDeviceAdaptor</code></strong> (static method per op) that is the Ascend analogue of a CUDA kernel
+library. It is the op-dispatch backbone for the whole attention/MoE/KV-cache stack:</p>
+<ul>
+<li><strong>KV-cache scatter/gather</strong>: <code>reshape_and_cache</code> → <code>torch_npu.npu_scatter_pa_kv_cache</code>;
+  <code>kv_cache_load</code> → <code>torch_npu.npu_gather_pa_kv_cache</code>.</li>
+<li><strong>Attention</strong>: <code>npu_fused_infer_attention_score</code> (FIA TND path), <code>npu_flash_attention</code>
+  (<code>_npu_flash_attention_unpad</code>), <code>npu_moe_init_routing</code>, <code>moe_gating_top_k</code>,
+  <code>npu_moe_token_unpermute</code>.</li>
+<li><strong>MLA preprocess</strong>: <code>mla_preprocess_only_decode</code> and <code>sfa_preprocess_with_mlapo</code> dispatch
+  between <code>torch_npu.npu_mla_prolog_v2</code> (quant) and <code>torch.ops._C_ascend.mla_preprocess</code>
+  (non-quant), with <code>cache_mode="PA_NZ"</code> / <code>"nzcache"</code> / <code>"krope_ctkv"</code>.</li>
+<li><strong>Sparse attention (DSA)</strong>: <code>execute_sparse_flash_attention_process</code>,
+  <code>execute_kv_quant_sparse_flash_attention</code>, <code>indexer_select_post_process</code> (three indexer
+  branches: sparse_c8 / torch_npu_lightning_indexer / custom op), plus the full
+  quant+scatter pipeline (<code>indexer_quant_scatter</code>, <code>dsa_kv_compress_scatter</code>,
+  <code>dsa_indexer_scatter_scale_part3</code>, <code>warmup_indexer_quant_scatter</code>).</li>
+<li><strong>GDN / linear-attn / normalization</strong>: <code>fused_gdn_gating</code>, <code>split_qkv_rmsnorm_rope</code>,
+  <code>npu_gemma_rms_norm</code>, <code>apply_dsa_q_rms</code>, and the triton <code>chunk_scaled_dot_kkt_fwd</code> /
+  <code>solve_tril_16x16</code> kernels.</li>
+<li><strong>MXFP quant</strong>: <code>npu_dynamic_quant</code>, <code>npu_grouped_matmul_swiglu_quant</code>,
+  <code>npu_grouped_matmul_gmm2</code> (all gated: MXFP MoE is A5-only, else <code>RuntimeError</code>).</li>
+</ul>
+<p><code>device/utils.py</code> holds the large-head prefill fallback (<code>npu_large_head_prefill_attention</code>)
+for the A2/A3 FIA-TND 512-dim head gap. <code>device/mxfp_compat.py</code> defines the MXFP quant dtypes.</p>
+<p><strong>How this differs from CUDA:</strong> CUDA vLLM mostly calls cuDNN/FlashInfer/Triton directly from
+attention backends. Ascend routes through <code>torch_npu.*</code> and <code>torch.ops._C_ascend.*</code> with
+explicit <code>cache_mode</code>/<code>quant_mode</code>/<code>layout_*</code> enums (FRACTAL_NZ, PA_BSND, TND) that have no
+CUDA equivalent — the device layer is a <strong>format+kernel translation shim</strong> for CANN.</p>
+<h3 id="42-allocator-device_allocator" id="4-2-allocator-device-allocator">4.2 Allocator (<code>device_allocator/</code>)</h3>
+<p>Two allocators, both for <strong>sleep mode</strong> (the Ascend answer to CUDA&rsquo;s CuMem sleep mode):</p>
+<p><strong><code>camem.py</code> — <code>CaMemAllocator</code></strong> (a singleton <code>NPUPluggableAllocator</code>):
+- Backed by a C++ extension <code>vllm_ascend_C</code> exposing <code>init_module</code>, <code>python_create_and_map</code>,
+  <code>python_unmap_and_release</code> (ACL runtime <code>memcpy</code>-based mmap).
+- <code>use_memory_pool(tag)</code> context routes every tensor through a tagged pool;
+  <code>sleep(offload_tags)</code> ACL-memcpy&rsquo;s tagged tensors to <strong>pinned CPU backup</strong> and
+  <code>unmap_and_release</code>s the device handles; <code>wake_up(tags)</code> remaps and copies back.
+- Explicitly rejects <code>expandable_segments:True</code> (PyTorch issue #147851) and works around
+  PyTorch issues #146431 / #145168. This is the NPU-native analogue of vLLM&rsquo;s CUDA CuMem
+  allocator, but built on ACL <code>memcpy</code> + <code>NPUPluggableAllocator</code> instead of CUDA virtual
+  memory.</p>
+<p><strong><code>sleep_mem_optimized.py</code> — <code>SleepWakeupManager</code></strong> (the HCCL-aware layer):
+- <code>AclGraphSleepWakeupManager</code>: on sleep, clears attention workspaces and resets all
+  <code>acl_graph._graph_params</code> + concrete graph entries; on wakeup, re-runs
+  <code>model_runner.capture_model()</code>.
+- <code>HcclSleepWakeupManager</code>: on sleep, <strong>destroys all live HCCL process groups</strong> (iterates
+  <code>parallel_state._groups</code>, calls <code>group.destroy_hccl()</code>); on wakeup, restores them and
+  refreshes MoE HCCL groups via <code>moe_comm_method.*.token_dispatcher.refresh_hccl_group()</code>.</p>
+<p><strong>Differences from CUDA caching allocator:</strong>
+1. CUDA&rsquo;s caching allocator reuses freed blocks in-place; Ascend sleep mode <strong>unmaps</strong> the
+   device handle entirely and backs up to host — it is offload, not cache reuse.
+2. It is <strong>HCCL-aware</strong>: CUDA sleep mode doesn&rsquo;t tear down NCCL comms; Ascend must, because
+   HCCL groups hold device memory that would otherwise leak across sleep/wake.
+3. It is <strong>graph-aware</strong>: ACL graph workspaces and captured graphs must be torn down before
+   sleep and recaptured after — a concern unique to the Ascend graph-capture path.</p>
+<hr />
+<h2 id="5-profiler-profiler" id="5-profiler-profiler">5. Profiler (<code>profiler/</code>)</h2>
+<p><code>profiler/torch_npu_profiler.py</code> — <code>TorchNPUProfilerWrapper(WorkerProfiler)</code> wires vanilla
+vLLM&rsquo;s <code>WorkerProfiler</code> interface to <code>torch_npu.profiler</code>:</p>
+<ul>
+<li><strong>Scope</strong>: CPU + NPU activities; <code>ProfilerLevel.Level1</code>; <code>AiCMetrics.PipeUtilization</code>
+  (pipeline-bubble visibility); <code>ExportType.Text</code>; memory profiling optional
+  (<code>torch_profiler_with_memory</code>); stack/modules off by default (the comment notes
+  <code>with_stack</code> adds &ldquo;significant time overhead&rdquo; on NPU).</li>
+<li><strong>Guard</strong>: refuses to run alongside <code>MSMONITOR_USE_DAEMON</code> (the Ascend msmonitor daemon
+  profiler) — they are mutually exclusive.</li>
+<li><strong>Output</strong>: <code>tensorboard_trace_handler(torch_profiler_dir, worker_name=trace_name)</code> —
+  TensorBoard-compatible traces per worker.</li>
+<li><strong>Lifecycle</strong>: <code>_start</code>/<code>_stop</code> delegate to the <code>torch_npu.profiler.profile</code> context;
+  <code>_profiler_step</code> returns <code>True</code> (step-based stepping is a no-op at the wrapper level).</li>
+</ul>
+<p><strong>Ascend profiling scope vs CUDA:</strong> CUDA vLLM uses <code>torch.profiler</code> (CUPTI/Nsight). Ascend
+uses <code>torch_npu.profiler</code> with CANN-level <code>PipeUtilization</code> and explicit
+<code>data_simplification=True</code> / <code>op_attr=False</code> to keep overhead manageable. HCCL timings and
+op-level traces come through the CANN integration rather than CUPTI. Flame-graph support is
+via the TensorBoard trace handler (the <code>torch_npu.profiler</code> equivalent of Nsight/Perfetto).</p>
+<hr />
+<h2 id="6-xlite-xlite" id="6-xlite-xlite">6. Xlite (<code>xlite/</code>)</h2>
+<h3 id="61-what-xlite-is" id="6-1-what-xlite-is">6.1 What xlite is</h3>
+<p><strong>xlite is NOT a new edge runtime.</strong> It is a <strong>graph-based, whole-model fusion execution mode</strong>
+layered on top of the standard <code>NPUModelRunner</code>, backed by an external C++ library
+<code>xlite._C</code> exposing <code>Model</code>, <code>ModelConfig</code>, <code>Runtime</code>, <code>AttnMeta</code>, <code>AttnMHA</code>, and scoring
+functions (<code>ScoringFuncSoftmax</code>, <code>ScoringFuncSigmoid</code>). Think of it as the Ascend analogue of
+a fixed-fusion &ldquo;metal path&rdquo;: the model&rsquo;s weights and config are extracted once into an
+<code>XModel</code>, a per-rank <code>Runtime</code> owns a pre-allocated tensor pool, and each forward step runs
+<code>xlite_model.forward(rt, input_ids, attn_meta, kv_caches, freq_cis, hidden_states, stream)</code>.</p>
+<h3 id="62-architecture" id="6-2-architecture">6.2 Architecture</h3>
+<ul>
+<li><strong><code>XliteModel</code> (ABC)</strong> + <code>_architecture_strategy_map</code>: each architecture subclasses it,
+  implements <code>_build_model_config</code> / <code>_build_model</code> / <code>_precompute_freqs_cis</code>, and is
+  auto-registered by <code>_supported_architectures</code>. Implementations:</li>
+<li><code>LlamaXliteModel</code> — Llama/Qwen2/Qwen3/Qwen3VL (dense, <code>ScoringFuncSoftmax</code>).</li>
+<li><code>QwenMoeXliteModel</code> — Qwen3Moe / Qwen3VLMoe.</li>
+<li><code>Glm4MoeXliteModel</code> — Glm4Moe (<code>ScoringFuncSigmoid</code>, partial rotary, shared experts).</li>
+<li><code>MiniMaxM2XliteModel</code> — MiniMaxM2.</li>
+<li><strong><code>XliteWrapper</code></strong>: wraps the runnable model; <code>register_kv_caches</code>; in <code>__call__</code> it
+  <strong>dispatches</strong>:</li>
+<li><code>in_profile_run</code> + full_mode → return preallocated hidden states (no double alloc).</li>
+<li>non-<code>AscendMetadata</code> → fall back to the eager runnable.</li>
+<li><code>DecodeOnly</code>/<code>SpecDecoding</code> (or prefill in full_mode) → run the <strong>xlite graph</strong>.</li>
+<li>prefill in decode-only non-DP mode → fall back to runnable.</li>
+<li>DP + non-full-mode → use <code>num_tokens &lt;= num_reqs</code> as the decode heuristic.</li>
+<li><strong><code>XliteWorker(NPUWorker)</code></strong> overrides <code>init_device</code> to build an <code>XliteModelRunner</code>.</li>
+<li><strong><code>XliteModelRunner(NPUModelRunner)</code></strong> wraps <code>self.model = XliteWrapper(self.model, ...)</code>
+  and builds attention metadata during DP dummy runs when xlite is enabled.</li>
+</ul>
+<h3 id="63-role-in-the-system" id="6-3-role-in-the-system">6.3 Role in the system</h3>
+<p>xlite is an <strong>opt-in execution mode</strong> (<code>ascend_config.xlite_graph_config.enabled</code>,
+<code>full_mode</code>). It is the path that trades the eager/PyTorch-forward model for a
+C++-runtime, graph-captured forward with a preallocated tensor pool — the Ascend answer to
+CUDA&rsquo;s &ldquo;CUDA graph + FlashInfer fixed-fusion&rdquo; decode path, but implemented as a separate
+<code>xlite._C</code> library rather than via vLLM&rsquo;s own CUDA graphs. It coexists with the standard
+<code>NPUModelRunner</code> path and the ACL graph path (<code>compilation/acl_graph.py</code>).</p>
+<hr />
+<h2 id="7-cpu-binding-cpu_bindingpy" id="7-cpu-binding-cpu-binding-py">7. CPU binding (<code>cpu_binding.py</code>)</h2>
+<h3 id="71-why-per-device-binding-matters-for-multi-npu" id="7-1-why-per-device-binding-matters-for-multi-npu">7.1 Why per-device binding matters for multi-NPU</h3>
+<p>Ascend servers (A2/A3/310P/A5) pack many NPU chips sharing a NUMA-socket with dozens of ARM
+cores. Each NPU has dedicated IRQ threads (<code>sq_send_trigger_irq</code>, <code>cq_update_irq</code>), an
+<code>acl_thread</code>, and a <code>release_thread</code>. Without binding, a vLLM worker&rsquo;s main thread, its ACL
+threads, and the NPU IRQs contend across cores and cross NUMA nodes — costing latency and
+jitter on the critical prefill/decode path. <code>bind_cpus(rank_id)</code> pins each worker to a
+per-NPU CPU pool and migrates its memory to that NPU&rsquo;s NUMA node.</p>
+<h3 id="72-topology-modes" id="7-2-topology-modes">7.2 Topology modes</h3>
+<p><code>DEVICE_BINDING_MODE</code> selects the strategy per silicon:</p>
+<table>
+<thead>
+<tr>
+<th>Device</th>
+<th>Mode</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A2</td>
+<td><code>topo_affinity</code></td>
+<td>Use <code>npu-smi info -t topo</code> NPU→CPU affinity</td>
+</tr>
+<tr>
+<td>A3</td>
+<td><code>global_slice</code></td>
+<td>Slice <code>allowed_cpus</code> by <strong>global logical NPU id</strong> (multiple DP processes may share one cpuset; global slicing avoids overlapping partitions)</td>
+</tr>
+<tr>
+<td>310P</td>
+<td><code>topo_affinity</code></td>
+<td>Same as A2</td>
+</tr>
+<tr>
+<td>A5 (Ascend 950)</td>
+<td><code>topo_affinity</code> + 950-specific cluster pooling</td>
+<td>8-physical-core clusters, no IRQ reservation, <code>uvb_poll_window_thread</code> binding</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong><code>topo_affinity</code> (<code>_build_topo_affinity_cpu_pool</code>)</strong>: reads <code>npu-smi info -t topo</code>
+  NPU→CPU map, extends each pool into the adjacent NUMA node (<code>extend_numa</code>), groups NPUs
+  by identical CPU sets, and <code>average_distribute</code>s when multiple NPUs map to the same pool.
+  Non-visible NPUs are still considered to <strong>avoid cross-process overlap</strong>.</li>
+<li><strong><code>global_slice</code> (<code>build_global_slice_cpu_pool</code>)</strong>: ignores topo; partitions
+  <code>allowed_cpus</code> into <code>total_npus</code> global slices by logical id, enforcing
+  <code>min_cpus_per_npu</code> (5 with IRQ, 3 without). Deterministic and cpuset-safe.</li>
+</ul>
+<h3 id="73-role-split-and-irq-binding" id="7-3-role-split-and-irq-binding">7.3 Role split and IRQ binding</h3>
+<p><code>allocate()</code> splits each NPU pool into roles:
+- <strong>default (A2/A3/310P)</strong>: <code>main = pool[2:-2]</code>, <code>acl = [pool[-2]]</code>, <code>rel = [pool[-1]]</code>
+  (first two cores reserved for IRQ).
+- <strong>A5 (Ascend 950)</strong>: whole pool is <code>main</code>; ACL/release threads are not reserved.</p>
+<p><code>bind_threads()</code> pins the main PID (and its <code>acl_thread</code>/<code>release_thread</code> TIDs via
+<code>taskset -acp</code>) and runs <code>migratepages</code> to bind memory to the NPU&rsquo;s NUMA node.
+<code>bind_npu_irq()</code> stops <code>irqbalance</code>, finds the NPU&rsquo;s PCI MSI-IRQs, and writes
+<code>/proc/irq/&lt;irq&gt;/smp_affinity</code> to pin <code>sq_send_trigger_irq</code>/<code>cq_update_irq</code> to the first two
+reserved cores. <code>run_all()</code> = build pools → allocate → print plan → bind threads → bind IRQ.</p>
+<p>The entry point is <code>bind_cpus(rank_id)</code> (<code>cpu_binding.py:801</code>), gated on <code>is_arm_cpu()</code>
+(x86_64 skips binding entirely), called from <code>NPUWorker</code> when
+<code>ascend_config.enable_cpu_binding</code>.</p>
+<hr />
+<h2 id="key-file-references" id="key-file-references">Key file references</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Patch dispatcher</td>
+<td><code>vllm_ascend/utils.py:537</code> <code>adapt_patch</code></td>
+</tr>
+<tr>
+<td>Global patch trigger</td>
+<td><code>vllm_ascend/platform.py:184-188</code> <code>pre_register_and_update</code></td>
+</tr>
+<tr>
+<td>Worker patch trigger</td>
+<td><code>vllm_ascend/worker/worker.py:108-111</code></td>
+</tr>
+<tr>
+<td>Plugin re-patch guard</td>
+<td><code>vllm_ascend/__init__.py:18-35</code> <code>_ensure_global_patch</code></td>
+</tr>
+<tr>
+<td>Patch index (canonical)</td>
+<td><code>vllm_ascend/patch/__init__.py:29-1200</code></td>
+</tr>
+<tr>
+<td>Platform patch list</td>
+<td><code>vllm_ascend/patch/platform/__init__.py</code></td>
+</tr>
+<tr>
+<td>Worker patch list</td>
+<td><code>vllm_ascend/patch/worker/__init__.py</code></td>
+</tr>
+<tr>
+<td>CUDA→NPU memory API</td>
+<td><code>vllm_ascend/patch/platform/patch_torch_accelerator.py</code></td>
+</tr>
+<tr>
+<td>FusedMoE swap</td>
+<td><code>vllm_ascend/patch/platform/patch_fused_moe.py</code></td>
+</tr>
+<tr>
+<td>MLA prefill backend stub</td>
+<td><code>vllm_ascend/patch/platform/patch_mla_prefill_backend.py</code></td>
+</tr>
+<tr>
+<td>Profiling chunk (3-symbol)</td>
+<td><code>vllm_ascend/patch/platform/patch_profiling_chunk.py</code></td>
+</tr>
+<tr>
+<td>HCCL PG reuse registry</td>
+<td><code>vllm_ascend/patch/worker/_hccl_pg_registry.py</code></td>
+</tr>
+<tr>
+<td>Cudagraph FULL fix</td>
+<td><code>vllm_ascend/patch/worker/patch_cudagraph.py</code></td>
+</tr>
+<tr>
+<td>DP device-id sharding</td>
+<td><code>vllm_ascend/patch/platform/patch_dp_device_ids.py</code></td>
+</tr>
+<tr>
+<td>Balance scheduling</td>
+<td><code>vllm_ascend/patch/platform/patch_balance_schedule.py</code></td>
+</tr>
+<tr>
+<td>Device op dispatch</td>
+<td><code>vllm_ascend/device/device_op.py</code> (<code>BaseDeviceAdaptor</code>)</td>
+</tr>
+<tr>
+<td>Device utils / large-head fallback</td>
+<td><code>vllm_ascend/device/utils.py</code></td>
+</tr>
+<tr>
+<td>MXFP compat</td>
+<td><code>vllm_ascend/device/mxfp_compat.py</code></td>
+</tr>
+<tr>
+<td>CaMem sleep allocator</td>
+<td><code>vllm_ascend/device_allocator/camem.py</code></td>
+</tr>
+<tr>
+<td>HCCL-aware sleep/wake</td>
+<td><code>vllm_ascend/device_allocator/sleep_mem_optimized.py</code></td>
+</tr>
+<tr>
+<td>NPU profiler wrapper</td>
+<td><code>vllm_ascend/profiler/torch_npu_profiler.py</code></td>
+</tr>
+<tr>
+<td>Xlite runtime + adapters</td>
+<td><code>vllm_ascend/xlite/xlite.py</code></td>
+</tr>
+<tr>
+<td>Xlite model runner / worker</td>
+<td><code>vllm_ascend/xlite/xlite_model_runner.py</code>, <code>xlite_worker.py</code></td>
+</tr>
+<tr>
+<td>Xlite utils</td>
+<td><code>vllm_ascend/xlite/utils.py</code></td>
+</tr>
+<tr>
+<td>CPU binding (topo + IRQ)</td>
+<td><code>vllm_ascend/cpu_binding.py</code></td>
+</tr>
+<tr>
+<td>Meta op registration</td>
+<td><code>vllm_ascend/meta_registration.py</code></td>
+</tr>
+<tr>
+<td>Ascend config (xlite/profiling/sleep)</td>
+<td><code>vllm_ascend/ascend_config.py:623-682</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<footer>Report 06 — source <code>agent_reports/06_patch_device.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

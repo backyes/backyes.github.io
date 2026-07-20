@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>03 · Attention / MLA / Ops / Triton — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Attention / MLA / Ops / Triton</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="active">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">03 · Attention / MLA / Ops / Triton</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-attention-backend-taxonomy" class="">1. Attention backend taxonomy</a>
+<a href="#2-mla-on-ascend" class="">2. MLA on Ascend (深度重点)</a>
+<a href="#2-1-conceptual-mapping" class="l3">2.1 Conceptual mapping</a>
+<a href="#2-2-decode-path-forward-decode-mla-v1-py-1370" class="l3">2.2 Decode path (_forward_decode, mla_v1.py:1370)</a>
+<a href="#2-3-prefill-path-forward-prefill-mla-v1-py-1221" class="l3">2.3 Prefill path (_forward_prefill, mla_v1.py:1221)</a>
+<a href="#2-4-mlapo-fused-mla-preproc-deep-operator-fusion" class="l3">2.4 MLAPO — fused MLA preproc (deep operator fusion)</a>
+<a href="#2-5-how-this-differs-from-vanilla-vllm-rsquo-s-mla-decode-attention-mla-prefill" class="l3">2.5 How this differs from vanilla vLLM&rsquo;s mla_decode_attention / mla_prefill</a>
+<a href="#3-context-parallel-amp-kv-compression-attention" class="">3. Context Parallel &amp; KV-Compression attention</a>
+<a href="#3-1-pcp-prefill-context-parallel-dcp-decode-context-parallel" class="l3">3.1 PCP (Prefill Context Parallel) + DCP (Decode Context Parallel)</a>
+<a href="#3-2-kv-compression-attention-hamming-sparse-long-context-not-gla" class="l3">3.2 KV-compression attention — Hamming-sparse long-context (not GLA)</a>
+<a href="#4-fused-moe-ops" class="">4. Fused MoE ops</a>
+<a href="#4-1-gating-top-k-routing" class="l3">4.1 Gating + Top-K routing</a>
+<a href="#4-2-comm-method-stack-moe-comm-method-py" class="l3">4.2 Comm-method stack (moe_comm_method.py)</a>
+<a href="#4-3-mc2-communication-computation-fusion-token-dispatcher-py-102" class="l3">4.3 MC2 — communication/computation fusion (token_dispatcher.py:102)</a>
+<a href="#4-4-fused-mc2-single-op-moe-decode" class="l3">4.4 Fused MC2 — single-op MoE decode</a>
+<a href="#4-5-mlp-compute-amp-experts" class="l3">4.5 MLP compute &amp; experts</a>
+<a href="#5-triton-kernels" class="">5. Triton kernels</a>
+<a href="#6-310p-vs-a2-a3" class="">6. 310P vs A2/A3</a>
+<a href="#7-cann-custom-ops" class="">7. CANN custom ops</a>
+<a href="#7-1-registration-mechanism" class="l3">7.1 Registration mechanism</a>
+<a href="#7-2-how-key-cann-ops-are-exposed-to-vllm-rsquo-s-graph" class="l3">7.2 How key CANN ops are exposed to vLLM&rsquo;s graph</a>
+<a href="#7-3-graph-capture-interactions" class="l3">7.3 Graph-capture interactions</a>
+<a href="#key-file-references" class="">Key file references</a>
+</div>
+<h1 id="03-attention-backends-mla-kv-compression-custom-ops-triton-kernels-310p-cann-custom-ops">03 — Attention Backends, MLA, KV-Compression, Custom Ops, Triton Kernels, 310P, CANN Custom Ops</h1>
+<blockquote>
+<p>Scope: <code>vllm_ascend/attention/</code>, <code>vllm_ascend/ops/</code>, <code>vllm_ascend/_310p/</code>, <code>vllm_ascend/device/device_op.py</code>, <code>vllm_ascend/_cann_ops_custom/</code>.
+Analysis date: 2026-07-18. Repo: <code>vllm-ascend</code> (Huawei Ascend NPU plugin for vLLM v1).</p>
+</blockquote>
+<hr />
+<h2 id="1-attention-backend-taxonomy" id="1-attention-backend-taxonomy">1. Attention backend taxonomy</h2>
+<p>vLLM-Ascend plugs into vLLM v1&rsquo;s <code>AttentionBackendEnum.CUSTOM</code> registry via <code>@register_backend(AttentionBackendEnum.CUSTOM, "ASCEND")</code> (and per-backend registrations in <code>platform.get_attn_backend_cls</code>). The backend is chosen by <code>(use_mla, use_sparse, use_compress)</code> in <code>vllm_ascend/platform.py:784-810</code>. Device mapping is by <code>AscendDeviceType</code> enum {A2=0 (910B, soc 220–225), A3=1 (soc 250–255), <strong>_310P=2</strong> (soc 200–205), <strong>A5=3</strong> (soc 260)} read from <code>torch_npu.npu.get_soc_version()</code> and matched against a baked-in build label (<code>vllm_ascend/utils.py:788-836</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Backend class</th>
+<th>Device</th>
+<th>Attention type</th>
+<th>Core kernel</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AscendAttentionBackend</code> / <code>AscendAttentionBackendImpl</code></td>
+<td>A2 / A3 / A5</td>
+<td>MHA / GQA (standard softmax attn), chunked-prefill, sliding-window, spec-decode</td>
+<td><code>torch_npu.npu_fused_infer_attention_score</code> / <code>score_v2</code> (FIA, <strong>TND</strong> layout); fallback <code>_npu_fusion_attention</code> for enc-dec</td>
+<td><code>attention/attention_v1.py:76, 395</code></td>
+</tr>
+<tr>
+<td><code>AscendMLABackend</code> / <code>AscendMLAImpl</code></td>
+<td>A2 / A3 / A5</td>
+<td><strong>MLA</strong> (DeepSeek V3/R1 latent attn: W_UK/W_UV weight-absorption, split q_nope/q_pe, k_nope/k_pe, KV-compressed latent cache)</td>
+<td><code>torch_npu.npu_fused_infer_attention_score_v2</code> with <code>query_rope</code>/<code>key_rope</code> latent + <code>npu_kv_rmsnorm_rope_cache</code> + <code>npu_transpose_batchmatmul</code> (v-up)</td>
+<td><code>attention/mla_v1.py:72, 699</code></td>
+</tr>
+<tr>
+<td><code>AscendSFABackend</code> / <code>AscendSFAImpl</code></td>
+<td>A2 / A3 / A5</td>
+<td><strong>Sparse/Indexer-based MLA</strong> (DeepSeek V3.2-style SFA with learned indexer + C8 KV quantization, Hadamard rotation)</td>
+<td><code>npu_fused_infer_attention_score_v2</code> + <code>_C_ascend.store_kv_block</code> / <code>batch_matmul_transpose</code></td>
+<td><code>attention/sfa_v1.py:119, 492</code></td>
+</tr>
+<tr>
+<td><code>AscendDSABackend</code> / <code>AscendDSAImpl</code></td>
+<td>A2 / A3 / A5 (DeepSeek V4)</td>
+<td><strong>Delta-Sparse-Attention (DSA)</strong> + <strong>Hadamard-rotated compress ratio</strong> KV + SWA; <code>use_compress=True</code></td>
+<td><code>_C_ascend.compressor</code>, <code>npu_kv_quant_sparse_attn_sharedkv</code>, <code>npu_rms_norm_dynamic_quant</code>, <code>inplace_partial_rotary_mul</code></td>
+<td><code>attention/dsa_v1.py:184</code></td>
+</tr>
+<tr>
+<td><code>AscendSFAIndexerBackend</code></td>
+<td>A2 / A3 / A5</td>
+<td>Cache-only placeholder so the KV-cache planner allocates a physical tensor for the split SFA indexer cache</td>
+<td>(no compute)</td>
+<td><code>attention/indexer.py:14</code></td>
+</tr>
+<tr>
+<td><code>AscendFABackend</code> / <code>AscendFAImpl</code></td>
+<td>A2 / A3 / A5 (batch-invariant training)</td>
+<td>FA-V3 (via <code>flash_attn_npu_v3</code>) for train-inference-consistency; <strong>not</strong> for normal serving</td>
+<td><code>flash_attn_npu_v3.flash_attn_with_kvcache</code></td>
+<td><code>attention/fa3_v1.py:12, 43</code></td>
+</tr>
+<tr>
+<td><code>AscendAttentionBackend310</code> / <code>AscendAttentionBackendImpl310</code></td>
+<td><strong>_310P only</strong></td>
+<td>MHA / GQA only — <strong>no MLA/SFA on 310P yet</strong>; uses <code>_npu_flash_attention</code> / <code>_npu_flash_attention_v3</code> + <code>_npu_paged_attention</code>, supports a NZ-aligned KV shape</td>
+<td><code>_npu_flash_attention</code>, <code>_npu_paged_attention</code></td>
+<td><code>_310p/attention/attention_v1.py:48, 102</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Context-parallel (PCP/DCP) variants</strong> are selector-flagged separately and swap the builder/impl at runtime when <code>enable_cp()</code>/<code>enable_dsa_cp()</code>/<code>enable_sfa_dcp_replicated_indexer()</code> are true:</p>
+<ul>
+<li><code>AscendAttentionCPImpl</code> / <code>AscendAttentionCPMetadataBuilder</code> (<code>context_parallel/attention_cp.py:284</code>)</li>
+<li><code>AscendMlaCPImpl</code> / <code>AscendMlaCPMetadataBuilder</code> (<code>context_parallel/mla_cp.py:57</code>)</li>
+<li><code>Ascend(SFA|DSA|SFADCP)(Impl|MetadataBuilder)</code> (<code>context_parallel/{sfa,dsa}_cp.py</code>)</li>
+</ul>
+<p><strong>KV cache shape split:</strong>
+- Standard MHA/GQA (FIA): <code>(2, num_blocks, block_size, num_kv_heads, head_size)</code> — separate K &amp; V (<code>attention_v1.py:110</code>).
+- MLA / SFA / DSA: <code>(num_blocks, block_size, num_kv_heads, head_size)</code> — <strong>latent compressed</strong> <code>(c_kv, k_pe)</code>; here <code>head_size</code> already covers the joint latent (<code>mla_v1.py:98</code>).
+- 310P MHA: <code>(2, num_blocks, num_kv_heads*head_size//16, block_size, 16)</code> — hardware-mandated 16-alignment tiling (<code>_310p/attention/attention_v1.py:81</code>).</p>
+<hr />
+<h2 id="2-mla-on-ascend" id="2-mla-on-ascend">2. MLA on Ascend (深度重点)</h2>
+<p>This is the high-value path powering DeepSeek V3/R1 inference on Ascend.</p>
+<h3 id="21-conceptual-mapping" id="2-1-conceptual-mapping">2.1 Conceptual mapping</h3>
+<p>Where vanilla vLLM&rsquo;s <code>mla_decode_attention</code> / <code>mla_prefill</code> run an <strong>explicit two-stage</strong> attention (project Q/K/V → paged-Softmax with separate K/V caches), Ascend MLA collapses the K side into a <strong>compressed latent <code>c_kv</code></strong> stored in the KV cache and absorbs the up-projection <code>W_UK</code> into the query, never materializing full K/V heads in the hot path:</p>
+<div class="highlight"><pre><span></span><code>q_c = fused_qkv_a_proj(hidden_states).split([q_lora_rank, kv_lora_rank + qk_rope_head_dim])
+q_c = q_a_layernorm(q_c)
+kv_no_split = kv_a_layernorm-like projection, shape [B, N, kv_lora_rank + qk_rope_head_dim]
+   └─ cached directly as (c_kv, k_pe) via npu_kv_rmsnorm_rope_cache
+</code></pre></div>
+<h3 id="22-decode-path-_forward_decode-mla_v1py1370" id="2-2-decode-path-forward-decode-mla-v1-py-1370">2.2 Decode path (<code>_forward_decode</code>, <code>mla_v1.py:1370</code>)</h3>
+<p>Preprocessing (<code>mla_preprocess_decode</code>, <code>_q_proj_and_k_up_proj</code>):</p>
+<ol>
+<li><code>q_nope, q_pe = self.q_proj(q_c).view(...).split([qk_nope_head_dim, qk_rope_head_dim])</code> — then absorb <code>W_UK_T</code> on the nope part via <code>torch.bmm(q_nope, self.W_UK_T)</code> → <code>ql_nope</code> (so the query is pre-baked into the latent space). This is the <strong>weight-absorption trick</strong> that enables the latent-space attention.</li>
+<li>RoPE applied on the <code>q_pe</code> rope part via <code>npu_interleave_rope</code> (<code>rope_single</code>).</li>
+<li><code>k_pe, k_nope = exec_kv_decode(kv_no_split, cos, sin, kv_cache, slots)</code> writes the latent+rope cache with <strong><code>torch_npu.npu_kv_rmsnorm_rope_cache(..., cache_mode="PA_NZ" | "PA")</code></strong> — a single fused CANN op that does RMSNorm → RoPE → paged-cache write.</li>
+</ol>
+<p>Core attention call (decode, non-quantized, <code>mla_v1.py:1564-1570</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># shape knope/k_pe for npu graph mode should be:</span>
+<span class="c1"># [num_blocks, num_kv_heads, block_size, kv_lora_rank / qk_rope_head_dim]</span>
+<span class="n">attn_output</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_fused_infer_attention_score_v2</span><span class="p">(</span>
+    <span class="n">q_nope</span><span class="p">,</span> <span class="n">k_nope</span><span class="p">,</span> <span class="n">k_nope</span><span class="p">,</span>          <span class="c1"># k_nope passed 3rd positional too (placeholder)</span>
+    <span class="n">query_rope</span><span class="o">=</span><span class="n">q_pe</span><span class="p">,</span> <span class="n">key_rope</span><span class="o">=</span><span class="n">k_pe</span><span class="p">,</span>  <span class="c1"># &lt;-- RoPE parts injected here</span>
+    <span class="n">num_query_heads</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">num_heads_padded</span><span class="p">,</span>
+    <span class="n">num_key_value_heads</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">num_kv_heads</span><span class="p">,</span>
+    <span class="n">input_layout</span><span class="o">=</span><span class="s2">&quot;BSND_NBSD&quot;</span> <span class="o">|</span> <span class="s2">&quot;BNSD_NBSD&quot;</span> <span class="o">|</span> <span class="s2">&quot;TND_NTD&quot;</span><span class="p">,</span>  <span class="c1"># per sliding-window/spec</span>
+    <span class="n">softmax_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">,</span>
+    <span class="n">block_table</span><span class="o">=</span><span class="n">decode_meta</span><span class="o">.</span><span class="n">block_table</span><span class="p">,</span>
+    <span class="n">block_size</span><span class="o">=</span><span class="n">block_size</span><span class="p">,</span>
+    <span class="n">actual_seq_qlen</span><span class="o">=</span><span class="n">actual_seq_lengths</span><span class="p">,</span>
+    <span class="n">actual_seq_kvlen</span><span class="o">=</span><span class="n">decode_meta</span><span class="o">.</span><span class="n">seq_lens_list</span><span class="p">,</span>
+    <span class="n">workspace</span><span class="o">=</span><span class="n">workspace</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The kernel is <strong>Fused Infer Attention v2</strong> (<code>npu_fused_infer_attention_score_v2</code>), vLLM-Ascend&rsquo;s single most important kernel. Unlike vanilla vLLM&rsquo;s <code>flash_attn</code> / <code>triton</code> <code>mla_decode</code>, FIA-v2 natively takes the latent <code>(q_nope, q_pe), (k_nope, k_pe)</code> decomposition plus paged block tables — <strong>no explicit materialization of full K/V heads happens inside the kernel</strong>.</p>
+<p>Output up-projection (<code>_v_up_proj</code>, <code>mla_v1.py:880</code>) — a fused batch-matmul that maps <code>kv_lora_rank</code> → <code>v_head_dim</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">kv_lora_rank</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_transpose_batchmatmul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_UV</span><span class="p">,</span> <span class="n">perm_y</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_head_dim</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="23-prefill-path-_forward_prefill-mla_v1py1221" id="2-3-prefill-path-forward-prefill-mla-v1-py-1221">2.3 Prefill path (<code>_forward_prefill</code>, <code>mla_v1.py:1221</code>)</h3>
+<p>Prefill materializes full <code>k_nope, value = self.kv_b_proj(kv_c_normed)</code> and runs a <strong>single</strong> FIA call with <code>softmax_lse_flag=True</code>, then <code>_compute_prefill_context</code> chunks the prefill context into <code>chunked_prefill_workspace</code>-sized pieces:</p>
+<div class="highlight"><pre><span></span><code><span class="n">attn_output</span><span class="p">,</span> <span class="n">attn_lse</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_fused_infer_attention_score</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">,</span> <span class="n">key</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span>
+    <span class="n">num_heads</span><span class="o">=...</span><span class="p">,</span> <span class="n">num_key_value_heads</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span><span class="p">,</span> <span class="n">input_layout</span><span class="o">=</span><span class="s2">&quot;TND&quot;</span><span class="p">,</span>
+    <span class="n">sparse_mode</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">,</span> <span class="n">actual_seq_lengths</span><span class="o">=</span><span class="n">actual_seq_lengths_q</span><span class="p">,</span>
+    <span class="n">actual_seq_lengths_kv</span><span class="o">=</span><span class="n">actual_seq_lengths_kv</span><span class="p">,</span> <span class="n">softmax_lse_flag</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># then chunked context via the same kernel + npu_attention_update to merge LSE</span>
+<span class="n">output_final</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_attention_update</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">lse_list</span><span class="p">),</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">out_list</span><span class="p">),</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p>Each chunk loads its slice from the paged <code>(c_kv, k_pe)</code> cache via <strong><code>DeviceOperator.kv_cache_load</code></strong> → <code>torch_npu.npu_gather_pa_kv_cache</code>, runs the same <code>npu_b_proj</code>, and fuses via <code>npu_attention_update</code>.</p>
+<h3 id="24-mlapo-fused-mla-preproc-deep-operator-fusion" id="2-4-mlapo-fused-mla-preproc-deep-operator-fusion">2.4 MLAPO — fused MLA preproc (deep operator fusion)</h3>
+<p><code>enable_mlapo()</code> gates a deeper fusion (<code>mla_v1.py:942-1065</code>, <code>_process_weights_for_fused_mlapo</code> &amp; <code>_process_weights_for_fused_mlapo_a5</code>):</p>
+<ul>
+<li><strong>A2/A3</strong>: <code>torch.ops._C_ascend.mla_preprocess(... wd_qkv, deq_scale_qkv, gamma1, beta1, wu_q, qb_deq_scl, gamma2, cos, sin, W_UK_T, k_nope, k_pe, slot_mapping, quant_scale0/1, ..., cache_mode="nzcache|krope_ctkv", quant_mode="per_tensor_quant_asymm")</code> fuses Q/KV projections + LayerNorm + RoPE + cache write into one CANN custom op, then <code>reorg_decode_q</code> reshapes for FIA.</li>
+<li><strong>A5</strong>: <code>npu_mla_prolog_v2</code> / <code>npu_mla_prolog_v3</code> / <code>npu_dynamic_quant</code> family, casting to <code>float8_e4m3fn</code> / MXFP (<code>npu_dynamic_mx_quant</code>) — a separate fused prolog for FP8 decode.</li>
+<li>Weights are pre-reformatted into FraCTAL_NZ (<code>npu_format_cast(..., 29)</code>) and <code>trans_rope_weight</code> + <code>transdata</code> are applied offline.</li>
+</ul>
+<p>On <strong>KV consumer</strong> (PD-decode) instances, <code>fused_qkv_a_proj.weight / q_proj.weight</code> are set to <code>None</code> once MLAPO absorbs them, explicitly freeing VRAM (<code>mla_v1.py:1053-1064</code>).</p>
+<h3 id="25-how-this-differs-from-vanilla-vllms-mla_decode_attention-mla_prefill" id="2-5-how-this-differs-from-vanilla-vllm-rsquo-s-mla-decode-attention-mla-prefill">2.5 How this differs from vanilla vLLM&rsquo;s <code>mla_decode_attention</code> / <code>mla_prefill</code></h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>vanilla vLLM (FlashMLA/ TritonMLA)</th>
+<th>vllm-ascend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>KV cache</td>
+<td>full K/V heads, shape <code>[2, blocks, bs, kv_heads, head_dim]</code></td>
+<td><strong>latent</strong> <code>(c_kv, k_pe)</code>, 1 tensor</td>
+</tr>
+<tr>
+<td>Query proj</td>
+<td>Q → full heads, then softmax(QK^T)V</td>
+<td>Q <strong>absorbs W_UK</strong> (<code>bmm(q_nope, W_UK_T)</code>) → <code>ql_nope</code> in latent space</td>
+</tr>
+<tr>
+<td>K/V materialization</td>
+<td>explicit in-kernel proj from latent</td>
+<td><strong>Fused into FIA-v2</strong> (no head materialization in the hot path)</td>
+</tr>
+<tr>
+<td>RoPE</td>
+<td>external</td>
+<td>fused-in-kernel via <code>query_rope</code>/<code>key_rope</code> params + pre-write with <code>npu_kv_rmsnorm_rope_cache</code></td>
+</tr>
+<tr>
+<td>V up-proj</td>
+<td>part of <code>W_V</code> in kernel</td>
+<td>explicit <code>npu_transpose_batchmatmul(x, W_UV)</code> post-FIA</td>
+</tr>
+<tr>
+<td>Chunked prefill</td>
+<td><code>triton</code> / flash chunked</td>
+<td><code>npu_gather_pa_kv_cache</code> load + <code>npu_attention_update</code> LSE merge</td>
+</tr>
+<tr>
+<td>FP8/MXFP</td>
+<td>Hopper SM80+ only</td>
+<td>A5 path via <code>npu_mla_prolog_{v2,v3}</code> + <code>npu_dynamic_{mx_}quant</code></td>
+</tr>
+<tr>
+<td>Graph capture</td>
+<td>CUDA graphs</td>
+<td>ACL task-graph replay: <code>torch.npu.graph_task_group_begin/end</code> + <code>graph_task_update_begin/end</code> with <code>weak_ref_tensors</code> parameter capture — FIA params, handles, events cached per token-count bucket</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-context-parallel-kv-compression-attention" id="3-context-parallel-amp-kv-compression-attention">3. Context Parallel &amp; KV-Compression attention</h2>
+<h3 id="31-pcp-prefill-context-parallel-dcp-decode-context-parallel" id="3-1-pcp-prefill-context-parallel-dcp-decode-context-parallel">3.1 PCP (Prefill Context Parallel) + DCP (Decode Context Parallel)</h3>
+<p>Implemented across <code>attention/context_parallel/{common_cp, attention_cp, mla_cp, sfa_cp, dsa_cp}.py</code>. Two groups: <code>get_pcp_group()</code> and <code>get_decode_context_model_parallel_group()</code> (DCP). Key structures in <code>common_cp.py</code>:</p>
+<ul>
+<li><code>AscendPCPMetadata</code> — per-request PCP chunk pointers.</li>
+<li><code>CPChunkedContextMetadata</code> — <code>cu_seq_lens</code>, <code>starts</code>, <code>seq_tot</code>, <code>max_seq_lens</code>, <code>workspace</code>.</li>
+<li><code>AscendMetadataForPrefill</code> / <code>AscendMetadataForDecode</code> — decode-side PCP bookkeeping.</li>
+</ul>
+<p>In <code>attention_cp.py:108</code>, <code>AscendAttentionCPMetadataBuilder.build</code> reads the all-rank context-lens tensor, partitions the PCP chunk load, and rewrites the attention mask accordingly. <code>mla_cp.py:57-97</code> does the equivalent for MLA&rsquo;s <code>(c_kv, k_pe)</code> cache by computing a <strong>virtual block size</strong> <code>cp_local_block_size * dcp_size * pcp_size</code> and realigning the block table with <code>np.gcd</code> so all ranks index a consistent paged view.</p>
+<h3 id="32-kv-compression-attention-hamming-sparse-long-context-not-gla" id="3-2-kv-compression-attention-hamming-sparse-long-context-not-gla">3.2 KV-compression attention — <strong>Hamming-sparse long-context (not GLA)</strong></h3>
+<p><code>attention/kvcomp_attn/attention_utils.py</code> implements a <strong>Hamming-distance hash-top-k sparse attention</strong>, not Mamba/GLA. Control gate: <code>is_enable_hamming_sparse(enable_c8_quant)</code> reads <code>additional_config["enable_hamming_sparse"]</code> and <strong>mutually-excludes</strong> C8 KV quantization (<code>attention_utils.py:145-154</code>).</p>
+<p>Mechanism:
+1. <code>reshape_and_cache_kvcomp</code> — every layer, compute <code>hashk = hash_encoder.compute_hash(key)</code>, write into <code>hashk_caches[layer]</code> via <code>torch.ops._C_ascend.npu_reshape_and_cache_bnsd</code>.
+2. <code>get_kvcomp_decode_params</code> — for decode, hash the query, then <code>torch.ops._C_ascend.npu_hamming_dist_top_k(hashq, hashk_cache, topk, seq_lens, chunk_sizes, max_seq_len, sink, recent, ..., block_table, valid_query_mask, hamming_output)</code> picks the top-K most-recent <strong>blocks</strong> by Hamming distance, returning a <strong>sparse block table</strong> and compressed <code>seq_lens_from_hamming</code>.
+3. FIA is then called with the sparse block table — only attending to <code>top_k * chunk_size</code> tokens per request instead of full context. Metadata is plumbed via <code>AscendMetadata.kvcomp_metadata: KVCompMetaData</code> (<code>worker/kvcomp_utils.py</code>).</p>
+<p>Memory/compute savings: context length collapses from <code>L</code> to <code>top_k * chunk_size</code> per request, with a <code>sink</code> (initial tokens) + <code>recent</code> (local window) always retained — a classic H2O/StreamingLLM-style long-context strategy implemented purely in custom ops.</p>
+<p>The <code>ops/gdn_attn_builder.py</code> (and <code>ops/gdn.py</code>, <code>ops/fla/</code>) path is a <strong>separate</strong> linear-recurrent attention (Gated Delta Net / GDN) used by Mamba-style hybrid models, gated behind the <code>flash_linear_attention</code> ops; KV-comp is the other, independent long-context mechanism.</p>
+<hr />
+<h2 id="4-fused-moe-ops" id="4-fused-moe-ops">4. Fused MoE ops</h2>
+<p>All under <code>ops/fused_moe/</code>. The architecture mirrors vLLM&rsquo;s EP-aware <code>FusedMoE</code> but uses <strong>Ascend-specific comm+compute fusion</strong>.</p>
+<h3 id="41-gating-top-k-routing" id="4-1-gating-top-k-routing">4.1 Gating + Top-K routing</h3>
+<p><code>select_experts</code> (<code>experts_selector.py</code>) wraps either:
+- <code>torch_npu.npu_moe_gating_top_k</code> (fused gating kernel, via <code>check_npu_moe_gating_top_k</code>), or
+- a vLLM <code>grouped_topk</code> fallback, with <code>zero_experts_compute</code> (zero-expert bypass), <code>AscendW8A8MXFP8DynamicLinearMethod</code> &amp; <code>AscendW8A8LinearMethod</code> quant hooks.</p>
+<p><code>topk_ids</code> is post-permuted by <code>log2phy</code> (EPLB logical→physical) before dispatch.</p>
+<h3 id="42-comm-method-stack-moe_comm_methodpy" id="4-2-comm-method-stack-moe-comm-method-py">4.2 Comm-method stack (<code>moe_comm_method.py</code>)</h3>
+<p><code>MoECommType</code> enum (<code>ascend_forward_context.py:27</code>): <strong>ALLGATHER = 0, MC2 = 1, ALLTOALL = 2, FUSED_MC2 = 3.</strong> Selected via <code>_EXTRA_CTX.moe_comm_method</code> and per-EP-size registered in <code>setup_moe_comm_method</code> (<code>moe_comm_method.py:55</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>When</th>
+<th>Dispatcher</th>
+<th>Prepare/Finalize</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AllGatherCommImpl</code></td>
+<td>EP=1 (single-node)</td>
+<td><code>TokenDispatcherWithAllGather</code></td>
+<td><code>PrepareAndFinalizeWithAllGather</code></td>
+<td>pure TP/DP gather</td>
+</tr>
+<tr>
+<td><code>MC2CommImpl</code></td>
+<td>EP&gt;1</td>
+<td><code>TokenDispatcherWithMC2</code></td>
+<td><code>PrepareAndFinalizeWithMC2</code></td>
+<td>comm/compute-overlapped <code>npu_moe_distribute_dispatch</code> + <code>..._combine</code></td>
+</tr>
+<tr>
+<td><code>AlltoAllCommImpl</code></td>
+<td>EP&gt;1, fallback</td>
+<td><code>TokenDispatcherWithAll2AllV</code></td>
+<td><code>PrepareAndFinalizeWithAll2All</code></td>
+<td>all-to-all exchange, then <code>npu_grouped_matmul</code></td>
+</tr>
+<tr>
+<td><code>FusedMC2CommImpl</code></td>
+<td>EP&gt;1, fully fused decode</td>
+<td><code>TokenDispatcherWithMC2</code></td>
+<td><code>PrepareAndFinalizeWithMC2</code></td>
+<td><strong>dispatch+FFN+combine single op</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-mc2-communicationcomputation-fusion-token_dispatcherpy102" id="4-3-mc2-communication-computation-fusion-token-dispatcher-py-102">4.3 MC2 — communication/computation fusion (<code>token_dispatcher.py:102</code>)</h3>
+<p><code>TokenDispatcherWithMC2.token_dispatch</code> calls <code>torch_npu.npu_moe_distribute_dispatch[v2]</code>; combine uses <code>npu_moe_distribute_combine</code>. These are the <strong>MC2</strong> primitives: they combine an all-to-all-style token scatter with the GMM compute on the cube (Cohen-McMullen-Cannon style comm/compute overlap on Ascend&rsquo;s AI-Core). A5 vs A3 toggle extra args (<code>a5_need_extra_args</code>, <code>need_extra_args</code>), and hierarchical comm (<code>is_hierarchical_communication_enabled</code>) adds <code>expert_scales</code>.</p>
+<h3 id="44-fused-mc2-single-op-moe-decode" id="4-4-fused-mc2-single-op-moe-decode">4.4 Fused MC2 — single-op MoE decode</h3>
+<p><code>FusedMC2CommImpl.fused_experts</code> (<code>moe_comm_method.py:286-349</code>) — the highest-fusion mode:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># enable_fused_mc2 == 1: dispatch + silu + gmm1/gmm2 + combine in ONE op</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">_C_ascend</span><span class="o">.</span><span class="n">dispatch_ffn_combine</span><span class="p">(</span>
+    <span class="n">x</span><span class="o">=</span><span class="n">hidden_states</span><span class="p">,</span> <span class="n">weight1</span><span class="o">=</span><span class="n">w1</span><span class="p">,</span> <span class="n">weight2</span><span class="o">=</span><span class="n">w2</span><span class="p">,</span> <span class="n">expert_idx</span><span class="o">=</span><span class="n">topk_ids</span><span class="p">,</span>
+    <span class="n">scale1</span><span class="o">=</span><span class="n">w1_scale</span><span class="p">,</span> <span class="n">scale2</span><span class="o">=</span><span class="n">w2_scale</span><span class="p">,</span> <span class="n">bias1</span><span class="o">=</span><span class="n">w1_scale_bias</span><span class="p">,</span> <span class="n">bias2</span><span class="o">=</span><span class="n">w2_scale_bias</span><span class="p">,</span>
+    <span class="n">probs</span><span class="o">=</span><span class="n">topk_weights</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">group</span><span class="o">=</span><span class="n">moe_all_to_all_group_name</span><span class="p">,</span>
+    <span class="n">max_output_size</span><span class="o">=</span><span class="n">mega_moe_max_tokens</span><span class="p">,</span> <span class="n">swiglu_limit</span><span class="o">=...</span><span class="p">,</span>
+    <span class="n">x_active_mask</span><span class="o">=</span><span class="n">mc2_mask</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">out</span><span class="p">,</span> <span class="n">expert_token_nums</span><span class="o">=</span><span class="n">expert_token_nums</span><span class="p">)</span>
+
+<span class="c1"># enable_fused_mc2 == 2: dispatch + gmm + combine, decode-specific</span>
+<span class="n">out</span><span class="p">,</span> <span class="n">expert_tokens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">_C_ascend</span><span class="o">.</span><span class="n">dispatch_gmm_combine_decode</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">expert_ids</span><span class="o">=</span><span class="n">topk_ids</span><span class="p">,</span> <span class="n">gmm1_permuted_weight</span><span class="o">=</span><span class="n">w1</span><span class="p">,</span> <span class="n">gmm1_permuted_weight_scale</span><span class="p">,</span>
+    <span class="n">gmm2_weight</span><span class="p">,</span> <span class="n">gmm2_weight_scale</span><span class="p">,</span> <span class="n">expert_smooth_scales</span><span class="p">,</span> <span class="n">expert_scales</span><span class="p">,</span> <span class="n">group_ep</span><span class="p">,</span>
+    <span class="n">ep_rank_size</span><span class="p">,</span> <span class="n">ep_rank_id</span><span class="p">,</span> <span class="n">moe_expert_num</span><span class="p">,</span> <span class="n">global_bs</span><span class="p">)</span>
+</code></pre></div>
+<p>Weight handling: <code>w13/w2</code> are <code>(E, N, K)</code> pytorch shape → transposed to <code>(E, K, N)</code> and <strong>cast to FraCTAL_NZ</strong> (<code>npu_format_cast(..., ACL_FORMAT_FRACTAL_NZ)</code>) because <code>dispatch_ffn_combine</code> requires NZ (<code>fused_moe.py:125-143</code>). With <code>dynamic_eplb</code>, weights are unbinded into per-expert <code>w13_weight_list</code>/<code>w2_weight_list</code> to keep load-balancing movable.</p>
+<h3 id="45-mlp-compute-experts" id="4-5-mlp-compute-amp-experts">4.5 MLP compute &amp; experts</h3>
+<p><code>moe_mlp.py</code> (<code>unified_apply_mlp</code>) and <code>experts_selector.py</code> route the per-token GMMs. <code>prepare_finalize.py</code> has four variants (<code>PrepareAndFinalize{,WithAll2All,WithAllGather,WithMC2}</code>) handling padding, shared-expert DP overlap, and replace-allreduce logic. <code>gate_linear.py</code> wraps the fused gate-up matmul.</p>
+<hr />
+<h2 id="5-triton-kernels" id="5-triton-kernels">5. Triton kernels</h2>
+<p><code>ops/triton/</code> exists <strong>because CANN&rsquo;s operator coverage for experimental / prefill / non-standard layouts is incomplete or version-locked</strong> — Triton provides a fast iteration path without a full CANN release. Each file:</p>
+<table>
+<thead>
+<tr>
+<th>Triton kernel</th>
+<th>File</th>
+<th>Purpose (what CUDA/CANN path it replaces / augments)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>triton_rms_kernel</code> / <code>triton_q_rms</code></td>
+<td><code>rms_norm.py</code></td>
+<td>Q/K RMSNorm; the <code>triton_q_rms</code> variant is used for MLA decode preproc when the CANN fused prolog can&rsquo;t cover it (e.g. odd head dims)</td>
+</tr>
+<tr>
+<td><code>_triton_rope</code></td>
+<td><code>rope.py</code></td>
+<td>RoPE with <code>rope_dim != head_dim</code> and both neox / non-neox styles — more flexible than the fixed CANN RoPE</td>
+</tr>
+<tr>
+<td><code>rope_forward_triton_siso</code></td>
+<td><code>rope.py</code></td>
+<td>single-input-single-output RoPE</td>
+</tr>
+<tr>
+<td><code>split_qkv_{rmsnorm_rope, mrope, tp_rmsnorm_rope, rmsnorm_rope_simt}</code></td>
+<td><code>linearnorm/</code></td>
+<td>fused split-QKV + RMSNorm + RoPE; <code>_simt</code> version avoids UB overflow on large models</td>
+</tr>
+<tr>
+<td><code>triton_rmsnorm</code></td>
+<td>(top-level)</td>
+<td>generic RMSNorm fallback</td>
+</tr>
+<tr>
+<td><code>layernorm_gated</code></td>
+<td><code>layernorm_gated.py</code></td>
+<td>gated LayerNorm (Qwen-style)</td>
+</tr>
+<tr>
+<td><code>swiglu_quant</code> / <code>swiglustep</code></td>
+<td><code>activation/</code></td>
+<td>SiLU·gate fused with W4A8 quantization (per-channel gmm_swiglu_quant)</td>
+</tr>
+<tr>
+<td><code>chunk_gated_delta_rule_fwd_h / _hupdate / chunk_fwd_o / chunk_scaled_dot_kkt_fwd / chunk_local_cumsum / solve_tril / l2norm_fwd / recompute_w_u_fwd / ...</code></td>
+<td><code>fla/</code></td>
+<td><strong>Flash-linear-attention (GLA/GDN delta-rule) chunked prefill</strong> — DCP-friendly chunk size 64; <code>solve_tril.LARGE_BLOCK_T = 608*2</code></td>
+</tr>
+<tr>
+<td><code>fused_recurrent_gated_delta_rule_fwd_kernel</code></td>
+<td><code>kda/</code></td>
+<td><strong>KDA (chunked delta-rule recurrent attention)</strong> with varlen / continuous-batching / spec-decode / L2-norm heuristics</td>
+</tr>
+<tr>
+<td><code>cumsum / l2norm / chunk_delta_h / solve_tril / utils</code></td>
+<td><code>kda/</code></td>
+<td>KDA support ops</td>
+</tr>
+<tr>
+<td><code>sigmoid_gating / fused_qkvzba_split_reshape / layernorm_guard / chunk_o_update / chunk_delta_hupdate</code></td>
+<td><code>fla/</code></td>
+<td>GLA support (sigmoid gate update, fused QKVZBA split-reshape)</td>
+</tr>
+<tr>
+<td><code>fused_gdn_gating</code></td>
+<td><code>fused_gdn_gating.py</code></td>
+<td>Gated Delta Net chunked gating</td>
+</tr>
+<tr>
+<td><code>causal_conv1d</code> / <code>lightning_attn</code> / <code>postprocess</code></td>
+<td><code>mamba/</code></td>
+<td>Mamba-1/2 hybrids — causal conv1d, lightning-attn SSM, postprocess</td>
+</tr>
+<tr>
+<td><code>mul_add</code> / <code>muls_add</code></td>
+<td><code>mul_add.py</code> / <code>muls_add.py</code></td>
+<td>scalar·x + b fused (register-simple but avoided in hot path)</td>
+</tr>
+<tr>
+<td><code>penalty</code></td>
+<td><code>penalty.py</code></td>
+<td>repetition / presence / freq penalties fused</td>
+</tr>
+<tr>
+<td><code>bincount</code></td>
+<td><code>bincount.py</code></td>
+<td>expert token counting</td>
+</tr>
+<tr>
+<td><code>batch_memcpy</code></td>
+<td><code>batch_memcpy.py</code></td>
+<td>batched device memory copy</td>
+</tr>
+<tr>
+<td><code>reject_sample</code></td>
+<td><code>reject_sample.py</code></td>
+<td>rejection sampling in spec decode</td>
+</tr>
+<tr>
+<td><code>utils</code></td>
+<td><code>spec_decode/utils.py</code></td>
+<td>spec-decode helpers</td>
+</tr>
+</tbody>
+</table>
+<p>The KDA / FLA Triton stack is the most interesting: these are <strong>linear-recurrent (GDN / GLA) kernels</strong> ported from the <code>flash-linear-attention</code> project for DSA/SFA-style sparse attention — they power Qwen3-Next-style mixed-attention on Ascend, where a CANN equivalent does not ship yet. The <code>fla/</code> kernels are large, hand-tuned Triton (block-size 64, WY-factorized triangular solve via <code>wy_fast.recompute_w_u_fwd</code>), and run under PCP/DCP because their chunked layout maps to the split context-parallel dimension naturally.</p>
+<hr />
+<h2 id="6-310p-vs-a2a3" id="6-310p-vs-a2-a3">6. 310P vs A2/A3</h2>
+<p><code>_310p/</code> is a <strong>separate code tree</strong> for the Ascend 310P (the &ldquo;P&rdquo; inference/edge series, e.g. Atlas 300I Duo / 310P soc 200–205). A separate tree is needed because 310P has:</p>
+<ol>
+<li><strong>Operator-subset differences</strong> — <code>_310p/attention/attention_v1.py:112-147</code> implements its own <code>_flash_attention</code> dispatching to <code>_npu_flash_attention</code> / <code>_npu_flash_attention_v3</code> + a <code>support_compressed_mask</code> branch, and to <code>_npu_paged_attention</code> (<code>forward_paged_attention</code>, <code>attention_v1.py:166</code>). These are older CANN primitives than the FIA-v2 path used on A2/A3/A5 — 310P does not support <code>npu_fused_infer_attention_score</code> (FIA) at all, so the canonical Ascend MLA / FIA path <strong>cannot run</strong>. That is also why <code>backend_map_310</code> only maps <code>(False, False) → AscendAttentionBackend310</code> (<code>platform.py:797-808</code>): <strong>MLA/SFA/DSA are not implemented on 310P</strong>.</li>
+<li><strong>KV-cache shape constraint</strong> — 310P requires 16-aligned last-dim tiling: <code>(2, num_blocks, num_kv_heads*head_size//16, block_size, 16)</code> and supports block sizes <strong>{128, 64}</strong> (<code>get_supported_kernel_block_sizes → [128, 64]</code>), whereas A2/A3/A5 mandate 128 only (<code>attention_v1.py:141</code>).</li>
+<li><strong>Precision / quant</strong> — 310P has its own <code>quantization/methods/{w8a8_dynamic, w8a8_static, w8a8sc, w8a8s, w8a8_base}.py</code> registry and linear method (<code>_310p/quantization/methods/w8a8_dynamic.py</code> is a <code>W8A8_DYNAMIC</code> scheme registered to the 310P registry). It lacks A5&rsquo;s FP8 (<code>float8_e4m3fn</code>) / MXFP8 path but retains W8A8 dynamic/static/scaled/sign schemes.</li>
+<li><strong>DeviceOp</strong> — <code>Ascend310PDeviceAdaptor</code> (<code>device/device_op.py:1925</code>) overrides <code>index_fill_</code> with a boolean-mask emulation because that op is unavailable on 310P; <code>reshape_and_cache</code> uses <code>_npu_reshape_and_cache</code> instead of the A2/A3 path.</li>
+<li><strong>FLS/SSM path</strong> — 310P has its own GDN/Delta-net stack under <code>_310p/ops/fla/</code> (<code>gdn_310.py</code>, <code>chunk_gated_delta_rule.py</code>, <code>fused_gdn_gating.py</code>, <code>fused_recurrent_gated_delta_rule.py</code>, <code>l2norm.py</code>, <code>cumpute_causal_conv1d_metadata_310.py</code>) calling <code>_C_ascend.npu_recurrent_gated_delta_rule_310</code>, <code>chunk_gated_delta_rule_fwd_h</code>, <code>chunk_fwd_o</code>, <code>npu_causal_conv1d_310</code> — the <code>_310</code> CANN ops are a 310P-specific subset distinct from the A2/A3/A5 Triton path.</li>
+<li><strong>Fused MoE</strong> — <code>_310p/fused_moe/</code> has its own <code>fused_moe.py</code>, <code>moe_mlp.py</code>, <code>moe_comm_method.py</code>, <code>token_dispatcher.py</code>, <code>experts_selector.py</code> — parallel implementation for the 310P operator set.</li>
+<li><strong>Spec decode / sample</strong> — own <code>spec_decode/llm_base_proposer_310.py</code> and <code>sample/{sampler, rejection_sampler}.py</code>.</li>
+</ol>
+<p>In short: <strong>310P = a forked operator tree</strong> whose CANN backend predates (and sits below) the FIA-v2 + MLAPO stack that makes DeepSeek V3-class MLA fast on A2/A3/A5; it only supports vanilla MHA/GQA Flash-attn / paged-attn, W8A8 quant, and the linear-recurrent SSMs.</p>
+<hr />
+<h2 id="7-cann-custom-ops" id="7-cann-custom-ops">7. CANN custom ops</h2>
+<h3 id="71-registration-mechanism" id="7-1-registration-mechanism">7.1 Registration mechanism</h3>
+<p>vLLM-Ascend has <strong>two</strong> custom-op surfaces:</p>
+<p><strong>(a)</strong> <code>_C_ascend.*</code> — bulk of Ascend-specific operators, registered into <code>torch.ops._C_ascend</code> via the global <code>_CUSTOM_OP_REGISTERED</code> flag and <code>bootstrap_custom_op_env()</code> (<code>utils.py:774-781</code>). <strong><code>vllm_ascend/_cann_ops_custom/</code> exists but contains only <code>.gitkeep</code></strong> — the actual compiled operator library is loaded at import time from the CANN (<code>torch_npu</code>) runtime, not vendored. So &ldquo;C custom ops&rdquo; = the set of <code>torch.ops._C_ascend</code> and <code>torch_npu.*</code> functions exposed by the CANN/torch_npu install.</p>
+<p><strong>(b)</strong> <code>register_custom_ops.py</code> registers <strong>vLLM-namespaced PyTorch ops</strong> via <code>vllm.utils.torch_utils.direct_register_custom_op</code> so they&rsquo;re reachable as <code>torch.ops.vllm.{maybe_all_gather_and_maybe_unpad, maybe_pad_and_reduce, ...}</code> and participate in vLLM&rsquo;s FP8/all-gather/EP interplay.</p>
+<h3 id="72-how-key-cann-ops-are-exposed-to-vllms-graph" id="7-2-how-key-cann-ops-are-exposed-to-vllm-rsquo-s-graph">7.2 How key CANN ops are exposed to vLLM&rsquo;s graph</h3>
+<p>Most of the critical kernels are <code>torch_npu.*</code> native ops called directly in Python, <strong>not</strong> captured as opaque custom ops — meaning they integrate with vLLM&rsquo;s v1 attention layer through normal torch dispatch. The few that are <code>_C_ascend.*</code> custom ops are registered against the <code>torch.ops._C_ascend</code> namespace at CANN load time, then called explicitly in attention/MoE code. Key ones:</p>
+<table>
+<thead>
+<tr>
+<th>CANN op</th>
+<th>Used by</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>torch.ops._C_ascend.mla_preprocess</code></td>
+<td>MLAPO A2/A3 decode</td>
+<td>fused Q/KV proj + LayerNorm + RoPE + cache write</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_mla_prolog_{v2,v3}</code></td>
+<td>MLAPO A5 decode (FP8 / MXFP)</td>
+<td>FP8 / MXFP MLA prolog with dynamic quant</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_kv_rmsnorm_rope_cache</code></td>
+<td>MLA encode/decode</td>
+<td>single-call RMSNorm+RoPE+paged cache write, <code>PA</code>/<code>PA_NZ</code>/<code>PA_BSND</code> modes</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_gather_pa_kv_cache</code> / <code>npu_scatter_pa_kv_cache</code></td>
+<td>chunked prefill KV load / store</td>
+<td>paged KV scatter/gather</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.dispatch_ffn_combine</code></td>
+<td>FusedMC2 v1</td>
+<td>single-op dispatch+GMM+combine MoE</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.dispatch_gmm_combine_decode</code></td>
+<td>FusedMC2 v2</td>
+<td>decode-specific dispatch+GMM+combine</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_moe_distribute_dispatch[v2]</code> / <code>npu_moe_distribute_combine</code></td>
+<td>MC2</td>
+<td>comm/compute-overlapped token dispatch / combine</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.npu_moe_init_routing_custom</code> / <code>npu_moe_init_routing_v2</code></td>
+<td>AlltoAll/AG path</td>
+<td>token routing with quant mode</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_grouped_matmul</code></td>
+<td>AlltoAll MoE</td>
+<td>grouped GMM</td>
+</tr>
+<tr>
+<td><code>torch_npu.npu_moe_gating_top_k</code></td>
+<td>gating</td>
+<td>fused top-k</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.npu_reshape_and_cache_bnsd</code> / <code>npu_hamming_dist_top_k</code></td>
+<td>KV-comp</td>
+<td>hash top-K compression</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.{compressor, npu_vllm_quant_lightning_indexer(_metadata), npu_kv_quant_sparse_attn_sharedkv(_metadata), kv_compress_epilog, npu_rms_norm_dynamic_quant, inplace_partial_rotary_mul}</code></td>
+<td>DSA (DeepSeek V4)</td>
+<td>compress-ratio KV + Hadamard sparse attention</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.{store_kv_block(_metadata), batch_matmul_transpose}</code></td>
+<td>SFA</td>
+<td>indexer cache scatter + v-up</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.{chunk_gated_delta_rule_fwd_h, chunk_fwd_o, npu_recurrent_gated_delta_rule_310, npu_causal_conv1d_310}</code></td>
+<td>310P FLA</td>
+<td>310P-specific linear-recurrent</td>
+</tr>
+<tr>
+<td><code>torch.ops._C_ascend.device_print[_tensor]</code></td>
+<td>debug</td>
+<td>side-effectful device print (marked via <code>_mark_op_side_effectful</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The deep-fusion prolog ops (<code>mla_preprocess</code>, <code>dispatch_ffn_combine</code>, <code>dispatch_gmm_combine_decode</code>, <code>kv_compress_epilog</code>) are the ones that <strong>cannot</strong> be reconstructed from <code>torch_npu.npu_*</code> primitives alone and justify the <code>torch.ops._C_ascend</code> namespace.</p>
+<h3 id="73-graph-capture-interactions" id="7-3-graph-capture-interactions">7.3 Graph-capture interactions</h3>
+<p>ACL graph capture uses <code>torch.npu.graph_task_group_begin/end</code> + <code>graph_task_update_begin/end</code> with weak-referenced parameter tuples cached per token-count bucket (e.g. <code>full_graph_fia</code>, <code>update_graph_params</code> in <code>attention_v1.py:452-750</code>, <code>mla_v1.py:766-878</code>). <code>weak_ref_tensors</code> + a per-size <code>graph_params.attn_params[num_tokens] / handles / events / workspaces</code> lets each layer register its op into the captured task graph, with workspace pre-allocated from <code>_npu_fused_infer_attention_score_get_max_workspace</code> (and cached with <code>_use_max_workspace_for_fia_graph</code>) so mixed-attention models sharing one graph size don&rsquo;t OOM.</p>
+<hr />
+<h2 id="key-file-references" id="key-file-references">Key file references</h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vllm_ascend/attention/attention_v1.py</code></td>
+<td><code>AscendAttentionBackend</code>, <code>AscendAttentionMetadataBuilder</code>, <code>AscendAttentionBackendImpl</code> (FIA), <code>AscendC8AttentionBackendImpl</code>, ACL-graph <code>full_graph_fia</code>/<code>update_graph_params</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/mla_v1.py</code></td>
+<td><code>AscendMLABackend/Builder/Impl</code>, MLAPO weight baking, <code>_forward_decode</code>, <code>_forward_prefill</code>, <code>_compute_prefill_context</code>, <code>_v_up_proj</code>, <code>_q_proj_and_k_up_proj</code>, <code>exec_kv_{decode,prefill}</code>, <code>mla_preprocess_*</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/dsa_v1.py</code></td>
+<td><code>AscendDSABackend/Builder/Impl</code>, Hadamard KV compression, <code>compress-ratio</code>, sparse-attn metadata</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/sfa_v1.py</code></td>
+<td><code>AscendSFABackend/Builder/Impl</code>, SFA indexer, C8 KV quant, <code>batch_matmul_transpose</code> v-up</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/fa3_v1.py</code></td>
+<td>FA3 backend (<code>flash_attn_npu_v3</code>), train-inference consistency only</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/indexer.py</code></td>
+<td><code>AscendSFAIndexerBackend</code> (cache-only placeholder)</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/kvcomp_attn/attention_utils.py</code></td>
+<td>Hamming-sparse KV compression: <code>reshape_and_cache_kvcomp</code>, <code>get_kvcomp_decode_params</code>, <code>is_enable_hamming_sparse</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/context_parallel/{common_cp, attention_cp, mla_cp, sfa_cp, dsa_cp}.py</code></td>
+<td>PCP/DCP metadata, <code>AscendPCPMetadata</code>, per-backend CP builders/impls</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/attention/abstract.py</code></td>
+<td><code>DSAAttentionImpl</code> ABC</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ops/fused_moe/{fused_moe, moe_comm_method, token_dispatcher, experts_selector, moe_mlp, prepare_finalize, moe_runtime_args, gate_linear, comm_utils}.py</code></td>
+<td>Ascend FusedMoE stack; MC2 / AlltoAll / AllGather / FusedMC2; <code>dispatch_ffn_combine</code>/<code>dispatch_gmm_combine_decode</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ops/register_custom_ops.py</code></td>
+<td>vLLM-namespaced custom ops (gather/unpad/pad/reduce; SP bypass)</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ops/{gdn_attn_builder, gdn, dsa, mla, fla, rope_dsv4, cv_linear, linear, linear_op}.py</code></td>
+<td>attention helper ops</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ops/triton/{rms_norm, rope, layernorm_gated, mul_add, muls_add, penalty, bincount, batch_memcpy, reject_sample, fused_gdn_gating}.py</code></td>
+<td>utility Triton kernels</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ops/triton/{fla/*, kda/*, mamba/*, linearnorm/*, activation/*, batch_invariant/*, spec_decode/*}.py</code></td>
+<td>KDA / GLA / GDN / Mamba-SSM / split-QKV-RMSNorm-RoPE / activation-quant / batch-invariant Triton kernels</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/ascend_forward_context.py</code></td>
+<td><code>MoECommType</code> enum, <code>_EXTRA_CTX</code> context, graph/spec-decode flags</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/device/device_op.py</code></td>
+<td><code>BaseDeviceAdaptor</code>, <code>A5DeviceAdaptor</code> (<code>A5DeviceAdaptor:1044</code>, <code>npu_mla_prolog_v3</code> MXFP path), <code>Ascend310PDeviceAdaptor</code> (<code>:1925</code>), <code>reshape_and_cache</code>, <code>npu_fused_infer_attention_score</code>, <code>kv_cache_load</code>, <code>mla_preprocess_only_decode</code>, <code>moe_gating_top_k</code>/<code>npu_moe_init_routing</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/platform.py:784-810</code></td>
+<td><code>get_attn_backend_cls</code> <code>(use_mla, use_sparse, use_compress)</code> → backend map</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/utils.py:788-836</code></td>
+<td><code>AscendDeviceType</code> enum, <code>get_ascend_device_type</code>, soc ↔ type matching</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/_310p/attention/attention_v1.py</code></td>
+<td><code>AscendAttentionBackend310</code> / <code>Impl310</code>: <code>_flash_attention</code>, <code>forward_paged_attention</code>, NZ KV shape</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/_310p/{fused_moe, quantization, spec_decode, sample, ops/fla}/</code></td>
+<td>310P-forked MoE, W8A8 quant, spec decode, GDN/Delta-net (<code>gdn_310</code>, <code>fused_recurrent_gated_delta_rule</code>, <code>chunk_gated_delta_rule</code>)</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/_cann_ops_custom/</code></td>
+<td><code>.gitkeep</code> only; real CANN ops loaded from <code>torch.ops._C_ascend</code> / <code>torch_npu</code> at runtime</td>
+</tr>
+<tr>
+<td><code>vllm_ascend/models/deepseek_v4.py:89-93</code></td>
+<td><code>_get_ascend_dsa_backend</code> — DeepSeek V4 → <code>AscendDSABackend</code></td>
+</tr>
+<tr>
+<td><code>vllm_ascend/models/layer/attention/layer.py</code></td>
+<td>shared <code>AttentionLayerBase</code> integration with DSA backends</td>
+</tr>
+</tbody>
+</table>
+</div>
+<footer>Report 03 — source <code>agent_reports/03_attention_ops.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

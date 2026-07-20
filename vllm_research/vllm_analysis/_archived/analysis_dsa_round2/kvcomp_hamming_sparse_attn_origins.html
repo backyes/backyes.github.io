@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kvcomp_attn (Hamming/SimHash Sparse) — Algorithmic Origins</title>
+<style>
+:root{--bg:#0e1116;--card:#161b22;--ink:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--good:#3fb950;--warn:#d29922;--bad:#f85149;--line:#30363d}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;padding:14px;max-width:880px;margin:auto}
+h1{font-size:1.45rem;margin:.2rem 0 .6rem} h2{font-size:1.1rem;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:4px;margin-top:1.6rem}
+h3{font-size:.98rem;margin:.9rem 0 .2rem} p,li{font-size:.9rem}
+a{color:var(--accent);text-decoration:none;word-break:break-all}a:hover{text-decoration:underline}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
+.tag{display:inline-block;background:#1f2937;color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:.72rem;margin:2px 3px 2px 0}
+.tag.g{color:var(--good);border-color:#2ea04344} .tag.w{color:var(--warn);border-color:#d2992244}
+table{border-collapse:collapse;width:100%;font-size:.82rem;margin:8px 0}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#1b2230} tr:hover td{background:#121722}
+.src{font-size:.78rem;color:var(--muted);margin-top:4px}
+.src a{color:#79c0ff}
+blockquote{border-left:3px solid var(--accent);margin:8px 0;padding:2px 12px;color:#c9d1d9;font-size:.86rem}
+code{background:#1b2230;padding:1px 5px;border-radius:4px;font-size:.82rem}
+.verdict{border-left:4px solid var(--good);background:#0d1a12;padding:10px 14px;border-radius:0 8px 8px 0;margin:10px 0}
+.warn{border-left:4px solid var(--warn);background:#1a1409;padding:6px 12px;border-radius:0 8px 8px 0}
+hr{border:none;border-top:1px solid var(--line);margin:1.4rem 0}
+</style>
+</head>
+<body>
+
+<h1>kvcomp_attn (Hamming / SimHash Sparse Attention) in vllm_ascend</h1>
+<div class="card" style="border-left:4px solid var(--accent)">
+<b>Research date</b> 2026-07-18 &nbsp;|&nbsp; <b>Mechanism traced</b><br>
+1. <b>HashEncoder</b>: <code>sign(x @ hash_weights)</code> → pack bits into uint8 (SimHash-style binary signature)<br>
+2. <b>npu_hamming_dist_top_k</b>: select KV blocks by Hamming distance between query signature &amp; per-block signature<br>
+3. Selected blocks <b>rewrite the block_table</b> → standard paged attention runs on the retrieved subset<br>
+<b>Code location in repo</b>: <code>csrc/attention/kv_quant_sparse_attn_sharedkv/</code> (vllm-project/vllm-ascend, op+tiling+kernel under op_host/op_kernel)
+</div>
+
+<!-- ============ VERDICT ============ -->
+<div class="verdict">
+<h2 style="margin-top:0;border:none">一、Short answer / verdict</h2>
+<ul>
+<li><b>The closest single academic match is HashEvict</b> (Liu&nbsp;et&nbsp;al., arXiv:2412.16187) — it proposes exactly <i>"binarized Gaussian projections + Hamming distance, computed pre-attention, with a lightweight binary structure in GPU memory,"</i> to identify and evict cosine-dissimilar tokens. The algorithmic core of kvcomp_attn is essentially HashEvict's selection step, promoted from a token-level eviction rule to a pre-paged-attention <b>block retrieval + block_table rewrite</b>.</li>
+<li><b>The theoretical foundation is Charikar's SimHash</b> (2002, <i>"Similarity Estimation Techniques from Rounding Algorithms,"</i> NIPS 2002): <span style="color:var(--good)">P[sign(xR)=sign(yR)] = 1 − θ/π</span> → Hamming distance between random-projection binary codes is a consistent estimator of angular distance.</li>
+<li><b>H2O (arXiv:2306.14048) is NOT the origin of the hashing part.</b> H2O is a <i>cumulative heavy-hitter score</i> eviction policy built from <i>actual attention scores</i>, with no hashing whatsoever. Hashing-based sparse work runs on a different branch (SimHash/LSH). kvcomp_attn is closer to HashEvict/SOCKET than to H2O.</li>
+<li><b>vllm_ascend's own naming confirms the lineage</b>: the C++ source lives in <code>csrc/attention/kv_quant_sparse_attn_sharedkv</code> — this is Huawei's NPU implementation of a SimHash-style quantized sparse KV attention, with the "shared-kv" / "quant" dimensions added on top of the hash-retrieval core.</li>
+</ul>
+</div>
+
+<!-- ============ LINEAGE ============ -->
+<h2>二、Canonical paper lineage (idea → idea)</h2>
+<table>
+<tr><th>Era</th><th>Paper</th><th>arXiv / venue</th><th>Core idea for this lineage</th></tr>
+
+<tr><td rowspan="2">Foundational theory</td>
+<td><b>Charikar 2002</b> — "Similarity Estimation Techniques from Rounding Algorithms"</td>
+<td>NIPS 2002</td>
+<td><b>SimHash.</b> Random projection → binary code. P[sign(xR)=sign(yR)] = 1 − θ/π. This makes Hamming distance a surrogate for cosine/angular similarity. <b>The entire Hamming-sparse family rests on this.</b> <span class="src">Note: not a CS arxiv paper; it is a conference paper. Closely cited reformulations appear in subsequent hashing literature.</span></td></tr>
+
+<tr><td><b>Datta et al. 2014–2015</b> — locality-sensitive hashing surveys / weighted LSH (Li, Shrivastava)</td>
+<td>various (VLDB/SIGMOD)</td>
+<td>Locality-Sensitive hashing with collision kernels; "soft collisions" later re-used by SOCKET.</td></tr>
+
+<tr><td rowspan="3">LSH-for-attention ancestors</td>
+<td><b>Reformer</b> (Kitaev, Kaiser, Levskaya 2020)</td>
+<td><a href="https://arxiv.org/abs/2001.04451" target="_blank">arXiv:2001.04451</a> (ICLR 2020)</td>
+<td><b>First LSH-for-attention</b>: replace dot-product attention with <i>locality-sensitive hashing</i> so each query attends only to same-bucket keys → O(L log L). Uses <i>angular</i> LSH buckets (cross-polytope), <b>not</b> Hamming distance; hard bucketing, no top-k. This is the conceptual ancestor that proved hashing belongs in attention. <span class="src">src: <a href="https://arxiv.org/abs/2001.04451">2001.04451</a></span></td></tr>
+
+<tr><td><b>Performers / RFA</b> (Choromanski et al. 2020)</td>
+<td><a href="https://arxiv.org/abs/2009.14794" target="_blank">arXiv:2009.14794</a></td>
+<td><b>Random-Feature Attention</b>: approximate softmax kernel φ(Q)φ(K)ᵀ via random Fourier-like features (FAVOR+). Binary/Hamming variant lives here — "positive random features" give fast, <i>unbiased</i> kernel estimates. Same math vein (random projection ≈ cosine) but uses cos/sin features, not binary packing. <span class="src">src: <a href="https://arxiv.org/abs/2009.14794">2009.14794</a></span></td></tr>
+
+<tr><td><b>Sparse Flash Attention</b> (Pagliardini et al. 2023)</td>
+<td><a href="https://arxiv.org/abs/2306.01160" target="_blank">arXiv:2306.01160</a></td>
+<td>Extends FlashAttention to hashing-based + dropping sparsity patterns with <i>no</i> complexity overhead and multi-fold speedup. Shows hashing-routing can be implemented efficiently in a Flash-style tiled kernel — the same implementation genre as the NPU kernel underlying kvcomp_attn. <span class="src">src: <a href="https://arxiv.org/abs/2306.01160">2306.01160</a></span></td></tr>
+
+<tr><td rowspan="4">Hamming / binary-signature sparse KV (closest kin)</td>
+<td><b>★ HashEvict</b> (Liu, Rabbani et al. 2024)</td>
+<td><a href="https://arxiv.org/abs/2412.16187" target="_blank">arXiv:2412.16187</a></td>
+<td><b>Best single match.</b> "uses locality-sensitive hashing to compress the KV cache … by computing the Hamming distance between binarized Gaussian projections of the current token query and cached token keys, with a projection length much smaller than the embedding dimension." Binarized projection + Hamming + pre-attention decision + lightweight binary structure = exactly kvcomp_attn's core. kvcomp_attn = HashEvict's scorer lifted to block-level + block_table rewrite. <span class="src">src: <a href="https://arxiv.org/abs/2412.16187">2412.16187</a> (quotes from Abstract)</span></td></tr>
+
+<tr><td><b>★ RaBitQCache</b> (Li, Dong et al. 2026)</td>
+<td><a href="https://arxiv.org/abs/2606.31519" target="_blank">arXiv:2606.31519</a> (ICML'26)</td>
+<td>Rotated binary quantization + binary-INT4 arithmetic for an <i>unbiased attention-weight estimator</i> with proven error bound → adaptive Top-p retrieval. Same "randomized projection → binary code → fast Hamming/XOR arithmetic → top-k/p block retrieval" paradigm that kvcomp_attn implements on NPU. <span class="src">src: <a href="https://arxiv.org/abs/2606.31519">2606.31519</a></span></td></tr>
+
+<tr><td><b>★ SOCKET</b> (Joshi, Chowdhury et al. 2026)</td>
+<td><a href="https://arxiv.org/abs/2602.06283" target="_blank">arXiv:2602.06283</a></td>
+<td>SOft Collision Kernel EsTimator for sparse attention. Revisits LSH, replaces hard bucket match with <i>probabilistic, similarity-aware</i> aggregation that "preserves top-k ordering with significantly less memory" — reframes LSH from a candidate-generator into a scoring kernel. Authors incl. A.&nbsp;Shrivastava (random-projection-for-ML lineage). Direct design alternative to a hard Hamming top-k selector. <span class="src">src: <a href="https://arxiv.org/abs/2602.06283">2602.06283</a></span></td></tr>
+
+<tr><td><b>DASH-KV</b> (Guo, Zhang et al. 2026)</td>
+<td><a href="https://arxiv.org/abs/2604.19351" target="_blank">arXiv:2604.19351</a></td>
+<td>"approximate nearest-neighbor search via asymmetric deep hashing … encodes queries and keys differentially," + dynamic mixed-precision for critical tokens, O(N²)→O(N). The "attention-as-ANN-retrieval via hashing" framing is the same high-level story as kvcomp_attn. <span class="src">src: <a href="https://arxiv.org/abs/2604.19351">2604.19351</a></span></td></tr>
+
+<tr><td rowspan="2">Block-statistic / learned-sparse neighbors (contrast)</td>
+<td><b>COBS</b> (Tian et al. 2026)</td>
+<td><a href="https://arxiv.org/abs/2607.09052" target="_blank">arXiv:2607.09052</a></td>
+<td>Block-sparse reduction: selection = ranking blocks by <i>attention mass</i>, estimating it from a compressed 2nd-order (cumulant) statistic instead of full keys. This is the modern "how to select blocks from a compact summary" theory that the Hamming-signature approach competes with. <span class="src">src: <a href="https://arxiv.org/abs/2607.09052">2607.09052</a></span></td></tr>
+
+<tr><td><b>LISA / Codeword-Histogram</b> (Wu et al. 2021)</td>
+<td><a href="https://arxiv.org/abs/2105.14068" target="_blank">arXiv:2105.14068</a> (WWW'21)</td>
+<td>Linear-time self-attention via differentiable <i>codeword-distribution histograms</i> (vector-quantization view of hashing). Same intellectual bucket — approximate attention with a compact quantized summary — but via soft codeword histograms not bit-packed codes. <span class="src">src: <a href="https://arxiv.org/abs/2105.14068">2105.14068</a></span></td></tr>
+
+<tr><td>Heavy-hitter, non-hash</td>
+<td><b>H2O</b> (Zhang et al. 2023)</td>
+<td><a href="https://arxiv.org/abs/2306.14048" target="_blank">arXiv:2306.14048</a></td>
+<td>Heavy-Hitter Oracle: retains tokens with large <i>accumulated real attention scores</i>. <b>No hashing at all.</b> Conceptually adjacent (it motivates "retrieve a salient KV subset") but mechanistically different branch. <span class="src">src: <a href="https://arxiv.org/abs/2306.14048">2306.14048</a></span></td></tr>
+
+<tr><td>Learned sparse (other vllm_ascend DSA path)</td>
+<td><b>DeepSeek NSA</b> (2025)</td>
+<td><a href="https://arxiv.org/abs/2502.11089" target="_blank">arXiv:2502.11089</a></td>
+<td>Native Sparse Attention: trained Lightning Indexer (learned top-k block selector) + kernel. This is the <i>learned</i> branch that vllm_ascend's key_code/ snippets implement (index_dsa/LightningIndexer). kvcomp_attn is the complementary <i>non-learned, hashing</i> branch. See comparison §5. <span class="src">src: <a href="https://arxiv.org/abs/2502.11089">2502.11089</a></span></td></tr>
+</table>
+
+<!-- ============ THEORY ============ -->
+<h2>三、Theoretical foundation of SimHash for attention</h2>
+<div class="card">
+<b>Charikar's SimHash identity</b> (the whole trick in one line):<br>
+Let R ∈ ℝ^{d×b} have i.i.d. N(0,1) entries. For unit vectors x,y with angle θ,
+<div style="text-align:center;margin:8px 0"><b>P[ sign(xR) = sign(yR) ] = 1 − θ/π</b></div>
+Equivalently  <b>θ = π · (1 − P[match]) = π · (Hamming(xR,yR) / b)</b>.<br>
+So <i>Hamming distance between b-bit random-projection codes is a consistent estimator of angular distance</i> (variance ∝ 1/b).
+<ul>
+<li>For normalized query/key vectors, <b>q·k = cos θ</b>; therefore Hamming on sign codes orders nearly identically to true dot-product/cosine similarity.</li>
+<li>A block's summary = <i>one</i> sign-code (or a small aggregated signature) is enough to rank blocks; reading full d-dim keys is unnecessary → the whole memory/compute saving.</li>
+<li>Because the code is packed into uint8/uint64, Hamming becomes a fast popcount (XOR+popcnt), which maps perfectly to NPU scalar/vector units → <code>npu_hamming_dist_top_k</code>.</li>
+<li>Error bound (the reason it generalizes): by Hoeffding, the empirical Hamming on b bits estimates θ within O(1/√b) w.h.p. The HashEvict/RaBitQCache papers each tighten this for the attention case.</li>
+</ul>
+<div class="src">Original source: Charikar, "Similarity Estimation Techniques from Rounding Algorithms," NIPS 2002. Modern attention-context restatement: see H2O/Reformer citations and the HashEvict/RaBitQCache papers above.</div>
+</div>
+
+<!-- ============ MAPPING ============ -->
+<h2>四、How kvcomp_attn's HashEncoder maps to the academic approach</h2>
+<table>
+<tr><th>kvcomp_attn component</th><th>Academic analogue</th><th>Key paper</th></tr>
+<tr><td><code>hash_weights</code> (learned or fixed random matrix ∈ ℝ^{d×b})</td><td>SimHash random projection R (i.i.d. Gaussian rows)</td><td>Charikar 2002; HashEvict (2412.16187)</tr>
+<tr><td><code>sign(x @ hash_weights)</code> → bit pack into uint8</td><td>Binarized Gaussian projection = the "sign code" / LSH code of the key</td><td>HashEvict; Reformer (bucket id); RaBitQCache (rotated binary quant)</tr>
+<tr><td>per-block signature (cached)</td><td>lightweight binary structure kept in accelerator memory</td><td>HashEvict (explicit "lightweight binary structure in GPU memory")</tr>
+<tr><td><code>npu_hamming_dist_top_k</code> (query code → popcount vs block codes)</td><td>Hamming-distance top-k / collision-kernel score; hard top-k (HashEvict) or soft collision ordering (SOCKET)</td><td>HashEvict; SOCKET (2602.06283); COBS (2607.09052)</tr>
+<tr><td>rewrite <code>block_table</code> with selected block ids → paged attention on subset</td><td>Restrict attention to retrieved buckets / token subset (Reformer buckets ⇌ RaBitQCache Top-p ⇌ HashEvict retained set)</td><td>Reformer (2001.04451); RaBitQCache (2606.31519)</tr>
+</table>
+<div class="warn">
+<b>What kvcomp_attn adds beyond the papers</b>: (i) NPU-native tiling &amp; the actual <code>npu_hamming_dist_top_k</code> operator I engineered in <code>op_host/*tiling*</code>/<code>op_kernel/</code>; (ii) integration with paged KV / block_table rewrite so the <i>same</i> standard Flash/PagedAttention kernel runs unchanged on the reduced block set; (iii) the "sharedkv" + quantization dimensions (cf. dir name <code>kv_quant_sparse_attn_sharedkv</code>) that combine the Hamming selector with KV quantization — an engineering stack the papers treat separately.
+</div>
+
+<!-- ============ COMPARE ============ -->
+<h2>五、hash-attention (kvcomp_attn) vs. learned sparse attention (DeepSeek NSA Lightning Indexer)</h2>
+<table>
+<tr><th>Dimension</th><th>kvcomp_attn — hashing (SimHash/Hamming)</th><th>Lightning Indexer — learned (NSA, arXiv:2502.11089)</th></tr>
+<tr><td>Block selector</td><td>Fixed / data-independent random projection sign code; Hamming + popcount, deterministic, no parameters.</td><td>Trained small MLP "indexer" that outputs a per-blocklearned score; costs extra FLOPs and model parameters.</td></tr>
+<tr><td>Training needed?</td><td><b>No.</b> Algorithmic. Drop-in at inference.</td><td><b>Yes.</b> Jointly trained end-to-end (natively-trainable); inference-only transfer degrades.</td></tr>
+<tr><td>Retrieval signal</td><td>Angular similarity via Hamming ≈ cosine. Biased; ignores actual attention structure beyond direction.</td><td>Learns the true attention-mass distribution (incl. magnitude, content) from data → usually higher rank-K accuracy.</td></tr>
+<tr><td>Hardware fit</td><td>Trivial: XOR + popcount on packed uint8/uint64 → excellent on NPU integer units; deterministic memory.</td><td>Needs the indexer MLP (matmul) + top-k; uses more FP compute.</td></tr>
+<tr><td>Memory overhead</td><td>1 code (≈ b bits) per block stored in a "lightweight binary structure."</td><td>Indexer params + score buffer.</td></tr>
+<tr><td>Theoretical status</td><td>Well-founded (Charikar identity); error shrinks with more bits.</td><td>Empirically strong; analysis is newer (COBS cumulant expansion).</td></tr>
+<tr><td>Representative papers</td><td>HashEvict (2412.16187), RaBitQCache (2606.31519), SOCKET (2602.06283), DASH-KV (2604.19351)</td><td>NSA (2502.11089), FSA (2508.18224), COBS (2607.09052)</td></tr>
+</table>
+<p>The two branches are complementary, and vllm_ascend carries <i>both</i>: the <code>key_code/</code> snippets trace the <b>NSA / Lightning-Indexer</b> (learned) branch, while the <code>csrc/attention/kv_quant_sparse_attn_sharedkv</code> op traces the <b>HashEvict / SimHash</b> (non-learned) branch that this report is about.</p>
+
+<!-- ============ CONCLUSION ============ -->
+<h2>六、Conclusion &amp; key takeaways</h2>
+<div class="card">
+<ul>
+<li><b>Origin</b>: kvcomp_attn's Hamming-selection core descends from <b>Charikar's SimHash (2002)</b>, filtered through the LSH-attention wave (<b>Reformer</b>, 2001.04451) and most immediately from <b>HashEvict</b> (2412.16187), with the randomized-projection-then-binary paradigm tightened by <b>RaBitQCache</b> (2606.31519) and the soft-collision/better-scoring angle from <b>SOCKET</b> (2602.06283).</li>
+<li><b>Not H2O.</b> H2O (2306.14048) is a different idea (accumulated real attention scores → heavy hitters). The hashing path is a separate lineage. Confusing the two is common because both produce a "small salient KV subset"; the selection mechanism is what differs.</li>
+<li><b>Theory that matters</b>: <span style="color:var(--good)">P[sign(xR)=sign(yR)] = 1−θ/π</span>. All Hamming-sparse methods are just careful deployments of this identity so that Hamming distance ≈ angular distance ≈ (monotone in) attention score.</li>
+<li><b>vs. learned NSA</b>: hashing is parameter-free / drop-in / NPU-friendly but biased; learned indexers (NSA, the other DSA path) are data-accurate but need training. vllm_ascend implements both; kvcomp_attn is the inference-time, learn-free member of the pair.</li>
+</ul>
+</div>
+
+<h2>七、Complete source registry</h2>
+<table>
+<tr><th>#</th><th>Paper</th><th>arXiv</th><th>Saved locally</th><th>Role</th></tr>
+<tr><td>1</td><td>Charikar "Similarity Estimation Techniques from Rounding Algorithms"</td><td>NIPS 2002 (not on arxiv)</td><td>—</td><td><b>Theoretical root</b></td></tr>
+<tr><td>2</td><td>Reformer (Kitaev et al. 2020)</td><td><a href="https://arxiv.org/abs/2001.04451">2001.04451</a></td><td>✓ <code>arxiv_org_abs_2001_04451_ae9b217bfe.txt</code></td><td>LSH-attention ancestor</td></tr>
+<tr><td>3</td><td>Performers / RFA (Choromanski et al. 2020)</td><td><a href="https://arxiv.org/abs/2009.14794">2009.14794</a></td><td>✓ <code>arxiv_org_abs_2009_14794_8e58d32ce5.txt</code></td><td>Random-feature attention</td></tr>
+<tr><td>4</td><td>Sparse Flash Attention (Pagliardini et al. 2023)</td><td><a href="https://arxiv.org/abs/2306.01160">2306.01160</a></td><td>✓ <code>arxiv_org_abs_2306_01160_8d975c5539.txt</code></td><td>Hashing in Flash kernels</td></tr>
+<tr><td>5</td><td><b>★ HashEvict</b> (Liu et al. 2024)</td><td><a href="https://arxiv.org/abs/2412.16187">2412.16187</a></td><td>✓ <code>arxiv_org_abs_2412_16187_1387d021da.txt</code></td><td><b>Closest academic match</b></td></tr>
+<tr><td>6</td><td><b>★ RaBitQCache</b> (Li et al. 2026)</td><td><a href="https://arxiv.org/abs/2606.31519">2606.31519</a></td><td>✓ <code>arxiv_org_abs_2606_31519_a4a372fae4.txt</code></td><td>Rotated binary quant + Top-p</td></tr>
+<tr><td>7</td><td><b>★ SOCKET</b> (Joshi et al. 2026)</td><td><a href="https://arxiv.org/abs/2602.06283">2602.06283</a></td><td>✓ <code>arxiv_org_abs_2602_06283_3758ba1fcc.txt</code></td><td>Soft collision scoring kernel</td></tr>
+<tr><td>8</td><td>DASH-KV (Guo et al. 2026)</td><td><a href="https://arxiv.org/abs/2604.19351">2604.19351</a></td><td>✓ <code>arxiv_org_abs_2604_19351_5d5bf53855.txt</code></td><td>Asymmetric deep hashing</td></tr>
+<tr><td>9</td><td>H2O (Zhang et al. 2023)</td><td><a href="https://arxiv.org/abs/2306.14048">2306.14048</a></td><td>✓ <code>arxiv_org_abs_2306_14048_a59cabda77.txt</code></td><td>Heavy-hitter (NOT hash) — contrast</td></tr>
+<tr><td>10</td><td>COBS (Tian et al. 2026)</td><td><a href="https://arxiv.org/abs/2607.09052">2607.09052</a></td><td>✓ <code>arxiv_org_abs_2607_09052_2745c059c1.txt</code></td><td>Blocksparse mass estimation</td></tr>
+<tr><td>11</td><td>LISA / Codeword Histogram (Wu et al. 2021)</td><td><a href="https://arxiv.org/abs/2105.14068">2105.14068</a></td><td>✓ <code>arxiv_org_abs_2105_14068_366d5d59da.txt</code></td><td>Quantized-summary attention</td></tr>
+<tr><td>12</td><td>DeepSeek NSA (2025)</td><td><a href="https://arxiv.org/abs/2502.11089">2502.11089</a></td><td>✓ <code>arxiv_org_abs_2502_11089_6a2f9374cd.txt</code></td><td>Learned sparse (other DSA path)</td></tr>
+<tr><td>13</td><td>Optimizing NSA w/ Latent Attention (2025)</td><td><a href="https://arxiv.org/abs/2511.00819">2511.00819</a></td><td>✓ <code>arxiv_org_abs_2511_00819_7c45ed268b.txt</code></td><td>NSA optimization</td></tr>
+</table>
+
+<div class="card" style="border-left:4px solid var(--warn)">
+<b>Note on the queries the user flagged that had no arxiv hit:</b> "BMI selection attention random projection" and "Fast weighted estimators of similarity" did not surface a distinct arxiv paper — the relevant material is folded into the SimHash/LSH literature above (Charikar 2002; weighted LSH in Shrivastava et al.; SOCKET 2602.06283). "StreamingLLM attention sink" is a separate "attention-sink / initial-token" phenomenon (Xiao et al. 2023, arXiv:2309.17453) unrelated to hashing; it is orthogonal to kvcomp_attn (kvcomp_attn drops <i>dissimilar past tokens</i>, the opposite of keeping the sink).</div>
+
+<hr>
+<div style="font-size:.78rem;color:var(--muted)">
+Report auto-generated 2026-07-18. All consulted pages saved under <code>raw_web/</code>. Click any arXiv id above for the abstract; local .txt files are the fetched &amp; cleaned text. Method: arxiv export API + playwright fetcher; Charikar 2002 is a NIPS conference paper (cited via the hashing/attention papers, not a separate online fetch).
+</div>
+</body>
+</html>

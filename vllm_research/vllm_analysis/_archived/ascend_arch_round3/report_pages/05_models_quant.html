@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>05 · Models / Quant / Spec Decode / Loader — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Models / Quant / Spec Decode / Loader</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="active">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">05 · Models / Quant / Spec Decode / Loader</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-model-support-matrix" class="">1. Model support matrix</a>
+<a href="#2-deep-dive-deepseek-v4-on-ascend-the-most-adapted-model" class="">2. Deep-dive: DeepSeek V4 on Ascend (the most-adapted model)</a>
+<a href="#2-1-mla-dsa-deepseek-sparse-attention-path" class="l3">2.1 MLA → DSA (Deepseek Sparse Attention) path</a>
+<a href="#2-2-hc-hybrid-computation-pre-post-kernels-ascend-specific" class="l3">2.2 HC (Hybrid Computation) pre/post kernels — Ascend-specific</a>
+<a href="#2-3-moe-path" class="l3">2.3 MoE path</a>
+<a href="#2-4-mlp-path" class="l3">2.4 MLP path</a>
+<a href="#2-5-rope-amp-load-weights" class="l3">2.5 RoPE &amp; load_weights</a>
+<a href="#2-6-m-model-level-spec-decode-support" class="l3">2.6 M Model-level spec-decode support</a>
+<a href="#3-speculative-decoding-on-ascend" class="">3. Speculative decoding on Ascend</a>
+<a href="#3-1-mtp-on-ascend-deepseek-v4-mtp-py" class="l3">3.1 MTP on Ascend (deepseek_v4_mtp.py)</a>
+<a href="#3-2-ascendspecdecodebaseproposer-spec-decode-llm-base-proposer-py" class="l3">3.2 AscendSpecDecodeBaseProposer (spec_decode/llm_base_proposer.py)</a>
+<a href="#3-3-other-proposers" class="l3">3.3 Other proposers</a>
+<a href="#4-quantization" class="">4. Quantization</a>
+<a href="#4-1-architecture-the-registry-py-scheme-table" class="l3">4.1 Architecture — the registry.py scheme table</a>
+<a href="#4-2-methods-kernels-table" class="l3">4.2 Methods × kernels table</a>
+<a href="#4-3-ep-quant-interaction" class="l3">4.3 EP × quant interaction</a>
+<a href="#5-kv-offload-two-tier" class="">5. KV-offload (two-tier)</a>
+<a href="#5-1-full-kv-offload-the-vllm-v1-offloadingspec" class="l3">5.1 Full: kv_offload/ — the vLLM-v1 OffloadingSpec</a>
+<a href="#5-2-simple-simple-kv-offload-the-graph-capturable-connector" class="l3">5.2 Simple: simple_kv_offload/ — the graph-capturable connector</a>
+<a href="#5-3-why-both-exist" class="l3">5.3 Why both exist</a>
+<a href="#6-model-loader-innovations-netloader-rfork" class="">6. Model loader innovations (netloader, rfork)</a>
+<a href="#6-1-elastic-netloader-model-loader-netloader" class="l3">6.1 Elastic NetLoader (model_loader/netloader/)</a>
+<a href="#6-2-rfork-loader-model-loader-rfork-the-headline-innovation" class="l3">6.2 RFork loader (model_loader/rfork/) — the headline innovation</a>
+<a href="#7-lora-amp-sampling" class="">7. LoRA &amp; Sampling</a>
+<a href="#7-1-lora-lora" class="l3">7.1 LoRA (lora/)</a>
+<a href="#7-2-sampling-sample" class="l3">7.2 Sampling (sample/)</a>
+<a href="#key-file-references" class="">Key file references</a>
+</div>
+<h1 id="agent-5-models-spec-decode-quantization-lora-kv-offload-model-loader">Agent 5 — Models, Spec Decode, Quantization, LoRA, KV-Offload, Model Loader</h1>
+<blockquote>
+<p>Scope: <code>models/</code>, <code>xlite/</code>, <code>spec_decode/</code>, <code>quantization/</code>, <code>lora/</code>, <code>sample/</code>, <code>kv_offload/</code>, <code>simple_kv_offload/</code>, <code>model_loader/</code> (+ <code>patch/</code> for model-specific adaptations).</p>
+</blockquote>
+<hr />
+<h2 id="1-model-support-matrix" id="1-model-support-matrix">1. Model support matrix</h2>
+<p>Architecture support in vllm-ascend is <strong>not</strong> confined to <code>models/</code>. Only three modelsregister custom Ascend <code>ForCausalLM</code> classes (<code>models/__init__.py</code>); everything else lives in the <strong>Xlite graph runtime</strong> (<code>xlite/xlite.py</code> — a whole-model graph capture for dense/MoE architectures), <strong>DSA/MLA/SFA attention backends</strong> (<code>attention/</code>), and <strong>model-specific patches</strong> (<code>patch/platform/</code>). This three-tier design is the key architectural fact.</p>
+<table>
+<thead>
+<tr>
+<th>Model family</th>
+<th>Ascend registration site</th>
+<th>Depth</th>
+<th>Key Ascend adaptation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DeepSeek V3 / V4 (R1)</strong></td>
+<td><code>models/deepseek_v4.py</code> (<code>AscendDeepseekV4ForCausalLM</code>)</td>
+<td><strong>FULL</strong> — 1516-line custom model file</td>
+<td>MLA→DSA sparse attention, Compressor/Indexer (c4/c128), Hadamard rope, HC (Hybrid Computation) pre/post kernels, custom <code>load_weights</code> (shared-expert fusion, sink distribution), FP8-E4M3 index cache on A5, MTP draft (<code>deepseek_v4_mtp.py</code>)</td>
+</tr>
+<tr>
+<td><strong>DeepSeek MTP</strong></td>
+<td><code>models/deepseek_v4_mtp.py</code> (<code>DeepSeekV4MTP</code>)</td>
+<td><strong>FULL</strong> — 523-line custom draft model</td>
+<td><code>DeepSeekMultiTokenPredictorLayer</code> (e_proj+h_proj fusion of embed + target hidden), shares <code>topk_indices_buffer</code>/lm_head with target</td>
+</tr>
+<tr>
+<td><strong>Qwen3 / Qwen3-MoE / Qwen3-VL</strong></td>
+<td><code>xlite/xlite.py</code> → <code>LlamaXliteModel</code> / <code>QwenMoeXliteModel</code></td>
+<td>Xlite full-graph (dense) + attention backends</td>
+<td>Supported arches: <code>Qwen2ForCausalLM</code>, <code>Qwen3ForCausalLM</code>, <code>Qwen3VL/Moe</code>, <code>Qwen3VLMoe</code></td>
+</tr>
+<tr>
+<td><strong>MiniMax M2</strong></td>
+<td><code>xlite/xlite.py</code> → <code>MiniMaxM2XliteModel</code></td>
+<td>Xlite graph</td>
+<td><code>MiniMaxM2ForCausalLM</code>; config patches in <code>patch/platform/patch_minimax_m2_config.py</code></td>
+</tr>
+<tr>
+<td><strong>GLM / GLM4-MoE</strong></td>
+<td><code>xlite/xlite.py</code> → <code>Glm4MoeXliteModel</code></td>
+<td>Xlite (MoE) + SFA attention (<code>attention/sfa_v1.py</code> detects <code>glm_moe_dsa</code>)</td>
+<td>Spec decode forced eager (no graph mode for GLM drafts)</td>
+</tr>
+<tr>
+<td><strong>Hunyuan</strong></td>
+<td><code>patch/hunyuan_vl_processor_compat.py</code></td>
+<td>Thin compat patch (processor)</td>
+<td>VL processor shim at registration time</td>
+</tr>
+<tr>
+<td><strong>Kimi K2.5</strong></td>
+<td><code>spec_decode/llm_base_proposer.py</code> (draft), W4A16 (quant)</td>
+<td>Spec decode + quantization</td>
+<td><code>media_placeholder_token_id</code> for MM; W4A16 targets <code>Kimi-K2-Thinking</code></td>
+</tr>
+<tr>
+<td><strong>Mamba / SSM</strong></td>
+<td><code>_310p/</code> <code>model_runner_310p.py</code>, <code>attention/</code> backends, <code>patch/platform/patch_mamba_*</code></td>
+<td>Attention-backend + cache-spec</td>
+<td><code>MambaSpec</code>, GDN (<code>ops/fla/gdn_310.py</code>), gated-delta-net</td>
+</tr>
+<tr>
+<td><strong>Step (3 / 3.5)</strong></td>
+<td><code>spec_decode/step3p5.py</code>, <code>utils.py</code> (Step3p5MTP), patch</td>
+<td>Spec decode + MTP</td>
+<td><code>Step3p7ForConditionalGeneration</code> multimodal handling</td>
+</tr>
+<tr>
+<td><strong>Llama-family dense</strong></td>
+<td><code>xlite</code> (<code>LlamaXliteModel</code>) + <code>attention/mla_v1</code>, <code>dsa_v1</code>, <code>sfa_v1</code>, <code>fa3_v1</code></td>
+<td>Attention backends</td>
+<td>Multiple MLA/DSA/SFA/FA3 backends selectable</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Top-3 most-Ascend-adapted</strong> (ranked by volume of custom Ascend logic): <strong>1) DeepSeek V4</strong> (full model, MoE, MLA→DSA, HC kernels, MTP), <strong>2) MiniMax M2 / Qwen3-MoE</strong> (Xlite graph runtime, moe_tp/moe_ep split), <strong>3) Mamba/SSM</strong> (dedicated 310p runner path, GDN delta-net kernel). DeepSeek is by far the deepest — the rest of this doc deep-dives it.</p>
+<p>Registration entry point (<code>models/__init__.py</code>):
+<div class="highlight"><pre><span></span><code><span class="n">ModelRegistry</span><span class="o">.</span><span class="n">register_model</span><span class="p">(</span><span class="s2">&quot;DeepseekV4ForCausalLM&quot;</span><span class="p">,</span> <span class="s2">&quot;vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM&quot;</span><span class="p">)</span>
+<span class="n">ModelRegistry</span><span class="o">.</span><span class="n">register_model</span><span class="p">(</span><span class="s2">&quot;DeepSeekV4MTPModel&quot;</span><span class="p">,</span> <span class="s2">&quot;vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP&quot;</span><span class="p">)</span>
+<span class="n">ModelRegistry</span><span class="o">.</span><span class="n">register_model</span><span class="p">(</span><span class="s2">&quot;LlamaForCausalLMVwnEagle3&quot;</span><span class="p">,</span> <span class="s2">&quot;vllm_ascend.models.llama_eagle3_vwn:Eagle3VwnLlamaForCausalLM&quot;</span><span class="p">)</span>
+</code></pre></div></p>
+<hr />
+<h2 id="2-deep-dive-deepseek-v4-on-ascend-the-most-adapted-model" id="2-deep-dive-deepseek-v4-on-ascend-the-most-adapted-model">2. Deep-dive: DeepSeek V4 on Ascend (the most-adapted model)</h2>
+<p><code>AscendDeepseekV4ForCausalLM</code> (<code>deepseek_v4.py:1206</code>) composes a <code>@support_torch_compile DeepseekV4Model</code> and a <code>DeepseekV2MixtureOfExperts</code>. The headline Ascend adaptations:</p>
+<h3 id="21-mla-dsa-deepseek-sparse-attention-path" id="2-1-mla-dsa-deepseek-sparse-attention-path">2.1 MLA → DSA (Deepseek Sparse Attention) path</h3>
+<p><code>DeepseekV4Attention</code> (<code>deepseek_v4.py:705</code>) does <strong>not</strong> run a conventional attention kernel. It builds a <code>DSAModules</code> bundle (wq_a, q_norm, wq_b, wkv, kv_norm, wo_a, wo_b, attn_sink, indexer, compressor, swa_cache) and instantiates <code>AscendDeepseekSparseAttention</code> (<code>ops/dsa.py</code>), which routes to an attention backend selected by <code>AscendDSABackend</code> (<code>attention/dsa_v1.py</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="bp">self</span><span class="o">.</span><span class="n">dsa_attn</span> <span class="o">=</span> <span class="n">AscendDeepseekSparseAttention</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">dsa_modules</span><span class="o">=</span><span class="n">dsa_modules</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># forward():</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">hidden_states</span><span class="p">,</span> <span class="n">llama_4_scaling</span><span class="p">):</span>
+    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dsa_attn</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">hidden_states</span><span class="p">,</span> <span class="n">llama_4_scaling</span><span class="p">)</span>   <span class="c1"># deepseek_v4.py:898</span>
+</code></pre></div>
+<p><strong>Sparse DSA caches (the MLA state compression)</strong> — three custom cache classes override vLLM&rsquo;s GPU-side MLA caches to emit <strong>Ascend-padded specs</strong>:
+- <code>AscendCompressorStateCache</code> → <code>AscendSlidingWindowMLASpec(page_size_padded=...)</code> (<code>:104</code>)
+- <code>AscendDeepseekV4IndexerCache</code> → <code>AscendMLAAttentionSpec(model_version="deepseek_v4", compress_ratio=..., scale_dim=...)</code> (<code>:137</code>). On <strong>A5</strong> devices the index cache dtype is forced to <code>float8_e4m3fn</code> (<code>:149</code>).
+- <code>AscendDeepseekV4SWACache</code> → <code>AscendSlidingWindowMLASpec(model_version="deepseek_v4")</code> (<code>:173</code>). A5 again uses FP8 and grows <code>head_size += 128</code> (<code>:191</code>).</p>
+<p>A block-size lookup table (<code>DSV4_BLOCK_SIZES</code>, from <code>models/layer/attention/layer.py</code>) pads all three cache levels per concrete <code>block_size</code> (<code>:118,156,185,647,655</code>).</p>
+<p><strong>Indexer / Compressor</strong> — for <code>compress_ratio == 4</code> (the V3.2 / V4 sparse-attention regime) the layer adds an <code>Indexer</code> (low-rank q projection <code>wq_b</code>, <code>weights_proj</code>, top-k index selection) and a <code>Compressor</code> (learned <code>ape</code> positional embedding, <code>wkv</code>/<code>wgate</code> projections, RMSNorm, inter-block overlap via <code>overlap_transform</code>) (<code>:525–703</code>). The IndexCache optimization (<code>:837</code>) reuses top-k indices across layers via a configurable <code>index_topk_pattern</code> (e.g. <code>"FSS"</code> → full/share/share) so only ~1/L layers run the indexer.</p>
+<h3 id="22-hc-hybrid-computation-prepost-kernels-ascend-specific" id="2-2-hc-hybrid-computation-pre-post-kernels-ascend-specific">2.2 HC (Hybrid Computation) pre/post kernels — Ascend-specific</h3>
+<p>The decoder layer is wrapped by custom C++ operators defined in <code>ops/</code>:
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">hc_pre</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">hc_fn</span><span class="p">,</span> <span class="n">hc_scale</span><span class="p">,</span> <span class="n">hc_base</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">_C_ascend</span><span class="o">.</span><span class="n">npu_hc_pre_v2</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">hc_fn</span><span class="p">,</span> <span class="n">hc_scale</span><span class="p">,</span> <span class="n">hc_base</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">hc_mult</span><span class="p">,</span>
+                                             <span class="bp">self</span><span class="o">.</span><span class="n">hc_sinkhorn_iters</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm_eps</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">hc_eps</span><span class="p">)</span>  <span class="c1"># :967</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">hc_post</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">residual</span><span class="p">,</span> <span class="n">post</span><span class="p">,</span> <span class="n">comb</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">_C_ascend</span><span class="o">.</span><span class="n">npu_hc_post</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">residual</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">post</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">comb</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+</code></pre></div>
+(<code>:966–976</code>) plus a per-model <code>hc_head</code> gated-head that mixes <code>hc_mult</code> streams with a learned sigmoid router + rmsnorm (<code>:1088</code>). These implement the Multi-head Latent / Hybrid-Computation variant where <code>hc_mult</code> parallel residual streams are combined with sinkhorn-routed gates — standard vLLM has no equivalent; this is fully custom.</p>
+<h3 id="23-moe-path" id="2-3-moe-path">2.3 MoE path</h3>
+<p><code>DeepseekV4MoE</code> (<code>:348</code>) is a standalone Ascend MoE:
+- <strong>Router</strong>: <code>ReplicatedLinear</code> gate with <code>precast_fp32_weight=True</code>; optional hash routing for early layers (<code>gate.tid2eid</code>, <code>:412</code>) vs. <code>e_score_correction_bias</code>.
+- <strong>EP-aware physical experts</strong>: <code>n_physical_experts = n_logical + n_redundant</code>, partitioned by EP rank, with EPLB support (<code>:385–391</code>, <code>enable_eplb</code>).
+- <strong>Shared-expert fusion</strong> (<code>is_fusion_moe_shared_experts_enabled</code> driven by <code>ascend_config.mix_placement</code>): when on, shared expert computation is folded into <code>FusedMoE</code> with <code>n_shared_experts</code> experts appended to the expert pool (<code>:396,451</code>) — this is the AITER/MC2 fused path.
+- <strong>FusedMoE</strong> from vLLM is used, but with DeepSeek-specific grouped-topk + routed scaling pulled outside the router so ordering is: <em>normalize top-k → scale routed output</em> (<code>:442–452</code>).
+- Sequence-parallel MoE: <code>sequence_parallel_chunk</code> before, <code>tensor_model_parallel_all_gather</code> after (<code>:464,498</code>).</p>
+<h3 id="24-mlp-path" id="2-4-mlp-path">2.4 MLP path</h3>
+<p>Standard <code>DeepseekV2MLP</code> (<code>:299</code>): <code>MergedColumnParallelLinear</code> → <code>SiluAndMul(SiwgClamp)</code> → <code>RowParallelLinear</code>, with <code>disable_tp</code> option when running under sequence-parallelism.</p>
+<h3 id="25-rope-load_weights" id="2-5-rope-amp-load-weights">2.5 RoPE &amp; load_weights</h3>
+<p><code>ComplexExpRotaryEmbedding</code> (<code>ops/rope_dsv4.py</code>) supports <strong>two rope groups</strong> (<code>default</code> + <code>c{compress_ratio}</code>) with <code>compress_rope_theta</code> (<code>:787</code>). <code>load_weights</code> (<code>:1295</code>) is a 220-line Ascend-specific weight map handling: w1/w2/w3→gate/down/upProj renaming, sink weights distributed across TP ranks (<code>enable_dsn_cp()</code> → full copy vs. narrow, <code>:1363</code>), and the shared-expert fusion slice-and-load into appended expert slots (<code>:1423–1428</code>).</p>
+<h3 id="26-m-model-level-spec-decode-support" id="2-6-m-model-level-spec-decode-support">2.6 M Model-level spec-decode support</h3>
+<p><code>DeepseekV4Model.forward</code> stashes a <code>_mtp_hidden_buffer</code> (pre-<code>hc_head</code> residual) with special all-gather handling for FlashComm v1 / sequence-parallel so the MTP draft sees the full token set (<code>:1133–1151</code>). Exposed via <code>get_mtp_target_hidden_states</code> (<code>:1289</code>).</p>
+<hr />
+<h2 id="3-speculative-decoding-on-ascend" id="3-speculative-decoding-on-ascend">3. Speculative decoding on Ascend</h2>
+<p>vllm-ascend spec decode lives in <code>spec_decode/</code> and is <strong>much broader</strong> than vanilla vLLM&rsquo;s MTP. It supports MTP (DeepSeek), <strong>Eagle3</strong>, <strong>DFlash</strong> (Qwen3), <strong>DSpark</strong> (Qwen3), <strong>Medusa</strong>, <strong>Ngram</strong>, <strong>suffix</strong>, plus a <code>draft_proposer</code> / <code>extract_hidden_states_proposer</code>.</p>
+<h3 id="31-mtp-on-ascend-deepseek_v4_mtppy" id="3-1-mtp-on-ascend-deepseek-v4-mtp-py">3.1 MTP on Ascend (<code>deepseek_v4_mtp.py</code>)</h3>
+<p><code>DeepSeekV4MTP</code> (<code>:201</code>) is a full custom draft model. <code>DeepSeekMultiTokenPredictorLayer</code> (<code>:56</code>) fuses the target hidden state and embedding:
+<div class="highlight"><pre><span></span><code><span class="n">inputs_embeds</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">inputs_embeds</span><span class="p">)</span>  <span class="c1"># mask pos 0</span>
+<span class="n">hidden_states</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">e_proj</span><span class="p">(</span><span class="n">inputs_embeds</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">h_proj</span><span class="p">(</span><span class="n">previous_hidden_states</span><span class="p">)</span>  <span class="c1"># :121</span>
+<span class="n">hidden_states</span><span class="p">,</span> <span class="n">residual</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mtp_block</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">hidden_states</span><span class="p">,</span> <span class="n">residual</span><span class="p">)</span>  <span class="c1"># shared DeepseekV2DecoderLayer</span>
+</code></pre></div>
+It shares <code>topk_indices_buffer</code>, <code>embed_tokens</code> (always), and <code>lm_head</code> with the target — handled in <code>AscendSpecDecodeBaseProposer._maybe_share_embeddings/topk_indices/lm_head</code> (<code>llm_base_proposer.py:408–513</code>). The <code>load_weights</code> rewrites <code>mtp.0.</code>-prefixed checkpoint names into the in-model layout with <code>mtp_block</code> insertion (<code>:300,480</code>).</p>
+<h3 id="32-ascendspecdecodebaseproposer-spec_decodellm_base_proposerpy" id="3-2-ascendspecdecodebaseproposer-spec-decode-llm-base-proposer-py">3.2 AscendSpecDecodeBaseProposer (<code>spec_decode/llm_base_proposer.py</code>)</h3>
+<p>This is the <strong>central Ascend spec-decode orchestrator</strong> (~2150 lines), subclassing vLLM&rsquo;s <code>SpecDecodeBaseProposer</code>. Notable Ascend behavior:
+- <strong>TP-patch for draft</strong>: swaps the global <code>_TP</code> group so a draft model can run at <code>draft_tensor_parallel_size == 1</code> different from target (<code>patch_tensor_parallel_group</code>, <code>:65–78</code>).
+- <strong>ACL Graph (cudagraph analog)</strong>: wraps the merged draft in <code>ACLGraphWrapper(..., runtime_mode=CUDAGraphMode.FULL)</code> (<code>:523</code>).
+- <strong>PCP/DP integration</strong>: <code>pcp_size</code>/<code>dcp_size</code> from the runner; <strong>block-table cloning</strong> for context-parallel where step&gt;0 needs an independent block table (<code>:596,670</code>); <code>block_table_tensor_clone</code> allocated after profile.
+- <strong>GLM fallback</strong>: <code>_is_glm_model()</code> forces the draft to eager mode with a warning (<code>:137–145, 223</code>).
+- <strong>Attention metadata</strong>: builds <code>AscendCommonAttentionMetadata</code> with dsv32-specific <code>seq_lens</code>/<code>query_start_loc</code> persistent pinned buffers for full-graph mode (<code>:249–256,613</code>).
+- <strong>Top-k / hidden sharing</strong>: <code>_maybe_share_topk_indices</code> rebinds <code>topk_indices_buffer</code> across all draft modules (<code>:531</code>).
+- <strong>multimodal</strong>: <code>_get_model_name</code> switches for Qwen2.5/3-VL, Step3.7, Pixtral, KimiK2.5 (<code>:371–387</code>).
+- <strong>Eagle3 / DFlash lm_head sharing</strong> with special handling for DFlash&rsquo;s <code>draft_id_to_target_id</code> vocab remapping (keeps draft&rsquo;s own lm_head, <code>:479–508</code>).
+- <strong>Merged drafting</strong> (<code>_run_merged_draft</code>) runs all K spec tokens through the draft model in one batched call (the default runnable, <code>:262</code>).
+- <code>greedy_sample</code> does TP-aware global argmax via all_gather (<code>:118</code>).</p>
+<h3 id="33-other-proposers" id="3-3-other-proposers">3.3 Other proposers</h3>
+<ul>
+<li><code>eagle_proposer.py</code>, <code>dflash_proposer.py</code> (<code>DFlashQwen3ForCausalLM</code> — imported from vLLM model lib), <code>dspark_proposer.py</code> (<code>Qwen3DSparkForCausalLM</code>, version-gated on <code>vllm_version_is("0.24.0")</code>, <code>:58</code>), <code>medusa_proposer.py</code>, <code>ngram_proposer.py</code> + <code>ngram_proposer_npu.py</code> (NPU variant), <code>suffix_proposer.py</code>, <code>step3p5.py</code>, <code>draft_proposer.py</code>, <code>extract_hidden_states_proposer.py</code>. <code>spec_decode/utils.py</code> provides <code>SlidingWindowAdapter</code> for draft sliding-window attention with <code>future_offset = 0 (DFlash) / num_spec_tokens (Eagle)</code>.</li>
+<li><strong>Eagle3-VWN</strong> for Llama: <code>models/llama_eagle3_vwn.py</code> registers <code>Eagle3VwnLlamaForCausalLM</code> — a small custom head (Vwn variant).</li>
+</ul>
+<p><strong>Integration with PCP/DP</strong>: PCP (prefill context parallel) needs block-table isolation per step; the proposer clones <code>block_table_tensor_clone</code> and uses <code>prefill_context_parallel_metadata</code> (<code>:642</code>). DP is handled via <code>_sync_metadata_across_dp</code> at the start of <code>dummy_run</code> (<code>:582</code>).</p>
+<hr />
+<h2 id="4-quantization" id="4-quantization">4. Quantization</h2>
+<h3 id="41-architecture-the-registrypy-scheme-table" id="4-1-architecture-the-registry-py-scheme-table">4.1 Architecture — the <code>registry.py</code> scheme table</h3>
+<p>Quantization uses a <strong>scheme registry keyed by <code>(quant_type, layer_type)</code></strong> (<code>quantization/methods/registry.py</code>):
+<div class="highlight"><pre><span></span><code><span class="n">_SCHEME_REGISTRY</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="nb">type</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">register_scheme</span><span class="p">(</span><span class="s2">&quot;W8A8_DYNAMIC&quot;</span><span class="p">,</span> <span class="s2">&quot;linear&quot;</span><span class="p">)(</span><span class="n">AscendW8A8DynamicLinearMethod</span><span class="p">)</span>
+<span class="n">register_scheme</span><span class="p">(</span><span class="s2">&quot;W8A8_DYNAMIC&quot;</span><span class="p">,</span> <span class="s2">&quot;moe&quot;</span><span class="p">)(</span><span class="n">AscendW8A8DynamicFusedMoEMethod</span><span class="p">)</span>
+</code></pre></div>
+<code>method_adapters.py</code> wraps schemes for vLLM&rsquo;s standard <code>LinearMethodBase</code>/<code>FusedMoEMethodBase</code> interface: <code>AscendLinearMethod</code>, <code>AscendKVCacheMethod</code>, <code>AscendFusedMoEMethod</code>, <code>AscendEmbeddingMethod</code>.</p>
+<h3 id="42-methods-kernels-table" id="4-2-methods-kernels-table">4.2 Methods × kernels table</h3>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Layer type</th>
+<th>Class</th>
+<th>CANN kernel</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>W8A8_DYNAMIC</td>
+<td>linear</td>
+<td><code>AscendW8A8DynamicLinearMethod</code></td>
+<td><code>torch_npu.npu_dynamic_quant</code> (act) + <code>npu_quant_matmul</code> (weight)</td>
+<td>per-token act, per-chunk weight; NZ format cast; DSA-CP wq_b weight-chunking workaround for dim ≥ 65536 (<code>:88–141</code>)</td>
+</tr>
+<tr>
+<td>W8A8_DYNAMIC</td>
+<td>moe</td>
+<td><code>AscendW8A8DynamicFusedMoEMethod</code></td>
+<td><code>MC2</code> fused-experts via <code>_EXTRA_CTX.moe_comm_method.fused_experts</code></td>
+<td>fused MC2 scales (int64 <code>scale_from_float_to_int64</code>), dynamic EPLB per-expert weight list</td>
+</tr>
+<tr>
+<td>W8A8_STATIC</td>
+<td>linear</td>
+<td><code>AscendW8A8LinearMethod</code></td>
+<td>static per-channel</td>
+<td>—</td>
+</tr>
+<tr>
+<td>W8A8FP8_DYNAMIC</td>
+<td>linear/moe</td>
+<td><code>AscendW8A8FP8Dynamic*Method</code></td>
+<td>FP8 act + W8 weight</td>
+<td>—</td>
+</tr>
+<tr>
+<td>W8A8_MXFP8</td>
+<td>linear</td>
+<td><code>AscendW8A8MXFP8DynamicLinearMethod</code></td>
+<td>MX (microscaling) FP8</td>
+<td><code>is_mx_quant_type</code> gate</td>
+</tr>
+<tr>
+<td>W8A8_PDMIX</td>
+<td>linear/moe</td>
+<td><code>AscendW8A8PDMix*Method</code></td>
+<td>mixed-precision PdMix</td>
+<td>—</td>
+</tr>
+<tr>
+<td>W4A16</td>
+<td>moe</td>
+<td><code>AscendW4A16FusedMoEMethod</code></td>
+<td>int4→int32 pack/unpack (<code>unpack_from_int32</code>, <code>pack_to_int32</code> via <code>npu_convert_weight_to_int4pack</code>)</td>
+<td><strong>Kimi-K2-Thinking</strong> (LLM-Compressor); group_size default 32; fused gate+up → w13 (<code>:111–365</code>)</td>
+</tr>
+<tr>
+<td>W4A16_MXFP4</td>
+<td>moe</td>
+<td><code>AscendW4A16MXFP4FusedMoEMethod</code></td>
+<td>MXFP4</td>
+<td>—</td>
+</tr>
+<tr>
+<td>W4A8</td>
+<td>linear/moe</td>
+<td><code>AscendW4A8Dynamic*Method</code></td>
+<td>int4 act / int8 weight</td>
+<td>—</td>
+</tr>
+<tr>
+<td>W4A4_*</td>
+<td>linear/moe</td>
+<td>FlatQuant / Laos / MXFP4 variants</td>
+<td>multiple 4-bit schemes</td>
+<td><code>w4a4_flatquant</code>, <code>w4a4_laos_dynamic</code>, <code>w4a4_mxfp4*</code></td>
+</tr>
+<tr>
+<td>KV_C8 (FA)</td>
+<td>attention</td>
+<td><code>AscendFAQuantAttentionMethod</code></td>
+<td>KV-compressed attention</td>
+<td><code>kv_c8.py</code></td>
+</tr>
+<tr>
+<td>FP8</td>
+<td>linear/moe</td>
+<td><code>AscendFp8Config</code></td>
+<td>CANN FP8</td>
+<td><code>fp8_config.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Quant front-end configs (the vLLM <code>QuantizationConfig</code> subclasses, only built on demand to avoid circular imports — <code>quantization/__init__.py</code>): <strong><code>AscendFp8Config</code></strong>, <strong><code>AscendCompressedTensorsConfig</code></strong> (GPTQ/AWQ via Compressed-Tensors), <strong><code>AscendModelSlimConfig</code></strong> (ModelSlim).</p>
+<h3 id="43-ep-quant-interaction" id="4-3-ep-quant-interaction">4.3 EP × quant interaction</h3>
+<ul>
+<li><code>get_moe_num_logical_experts</code> (from <code>base.py</code>) excludes redundant EPLB experts — <code>router_logits.shape[1] == num_logical_experts</code> is asserted at apply time (<code>w8a8_dynamic.py:250, w4a16.py:283</code>).</li>
+<li><code>AscendFusedMoEMethod.create_weights</code> (<code>method_adapters.py:222</code>) partitions by <code>intermediate_size_per_partition</code> and tags scales as <code>FusedMoeWeightScaleSupported.CHANNEL</code> or <code>GROUP</code>; dynamic-EPLB clones per-expert weight/scale lists at <code>process_weights_after_loading</code> (<code>w8a8_dynamic.py:360–384</code>).</li>
+<li><strong>MC2коммуникация</strong>: MoE uses an MC2 all-to-all group name captured from the HCCL comm (<code>get_mc2_group().device_group</code>, <code>:172</code>); <code>enable_fused_mc2</code> replicates scales in int64 for the fused path (<code>:356</code>).</li>
+<li><code>AscendFusedMoEMethod.maybe_make_prepare_finalize</code> returns <code>None</code> to prevent upstream modular-kernel initialization from overriding Ascend&rsquo;s own MoE forward_impl (<code>:217–220</code>).</li>
+</ul>
+<p>W4A16 weight flow (most carefully documented): checkpoint <code>weight_packed[int32]</code>/<code>weight_scale[bf16]</code>/<code>weight_shape[int32]</code> → load as w13/w2 → <code>process_weights_after_loading</code> <strong>unpacks → transposes → re-packs</strong> to the Ascend fused-MoE layout (<code>:332–364</code>). All-zero offset tensors are synthesized since the operator requires them.</p>
+<hr />
+<h2 id="5-kv-offload-two-tier" id="5-kv-offload-two-tier">5. KV-offload (two-tier)</h2>
+<p>Ascend implements <strong>two distinct</strong> CPU-offload systems — they coexist because they serve different predictability/latency profiles.</p>
+<h3 id="51-full-kv_offload-the-vllm-v1-offloadingspec" id="5-1-full-kv-offload-the-vllm-v1-offloadingspec">5.1 Full: <code>kv_offload/</code> — the vLLM-v1 <code>OffloadingSpec</code></h3>
+<p><code>NPUOffloadingSpec</code> (<code>kv_offload/npu.py</code>) subclasses <code>vllm.v1.kv_offload.spec.OffloadingSpec</code> and is driven by <strong>events</strong> (<code>kv_events_config.enable_kv_cache_events</code>):
+- Manager: <code>CPUOffloadingManager(block_size = gpu_block_size * block_size_factor, num_cpu_blocks)</code> (<code>:38</code>).
+- Handler: <code>CpuNpuOffloadingHandler(attn_backends, gpu_block_size, cpu_block_size, num_cpu_blocks, gpu_caches)</code> (<code>:53</code>), yielding both <code>GPULoadStoreSpec↔CPULoadStoreSpec</code> directions.
+- Block size is scaled by <code>block_size_factor</code>; <code>num_cpu_blocks</code> comes from <code>extra_config</code>.</p>
+<h3 id="52-simple-simple_kv_offload-the-graph-capturable-connector" id="5-2-simple-simple-kv-offload-the-graph-capturable-connector">5.2 Simple: <code>simple_kv_offload/</code> — the graph-capturable connector</h3>
+<p><code>SimpleCPUOffloadNPUWorker</code> (<code>simple_kv_offload/worker.py</code>) subclasses <code>SimpleCPUOffloadWorker</code> and <strong>replaces only the copy backend with <code>NPUDmaCopyBackend</code></strong> (<code>copy_backend.py</code>). Key Ascend realities:
+- <strong>K/V are separate allocations</strong> (not stacked) → must iterate every sub-tensor; dedup by <code>untyped_storage().data_ptr()</code> (<code>:101–112</code>).
+- The NPU runner <strong>over-allocates each KV for 2 MiB alignment</strong>, so block-views are sized from tensor stride/shape, not <code>storage.nbytes()</code> (<code>_build_block_views</code>, <code>:160–224</code>).
+- <strong>No <code>cudaHostRegister</code></strong> → CPU mirrors are <code>torch.zeros(pin_memory=True)</code>; transfer streams are plain <code>torch.npu.Stream()</code> (no priority hint since <code>torch.npu</code> lacks <code>Stream.priority_range()</code>, <code>:124–151</code>).
+- <code>NPUDmaCopyBackend</code> issues batched <code>aclrtMemcpyBatchAsync</code> across all sub-tensors.</p>
+<h3 id="53-why-both-exist" id="5-3-why-both-exist">5.3 Why both exist</h3>
+<p><code>kv_offload/</code> is the event-driven, vLLM-official mechanism (used with block-size factor / KV-events / disaggregated-PP KV connectors); <code>simple_kv_offload/</code> is the lightweight, ACL-Graph-capturable path with deterministic pinned-buffer transfers and no event dependency — preferred when full-graph capture and P2P DMA overlap matter more than scheduler-driven eviction. The &ldquo;simple&rdquo; one stores the leading <code>num_blocks</code> blocks that the connector knows about, regardless of the runner&rsquo;s alignment padding.</p>
+<hr />
+<h2 id="6-model-loader-innovations-netloader-rfork" id="6-model-loader-innovations-netloader-rfork">6. Model loader innovations (netloader, rfork)</h2>
+<p>vllm-ascend registers <strong>two</strong> custom loaders (<code>register_model_loader</code> → <code>register_netloader</code>/<code>register_rforkloader</code>, <code>model_loader/{netloader,rfork}/__init__.py</code>), both falling back to <code>DefaultModelLoader</code> on failure.</p>
+<h3 id="61-elastic-netloader-model_loadernetloader" id="6-1-elastic-netloader-model-loader-netloader">6.1 Elastic NetLoader (<code>model_loader/netloader/</code>)</h3>
+<p><code>ModelNetLoaderElastic</code> (<code>netloader.py::ModelNetLoaderElastic</code>) — a <strong>network/distributed weight loader</strong>. Pipeline:
+1. Read config from <code>model_loader_extra_config</code> keys <code>SOURCE</code> / <code>MODEL</code> / <code>LISTEN_PORT</code> / <code>INT8_CACHE</code> (<code>hbm|dram|no</code>) / <code>INT8_CACHE_NAME</code> / <code>OUTPUT_PREFIX</code> (<code>:94–125</code>).
+2. <code>initialize_model</code> builds an empty model on the NPU in its target dtype.
+3. <code>elastic_load(model, device_id, model_path, sources, tp, pp, group_name)</code> (<code>load.py</code>):
+   - Filters <code>sources</code> for this <code>device_id</code>; opens an <code>ElasticClient</code> socket to the source addr:port.
+   - Constructs <code>P2PLoad(world_name, source_ip, source_port, group_name)</code> (<code>executor/elastic_load.py</code>), which <strong>statelessly init&rsquo;s an HCCL process group</strong> and <strong>recv&rsquo;s every named parameter</strong> over HCCL on a dedicated <code>torch_npu.npu.Stream</code>, then barrier + synchronize (<code>elastic_load.py:50–90</code>). Weight arrives <strong>already distributed via HCCL</strong> so no CPU staging.
+4. Optionally starts an <code>ElasticServer</code> (<code>interaction/elastic.py</code>) listening for downstream consumers (model cascading), with <code>INT8_CACHE</code> options (<code>hbm|draft</code>, <code>:360</code>).
+5. Draft-model loading uses <code>DRAFT_PORT_OFFSET=10000</code> so target/draft servers don&rsquo;t collide (<code>:258–273</code>); a <code>torch.distributed.barrier()</code> synchronizes <strong>all target ranks before loading the draft</strong> (<code>_sync_target_netloader_before_draft</code>, <code>:146</code>).</p>
+<p><strong>Why faster</strong>: weights stream <strong>rank-to-rank over HCCL while compute setup happens</strong>; the source node broadcasts once and many receivers load in parallel. Avoids each rank independently reading shards from NFS (the default-path bottleneck), and the post-load <code>process_weights_after_loading</code> (quant reorder) runs on-device.</p>
+<h3 id="62-rfork-loader-model_loaderrfork-the-headline-innovation" id="6-2-rfork-loader-model-loader-rfork-the-headline-innovation">6.2 RFork loader (<code>model_loader/rfork/</code>) — the headline innovation</h3>
+<p><code>RForkModelLoader</code> (<code>rfork_loader.py::RForkModelLoader</code>, registered <code>"rfork"</code>, 2026) implements a <strong>seeded weight transfer</strong>: instead of re-loading weights from disk, a <strong>warmed &ldquo;seed&rdquo; instance</strong> RDMA-pushes its already-loaded weights to a fresh worker. Pipeline:
+1. <code>model_loader_extra_config</code> keys <code>model_url</code>, <code>model_deploy_strategy_name</code>, <code>rfork_scheduler_url</code>, <code>rfork_seed_timeout_sec</code>, <code>rfork_seed_key_separator</code> — or env vars (<code>:134–174</code>). RFork is <strong>skipped entirely under dynamic EPLB</strong> (<code>_is_dynamic_eplb_enabled</code>, <code>:231</code>).
+2. <code>_ensure_rfork_worker</code> creates an <code>RForkWorker</code> (<code>rfork_worker.py</code>) holding:
+   - <code>RForkSeedProtocol</code> (<strong><code>seed_protocol.py</code></strong>) — builds a per-instance seed key <code>"{model_url}${strategy_name}${node_rank}$pp{rank}$tp{rank}$ep{rank}$draft"</code> (<code>get_local_seed_key</code>, seed_protocol.py:50), then <code>GET http://scheduler/get_seed</code> → returns <code>{seed_ip, seed_port, ...}</code> / <code>release_seed</code> / <code>report_seed</code> (heartbeat thread). A central <strong>scheduler</strong> hands out seed instances.
+   - <code>RForkTransferBackend</code> (<strong><code>transfer_backend.py</code></strong>) — wraps <strong><code>yr.datasystem.TransferEngine</code></strong> (Yuanrong RDMA transfer engine). <code>init_transfer_engine()</code> opens it on <code>ascend</code> with <code>npu:{device}</code> (<code>:263–288</code>).
+3. <code>load_model</code> (<code>rfork_loader.py:217</code>):
+   - <code>initialize_model</code> (empty model, on device). For quantized models, <code>process_weights_after_loading</code> is run <strong>before</strong> transfer so weight dtypes/shapes match the seed&rsquo;s (<code>:268–270</code>).
+   - <code>rfork_worker.pre_transfer(model)</code>: <strong>registers the model&rsquo;s weight memory with the RDMA engine</strong>. It walks all parameters + buffers + Ascend post-load runtime tensors (MLA <code>W_UV</code>, <code>W_UK_T</code> etc., <code>_iter_transferable_tensors</code>/<code>_collect_transferable_tensors</code>, <code>:167–203</code>), coalesces <code>torch.npu.memory.memory_snapshot()</code> blocks that contain weight pointers, and <code>batch_register_memory</code> them (<code>register_memory_region</code>, <code>:298–363</code>).
+   - <code>rfork_worker.transfer(model)</code>: for each weight, pulls seed pointer/session from <code>GET /get_rfork_transfer_engine_info</code>, <strong>reshapes local tensor to seed shape</strong> if needed, then <code>batch_transfer_sync_read(seed_session_id, client_ptrs, seed_ptrs, lengths)</code> in chunks capped at <code>1 GiB / 512 weights</code> (<code>_iter_transfer_chunks</code>, <code>:215–249</code>, <code>MAX_TRANSFER_CHUNK_BYTES=1024**3</code>).
+   - <code>post_transfer</code> releases the seed; <code>start_seed_service</code> spins up an HTTP server (<code>seed_server.py</code>) advertising this instance as a future seed (<code>:110–144</code>).
+4. <strong>Fallback on any failure</strong> (seed unavailable, transfer error, shape mismatch) → <code>get_model(load_format="auto")</code>, default vLLM loader. NPU cache is emptied aggressively (<code>gc.collect()</code> ×3 + <code>torch.npu.empty_cache()</code>, <code>:299</code>).</p>
+<p><strong>Why faster than default</strong>: the default loader has every rank deserialize shards from storage, paying CPU/GIL + PCIe × each new process. RFork replaces that with <strong>one RDMA read</strong> from a live, already-warmed seed (same model, same quantization, same layout). The seed-reuse pattern matters for <strong>elastic serving / KV-decode disaggregation / preemption recovery</strong> where a new worker must become ready in seconds, not minutes. The GIL concern is sidestepped because TransferEngine is a native RDMA library that pushes into GPU-mapped memory without Python-level tensor construction.</p>
+<hr />
+<h2 id="7-lora-sampling" id="7-lora-amp-sampling">7. LoRA &amp; Sampling</h2>
+<h3 id="71-lora-lora" id="7-1-lora-lora">7.1 LoRA (<code>lora/</code>)</h3>
+<p><code>PunicaWrapperNPU</code> (<code>lora/punica_npu.py</code>) wraps the punica bgmv/sgmv kernels. Ascend selection logic (<code>:22–50</code>):
+- On <strong>310P</strong> or when <code>max_lora_rank ≥ 128</code>: uses vLLM&rsquo;s <strong>PyTorch-native</strong> <code>bgmv_*</code>/<code>sgmv_*</code> ops (Triton-less path).
+- Else: imports Ascend-native <code>vllm_ascend.lora.lora_ops</code> bgmv/sgmv (custom AscendC kernels, <code>csrc/kernels/bgmv_*.cpp</code>).
+All ops are graph-capturable (static shapes, value-independent).</p>
+<p><code>AscendFusedMoEWithLoRA</code> / <code>AscendFusedMoE3DWithLoRA</code> (<code>lora/fused_moe.py</code>) implement <strong>MoE LoRA v2</strong> — the key Ascend innovation: instead of a <code>torch.unique</code>/<code>nonzero</code> gather (data-dependent shapes <strong>not</strong> capturable by ACL Graph), they fold the <code>(lora_id, expert_id)</code> pair into a single gather index into a <code>[max_loras * num_experts, ...]</code> view of the weight stacks, with <strong>-1 sentinel rows skipped internally by the bgmv kernels</strong> (<code>punica_npu.py:344–410</code>). This keeps shapes value-independent → fully graph-capturable. Uses <code>mul_routed_weight</code>, adapter_enabled masks, and in-place <code>bgmv_expand_slice</code>.</p>
+<p><code>lora/__init__.py</code>, <code>utils.py</code> (<code>refresh_all_lora_classes</code>), and supported ops cover linear, embedding, logits, and fused-MoE. <strong>Scope</strong>: full LoRA for dense + MoE (shared + routed) experts where Ascend bgmv kernels apply; PunicaWrapperBase wiring handles the multi-LoRA metadata.</p>
+<h3 id="72-sampling-sample" id="7-2-sampling-sample">7.2 Sampling (<code>sample/</code>)</h3>
+<p><code>AscendSampler</code> (<code>sample/sampler.py:45</code>) replaces the CPU/CUDA penalty loop with <strong>Triton-Ascend</strong> via <code>apply_all_penalties</code> → <code>ops.triton.penalty.apply_penalties_triton</code> when the Ascend Triton backend is available, else vLLM default (<code>:47–68</code>). It also overrides <code>greedy_sample</code> to do a TP-aware global argmax via <code>tp_group.all_gather</code> (<code>:105–124</code>). <code>AscendTopKTopPSampler(:127)</code> similarly gates its kernel path. <code>sample/rejection_sampler.py</code> is a ~1400-line <strong>custom rejection sampler</strong> with both NPU-optimized and pure-PyTorch (<code>*_pytorch</code>) paths — <code>AscendRejectionSampler.apply_penalties</code> reuses the Triton-Ascend penalties, <code>prepare_sampling</code>, <code>apply_logits_processors</code>, and <code>forward</code>, plus block-verify (<code>rejection_random_sample_block_verify_pytorch</code>) and recovered-token sampling, all with spec-length-1 fast paths. This breadth is required because speculative decoding (MTP/Eagle3/Medusa/DFlash) needs a different sampling semantic than vanilla single-token decoding.</p>
+<hr />
+<h2 id="key-file-references" id="key-file-references">Key file references</h2>
+<ul>
+<li><code>models/deepseek_v4.py</code> — Ascend DeepSeek V4 model: <code>AscendDeepseekV4ForCausalLM</code> (:1206), <code>DeepseekV4Attention</code> (:705), <code>DeepseekV4MoE</code> (:348), <code>Indexer</code>/<code>Compressor</code> (:525/592), HC kernels (:966), <code>load_weights</code> (:1295), <code>_mtp_hidden_buffer</code> stash for MTP (:1133).</li>
+<li><code>models/deepseek_v4_mtp.py</code> — <code>DeepSeekV4MTP</code> (:201), <code>DeepSeekMultiTokenPredictorLayer</code> (:56).</li>
+<li><code>models/layer/attention/layer.py</code> — <code>DSV4_BLOCK_SIZES</code> padding table.</li>
+<li><code>xlite/xlite.py</code> — <code>QwenMoeXliteModel</code> (:416), <code>Glm4MoeXliteModel</code> (:451), <code>MiniMaxM2XliteModel</code> (:502), <code>XliteWrapper</code> (:566), <code>get_adapter_xlite_model</code> (:546).</li>
+<li><code>spec_decode/llm_base_proposer.py</code> — <code>AscendSpecDecodeBaseProposer</code> (:148), TP patch, ACLGraph, PCP/DP, sharing, GLM eager fallback.</li>
+<li><code>spec_decode/{eagle,dflash,dspark,medusa,ngram,suffix,step3p5,draft,extract_hidden_states}_proposer.py</code> — full proposer zoo.</li>
+<li><code>quantization/methods/registry.py</code> — <code>(quant_type, layer_type)</code> scheme registry.</li>
+<li><code>quantization/methods/w8a8_dynamic.py</code>, <code>w4a16.py</code> — W8A8/W4A16 schemes (MC2, EPLB, fused-MoE int64 scales).</li>
+<li><code>quantization/methods/{w4a8,w4a8_mxfp4,w4a4_*,w8a8_*,kv_c8,fp8}.py</code> — full method zoo; <code>methods/__init__.py</code> lists all 20+ scheme classes + <code>is_mx_quant_type</code>.</li>
+<li><code>quantization/method_adapters.py</code> — <code>AscendLinearMethod</code>/<code>AscendFusedMoEMethod</code> (EP-aware partitioning, weight scale tagging).</li>
+<li><code>kv_offload/npu.py</code>, <code>kv_offload/cpu_npu.py</code> — event-driven OffloadingSpec + CpuNpu handler.</li>
+<li><code>simple_kv_offload/worker.py</code> (<code>SimpleCPUOffloadNPUWorker</code>), <code>copy_backend.py</code> (<code>NPUDmaCopyBackend</code>), <code>npu_mem_ops.py</code>.</li>
+<li><code>model_loader/netloader/netloader.py</code> (<code>ModelNetLoaderElastic</code>), <code>load.py</code> (<code>elastic_load</code>→<code>P2PLoad</code>), <code>executor/elastic_load.py</code> (HCCL recv), <code>interaction/elastic.py</code>.</li>
+<li><code>model_loader/rfork/rfork_loader.py</code> (<code>RForkModelLoader</code>), <code>rfork_worker.py</code>, <code>seed_protocol.py</code> (scheduler seed keys), <code>seed_server.py</code>, <code>transfer_backend.py</code> (Yuanrong <code>TransferEngine</code> RDMA).</li>
+<li><code>lora/punica_npu.py</code> (<code>PunicaWrapperNPU</code> — bgmv/sgmv kernel selection + MoE LoRA v2), <code>lora/fused_moe.py</code> (<code>AscendFusedMoEWithLoRA</code>).</li>
+<li><code>sample/sampler.py</code> (<code>AscendSampler</code>, <code>AscendTopKTopPSampler</code> — Triton-Ascend penalties + TP-aware argmax), <code>sample/rejection_sampler.py</code> (<code>AscendRejectionSampler</code>), <code>sample/penalties.py</code> (<code>apply_all_penalties</code>→<code>apply_penalties_triton</code>).</li>
+<li><code>ops/dsa.py</code> (<code>AscendDeepseekSparseAttention</code>, <code>DSAModules</code>), <code>attention/dsa_v1.py</code> (<code>AscendDSABackend</code>), <code>ops/rope_dsv4.py</code> (<code>ComplexExpRotaryEmbedding</code>), <code>ops/triton/{penalty,mul_add}/</code>.</li>
+<li><code>meta_registration.py</code> — custom-op meta (shape-inference) registration for <code>bgmv_expand</code>/<code>sgmv_expand</code>.</li>
+</ul>
+</div>
+<footer>Report 05 — source <code>agent_reports/05_models_quant.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

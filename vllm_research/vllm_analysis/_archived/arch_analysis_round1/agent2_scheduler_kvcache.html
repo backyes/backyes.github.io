@@ -1,0 +1,555 @@
+<!doctype html><html lang="head"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>L2 调度器/KV缓存 · vLLM Arch</title><link rel="stylesheet" href="report.css"></head>
+<body><div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>L2 调度器/KV缓存</h1><div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
+<article><h1 id="layer-2-scheduler-kv-cache-management-workerblock-management-ascendscheduler">LAYER 2 — Scheduler, KV Cache Management, Worker/Block Management &amp; AscendScheduler</h1>
+<blockquote>
+<p>vLLM ascii v1 scheduler + paged-KV subsystem and the Ascend extescheduling layer. Read after [Layer 1] (engine/executor). All <code>path/file.py:LINE</code> are real locations at the snapshot.</p>
+</blockquote>
+<hr />
+<h2 id="0-architectural-landscape-at-a-glance">0. Architectural landscape at a glance</h2>
+<p>Two <strong>independent planes</strong> interlock through a tight feedback contract:</p>
+<table>
+<thead>
+<tr>
+<th>Plane</th>
+<th>Packages</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Scheduler / KV-manager</strong></td>
+<td><code>vllm/v1/core/sched/*</code>, <code>vllm/v1/core/{block_pool,kv_cache_manager,kv_cache_coordinator,single_type_kv_cache_manager}.py</code></td>
+<td>Policy + <em>virtual</em> block allocation (which request owns which <code>KVCacheBlock</code>)</td>
+</tr>
+<tr>
+<td><strong>Worker / Block-table</strong></td>
+<td><code>vllm/v1/worker/gpu/{block_table,model_runner,input_batch}.py</code>, <code>vllm/v1/worker/gpu_worker.py</code></td>
+<td><em>Physical</em> GPU tensor pool; turns block-ids into attention kernel operands (<code>block_tables</code>, <code>slot_mappings</code>)</td>
+</tr>
+<tr>
+<td><strong>Hardware-agnostic contracts</strong></td>
+<td><code>vllm/v1/kv_cache_interface.py</code>, <code>vllm/v1/kv_cache_spec_registry.py</code></td>
+<td>How a device advertises a KV-cache format and plugs a new manager in</td>
+</tr>
+<tr>
+<td><strong>Ascend overlay</strong></td>
+<td><code>vllm_ascend/core/{recompute_scheduler,short_request_first_scheduler,scheduler_profiling_chunk,single_type_kv_cache_manager,kv_cache_interface}.py</code>, <code>vllm_ascend/profiling_config.py</code></td>
+<td>Policy + device-specific KV manager, <strong>extension not fork</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The central insight: <strong>the scheduler never touches GPU tensors.</strong> It allocates <code>KVCacheBlock</code> <em>metadata objects</em>; the worker maps those <code>block_id</code>s into the actual attention kernel input. This is the seam a new device substrate plugs into.</p>
+<hr />
+<h2 id="1-kv-cache-data-model-block-device-memory">1. KV-cache data model: block → device memory</h2>
+<h3 id="11-the-kvcacheblock-object-the-unit-of-paging">1.1 The <code>KVCacheBlock</code> object (the unit of paging)</h3>
+<p><code>vllm/v1/core/kv_cache_utils.py:117</code></p>
+<pre><code class="language-python">@dataclass(slots=True)
+class KVCacheBlock:
+    &quot;&quot;&quot;KV-cache metadata.&quot;&quot;&quot;
+    block_id: int            # 0 .. num_gpu_blocks-1
+    ref_cnt: int = 0         # live references (prefix-cache sharing)
+    _block_hash: BlockHashWithGroupId | None = None   # set only when full &amp; cached
+    _block_hash_num_tokens: int | None = None
+    prev_free_block / next_free_block: KVCacheBlock   # doubly-linked free list
+    is_null: bool = False    # block_id 0 placeholder, never cached
+</code></pre>
+<blockquote>
+<p><strong>Why this matters:</strong> a <code>KVCacheBlock</code> is <strong>metadata-only</strong>. The actual <code>block_size * num_kv_heads * head_size * 2 * dtype</code> bytes live in the worker-side <code>kv_caches: list[torch.Tensor]</code> (<code>worker/gpu/model_runner.py:494</code>, allocated by <code>init_kv_cache</code>). The <code>block_id</code> is an <em>index</em> into that flat pool. This indirection is what makes prefix-cache dedup and swap possible.</p>
+</blockquote>
+<h3 id="12-blockpool-the-free-block-allocator">1.2 <code>BlockPool</code> — the free-block allocator</h3>
+<p><code>vllm/v1/core/block_pool.py:143</code></p>
+<pre><code class="language-python">class BlockPool:
+    # BlockPool that manages KVCacheBlocks.
+    # free_block_queue = doubly-linked list in eviction order
+    # cached_block_hash_to_block = BlockHashToBlockMap()   # block_hash → KVCacheBlock
+    def get_new_blocks(self, num_blocks: int) -&gt; list[KVCacheBlock]: ...   # :647
+    def free_blocks(self, ordered_blocks): ...                            # :719  (ordered by eviction priority)
+    def touch(self, blocks): ...                                         # :702  ref_cnt++ (prefix-cache hit)
+    def cache_full_blocks(self, request, blocks, ...): ...               # :225
+    def get_cached_block(self, block_hash, group_ids): ...               # :198
+    def _maybe_evict_cached_block(self, block): ...                      # :679
+    def get_num_free_blocks(self) -&gt; int: ...                            # :797
+</code></pre>
+<p><strong>Key point:</strong> allocation is O(1) off a free linked list. With prefix-caching enabled, <code>cache_full_blocks</code> hashes every full block so identical prompt prefixes share physical blocks via <code>touch()</code> (ref-counted). On eviction, <code>_maybe_evict_cached_block</code> drops the hash index but the block data is overwritten lazily (see §3.4 zeroing).</p>
+<h3 id="13-kvcachespec-the-per-layer-format-contract">1.3 <code>KVCacheSpec</code> — the per-layer format contract</h3>
+<p><code>vllm/v1/kv_cache_interface.py</code></p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>File:line</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KVCacheSpec</code></td>
+<td>:100</td>
+<td>base; <code>block_size</code>, <code>page_size_bytes</code>, <code>max_num_blocks_per_req</code>, <code>max_memory_usage_bytes</code>, <code>storage_block_size</code></td>
+</tr>
+<tr>
+<td><code>AttentionSpec(KVCacheSpec)</code></td>
+<td>:176</td>
+<td>adds <code>num_kv_heads, head_size, dtype, kv_quant_mode</code>; DCP/PCP sharding-aware <code>max_num_blocks_per_req</code></td>
+</tr>
+<tr>
+<td><code>FullAttentionSpec(AttentionSpec)</code></td>
+<td>:232</td>
+<td>standard dense attention; carries <code>sliding_window</code>, <code>attention_chunk_size</code>, <code>non_causal</code></td>
+</tr>
+<tr>
+<td><code>MLAAttentionSpec(FullAttentionSpec)</code></td>
+<td>:389</td>
+<td>compressed-latent (DeepSeek): <code>storage_block_size = block_size // compress_ratio</code> (spec :402)</td>
+</tr>
+<tr>
+<td><code>RSWASpec</code></td>
+<td>:467</td>
+<td>rolling sliding-window attention</td>
+</tr>
+<tr>
+<td><code>KVCacheSpecKind</code></td>
+<td>:86</td>
+<td>enum of known kinds incl. <code>MAMBA</code>, <code>CHUNKED_LOCAL_ATTENTION</code></td>
+</tr>
+<tr>
+<td><code>KVCacheConfig</code></td>
+<td>:961</td>
+<td>top-level: <code>num_blocks</code>, <code>kv_cache_tensors</code>, <code>kv_cache_groups</code></td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>page size in bytes</strong> (<code>page_size_bytes</code> / <code>real_page_size_bytes</code>, <code>kv_cache_interface.py:197-214</code>) is what converts "N blocks → bytes" for the worker's <code>init_kv_cache</code>. MLA storage is cheaper than its logical block (<code>block_size</code> &gt; <code>storage_block_size</code>) because only the compressed state is paged.</p>
+<h3 id="14-data-flow-allocate-paged-attention-read">1.4 Data-flow: allocate → paged attention read</h3>
+<pre><code>Scheduler (KVCacheManager)                     Worker (GPUModelRunner)
+─────────────────────────────                  ─────────────────────────────
+1. allocate_slots(req, num_new_tokens)
+     -&gt; coordinator.allocate_new_blocks()
+     -&gt; block_pool.get_new_blocks()          -- returns list[KVCacheBlock]
+     -&gt; KVCacheBlocks(blocks=(tuple,...))     -- :283 kv_cache_manager.py
+
+2. SchedulerOutput.new_block_ids_to_zero      append_block_ids(req_index, block_ids)
+   = take_new_block_ids()                        overwrite=True (new) :804
+                                                  overwrite=False (append) :835
+   + req_to_new_blocks[req_id]                 
+     -&gt; SchedulerOutput                        block_tables:StagedWriteTensor (int32)
+        .scheduled_new_reqs[].block_ids          [num_reqs, max_num_blocks]
+        .scheduled_cached_reqs.new_block_ids
+                                               gather_block_tables(idx_mapping) -&gt; device :1045
+3. update_from_output / new_step_starts()     prepare_attn():
+                                               gather_block_tables()   -&gt; block_tables tensor
+                                               compute_slot_mappings()  -&gt; slot_mappings tensor
+                                                 _compute_slot_mapping_kernel :240 (block_table.py)
+4. forward                                    attention backend:
+                                                  block_tables: [groups, reqs, max_blocks]
+                                                  slot_mappings: [groups, tokens]  (token-&gt;kv slot)
+</code></pre>
+<p><strong>Slot → KV position.</strong> <code>_compute_slot_mapping_kernel</code> (<code>worker/gpu/block_table.py:240</code>) maps each scheduled token's <code>(req, block_table_row, slot_in_block)</code> flat onto the contiguous KV tensor. Padding slots are set to <code>PAD_SLOT_ID</code> so the attention CUDA-graph kernels safely skip them — this is what lets chunked-prefix and batched decode share one graph with holes.</p>
+<hr />
+<h2 id="2-scheduler-design-one-loop-no-phases">2. Scheduler design: one loop, no phases</h2>
+<p><code>vllm/v1/core/sched/scheduler.py:70</code> <code>class Scheduler(SchedulerInterface)</code></p>
+<h3 id="21-the-scheduling-loop-schedule-schedulerpy418">2.1 The scheduling loop (<code>schedule</code>, <code>scheduler.py:418</code>)</h3>
+<p>The design's headline — verbatim from the source — sets the philosophy (<code>:420</code>):</p>
+<blockquote>
+<p><em>"There's no 'decoding phase' nor 'prefill phase' in the scheduler. Each request just has num_computed_tokens and num_tokens_with_spec … At each step, the scheduler tries to assign tokens to the requests so that each request's num_computed_tokens can catch up its num_tokens_with_spec. This is general enough to cover chunked prefills, prefix caching, speculative decoding, and 'jump decoding.'"</em></p>
+</blockquote>
+<p>So <strong>continuous batching is realized at the token level</strong>: a request in the <em>running</em> set whose <code>num_computed_tokens &lt; num_tokens</code> still needs compute is simply given a chunk of tokens up to the remaining budget — even if it is mid-prefill. Prefill and decode requests are interleaved freely in one list iteration.</p>
+<p><strong>Loop structure</strong> (<code>schedule</code>, <code>scheduler.py:418-1008</code>):</p>
+<pre><code>token_budget = max_num_scheduled_tokens          # per-step cap (config)
+self.kv_cache_manager.new_step_starts()
+
+# PASS 1 — RUNNING requests (preempt surviving, min-fragmentation first)
+for req in self.running while token_budget &gt; 0:
+    clamp num_new_tokens by long_prefill_token_threshold   # chunked prefill chunk size
+    clamp by (max_model_len - computed)
+    if mamba &quot;align&quot; mode -&gt; _mamba_block_aligned_split(...)   # hybrid alignment
+    loop:
+        new_blocks = kv_cache_manager.allocate_slots(req, num_new_tokens, lookahead)
+        if new_blocks: break
+        else: preempt lowest-priority running request (_preempt_request -&gt; status PREEMPTED,
+              num_computed_tokens=0, back to waiting queue :1184)
+    record req_to_new_blocks, num_scheduled_tokens, token_budget -= n
+    apply DP-prefill throttling (throttle_prefills)
+
+# PASS 2 — WAITING requests (only if no preemption this step)
+while (waiting or skipped_waiting) and token_budget &gt; 0:
+    if running is full -&gt; break
+    req = _select_waiting_queue_for_scheduling().peek()
+    connector kv-offload gating, max_loras gating
+    new_computed_blocks, num_computed = get_computed_blocks(req)   # prefix cache hit
+       + connector.get_num_new_matched_tokens(...)                  # external KV prefetch
+    num_new_tokens = min(remaining, token_budget)  [respects long_prefill_token_threshold]
+    allocate_slots(..., new_computed_blocks=..., num_external_computed=...,
+                   full_sequence_must_fit=reserve_full_isl)
+    if None: break    # stop admitting; do NOT preempt for new admits
+    pop &amp; advance
+</code></pre>
+<h3 id="22-chunked-prefill-token-budgeting">2.2 Chunked prefill &amp; token budgeting</h3>
+<ul>
+<li><code>max_num_scheduled_tokens</code> (<code>:111</code>) → either explicit config or <code>max_num_batched_tokens</code>; the <strong>hard ceiling</strong> on tokens executed in one step.</li>
+<li><code>long_prefill_token_threshold</code> → the <em>chunk size</em> for long prefills; short prefills are scheduled whole.</li>
+<li>When <code>enable_chunked_prefill=False</code>, waiting admission requires the <strong>whole</strong> prompt to fit in one step (<code>break</code> on budget exceeded, <code>scheduler.py:844</code> in upstream).</li>
+<li>Per-step preemption budget is <strong>reused</strong>: when a request is preempted, <code>token_budget += num_scheduled_tokens.pop(...)</code> (<code>:578</code>), so the freed capacity is immediately recyclable within the same step.</li>
+</ul>
+<h3 id="23-precedences-queue-classes">2.3 Precedences &amp; queue classes</h3>
+<p><code>vllm/v1/core/sched/request_queue.py</code></p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>File:line</th>
+<th>Policy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SchedulingPolicy</code></td>
+<td>:13</td>
+<td><code>FCFS</code>, <code>PRIORITY</code></td>
+</tr>
+<tr>
+<td><code>RequestQueue</code> (ABC)</td>
+<td>:20</td>
+<td><code>add/pop/peek/prepend/remove/iter</code></td>
+</tr>
+<tr>
+<td><code>FCFSRequestQueue(deque)</code></td>
+<td>:75</td>
+<td>strict arrival order</td>
+</tr>
+<tr>
+<td><code>PriorityRequestQueue</code></td>
+<td>:131</td>
+<td><code>priority</code> primary, <code>arrival_time</code> tiebreak</td>
+</tr>
+</tbody>
+</table>
+<p>The scheduler holds two separate waiting lanes — <code>self.waiting</code> and <code>self.skipped_waiting</code> (<code>scheduler.py:183-185</code>) — the latter for async-blocked requests (remote-KV-not-ready, max_loras, encoder cache misses) so they don't starve normal FCFS order.</p>
+<h3 id="24-scheduler-output-contract-scheduleroutput-schedoutputpy191">2.4 Scheduler output contract (<code>SchedulerOutput</code>, <code>sched/output.py:191</code>)</h3>
+<p>The scheduler emits one <code>SchedulerOutput</code> per step and the worker consumes it as the <em>only</em> cross-process payload:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scheduled_new_reqs: list[NewRequestData]</code></td>
+<td>first appearance; carries full prompt + <code>block_ids</code> + sampling params (<code>output.py:33</code>)</td>
+</tr>
+<tr>
+<td><code>scheduled_cached_reqs: CachedRequestData</code></td>
+<td><strong>delta</strong> only: <code>new_block_ids</code>, <code>num_computed_tokens</code> per cached req (<code>output.py:114</code>)</td>
+</tr>
+<tr>
+<td><code>num_scheduled_tokens: dict[req_id-&gt;int]</code> + <code>total_num_scheduled_tokens</code></td>
+<td>the token budget actually spent</td>
+</tr>
+<tr>
+<td><code>new_block_ids_to_zero: list[int]</code></td>
+<td>freshly pulled from pool — worker must zero before first write (<code>:1103-1120</code>)</td>
+</tr>
+<tr>
+<td><code>kv_cache_block_copies</code></td>
+<td>copy-on-write entries for partial prefix-cache hits</td>
+</tr>
+<tr>
+<td><code>num_common_prefix_blocks</code></td>
+<td>cascade-attention hint</td>
+</tr>
+<tr>
+<td><code>scheduled_spec_decode_tokens</code>, <code>scheduled_encoder_inputs</code></td>
+<td>per-request side-channel side-data</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Bandwidth-savings trick:</strong> cached requests send only <code>new_block_ids</code> (the diff) rather than the full block table, <em>"so that we don't need to re-send it every scheduling step"</em> (<code>output.py:90</code>).</p>
+</blockquote>
+<hr />
+<h2 id="3-worker-scheduler-feedback-contract">3. Worker ↔ Scheduler feedback contract</h2>
+<p>The worker controls the <em>physical</em> memory; the scheduler controls <em>policy</em>. They meet on two handshakes:</p>
+<h3 id="31-upstream-budget-block-availability-pressure-signal">3.1 Upstream: budget / block availability (pressure signal)</h3>
+<ol>
+<li>
+<p><strong>Startup capacity handshake</strong> — <code>engine/core.py:309-311</code>:
+   <code>python
+   kv_cache_configs = get_kv_cache_configs(vllm_config, kv_cache_specs, available_gpu_memory)
+   scheduler_kv_cache_config = generate_scheduler_kv_cache_config(kv_cache_configs)
+   vllm_config.cache_config.num_gpu_blocks = scheduler_kv_cache_config.num_blocks</code>
+   Workers (<code>gpu_worker.py:701</code> <code>get_kv_cache_spec</code>) advertise their per-layer <code>KVCacheSpec</code>; the engine <em>profiles</em> available memory (<code>determine_available_memory</code>, <code>core.py:286</code>); <code>generate_scheduler_kv_cache_config</code> resolves the <strong>final <code>num_blocks</code></strong>; the scheduler then constructs its <code>BlockPool(num_gpu_blocks=...)</code>. This is the <em>available-blocks feedback loop</em> → the scheduler's <code>num_gpu_blocks</code> is literally the worker's measured capacity.</p>
+</li>
+<li>
+<p><strong>Per-step admission gate</strong> — <code>KVCacheManager.allocate_slots</code> (<code>kv_cache_manager.py:283</code>) returns <strong><code>None</code></strong> when <code>required_blocks &gt; free_blocks - reserved_blocks - watermark_blocks</code>. The scheduler treats None as "cannot fit, stop admitting" (or "must preempt a running request"). So <strong>block-pressure flows upstream as an allocate-failure signal</strong> that the scheduler reacts to. The <code>watermark_blocks</code> headroom (<code>:sched.py</code> ctor, <code>scheduler_config.watermark</code>) prevents the last blocks from being consumed by decodes.</p>
+</li>
+<li>
+<p><strong>Prefill throttling feedback</strong> — <code>throttle_prefills</code> flag from <code>EngineCore._should_throttle_prefills</code> (<code>core.py:609</code>) for DP prefill balancing; scheduler defers new prefills when a non-cadence DP step already has in-flight decode work (<code>:447-451</code>).</p>
+</li>
+</ol>
+<h3 id="32-scheduler-worker-the-scheduleroutput-dispatch">3.2 Scheduler → worker (the <code>SchedulerOutput</code> dispatch)</h3>
+<p><code>worker/gpu/model_runner.py</code>:</p>
+<ul>
+<li><strong>new requests</strong> (<code>update_requests</code> → <code>:804</code>): <code>block_tables.append_block_ids(req_index, req_new_data.block_ids, overwrite=True)</code> — writes the <em>entire</em> row (new request has no existing row).</li>
+<li><strong>cached requests</strong> (<code>:827-836</code>): <code>block_tables.append_block_ids(req_index, req_new_block_ids, overwrite=False)</code> — appends only blocks <em>newly</em> allocated this step.</li>
+<li><strong>zeroing new blocks</strong> (<code>:848-850</code>): <code>kv_block_zeroer.zero_block_ids(new_block_ids_to_zero)</code> before first use.</li>
+<li><strong>copy-on-write</strong> (<code>:853</code>): <code>copy_kv_cache_blocks_inplace(...)</code> for partial prefix-cache hits <strong>before</strong> attention reads them.</li>
+</ul>
+<h3 id="33-worker-attention-kernel-prepare_attn-1040">3.3 Worker → attention kernel (<code>prepare_attn</code>, <code>:1040</code>)</h3>
+<pre><code>gather_block_tables(idx_mapping)    -&gt; tuple[Tensor]  [groups, padded_reqs, max_blocks]
+compute_slot_mappings(idx_mapping, query_start_loc, positions, num_tokens_padded)
+                                    -&gt; Tensor         [groups, padded_tokens]
+</code></pre>
+<p>These two tensors — <strong>block table</strong> (per-request block-id matrix) and <strong>slot mapping</strong> (per-token flat KV-cache offset) — are the <em>only</em> dynamic inputs the paged-attention kernel needs per step. This is the true "paged" surface.</p>
+<h3 id="34-zeroing-prefix-cache-eviction-cow-lifecycle">3.4 Zeroing, prefix cache eviction, CoW lifecycle</h3>
+<ol>
+<li>Scheduler emits <code>new_block_ids_to_zero</code> pulled from <code>take_new_block_ids</code> (<code>scheduler.py:1103</code>).</li>
+<li>Worker zeros GPU bytes → forward.</li>
+<li><code>update_from_output</code> advances <code>num_computed_tokens</code> (<code>scheduler.py:1218</code>), then <code>cache_blocks</code> writes block hashes for prefix caching.</li>
+<li>On preemption, <code>_free_request_blocks</code> → <code>block_pool.free_blocks</code> decrements <code>ref_cnt</code>; with caching, hashes are retained and <code>_maybe_evict_cached_block</code> only removes the hash map entry (block data overwritten on next zeroing). Partial hits → <code>take_pending_cow_copies</code> + <code>kv_cache_block_copies</code> → <code>copy_kv_cache_blocks_inplace</code> on the worker.</li>
+</ol>
+<blockquote>
+<p><strong>Design insight (KV-cache):</strong> The split between <code>BlockPool</code>/<code>KVCacheManager</code> (scheduler, metadata+policy) and <code>BlockTables</code> (worker, GPU kernels) is the single most important architectural seam in vLLM. <strong>Everything that-hardware specific lives in the worker; everything that is scheduling/policy lives in the core.</strong> Paging is <em>virtual</em>: a request's logical positions are flattened to <code>(block_id, slot)</code> only when the worker builds the attention operands. This is what enables prefix-cache dedup (by block hash), swap, rolling sliding-window, and compressed-latent MLA to coexist — they all just change how <code>block_id</code>s get allocated and how the slot mapping is computed. A new hardware substrate that can satisfy the <code>KVCacheSpec</code>/<code>KVCacheManager</code> contract (page size, quantization, optional CoW) and produce a contiguous addressable KV tensor can be plugged into the entire scheduler/policy stack without touching scheduling code. The <code>storage_block_size ≠ block_size</code> split for MLA is the canonical example: the scheduler pages logical <code>block_size</code> tokens while the worker actually stores <code>storage_block_size // compress_ratio</code> entries; the attention kernel on the <em>worker</em> knows how to decompose a block-row into the right number of kernel-blocks (<code>blocks_per_kv_block</code>, <code>worker/block_table.py:57</code>).</p>
+</blockquote>
+<hr />
+<h2 id="4-coordinators-mapping-request-seq_pos-blocks">4. Coordinators — mapping (request, seq_pos) → blocks</h2>
+<p>The <code>KVCacheManager</code> delegates the per-kind allocation math to a <strong>coordinator</strong> hierarchy in <code>kv_cache_coordinator.py</code>:</p>
+<p><code>vllm/v1/core/kv_cache_coordinator.py</code></p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>File:line</th>
+<th>Used when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KVCacheCoordinator</code> (ABC)</td>
+<td>:60</td>
+<td>owns <code>BlockPool</code>, exposes <code>allocate_new_blocks</code>, <code>get_num_blocks_to_allocate</code>, <code>find_longest_cache_hit</code>, <code>cache_blocks</code></td>
+</tr>
+<tr>
+<td><code>KVCacheCoordinatorNoPrefixCache</code></td>
+<td>:385</td>
+<td><code>disable_prefix_caching</code> paths</td>
+</tr>
+<tr>
+<td><code>UnitaryKVCacheCoordinator</code></td>
+<td>:435</td>
+<td>single KV-cache group (one spec kind)</td>
+</tr>
+<tr>
+<td><code>HybridKVCacheCoordinator</code></td>
+<td>:523</td>
+<td>mixed e.g. full-attn + sliding-window (RSWA/Mamba), one manager per group (<code>SpecGroup</code>, :508)</td>
+</tr>
+</tbody>
+</table>
+<p><code>SingleTypeKVCacheManager</code> (<code>single_type_kv_cache_manager.py:36</code>) is the per-worker-side-per-group implementation class; kind-specific subclasses (e.g. <code>FullAttentionManager</code> <code>:649</code>, <code>SlidingWindowManager</code> <code>:847</code>, <code>MambaManager</code> <code>:1222</code>, <code>RSWAManager</code> <code>:801</code>, <code>ChunkedLocalAttentionManager</code> <code>:1064</code>) override <code>find_longest_cache_hit</code> and <code>cache_blocks</code> for their attention semantics. The registry (<code>kv_cache_spec_registry.py:39</code> <code>KVCacheSpecRegistry</code>) maps a spec <em>class</em> → its manager class — this is how a <strong>vendor registers a new spec without modifying scheduler code</strong> (the assertion at <code>:80</code> requires <code>manager_class</code> to be provided).</p>
+<p>The flow <code>allocate_slots → coordinator.get_num_blocks_to_allocate → allocate_new_blocks</code> (<code>kv_cache_manager.py:430-440</code>) is where logical tokens become block counts, with prefix-cache hits already owned counted toward the request (the three-stage "free → handle-prefix → allocate-new" documented at <code>kv_cache_manager.py:337</code>).</p>
+<hr />
+<h2 id="5-kv-cache-spec-registry-hardware-plug-in-surface">5. KV-cache spec registry — hardware plug-in surface</h2>
+<p><code>vllm/v1/kv_cache_spec_registry.py</code></p>
+<pre><code class="language-python">class KVCacheSpecRegistry:
+    def register(kvcache_spec_cls, manager_class, uniform_type_base_spec=None): ...  # :63
+    def get_manager_class(kvcache_spec) -&gt; type: ...                                  # :106
+</code></pre>
+<p>A new device declares a <code>KVCacheSpec</code> subclass (e.g. with new <code>kv_quant_mode</code> / compressed layout), registers it with its <code>SingleTypeKVCacheManager</code>, and the scheduler picks the right manager automatically. The <code>uniform_type_base_spec</code> mechanism (<code>:76</code>) also lets a vendor's custom spec be treated as "uniform" with a base kind — avoiding fragmentation of cache groups.</p>
+<hr />
+<h2 id="6-ascendscheduler-vs-upstream-extension-not-fork">6. AscendScheduler vs upstream — extension, not fork</h2>
+<h3 id="61-class-hierarchy-hook-in">6.1 Class hierarchy &amp; hook-in</h3>
+<p><code>vllm_ascend/core/recompute_scheduler.py</code></p>
+<pre><code>RecomputeSchedulerConfig(SchedulerConfig)          :58
+    scheduler_cls -&gt; &quot;…recompute_scheduler.RecomputeScheduler&quot;   # string import pivot :59
+    initialize_from_config(): if async -&gt; AsyncRecomputeScheduler  # :62-72
+                                                      else -&gt; RecomputeScheduler
+
+RecomputeScheduler(ShortRequestFirstSchedulerMixin, Scheduler) :98   # subclass, NOT copy
+RecomputeSchedulerOutput(SchedulerOutput)          :93  (adds preempted_reqs[], recomputed_reqs[])
+</code></pre>
+<h3 id="62-how-it-hooks-in-scheduler_cls-string-config-pivot">6.2 How it hooks in — <code>scheduler_cls</code> string config pivot</h3>
+<p>Ascend <strong>does not monkey-patch</strong> upstream. It subclasses <code>vllm.v1.core.sched.scheduler.Scheduler</code> (<code>:43</code>) and the engine-core builds it from the config string <code>scheduler_config.scheduler_cls</code> (<code>RecomputeSchedulerConfig.scheduler_cls</code>, <code>:59</code>). Async selection (<code>AsyncRecomputeScheduler</code> vs <code>RecomputeScheduler</code>) happens in <code>RecomputeSchedulerConfig.initialize_from_config</code> (<code>:62-72</code>). This is the same pluggability slot upstream <code>SchedulerConfig</code> exposes — Ascend just provides its concrete subclass.</p>
+<h3 id="63-scheduling-policy-changes-relative-to-upstream">6.3 Scheduling policy changes (relative to upstream)</h3>
+<p><strong>A. Recompute preemption</strong> — the central Ascend addition (<code>RecomputeScheduler.schedule</code> <code>:194</code>):</p>
+<p>The scheduler still passes over RUNNING then WAITING, but the <em>preemption path diverges</em> (<code>recompute_scheduler.py:307-350</code> vs upstream <code>:543-634</code>):</p>
+<ul>
+<li>If a <strong>KV-transfer connector is a non-producer consumer</strong>, a preempted request is <em>optionally offloaded</em>: <code>connector.update_state_before_preempt(...)</code> returns <code>offloaded</code>; the block data is preserved and the request goes back to <code>waiting</code> as a <code>PreemptedRequestData</code> rather than wiped. Otherwise (<code>offloaded=False</code>) it falls back to upstream-style free + recompute + <code>RecomputeReqInfo(recomputed_req_id, output_token_ids, client_index)</code> (<code>:346-359</code>), a <strong>"recompute"</strong> token the PD-proxy can re-stream.</li>
+<li>Notice the <strong>careful preservation of <code>recomputed_block_ids</code> / <code>num_computed_tokens</code> in the offload path</strong> (<code>:327-338</code>) — the scheduler retains enough to reconstruct state after re-admission.</li>
+<li>Upstream-style PRIORITY preemption also retained (<code>:361-398</code>), so the scheduler degrades to FCFS <code>running.pop()</code> when policy isn't priority.</li>
+</ul>
+<p><strong>B. Short-request-first waiting queue</strong> (<code>ShortRequestFirstSchedulerMixin</code> + <code>short_request_first_scheduler.py:58</code>):</p>
+<p>Three-lane queue <code>ShortRequestFirstRequestQueue(RequestQueue)</code> — <em>immediate / short / long</em> — selected via <code>SteppedWaitingQueue</code> Protocol (<code>:36</code>) methods: <code>begin_step(token_budget)</code>, <code>select_waiting_queue_for_scheduling()</code>, <code>has_schedulable_requests()</code>. Priority: immediate → short → long. <strong>Aging/jump</strong> avoids long starvation: a long request whose head waited ≥ <code>long_max_wait_ms</code> while shorts exist is <em>promoted</em> (<code>_select_schedulable_queue</code>, <code>:209-221</code>), with a <code>_consecutive_aged_long_promotions</code> degradation streak + <code>_maybe_warn_degradation</code> <code>:252</code>. So it's SJF-with-aging, fully wired through the existing <code>RequestQueue</code> ABC and the <code>_select_waiting_queue_for_scheduling</code> dispatch (<code>recompute_scheduler.py:440</code>).</p>
+<p><strong>C. Profiling-based chunk sizing</strong> (<code>scheduler_profiling_chunk.py:46</code> <code>ProfilingChunkScheduler(Scheduler)</code>):</p>
+<p>On startup, <code>run_profiling_chunk_init</code> (<code>:108</code>) runs the <em>real model forward</em> at several chunk sizes, fits a quadratic latency model via <code>ProfilingChunkManager</code> (<code>profiling_chunk_predictor.py</code>), and uses it to choose the runtime chunk per waiting request. Stats-driven rather than static <code>long_prefill_token_threshold</code>. Ascend's <code>profiling_config.py</code> carries the knobs (<code>smooth_factor</code>, <code>min_chunk</code>, <code>max_fit_chunk</code>, <code>page_size</code>).</p>
+<h3 id="64-what-ascend-adds-to-the-output-handshake">6.4 What Ascend adds to the output / handshake</h3>
+<p><code>RecomputeSchedulerOutput(SchedulerOutput)</code> (<code>:93</code>) extends the upstream output with:</p>
+<ul>
+<li><code>preempted_reqs: list[PreemptedRequestData]</code> — <code>(req_id, block_ids, num_computed_tokens)</code> for the PD-proxy that must be notified when a request is preempted with KVs stranded on-device/offloaded.</li>
+<li><code>recomputed_reqs: list[RecomputeReqInfo]</code> — <code>(req_id, output_token_ids, client_index)</code> so the proxy can replay already-sampled output after a <strong>free-and-recompute</strong> preemption (vs. the offload-preserve case).</li>
+</ul>
+<p>The upstream <code>SchedulerOutput</code> is reused 1:1 (cached-diff block_ids, <code>new_block_ids_to_zero</code>, CoW copies) → Ascend's recompute is purely a <em>policy + accounting</em> overlay on the same worker contract.</p>
+<h3 id="65-ascend-device-kv-manager">6.5 Ascend device KV manager</h3>
+<p><code>vllm_ascend/core/single_type_kv_cache_manager.py</code> + <code>vllm_ascend/core/kv_cache_interface.py</code> — Ascend's own <code>SingleTypeKVCacheManager</code> impl per platform (910/310P), registering through the same <code>KVCacheSpecRegistry</code>. It overrides the per-platform attention shape (MLA on Ascend) and zeroing policy. This shows the <strong>vendor-extension point is the coordinator/manager + spec, not the scheduler loop</strong>.</p>
+<blockquote>
+<p><strong>Design insight (Ascend overlay):</strong> "Extension rather than fork" here has three concrete structural faces: <strong>(i)</strong> replace the <em>policy object</em> (<code>RecomputeScheduler(Scheduler)</code> + <code>scheduler_cls</code> config pivot) instead of editing <code>schedule()</code>'s 600-line loop; <strong>(ii)</strong> add <em>extra state</em> to <code>SchedulerOutput</code> subclasses (<code>RecomputeSchedulerOutput</code>) so the worker/PD-proxy can observe schedule-side decisions the kernel doesn't need; <strong>(iii)</strong> register a per-platform <code>KVCacheSpec</code>/<code>SingleTypeKVCacheManager</code> through the registry instead of branching <code>kv_cache_manager.py</code>. The result is a scheduler that customizes <em>preemption semantics</em> (recompute vs. free, offload-aware) and <em>waiting order</em> (SJF-with-aging + profiling-chunk) while reusing 100% of the block-table/slot-mapping/paged-attention path. For an inference architect this is the template for any accelerator-specific scheduling: plug at the policy + spec surfaces, never in the kernel/budget loop. The one thing Ascend <em>cannot</em> change without touching core is the paged-attention kernel operand layout — by design, that's the stable hardware abstraction.</p>
+</blockquote>
+<hr />
+<h2 id="7-class-function-index">7. Class / function index</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Symbol</th>
+<th>File:line</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scheduler entry + token budgeting</td>
+<td><code>Scheduler.schedule</code></td>
+<td><code>vllm/v1/core/sched/scheduler.py:418</code></td>
+</tr>
+<tr>
+<td>Thread-safe budget</td>
+<td><code>max_num_scheduled_tokens</code>, <code>token_budget</code></td>
+<td><code>scheduler.py:111</code>, <code>:438</code></td>
+</tr>
+<tr>
+<td>Chunked prefill clamp</td>
+<td><code>long_prefill_token_threshold</code></td>
+<td><code>scheduler.py:498</code></td>
+</tr>
+<tr>
+<td>Preemption (std)</td>
+<td><code>Scheduler._preempt_request</code></td>
+<td><code>scheduler.py:1184</code></td>
+</tr>
+<tr>
+<td>Waiting queue selection</td>
+<td><code>Scheduler._select_waiting_queue_for_scheduling</code></td>
+<td><code>scheduler.py</code> (overridden by Ascend via mixin)</td>
+</tr>
+<tr>
+<td>Block pool allocator</td>
+<td><code>BlockPool.get_new_blocks / free_blocks / touch / cache_full_blocks</code></td>
+<td><code>vllm/v1/core/block_pool.py:647/719/702/225</code></td>
+</tr>
+<tr>
+<td>Block metadata</td>
+<td><code>KVCacheBlock</code></td>
+<td><code>vllm/v1/core/kv_cache_utils.py:117</code></td>
+</tr>
+<tr>
+<td>Block-to-KV owner</td>
+<td><code>KVCacheManager.allocate_slots</code></td>
+<td><code>vllm/v1/core/kv_cache_manager.py:283</code></td>
+</tr>
+<tr>
+<td>Kind-aware math</td>
+<td><code>{Unitary,Hybrid,KVCacheCoordinatorNoPrefixCache}KVCacheCoordinator</code></td>
+<td><code>vllm/v1/core/kv_cache_coordinator.py:435/523/385</code></td>
+</tr>
+<tr>
+<td>Per-kind manager</td>
+<td><code>FullAttentionManager / SlidingWindowManager / MambaManager / RSWAManager</code></td>
+<td><code>single_type_kv_cache_manager.py:649/847/1222/801</code></td>
+</tr>
+<tr>
+<td>Spec family</td>
+<td><code>KVCacheSpec / AttentionSpec / FullAttentionSpec / MLAAttentionSpec</code></td>
+<td><code>vllm/v1/kv_cache_interface.py:100/176/232/389</code></td>
+</tr>
+<tr>
+<td>Plug-in registry</td>
+<td><code>KVCacheSpecRegistry.register / get_manager_class</code></td>
+<td><code>vllm/v1/kv_cache_spec_registry.py:63/106</code></td>
+</tr>
+<tr>
+<td>Work↔sched payload</td>
+<td><code>SchedulerOutput</code></td>
+<td><code>vllm/v1/core/sched/output.py:191</code></td>
+</tr>
+<tr>
+<td>GPU block table (paged operands)</td>
+<td><code>BlockTables.{append_block_ids, gather_block_tables, compute_slot_mappings}</code></td>
+<td><code>vllm/v1/worker/gpu/block_table.py:107/134/160</code></td>
+</tr>
+<tr>
+<td>Slot-mapping kernel</td>
+<td><code>_compute_slot_mapping_kernel</code></td>
+<td><code>vllm/v1/worker/gpu/block_table.py:240</code></td>
+</tr>
+<tr>
+<td>Full-capacity handshake</td>
+<td><code>generate_scheduler_kv_cache_config</code> → <code>num_gpu_blocks</code></td>
+<td><code>vllm/v1/engine/core.py:309</code></td>
+</tr>
+<tr>
+<td>Worker apply + zero</td>
+<td><code>GPUModelRunner.update_requests</code></td>
+<td><code>vllm/v1/worker/gpu/model_runner.py:827</code></td>
+</tr>
+<tr>
+<td>Attn operands</td>
+<td><code>GPUModelRunner.prepare_attn</code></td>
+<td><code>vllm/v1/worker/gpu/model_runner.py:1040</code></td>
+</tr>
+<tr>
+<td>★ Ascend sub-scheduler</td>
+<td><code>RecomputeScheduler(ShortRequestFirstSchedulerMixin, Scheduler)</code></td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:98</code></td>
+</tr>
+<tr>
+<td>★ Recompute preempt</td>
+<td><code>RecomputeScheduler.schedule</code> (offload vs recompute)</td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:307-398</code></td>
+</tr>
+<tr>
+<td>★ SJF + aging</td>
+<td><code>ShortRequestFirstRequestQueue._select_schedulable_queue</code></td>
+<td><code>vllm_ascend/core/short_request_first_scheduler.py:209</code></td>
+</tr>
+<tr>
+<td>★ Profile chunk</td>
+<td><code>ProfilingChunkScheduler.run_profiling_chunk_init</code></td>
+<td><code>vllm_ascend/core/scheduler_profiling_chunk.py:108</code></td>
+</tr>
+<tr>
+<td>★ Ascend output</td>
+<td><code>RecomputeSchedulerOutput</code></td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:93</code></td>
+</tr>
+<tr>
+<td>★ config pivot</td>
+<td><code>RecomputeSchedulerConfig.scheduler_cls</code></td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:59</code></td>
+</tr>
+<tr>
+<td>Ascend KV manager</td>
+<td><code>single_type_kv_cache_manager</code> (910/310P)</td>
+<td><code>vllm_ascend/core/single_type_kv_cache_manager.py</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-key-takeaways-for-an-inference-architect">8. Key takeaways for an inference architect</h2>
+<ol>
+<li>
+<p><strong>Paging is the universal hardware abstraction.</strong> Block-id metadata (<code>scheduler</code>) ↔ contiguous GPU KV tensor (<code>worker</code>) is the seam. Every hardware feature — swap, prefix cache, rolling sliding window, MLA compression, CP/TP sharding — is expressed as "a different <code>KVCacheSpec</code> + a different <code>SingleTypeKVCacheManager</code> + (sometimes) a custom attention backend", <em>not</em> a new scheduler. If you are porting vLLM to a new device, the budget equation is: implement <code>KVCacheSpec</code> (page bytes / quant / ragged), one <code>SingleTypeKVCacheManager</code>, and a paged-attention kernel that reads the two operand tensors (<code>block_tables</code>, <code>slot_mappings</code>). The 600-line <code>schedule()</code> loop is then inherited for free.</p>
+</li>
+<li>
+<p><strong>The block-pressure feedback loop is implicit but load-bearing.</strong> <code>num_gpu_blocks</code> comes from a real memory profile at engine init (<code>core.py:309</code>); per-step admission is gated by <code>allocate_slots</code> returning None. Watermarks (<code>scheduler_config.watermark</code>) + <code>full_sequence_must_fit</code> (<code>reserve_full_isl</code>) are the knobs that prevent over-admission + preemption thrash. When adding a device-specific admission policy, hook at <code>allocate_slots</code> args / <code>SchedulerOutput</code>, never inside the worker kernel path.</p>
+</li>
+<li>
+<p><strong>Continuous batching = one-token-budget loop, no phases.</strong> This is what lets vLLM mix chunked-prefill chunks with decodes in a single step. The policy knob surface (<code>max_num_scheduled_tokens</code>, <code>long_prefill_token_threshold</code>, <code>SchedulingPolicy</code>, waiting-lane selection) is deliberately narrow. The Ascend overlay shows exactly how much scheduling personality you can inject (recompute preemption, SJF-with-aging, profiling-chunk sizing, PD-proxy restore tokens) by subclassing <code>Scheduler</code> and publishing subclass-specific <em>output</em>, without touching the per-token loop or the paged-KV backing pool.</p>
+</li>
+<li>
+<p><strong>Extension points vs. stable surfaces.</strong> Stable across the stack: <code>SchedulerOutput</code> builder fields, <code>KVCacheBlocks</code> handoff, <code>BlockTables</code> operand layout, <code>KVCacheSpec.{page_size_bytes, max_num_blocks_per_req}</code>. Vendor-extensible: <code>Scheduler</code> subclass + <code>scheduler_cls</code>, <code>KVCacheSpec</code>/<code>SingleTypeKVCacheManager</code> via the registry, and the PD-proxy observed fields on <code>SchedulerOutput</code> subclasses. Ascend's recompute is the reference design for "customize preemption + admission, keep everything".</p>
+</li>
+</ol>
+<p><em>Sources reviewed (all absolute paths): <code>vllm/v1/core/sched/{scheduler,interface,output,request_queue,utils}.py</code>, <code>vllm/v1/core/{block_pool,kv_cache_manager,kv_cache_coordinator,single_type_kv_cache_manager,kv_cache_utils}.py</code>, <code>vllm/v1/{kv_cache_interface,kv_cache_spec_registry}.py</code>, <code>vllm/v1/engine/core.py</code>, <code>vllm/v1/worker/gpu/{block_table,model_runner,input_batch}.py</code>, <code>vllm/v1/worker/gpu_worker.py</code>, <code>vllm_ascend/core/{recompute_scheduler,short_request_first_scheduler,scheduler_profiling_chunk,single_type_kv_cache_manager,kv_cache_interface}.py</code>.</em></p></article>
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div></body></html>

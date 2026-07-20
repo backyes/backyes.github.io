@@ -1,0 +1,599 @@
+<!doctype html><html lang="head"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第一性原理 Ascend · vLLM Arch</title><link rel="stylesheet" href="report.css"></head>
+<body><div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>第一性原理 Ascend</h1><div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
+<article><h1 id="first-principles-anatomy-of-vllm-ascend">First-Principles Anatomy of vLLM-Ascend</h1>
+<blockquote>
+<p><strong>Audience</strong>: senior systems engineers, parallel-computing experts, AI algorithm researchers, inference architects.
+<strong>Method</strong>: derive every significant design in vLLM-Ascend from a physical or structural <em>constraint</em> — "what MUST change because the hardware is different, what CAN stay because the physics is the same, and what <em>pattern</em> resolves the tension." Each thesis states the first principle, derives the design, and quotes the pivot code that embodies it.
+<strong>Scope boundary</strong>: this file does NOT re-engineer the executor / engine-core / scheduler mechanism — that ground is covered exhaustively in <a href="agent1_engine_orchestration.md"><code>agent1_engine_orchestration.md</code></a> and <a href="agent2_scheduler_kvcache.md"><code>agent2_scheduler_kvcend.md</code></a>. It focuses on the <em>Ascend overlay</em>: the seams, substitutions, and invention on top of the upstream v1 core.</p>
+</blockquote>
+<hr />
+<h2 id="0-the-framing-question-porting-an-os-to-alien-silicon">0. The framing question: "porting an OS to alien silicon"</h2>
+<p>Running vLLM (a CUDA-native serving stack) on Huawei Ascend NPU is architecturally equivalent to porting an operating system to a new ISA that does not share the host's system-call ABI. The migration is NOT a translation of algorithms; it is a <strong>mapping of contracts</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Contract vLLM assumes</th>
+<th>Reality on Ascend (CANN)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Device id + memory stats (<code>nvml</code>)</td>
+<td>NPU device id + <code>torch.npu</code> runtime stats</td>
+</tr>
+<tr>
+<td>CUDA streams / events</td>
+<td><code>torch.npu.Stream</code> / <code>torch.npu.Event</code></td>
+</tr>
+<tr>
+<td>cuDNN / cuBLAS kernels</td>
+<td>CANN operators (<code>torch_npu.*</code>, ACL kernels)</td>
+</tr>
+<tr>
+<td>NCCL collective comms</td>
+<td>HCCL comms (<code>hccl*</code>)</td>
+</tr>
+<tr>
+<td>CUDA graph capture</td>
+<td>ACL graph capture / <code>npugraph_ex</code> / <code>torchair</code></td>
+</tr>
+<tr>
+<td><code>torch.compile</code> → CUDA graph backend</td>
+<td>FX graph → <code>torch.compile</code> → <code>AscendCompiler</code> → NPU backend</td>
+</tr>
+</tbody>
+</table>
+<p>The first-principles theses below walk this contract layer, in order of <em>physical necessity</em>.</p>
+<hr />
+<h2 id="1-the-cuda-compat-shim-present-the-alien-as-native">1. The CUDA-compat shim — "present the alien as native"</h2>
+<p><strong>First principle.</strong> vLLM's codebase — <code>Platform</code>, <code>Worker</code>, <code>ModelRunner</code>, the engine core, the executor, layout and quantization validation — is written against a CUDA-shaped world. <code>torch.cuda.*</code>, CUDA device ordinal semantics, <code>nvml</code>-based memory stats, <code>multi_processor_count</code>, and a CUDA-graph dispatcher are referenced from dozens of call sites. Rewriting all of them to be device-agnostic is a multi-year redesign. The constraint: <strong>an adapter must make the NPU <em>quack like a CUDA device</em> at every touchpoint vLLM already has, without rewriting vLLM's core.</strong></p>
+<p><strong>Derived design: <code>Platform</code> as a feature-complete shim.</strong> Ascend subclasses upstream <code>Platform</code> into <code>NPUPlatform</code> and overrides every hardware-touching method to map CUDA-style semantics onto <code>torch.npu</code> / CANN equivalents:</p>
+<pre><code class="language-python"># vllm_ascend/platform.py:128-139
+class NPUPlatform(Platform):
+    _enum = PlatformEnum.OOT
+    device_name: str = &quot;npu&quot;
+    device_type: str = &quot;npu&quot;
+    simple_compile_backend: str = &quot;eager&quot;  # Disable torch.compile()
+    ray_device_key: str = &quot;NPU&quot;
+    device_control_env_var: str = &quot;ASCEND_RT_VISIBLE_DEVICES&quot;
+    dispatch_key: str = &quot;PrivateUse1&quot;
+</code></pre>
+<p>This is the <em>dispatch key</em> declaration: tell PyTorch's dispatcher that "NPU" tensors belong to the <code>PrivateUse1</code> backend (the OOT-device slot PyTorch reserves), so the dispatcher routes NPU-operator kernels instead of CUDA ones. Everything downstream — <code>torch.compile</code> decomposition, FX graph capture — keys off <code>dispatch_key</code>.</p>
+<p>Where the shim maps cleanly, the override is a one-liner:</p>
+<pre><code class="language-python"># vllm_ascend/platform.py:263-265, 334-335, 843-850
+@classmethod
+def get_device_name(cls, device_id: int = 0) -&gt; str:
+    return torch.npu.get_device_name(device_id)
+
+@classmethod
+def set_device(cls, device: torch.device):
+    torch.npu.set_device(device)
+
+@classmethod
+def get_current_memory_usage(cls, device=None) -&gt; float:
+    torch.npu.reset_peak_memory_stats(device)
+    return torch.npu.max_memory_allocated(device)
+
+@classmethod
+def num_compute_units(cls, device_id: int = 0) -&gt; int:
+    # NPU analogue of CUDA multi_processor_count (SM count) → Cube Cores
+    cube_core_num = getattr(props, &quot;cube_core_num&quot;, None)   # :298-305
+</code></pre>
+<p>And the <strong>CUDA-graph-equivalent</strong> surface and the <strong>comms-backend</strong> surface are swapped by returning Ascend class <em>strings</em> (vLLM's plugin convention avoids importing heavy CANN modules at platform-bootstrap time):</p>
+<pre><code class="language-python"># vllm_ascend/platform.py:860-850
+@classmethod
+def get_static_graph_wrapper_cls(cls) -&gt; str:
+    return &quot;vllm_ascend.compilation.acl_graph.ACLGraphWrapper&quot;
+
+@classmethod
+def get_compile_backend(self) -&gt; str:
+    return &quot;vllm_ascend.compilation.compiler_interface.AscendCompiler&quot;
+
+@classmethod
+def get_device_communicator_cls(cls) -&gt; str:
+    return &quot;vllm_ascend.distributed.device_communicators.npu_communicator.NPUCommunicator&quot;
+
+@classmethod
+def get_attn_backend_cls(cls, selected_backend, attn_selector_config, num_heads=None):
+    backend_map = {
+        (True, False, False): &quot;...attention.mla_v1.AscendMLABackend&quot;,
+        (False, False, False): &quot;...attention.attention_v1.AscendAttentionBackend&quot;,
+        (True, True, False): &quot;...attention.sfa_v1.AscendSFABackend&quot;,
+        (True, False, True): &quot;...attention.dsa_v1.AscendDSABackend&quot;,
+    }   # :791-810
+</code></pre>
+<p><strong>Where the shim breaks down — the impedance mismatch cost.</strong> Not everything is swappable by a return-value override:</p>
+<ol>
+<li><strong><code>get_device_total_memory</code> is a <code>NotImplementedError</code></strong> (<code>platform.py:275-281</code>). Comment: <em>"DO NOT IMPLEMENT: Implementing it calls <code>get_device_name()</code> in advance and initializes torch_npu too early. <code>torch_npu</code> allows global initialization only once; duplicate initialization causes errors."</em> The memory-stats path is therefore owned by the worker's <code>determine_available_memory()</code> handshake, not the platform class.</li>
+<li><strong>CUDA graph capture cannot be emulated</strong> — it must be <em>reimplemented</em> as ACL-graph capture (Thesis 3).</li>
+<li><strong>The cudagraph-mode config</strong> carries the CUDA term in its name, so <code>check_and_update_config</code> (<code>platform.py:411-644</code>) rewrites it to NPU semantics: it injects Ascend's default capture shape (<code>min(max_num_seqs * decode_query_len, 512)</code>, <em>without</em> the CUDA-specific <code>* 2</code>, <code>_get_default_max_cudagraph_capture_size</code> :207-241), injects MLA/DSA into the <code>splitting_ops</code> list (<code>:572-577</code>), routes <code>worker_cls</code> to <code>NPUWorker</code> / <code>NPUWorker310</code> / <code>XliteWorker</code> (<code>:608-618</code>), and disables <code>ASCEND_LAUNCH_BLOCKING</code> under graph mode (`:594-606**).</li>
+</ol>
+<blockquote>
+<p><strong>Insight for the architect.</strong> The <code>Platform</code> subclass is clean IF — and only IF — the difference is <em>data</em> (device name, SM count, comms class string). The moment the difference is a <em>mechanism</em> (graph capture, graph-mode semantics, per-<code>CUDAGraphMode</code> branching logic), the shim has to <em>re-derive upstream policies inside <code>check_and_update_config</code></em>. That method is 230+ lines because Ascend's graph mode is NOT CUDA's graph mode with a renamed flag; the two diverge in capture shape, splitting ops, and dependency checks. The friction surface is the <code>CUDAGraphMode</code> enum itself — its name and state machine are CUDA-origin.</p>
+</blockquote>
+<hr />
+<h2 id="2-custom-ops-as-cann-kernel-substitution-the-5-hot-path-reimplemented">2. Custom ops as CANN kernel substitution — "the 5% hot path, reimplemented"</h2>
+<p><strong>First principle.</strong> Inference cost follows the same 95/5 rule on NPU as on GPU: a handful of ops (matmul / GEMM, attention score, MoE dispatch+combine, norm, rotary embedding, fused activation) dominate latency and memory. PyTorch's generic kernels are written for CUDA and run poorly or abort on the NPU. The constraint: <strong>the compute-intense 5% must be <em>CANN-native kernels</em>, not PyTorch/cuDNN fallbacks — but the remaining 95% (indexing, reshapes, sampling, bookkeeping) can stay generic.</strong></p>
+<p><strong>Derived design 1: the backfill-the-<code>torch.ops.vllm.*</code> registration.</strong> Ascend loads CANN custom ops into vLLM's private <code>torch.ops.vllm.*</code> namespace via <code>torch.library</code>, with <code>dispatch_key="PrivateUse1"</code> so the same call resolves to an NPU kernel when the tensor is NPU-located:</p>
+<pre><code class="language-python"># vllm_ascend/ops/linear.py:69-95
+direct_register_custom_op(
+    op_name=&quot;unquantized_gemm&quot;,
+    op_func=unquantized_gemm,
+    fake_impl=unquantized_gemm_fake,
+    mutates_args=[],
+    dispatch_key=&quot;PrivateUse1&quot;,
+)
+
+class AscendUnquantizedLinearMethod(UnquantizedLinearMethod):
+    def apply(self, layer, x, bias=None):
+        return torch.ops.vllm.unquantized_gemm(x, layer.weight, bias)   # :95
+</code></pre>
+<p>The rest of vLLM's <code>QuantizedLinearMethod.apply</code> calls are unchanged — they go through <code>quant_method.apply</code> → <code>torch.ops.vllm.*</code> and silently hit the CANN kernel. The "envy" property: from vLLM's perspective, the upstream quant-method API is intact; under the hood the GEMM is an NPU kernel.</p>
+<p><strong>Derived design 2: attention = thin metadata builder + native fused kernel.</strong> The thickest compute op, paged attention, is implemented by dropping a CANN fused-inference-attention kernel into the MLA/DSA/SFA backends:</p>
+<pre><code class="language-python"># vllm_ascend/attention/mla_v1.py:855-856
+torch.npu.graph_task_update_begin(update_stream, handle)
+torch_npu.npu_fused_infer_attention_score_v2.out(...)   # CANN fused kernel
+
+# vllm_ascend/attention/dsa_v1.py:1771
+qr, qr_pertoken_scale = torch.ops._C_ascend.npu_rms_norm_dynamic_quant(...)
+</code></pre>
+<p><strong>Derived design 3: the parallel-aware op hierarchy (<code>linear_op.py</code>).</strong> Ascend's tensor-parallel GEMM is not just <code>F.linear</code> + a comm; it is a <em>fused comm-compute pipeline</em> with Ascend-specific EP/OTP/MC2 network topologies. The <code>CustomLinearOp</code> class hierarchy (<code>linear_op.py:83-450</code>) models these as separate compute graphs:</p>
+<pre><code>CustomLinearOp
+ ├─ CustomColumnParallelOp (all-gather + gemm)
+ ├─ CustomRowParallelOp    (split + gemm + reduce-scatter)
+ │    ├─ MatmulAllreduceRowParallelOp        ← fused matmul+allreduce
+ │    ├─ Flashcomm2OProjRowParallelOp        ← fused all-gather + oproj + reduce-scatter
+ │    └─ DSV4OProjRowParallelOp              ← project -&gt; transpose -&gt; quant-bmm
+ └─ CustomReplicatedOp
+</code></pre>
+<p><code>MatmulAllreduceRowParallelOp</code> is the key innovation: a TP matmul whose partial-sum reduction is fused into one kernel. This matters because NPU inter-device bandwidth/latency characteristics reward kernel fusion more aggressively than typical GPU TP layouts.</p>
+<p><strong>Derived design 4: <code>register_custom_ops.py</code> — comm primitives as ops.</strong> Beyond GEMM, even the collective-comm building blocks are registered as custom ops:
+<code>_maybe_chunk_residual_impl</code>, <code>_maybe_all_gather_and_maybe_unpad_impl</code>, <code>_maybe_pad_and_reduce_impl</code>, <code>_matmul_and_reduce_impl</code> (<code>ops/register_custom_ops.py:22-165</code>). This lets <code>torch.compile</code> / ACL-graph capture consume comm ops as first-class graph nodes instead of opaque <code>dist.*</code> calls.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> The Ascend ops layer is <strong>not</strong> a swap of cuBLAS for a vendor BLAS. It is a <em>semi-rewiring of model topology</em> — <code>MatmulAllreduceRowParallelOp</code>, <code>Flashcomm2OProjRowParallelOp</code>, and NPU-specific attention kernels restructure the per-layer compute graph to match the NPU network fabric. The registration trick (<code>direct_register_custom_op</code> + <code>PrivateUse1</code>) is the <em>only</em> clean part; the topology rewrites are forced by network-fabric physics, not by vLLM's preference.</p>
+</blockquote>
+<hr />
+<h2 id="3-acl-graph-vs-cuda-graph-same-idea-different-capture">3. ACL graph vs CUDA graph — "same idea, different capture"</h2>
+<p><strong>First principle.</strong> A decode step is a fixed-shape, highly-repetitive computation graph — ideal for graph capture that amortizes kernel-launch overhead. CUDA graphs capture a stream of GPU kernels. The NPU has no CUDA. The constraint: <strong>the <em>motivation</em> for graph capture is hardware-universal (amortize launch cost), but the <em>capture mechanism</em> is hardware-specific and non-portable.</strong> Ascend cannot reuse vLLM's CUDA-graph dispatcher; it must re-implement "capture → key → replay".</p>
+<p><strong>Derived design: <code>ACLGraphWrapper</code> — same protocol, NPU capture.</strong> The wrapper implements exactly vLLM's FULL/PIECEWISE/NONE dispatch surface, but its capture/Replay primitives are <code>torch.npu.NPUGraph</code> and NPU streams:</p>
+<pre><code class="language-python"># vllm_ascend/compilation/acl_graph.py:165-202
+aclgraph = torch.npu.NPUGraph()
+with ExitStack() as stack:
+    if self.aclgraph_options.gc_disable:
+        stack.enter_context(patch(&quot;gc.collect&quot;, lambda: None))
+    forward_context.capturing = True
+    try:
+        with torch.npu.graph(aclgraph, pool=self.graph_pool):
+            output = self.runnable(*args, **kwargs)   # capture
+    except RuntimeError as exc:
+        if _is_old_hdk_capture_error(exc): ...
+        if _is_stream_resource_capture_error(exc): ...
+entry.aclgraph = aclgraph        # cache
+...
+# replay path
+entry.aclgraph.replay()
+</code></pre>
+<p>The same <code>BatchDescriptor → ACLGraphEntry</code> cache and "capture if absent, replay if present" dispatch that vLLM's <code>CUDAGraphWrapper</code> uses is reproduced here (<code>acl_graph.py:133-267</code>). The v2-only <code>ModelAclGraphManager(ModelCudaGraphManager)</code> (<code>worker/v2/aclgraph_utils.py:41</code>) subclasses the upstream CUDA-graph manager, so model-runner code dispatches through the same manager interface regardless of device.</p>
+<p><strong>Derived design: <code>AscendCompiler</code> — <code>torch.compile</code> to NPU-FX.</strong> For the <em>graph-compilation</em> direction (as opposed to direct capture), Ascend provides a <code>torch.compile</code> backend that converts PyTorch FX graphs to NPU-executable functions via <code>npugraph_ex</code> (preferred) or <code>torchair</code> (legacy):</p>
+<pre><code class="language-python"># vllm_ascend/compilation/compiler_interface.py:161-223
+import npugraph_ex as nge
+torch.npu.set_compile_mode(jit_compile=False)
+config = nge.CompilerConfig()
+backend = nge.get_npu_backend(compiler_config=config)
+compiled_fn = backend(graph, example_inputs)   # torchair fallback on ImportError
+</code></pre>
+<p><code>AscendCompiler(CompilerInterface)</code> (<code>:226-303</code>) exposes the <code>compile/load/compute_hash</code> contract vLLM's compilation pipeline expects, with a hash keyed on <code>torch_npu_version + enable_npugraph_ex + enable_static_kernel</code> so NPU-build caches are invalidated correctly — the upstream CUDA hash ignores these.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> Graph capture/non-capture is the biggest <em>semantic</em> divergence: CUDA and ACL graphs expose different capture constraints (NPU needs <code>ASCEND_LAUNCH_BLOCKING=0</code>, needs GC disabled <em>per-subgraph</em>, needs offloader-stream sync before capture, <code>acl_graph.py:167-219</code>). The wrapper faithfully reinstates the vLLM graph API on top of these non-portable primitives — another shim, but one that fully redraws the capture runtime.</p>
+</blockquote>
+<hr />
+<h2 id="4-hccl-replacing-nccl-kv-pd-disaggregation-the-comms-layer-swapped">4. HCCL replacing NCCL + KV PD disaggregation — "the comms layer, swapped"</h2>
+<p><strong>First principle.</strong> Distributed TP/EP/PP inference needs <code>all-reduce</code>, <code>all-gather</code>, <code>all-to-all</code>, <code>p2p</code>. NCCL is NVIDIA-only. The constraint: <strong>the <em>collective interface</em> is universal; the <em>backend implementation</em> is vendor-specific and non-portable.</strong> Ascend therefore must provide an HCCL backend that matches the same rank/group/dtype/stream contract vLLM's communicators were written against.</p>
+<p><strong>Derived design 1: <code>PyHcclCommunicator</code> — HCCL via ctypes, NCCL-shaped API.</strong> This is the low-level NCCL-shaped binding: it creates an HCCL comm, exchanges <code>hcclUniqueId</code> via TCP/gloo, then issues <code>hcclAllReduce</code>/<code>hcclBroadcast</code> against that comm:</p>
+<pre><code class="language-python"># vllm_ascend/distributed/device_communicators/pyhccl.py:77-152
+self.hccl = HCCLLibrary(library_path)
+with torch.npu.device(device):
+    self.comm = self.hccl.hcclCommInitRank(self.world_size, self.unique_id, self.rank)
+    # warmup
+    self.all_reduce(data); stream.synchronize()
+
+def all_reduce(self, in_tensor, op=ReduceOp.SUM, stream=None):
+    self.hccl.hcclAllReduce(
+        buffer_type(in_tensor.data_ptr()), buffer_type(out_tensor.data_ptr()),
+        in_tensor.numel(), hcclDataTypeEnum.from_torch(in_tensor.dtype),
+        hcclRedOpTypeEnum.from_torch(op), self.comm,
+        aclrtStream_t(stream.npu_stream))              # :130-153
+</code></pre>
+<p>The <code>device_identity</code> assertion (<code>assert in_tensor.device == self.device</code>, "illegal memory access", <code>:134-138</code>) is the NPU version of NCCL's device-binding contract — HCCL comms are bound to a specific NPU and do not silently memcpy across devices.</p>
+<p><strong>Derived design 2: <code>NPUCommunicator</code> — drop-in replacement for <code>CudaCommunicator</code>.</strong> At the vLLM-communicator level, <code>NPUCommunicator(DeviceCommunicatorBase)</code> reuses upstream's gloo CPU groups for control, initializes <code>self.device = torch.npu.current_device()</code>, exposes the same <code>all_to_all</code> / <code>all_gather</code> / <code>all_reduce</code> interface, and adds Ascend-specific <code>_NpuAll2AllManager</code> fault tolerance (<code>npu_communicator.py:40-86</code>). Only <code>get_device_communicator_cls → "....NPUCommunicator"</code> (<code>platform.py:849</code>) differs from a CUDA install.</p>
+<p><strong>Derived design 3: KV PD disaggregation — Mooncake RDMA connector.</strong> Beyond 1:1 backend replacement, Ascend adds a first-party <strong>prefill-decode (PD) disaggregation</strong> transport via the Mooncake transfer engine — an RDMA-based KV-prefetch path. <code>MooncakeLayerwiseConnector(KVConnectorBase_V1, SupportsHMA)</code> is a clean-V1-style connector that implements the scheduler/worker KV-connector contract and shuttles KV between prefill-workers and decode-workers:</p>
+<pre><code class="language-python"># vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_transfer_engine.py:11-29
+from mooncake.engine import TransferEngine
+self.transfer_engine = TransferEngine()
+ret = self.transfer_engine.initialize(hostname, &quot;P2PHANDSHAKE&quot;, &quot;ascend&quot;, device_name)
+def register_buffer(self, ptrs, sizes):
+    self.transfer_engine.register_memory(ptr, size)
+
+# connector (mooncake_layerwise_connector.py:697)
+class MooncakeLayerwiseConnector(KVConnectorBase_V1, SupportsHMA):
+    # get_num_new_matched_tokens / start_load_kv / wait_for_layer_load / save_kv_layer
+</code></pre>
+<p>The layerwise variant pipelines KV transfer <em>layer-at-a-time</em> with the forward pass (<code>wait_for_layer_load</code>, <code>save_kv_layer</code>), overlapping transfer and compute — the same technique DeepSeek's PD serving papers advocate.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> HCCL-for-NCCL is <em>forced and mechanical</em>. Mooncake is <strong>original IP</strong> — Ascend's answer to the PD-disaggregated serving trend, built on the CANN-pluggable <code>KVConnectorBase_V1</code> interface. That the Mooncake connector slots in via the <em>upstream KV-connector contract</em> (not a forked scheduler or engine) is the second proof-point (after the scheduler) that vLLM's connector abstraction is the right seam for disaggregated serving.</p>
+</blockquote>
+<hr />
+<h2 id="5-the-patch-layer-surgical-extension-where-subclassing-fails">5. The patch layer — "surgical extension where subclassing fails"</h2>
+<p><strong>First principle.</strong> Not all of vLLM's hot paths go through clean virtual-method hooks. Some critical behaviors live in <strong>module-level functions</strong> (not classes) or inside methods with no override point, or in package-<code>__init__</code> bindings that model code imports <em>before</em> any subclass runs. The constraint: <strong>you cannot override what isn't a method; you cannot substitute what is imported by name elsewhere.</strong></p>
+<p><strong>Derived design: import-time monkey-patching, partitioned into global vs. worker scope.</strong> <code>utils.adapt_patch(is_global_patch=...)</code> selectively imports patch modules, and importing them executes top-level code that <em>rebinds module attributes</em>:</p>
+<pre><code class="language-python"># vllm_ascend/utils.py:537-541
+def adapt_patch(is_global_patch: bool = False):
+    if is_global_patch:
+        from vllm_ascend.patch import platform   # noqa: F401  — scheduler/engine side
+    else:
+        from vllm_ascend.patch import worker      # noqa: F401  — device-worker side
+</code></pre>
+<p><strong>Canonical example — patching a factory function, not a class.</strong> <code>vllm.model_executor.layers.fused_moe.FusedMoE</code> is a <em>factory function</em>, not a class. Models do <code>from ...fused_moe import FusedMoE; FusedMoE(...)</code>. You cannot subclass a function; you rebind it:</p>
+<pre><code class="language-python"># vllm_ascend/patch/platform/patch_fused_moe.py:56-58
+def _ascend_FusedMoE(*args, runner_cls=None, runner_args=None, **kwargs):
+    if runner_cls is None:
+        runner_cls = _DefaultAscendMoERunner     # AscendMoERunner310 on 310P
+    kwargs.pop(&quot;hash&quot;, None)
+    return _original_FusedMoE(*args, runner_cls=runner_cls, runner_args=runner_args, **kwargs)
+
+_fused_moe_layer.FusedMoE = _ascend_FusedMoE
+_fused_moe_pkg.FusedMoE = _ascend_FusedMoE          # rebind both before model import
+</code></pre>
+<p>The file header comment (<code>:19-28</code>) documents the <em>ordering constraint</em>: patches must fire in worker init (<code>adapt_patch</code>) BEFORE <code>from vllm_ascend import ops</code> and BEFORE model import, or the rebound <code>FusedMoE</code> binding won't hold. This is the brittleness.</p>
+<p><strong>Canonical example 2 — patching a dispatcher method.</strong> ACL capture shapes require a NPU-specific padding rule, so <code>CudagraphDispatcher._create_padded_batch_descriptor</code> is replaced wholesale:</p>
+<pre><code class="language-python"># vllm_ascend/patch/worker/patch_cudagraph.py:29-38
+return BatchDescriptor(num_tokens=num_tokens_padded, num_reqs=num_reqs,
+                      uniform=uniform_decode, has_lora=has_lora, num_active_loras=...)
+CudagraphDispatcher._create_padded_batch_descriptor = _create_padded_batch_descriptor
+</code></pre>
+<p><strong>Scale of the patch surface.</strong> The patch tree has ~50 files covering <code>patch/platform/*</code> (scheduler/engine-side: fused_moe, kv_cache_coordinator, distributed, mamba_config, profiling_chunk, mtp, …) and <code>patch/worker/*</code> (device-worker-side: cudagraph, deepseek_v2, fused_moe, triton, qwen3, weight utils, …). This is the <em>largest</em> subsystem in volume and the most frequent source of breakage across v0→v1 migrations.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> The patch layer is a <em>revelation of vLLM's missing extension points</em>. Where a clean virtual method exists, Ascend subclasses (<code>NPUModelRunner(GPUModelRunner)</code>, <code>NPUPlatform(Platform)</code>). Where only a free function or a non-overridable internal exists, Ascend must patch. Each patch is a small time-bomb: the upstream symbol it rebinds may move, rename, or be inlined in the next release. The v0→v1 migration evidently broke many (<code>patch/worker/patch_v2/</code> has its own sub-tree). <strong>This is the adaptation-community's core technical debt</strong>, and the most actionable feedback item for upstream: convert the patched free functions into overridable methods.</p>
+</blockquote>
+<hr />
+<h2 id="6-ascendscheduler-the-scheduler-as-an-extension-point">6. AscendScheduler — "the scheduler as an extension point"</h2>
+<p><strong>First principle.</strong> Scheduling policy (preemption semantics, admission order, chunk sizing) is <strong>not</strong> physically forced — it is an <em>optimization choice</em> over the same universal paging/KV-cache abstraction. The constraint: <strong>vLLM's scheduler already exposes a <code>Scheduler</code> class and a <code>SchedulerOutput</code> data contract; a new device should be able to change policy without touching the loop.</strong></p>
+<p><strong>Derived design: subclass + config-string pivot.</strong> Ascend injects its scheduler by overriding the <em>class string</em> that the engine core builds:</p>
+<pre><code class="language-python"># vllm_ascend/core/recompute_scheduler.py:58-75
+@dataclass
+class RecomputeSchedulerConfig(SchedulerConfig):
+    scheduler_cls: str | type[object] = &quot;vllm_ascend.core.recompute_scheduler.RecomputeScheduler&quot;
+
+    @classmethod
+    def initialize_from_config(cls, vllm_config):
+        if vllm_scheduler_config.async_scheduling:
+            scheduler_config[&quot;scheduler_cls&quot;] = &quot;...AsyncRecomputeScheduler&quot;
+        else:
+            scheduler_config[&quot;scheduler_cls&quot;] = &quot;...RecomputeScheduler&quot;
+</code></pre>
+<p><code>RecomputeScheduler(ShortRequestFirstSchedulerMixin, Scheduler)</code> (<code>:98</code>) subclasses upstream <code>Scheduler</code> directly. The extension surface is threefold:
+1. <strong>Recompute preemption</strong> — on Ascend, a preempted request can either free+recompute (emit <code>RecomputeReqInfo</code> so the PD-proxy replays already-sampled output) or offload-KV-and-preserve (<code>PreemptedRequestData</code> + connector <code>update_state_before_preempt</code>, <code>recompute_scheduler.py:307-398</code>). This replaces upstream's "free and re-prefill" with two device-conscious alternatives.
+2. <strong>SJF-with-aging waiting queue</strong> — <code>ShortRequestFirstSchedulerMixin</code> + <code>ShortRequestFirstRequestQueue</code> (immediate / short / long lanes, promote long after <code>long_max_wait_ms</code>, <code>short_request_first_scheduler.py:209</code>), optimizing NPU's memory-bandwidth-vs-compute ratio for short requests.
+3. <strong>Profiling-based chunk sizing</strong> — <code>ProfilingChunkScheduler</code> (<code>scheduler_profiling_chunk.py:108</code>) runs real forward passes at startup to fit a quadratic chunk-latency model instead of the static upstream <code>long_prefill_token_threshold</code>.
+4. <strong>Output contract extension</strong> — <code>RecomputeSchedulerOutput(SchedulerOutput)</code> (<code>:93</code>) adds <code>preempted_reqs</code> and <code>recomputed_reqs</code> lists; upstream's 600-line <code>schedule()</code> loop, the paged-KV pool, and the block-table operand path are reused verbatim.</p>
+<p>The config pivot also includes two more optional adapters: <code>ShortRequestFirstConfig</code> (<code>ascend_config.py:821</code>) and <code>ProfilingChunkConfig</code> (<code>:647</code>), both default-off and injected through <code>AscendConfig.check_and_update_config</code>.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> This is the <strong>cleanest</strong> Ascend extension and the strongest argument that <code>Scheduler</code> + <code>SchedulerConfig.scheduler_cls</code> was the right abstraction. Ascend rewrote the <em>preemption semantics</em> (recompute/offload), the <em>waiting-order policy</em> (SJF+aging), and the <em>chunk-sizing policy</em> (profiling), while inheriting 100% of the per-token loop, paged-KV path, and block-table/slot-mapping backend. This is the template any accelerator-specific scheduler should follow: <strong>subclass <code>Scheduler</code>, publish subclass-specific fields on <code>SchedulerOutput</code>, never touch the loop or the kernel.</strong></p>
+</blockquote>
+<hr />
+<h2 id="7-eplb-ascends-original-combinatorial-contribution">7. EPLB — "Ascend's original combinatorial contribution"</h2>
+<p><strong>First principle.</strong> In MoE expert-parallel serving under skewed expert routing, <em>static</em> expert-to-device assignment causes severe load imbalance → devices idle waiting for the hottest expert. The constraint: <strong>expert placement is a combinatorial optimization; static assignment is optimal only when routing is uniform.</strong> This is not device-specific — it's a property of MoE + EP — but the <em>solution</em> lives in the serving system, not the model, and Huawei contributed it back.</p>
+<p><strong>Derived design: offline-process rebalance + online D2D weight migration.</strong> <code>EplbUpdator</code> (<code>eplb/eplb_updator.py</code>) runs a dedicated <code>EplbProcess</code> (<code>:29-212</code>) that eats a <code>moe_load</code> tensor, calls a pluggable <code>EplbPolicy.rebalance_experts</code> (<code>policy/policy_random.py:12</code>), and produces an updated expert map. Across training iterations, the updator interleaves three phases gated by a shared memory dict:</p>
+<pre><code class="language-python"># eplm_updator.py:129-152, 79-89
+def forward_before(self):
+    if self.get_update_info_flag():
+        self.update_info_all = self.eplb_process.block_update_q.get()
+    if self.update_expert_weight_flag():
+        (expert_send_info, expert_recv_info, updated_expert_map, ...) = self.update_info_all.pop(0)
+        self.eplb_loader.generate_expert_d2d_transfer_task(...)  # P2P copy plan
+        self.eplb_loader.asyn_expert_weight_transfer(self.reqs)   # async D2D weight move
+
+def compute_and_set_moe_load(self):
+    local_load = self.adaptor.get_rank_expert_workload().unsqueeze(1)
+    moe_load = self.comm_group.all_gather(local_load, dim=1).cpu()
+    self.shared_dict[&quot;moe_load&quot;] = moe_load              # feed the planner process
+</code></pre>
+<p>The cycle: <strong>(1)</strong> <code>expert_heat_collection_interval</code> iterations of workload accumulation → <strong>(2)</strong> wake planner, run policy → <strong>(3)</strong> per-layer async device-to-device expert-weight migration (<code>D2DExpertWeightLoader.update_expert_map_and_weight</code>, <code>core/eplb_device_transfer_loader.py:32</code>) → reset. <code>warm_up_eplb</code> (<code>:157-183</code>) does an all-rank P2P handshake to calibrate. A multi-stage variant (<code>eplb_policy_type==3</code>) is supported (<code>:35,149</code>).</p>
+<p>The file's header Todo (<code>:16</code>) says <em>"Once https://github.com/vllm-project/vllm/issues/22246 is merged in vllm, remove this updator"</em> — acknowledging EPLB is <em>intended</em> to be upstreamed as an official vLLM mechanism, but Ascend needed it now rather than later.</p>
+<blockquote>
+<p><strong>Insight for the architect.</strong> EPLB is <strong>ascend's clearest original-IP block</strong> and the only subsystem here not forced by "the hardware is different"; it is forced by "MoE+EP+skew is a universal serving problem". The threaded-process + shared-dict + async-D2D design is portable to GPU serving as well — it is <em>notan NPU-specific trick</em>. For inference architects, EPLB's lesson is: <strong>expert load balancing is a systems problem, and the unit of rebalance is expert-by-expert weight migration, implemented as async D2P2P copies interleaved with the forward pass.</strong></p>
+</blockquote>
+<hr />
+<h2 id="8-plugin-registration-how-ascend-injects-itself-without-modifying-vllms-core-imports">8. Plugin registration — "how Ascend injects itself without modifying vLLM's core imports"</h2>
+<p><strong>First principle.</strong> vLLM is a library, not a monolith; its core intentionally never <code>import</code>s an accelerator name. The constraint: <strong>the adapter must inject itself at well-defined lifecycle hooks — platform, model, connector, weight engine, forward context — without rewriting vLLM's import graph.</strong> The hook contract is vLLM's plugin entry-point functions.</p>
+<p><strong>Derived design: five <code>register_*</code> entry points, each behind <code>_ensure_global_patch</code>.</strong> <code>vllm_ascend/__init__.py</code> exposes the exact functions vLLM's plugin loader calls:</p>
+<pre><code class="language-python"># vllm_ascend/__init__.py:32-83
+def register():
+    &quot;&quot;&quot;Register the NPU platform.&quot;&quot;&quot;
+    return &quot;vllm_ascend.platform.NPUPlatform&quot;
+
+def register_connector():
+    _ensure_global_patch()               # apply global (scheduler/engine) patches first
+    from vllm_ascend.distributed.kv_transfer import register_connector
+    from vllm_ascend.distributed.weight_transfer import register_engine
+    register_connector(); register_engine()
+
+def register_model_loader(): ...        # netloader + rforkloader
+def register_service_profiling(): ...    # generate_service_profiling_config
+def register_model():
+    install_hunyuan_vl_processor_compat()
+    from .models import register_model; register_model()
+</code></pre>
+<p>The <code>_ensure_global_patch()</code> guard (<code>:12-30</code>) matters: vLLM loads general plugins in <em>engine-core subprocesses</em>, where the e2e-test <code>conftest</code> hooks do NOT run. So global patches that affect scheduler/engine code must be re-applied here. <code>register()</code> is intentionally side-effect-free (returns only the platform string) — it runs before <code>torch_npu</code> is safe to initialize. All side-effectful setup is deferred to <code>register_connector</code> / <code>register_model</code>.</p>
+<p><strong>Derived design 2: model registration via <code>ModelRegistry</code>.</strong> <code>vllm_ascend/models/__init__.py</code> maps HuggingFace model-name strings to Ascend model classes through vLLM's <code>ModelRegistry</code>:</p>
+<pre><code class="language-python"># vllm_ascend/models/__init__.py:4-8
+from vllm import ModelRegistry
+def register_model():
+    ModelRegistry.register_model(&quot;DeepseekV4ForCausalLM&quot;,
+                                &quot;vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM&quot;)
+    ModelRegistry.register_model(&quot;DeepSeekV4MTPModel&quot;,
+                                &quot;vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP&quot;)
+</code></pre>
+<p><strong>Derived design 3: Python-side <code>meta</code> impls for <code>torch.compile</code>/<code>tracing</code>.</strong> <code>meta_registration.py</code> registers shape-inference ("meta") implementations of CANN custom ops into <code>torch.library("_C_ascend")</code> so that <code>torch.compile</code> and ACL-graph tracing can run without real tensors — only the <code>impl(...)</code> functions need live NPU kernels:</p>
+<pre><code class="language-python"># vllm_ascend/meta_registration.py:17-33
+lib = Library(&quot;_C_ascend&quot;, &quot;IMPL&quot;)
+def register_meta_if_necessary(ns, op_name, fn, overload=&quot;&quot;):
+    schema_to_find = ns + &quot;::&quot; + op_name
+    if schema_to_find in torch._C._dispatch_get_registrations_for_dispatch_key(&quot;Meta&quot;):
+        return
+    lib.impl(op_name, fn, &quot;Meta&quot;)          # enables tracing/export/shape-inference
+</code></pre>
+<blockquote>
+<p><strong>Insight for the architect.</strong> The registration path is layered in the right order: <strong>platform → (patch + connect) → model loader → model → compile-meta</strong>, with a single <code>_ensure_global_patch</code> barrier sequencing the global-vs-worker split. The reliance on <code>def register() -&gt; "ClassName"</code> (a string-returning entry point) is the key decoupling mechanism: vLLM's plugin loader gets a locator without importing CANN. The cost: every new Ascend capability must be wired into <em>one</em> of these five <code>register_*</code> functions plus (if it needs a vLLM entry point) an override in <code>NPUPlatform</code>. A capability that doesn't fit any of the five — e.g. a new MoE preemption behavior — falls back to the patch layer (Thesis 5).</p>
+</blockquote>
+<hr />
+<h2 id="9-xlite-the-third-graph-runtime-a-design-observation">9. Xlite — "the third graph runtime" (a design observation)</h2>
+<p>Ascend ships a <strong>third</strong> inference path beyond eager + ACL graph: <code>xlite</code>. <code>XliteModelRunner(NPUModelRunner)</code> (<code>xlite/xlite_model_runner.py:25</code>) and <code>XliteWorker(NPUWorker)</code> (<code>xlite/xlite_worker.py:22</code>) swap the model for a whole-program Xlite-compiled graph at <code>load_model</code> time:</p>
+<pre><code class="language-python"># xlite/xlite_model_runner.py:32-36
+def load_model(self):
+    from vllm_ascend.xlite.xlite import XliteWrapper
+    super().load_model()
+    self.model = self.xlite_model = XliteWrapper(self.model, self.vllm_config, device=self.device)
+</code></pre>
+<p>This implements the openEuler GVirt <a href="https://atomgit.com/openeuler/GVirt/tree/master/xlite"><code>Xlite</code></a> graph runtime. It is gated by <code>ascend_config.xlite_graph_config.enabled</code> (<code>check_and_update_config</code> platforms the <code>worker_cls</code> to <code>XliteWorker</code> at <code>:614-617</code>) and only hooks <code>get_model</code> / <code>load_model</code> / <code>initialize_kv_cache</code> — the upstream <code>ModelRunner</code> contract is otherwise untouched. This is an experiment in a "program-whole" graph backend alongside vLLM's native piecewise/Full ACL graph and <code>torch.compile</code>-via-AscendCompiler paths. It illustrates that Ascend treats the <em>runner</em> as the unit of inference-runtime-swappability.</p>
+<blockquote>
+<p><strong>Observation.</strong> Ascend therefore ships <em>three</em> parallel inference runtimes (eager, piecewise/full ACL graph, Xlite whole-program graph) behind one <code>NPUModelRunner</code>-derived hierarchy. This is a lot of runtime diversity; it exists because no single NPU graph backend dominates across all models and batch regimes on Ascend. For an architect this is a warning surface: every runtime has its own compile cache, warmup, and dispatch code path, and the selection happens via builder config rather than auto-tuned.</p>
+</blockquote>
+<hr />
+<h2 id="10-design-insights-for-an-inference-architect">10. Design insights for an inference architect</h2>
+<h3 id="101-what-is-physically-forced-vs-what-is-a-design-choice">10.1 What is physically forced vs. what is a design choice</h3>
+<table>
+<thead>
+<tr>
+<th>Necessity class</th>
+<th>Subsystem</th>
+<th>Why</th>
+<th>Category</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>(1) Platform + memory stats</strong></td>
+<td><code>NPUPlatform</code>, <code>set_device</code>, <code>get_current_memory_usage</code>, <code>num_compute_units</code></td>
+<td>vLLM's <code>Platform</code>/<code>ModelRunner</code> reference <code>torch.cuda.*</code> thermodynamics</td>
+<td><strong>FORCED</strong> by CUDA-isms</td>
+</tr>
+<tr>
+<td><strong>(2) Custom ops</strong></td>
+<td><code>ops/linear.py</code>, <code>ops/fused_moe/*</code>, <code>ops/layernorm.py</code>, <code>ops/rotary_embedding.py</code></td>
+<td>Generic PyTorch/CUDA kernels run poorly on NPU</td>
+<td><strong>FORCED</strong> by CANN kernel gap</td>
+</tr>
+<tr>
+<td><strong>(3) Attention backends</strong></td>
+<td><code>attention/{mla_v1,sfa_v1,dsa_v1,fa3_v1}.py</code></td>
+<td>MLA/DSA/SFA fused-kernel paths are required for the top models</td>
+<td><strong>FORCED</strong></td>
+</tr>
+<tr>
+<td><strong>(4) Comms backend</strong></td>
+<td><code>PyHcclCommunicator</code>, <code>NPUCommunicator</code>, <code>pyhccl_wrapper.py</code></td>
+<td>No NCCL on NPU</td>
+<td><strong>FORCED</strong></td>
+</tr>
+<tr>
+<td><strong>(5) Graph capture</strong></td>
+<td><code>acl_graph.py</code>, <code>npugraph_ex_compile</code>, <code>AscendCompiler</code></td>
+<td>NPU has no CUDA-graph</td>
+<td><strong>FORCED</strong></td>
+</tr>
+<tr>
+<td><strong>(6) Scheduler</strong></td>
+<td><code>RecomputeScheduler</code>, <code>ShortRequestFirstSchedulerMixin</code>, <code>ProfilingChunkScheduler</code></td>
+<td>NPU favors recompute + SJF + profiled chunks</td>
+<td><strong>CHOICE</strong> (high-value)</td>
+</tr>
+<tr>
+<td><strong>(7) EPLB</strong></td>
+<td><code>eplb/*</code></td>
+<td>MoE EP skew under static placement</td>
+<td><strong>CHOICE</strong> (original IP)</td>
+</tr>
+<tr>
+<td><strong>(8) PD disaggregation</strong></td>
+<td><code>mooncake_*.py</code>, <code>layerwise_connector</code></td>
+<td>Disaggregated PD serving trend</td>
+<td><strong>CHOICE</strong> (original IP)</td>
+</tr>
+<tr>
+<td><strong>(9) Patch layer</strong></td>
+<td><code>patch/**</code></td>
+<td>vLLMissing extension points</td>
+<td><strong>COST</strong> of misaligned seam</td>
+</tr>
+</tbody>
+</table>
+<p>The "forced" half (1-5) is the unavoidable tax of non-CUDA hardware. The "choice" half (6-8) is Ascend's <em>original IP</em> — the adaptations that would improve GPU serving too. The patch layer (9) is the <em>debt</em>.</p>
+<h3 id="102-the-adaptation-surface-ranked-by-first-principle-necessity">10.2 The "adaptation surface" ranked by first-principle necessity</h3>
+<ol>
+<li><strong><code>Platform</code> subclass + <code>dispatch_key</code></strong> — single mandatory root; all downstream dispatch keys off it (<code>PrivateUse1</code>).</li>
+<li><strong>CANN custom-ops registry</strong> (<code>ops/**</code>) without which the hot path is unusable.</li>
+<li><strong>ACL-graph capture / <code>AscendCompiler</code></strong> — without real graph reuse, decode throughput collapses.</li>
+<li><strong>HCCL communicator</strong> — without it, TP/EP/PP do not work.</li>
+<li><strong>One <code>AttentionImpl</code> per attention variant</strong> (MLA/DSA/SFA/FA3) — without model-specific kernels, DeepSeek/Qwen models don't run well.</li>
+<li><strong><code>KVCacheSpec</code> + <code>SingleTypeKVCacheManager</code></strong> (per-platform KV layer, <code>core/kv_cache_interface.py</code>) — slots through the existing registry, does not disturb scheduler.</li>
+<li><strong><code>Scheduler</code> subclass + <code>SchedulerOutput</code> extension</strong> — the template for accelerator scheduling.</li>
+<li><strong><code>KVConnectorBase_V1</code> (Mooncake)</strong> — the template for disaggregated serving.</li>
+<li><strong><code>EplbUpdator</code> + process-per-rebalance</strong> — the template for MoE load balancing.</li>
+<li><strong>Patches</strong> — the residual when (1-9) don't reach.</li>
+</ol>
+<h3 id="103-what-this-teaches-about-vllms-architecture-quality">10.3 What this teaches about vLLM's architecture quality</h3>
+<p><strong>Where vLLM's abstractions ENABLE clean extension:</strong>
+- <code>Platform</code> as pure-data shim (name/UUID/memory/comms-class strings) — clean swap for the easy half.
+- <code>AttentionBackend</code> registry keyed on <code>(use_mla, use_sparse, use_compress)</code> — <code>NPUPlatform.get_attn_backend_cls</code> (<code>:784-810</code>) is a <em>configuration table</em>, not a conditional tree that touches core.
+- <code>Scheduler</code> + <code>SchedulerConfig.scheduler_cls</code> string pivot — RecomputeScheduler proves you can rewrite preemption, admission order, <em>and</em> chunk sizing while inheriting 100% of the paged-KV path and the 600-line <code>schedule()</code> loop.
+- <code>KVCacheSpec</code> + <code>KVCacheSpecRegistry</code> + <code>SingleTypeKVCacheManager</code> — per-platform KV specs (MLA compression, 910/310P differences) plug in <em>without touching the scheduler</em>.
+- <code>KVConnectorBase_V1</code> — Mooncake shows a brand-new PD-disaggregated transport slots into the <em>scheduler/worker/connector</em> contract without a forked engine.</p>
+<p><strong>Where vLLM's abstractions FORCE brittle workarounds (the patch layer):</strong>
+- Free functions imported as names (<code>FusedMoE</code>, dispatcher methods) can't be subclassed → <code>patch_fused_moe.py</code>, <code>patch_cudagraph.py</code>, and ~50 siblings.
+- <code>CUDAGraphMode</code> enum carries CUDA semantics in its state names <em>and</em> in its size rules (CUDA's <code>* 2</code>, CUDA's padding logic) → over half of <code>check_and_update_config</code> is re-deriving NPU graph rules.
+- Warmup/compile paths shared between CUDA and ACL graphs → <code>patch_cudagraph.py</code>, <code>patch_triton.py</code>, <code>patch_npugraph_ex_triton.py</code> patch at the warmup level.</p>
+<h3 id="104-recommendations-how-vllm-could-better-support-non-nvidia-hardware">10.4 Recommendations: how vLLM could better support non-NVIDIA hardware</h3>
+<ol>
+<li>
+<p><strong>Convert patched free functions into overridable methods.</strong> The single highest-leverage change is to make <code>FusedMoE</code> a class (or an injectable factory) in upstream vLLM, and to make <code>CudagraphDispatcher._create_padded_batch_descriptor</code> a virtual method — each such change deletes an entire Ascend patch file.</p>
+</li>
+<li>
+<p><strong>A formal ops registry / vendor-ops contract.</strong> Today custom ops are registered via <code>direct_register_custom_op</code> + <code>dispatch_key="PrivateUse1"</code>, but the discovery between "Ascend wants a fused MLA kernel here" and "the model's attention layer wants <code>torch.ops.vllm.mla_forward</code>" is still positional. A <code>vllm.attention</code> / <code>vllm.ops</code> vendor registry (analogous to <code>KVCacheSpecRegistry</code>) would let Ascend publish "MLA → AscendMLAImpl" without touching <code>NPUPlatform.get_attn_backend_cls</code>.</p>
+</li>
+<li>
+<p><strong>A comms abstraction layer.</strong> <code>NPUCommunicator(DeviceCommunicatorBase)</code> works, but every layer above it (EPLB's <code>comm_group.all_gather</code>, <code>PyHcclCommunicator</code>'s device-binding assertions, flashcomm2/MLP TP groups) re-implements bandwidth/latency-conscious logic that upstream only provides via NCCL tunables. A <code>DeviceCommunicator</code> extension that exposes "fused matmul+reduce" and "fused all-gather+proj" primitives would <em>eliminate the entire <code>CustomLinearOp</code> hierarchy</em> (Thesis 2 design 3).</p>
+</li>
+<li>
+<p><strong>Rename / device-neutralize <code>CUDAGraphMode</code>.</strong> Replace the CUDA-named enum with a device-neutral <code>CaptureMode { NONE, FULL, PIECEWISE }</code> and push the CUDA-specific padding <code>* 2</code> rule into the CUDA platform. Then <code>ACLGraphWrapper</code> subclasses the same dispatcher as <code>CUDAGraphWrapper</code>, and <code>check_and_update_config</code>'s 230-line NPU branch collapses to a handful of overrides.</p>
+</li>
+<li>
+<p><strong>Treat "scheduler preemption policy" as a first-class plugin</strong> rather than a <code>Scheduler</code> subclass authored per silicon. Today <code>RecomputeScheduler</code> wrestles with the states <code>PREEMPTED</code>, <code>recomputed_reqs</code>, <code>offloaded</code>; a <code>PreemptionPlugin</code> hook inside the existing <code>Scheduler</code> would let Ascend ship its recompute/offload logic without a parallel <code>Scheduler</code> class.</p>
+</li>
+<li>
+<p><strong>Upstream EPLB + moonsault PD.</strong> Both EPLB (<code>eplb_updator.py:16</code>) and Mooncake PD disaggregation are intended for upstream (the former explicitly references vllm-project PR #22246). Doing so is the single biggest lever to reduce Ascend's patch surface: the patches around <code>patch_deepseek_mtp.py</code>, <code>patch_use_v2_model_runner.py</code>, and <code>patch_recompute_sampler.py</code> exist in part because these innovations can't yet slot into the public engine.</p>
+</li>
+</ol>
+<h3 id="105-one-sentence-design-principles-for-porting-inference-engines-to-a-new-device">10.5 One-sentence design principles for porting inference engines to a new device</h3>
+<ul>
+<li><strong>The OS-port analogy holds</strong>: emulate the host's ABI at the seams (<code>Platform</code>, <code>DeviceCommunicator</code>, custom-ops registry), capture/replace the kernel layer (ACL graph, <code>AscendCompiler</code>), innovate on policy only where the old device's physics were <em>suboptimal</em>, not where they were <em>wrong</em> (RecomputeScheduler, EPLB, Mooncake).</li>
+<li><strong>Every patch file is a missing extension point; every subclass is a well-designed seam.</strong></li>
+<li><strong>The "adapter surface" is bounded and rankable</strong>: platform/ops/comms/graph are <em>forced</em>; scheduler/EPLB/PD-disaggregation are <em>IP</em>; everything else is debt.</li>
+<li><strong>First-principles discipline pays</strong>: most Ascend code is either (a) a 1-line CUDA→CANN rename, (b) a structure-preserving subclass, or (c) deliberate MoE/comms innovation. The patches are the only part that resists this classification, and they are precisely where vLLM should invest in tighter seams.</li>
+</ul>
+<hr />
+<h2 id="11-pivot-code-index">11. Pivot-code index</h2>
+<table>
+<thead>
+<tr>
+<th>Thesis</th>
+<th>Symbol</th>
+<th>File:line</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Platform shim root</td>
+<td><code>NPUPlatform(Platform)</code></td>
+<td><code>vllm_ascend/platform.py:128</code></td>
+</tr>
+<tr>
+<td>Memory / SM-equiv stats</td>
+<td><code>get_device_name</code>, <code>num_compute_units</code>, <code>get_current_memory_usage</code></td>
+<td><code>:264</code> <code>:283</code> <code>:844</code></td>
+</tr>
+<tr>
+<td>Comms + attn + graph surface</td>
+<td><code>get_device_communicator_cls / get_attn_backend_cls / get_static_graph_wrapper_cls</code></td>
+<td><code>:849 / :784 / :861</code></td>
+</tr>
+<tr>
+<td>Graph-mode re-derivation</td>
+<td><code>check_and_update_config</code> (cudagraph branch)</td>
+<td><code>:411-644</code></td>
+</tr>
+<tr>
+<td>Custom GEMM op</td>
+<td><code>direct_register_custom_op("unquantized_gemm", ...)</code></td>
+<td><code>vllm_ascend/ops/linear.py:69</code></td>
+</tr>
+<tr>
+<td>Parallel-op fusion hierarchy</td>
+<td><code>CustomLinearOp</code> / <code>MatmulAllreduceRowParallelOp</code></td>
+<td><code>vllm_ascend/ops/linear_op.py:83</code> <code>:409</code></td>
+</tr>
+<tr>
+<td>CANN attention kernel</td>
+<td><code>npu_fused_infer_attention_score_v2.out</code></td>
+<td><code>vllm_ascend/attention/mla_v1.py:856</code></td>
+</tr>
+<tr>
+<td>ACL graph capture</td>
+<td><code>torch.npu.graph(aclgraph, pool=...)</code></td>
+<td><code>vllm_ascend/compilation/acl_graph.py:187</code></td>
+</tr>
+<tr>
+<td>ACL-CUDA manager bridge</td>
+<td><code>ModelAclGraphManager(ModelCudaGraphManager)</code></td>
+<td><code>vllm_ascend/worker/v2/aclgraph_utils.py:41</code></td>
+</tr>
+<tr>
+<td><code>torch.compile</code>→NPU</td>
+<td><code>npugraph_ex.get_npu_backend</code> / <code>torchair</code> fallback</td>
+<td><code>vllm_ascend/compilation/compiler_interface.py:161</code></td>
+</tr>
+<tr>
+<td>HCCL comm</td>
+<td><code>PyHcclCommunicator.all_reduce</code></td>
+<td><code>vllm_ascend/distributed/device_communicators/pyhccl.py:130</code></td>
+</tr>
+<tr>
+<td>comm drop-in</td>
+<td><code>NPUCommunicator(DeviceCommunicatorBase)</code></td>
+<td><code>vllm_ascend/distributed/device_communicators/npu_communicator.py:40</code></td>
+</tr>
+<tr>
+<td>PD-disagg KV transfer</td>
+<td><code>MooncakeLayerwiseConnector(...)</code> + <code>GlobalTE.TransferEngine</code></td>
+<td><code>vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:697</code> <code>:utils/mooncake_transfer_engine.py:4</code></td>
+</tr>
+<tr>
+<td>Function-patch example</td>
+<td><code>_fused_moe_layer.FusedMoE = _ascend_FusedMoE</code></td>
+<td><code>vllm_ascend/patch/platform/patch_fused_moe.py:57</code></td>
+</tr>
+<tr>
+<td>Scheduler class pivot</td>
+<td><code>RecomputeSchedulerConfig.scheduler_cls</code></td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:59</code></td>
+</tr>
+<tr>
+<td>Scheduler subclass</td>
+<td><code>RecomputeScheduler(ShortRequestFirstSchedulerMixin, Scheduler)</code></td>
+<td><code>vllm_ascend/core/recompute_scheduler.py:98</code></td>
+</tr>
+<tr>
+<td>EPLB rebalance cycle</td>
+<td><code>EplbUpdator.forward_before / compute_and_set_moe_load</code></td>
+<td><code>vllm_ascend/eplb/eplb_updator.py:106</code> <code>:145</code></td>
+</tr>
+<tr>
+<td>Plugin registration</td>
+<td><code>register() → "NPUPlatform"</code> + <code>register_model</code></td>
+<td><code>vllm_ascend/__init__.py:32</code> <code>:72</code></td>
+</tr>
+<tr>
+<td>Meta-impl tracing</td>
+<td><code>register_meta_if_necessary("_C_ascend", ...)</code></td>
+<td><code>vllm_ascend/meta_registration.py:22</code></td>
+</tr>
+<tr>
+<td>Whole-program graph runtime</td>
+<td><code>XliteModelRunner(NPUModelRunner)</code> + <code>XliteWrapper</code></td>
+<td><code>vllm_ascend/xlite/xlite_model_runner.py:25</code></td>
+</tr>
+</tbody>
+</table></article>
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div></body></html>

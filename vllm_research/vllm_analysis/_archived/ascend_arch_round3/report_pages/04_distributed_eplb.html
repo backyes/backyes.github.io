@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>04 · Distributed / KV Transfer / EPLB — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Distributed / KV Transfer / EPLB</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="active">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">04 · Distributed / KV Transfer / EPLB</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-hccl-device-communicators" class="">1. HCCL 通信器层（device_communicators）</a>
+<a href="#1-1-ctypes-pyhccl-wrapper-py" class="l3">1.1 底层 ctypes 直绑：pyhccl_wrapper.py</a>
+<a href="#1-2-pyhcclcommunicator-pyhccl-py" class="l3">1.2 PyHcclCommunicator：pyhccl.py</a>
+<a href="#1-3-npucommunicator-npu-communicator-py" class="l3">1.3 NPUCommunicator：npu_communicator.py</a>
+<a href="#1-4-hccl-vs-nccl" class="l3">1.4 HCCL vs NCCL 语义差距与桥接</a>
+<a href="#2-kv-cache-pd" class="">2. KV-cache 传输（PD 分离）— 深度重点</a>
+<a href="#2-1-kv-transfer-init-py" class="l3">2.1 连接器全景（kv_transfer/__init__.py 注册）</a>
+<a href="#2-2-mooncakeconnector-p2p" class="l3">2.2 MooncakeConnector 生命周期（核心 P2P 路径）</a>
+<a href="#2-3-ascendstoreconnector-pool" class="l3">2.3 AscendStoreConnector（Pool 路径）</a>
+<a href="#2-4-vanilla-vllm-nixlconnector" class="l3">2.4 与 vanilla vLLM NixlConnector 的对比</a>
+<a href="#3-weight-transfer" class="">3. 权重传输引擎（weight_transfer）</a>
+<a href="#3-1-hccl-hccl-engine-py" class="l3">3.1 HCCL 引擎：hccl_engine.py</a>
+<a href="#3-2-npu-ipc-npu-ipc-engine-py" class="l3">3.2 NPU IPC 引擎：npu_ipc_engine.py</a>
+<a href="#3-3" class="l3">3.3 对比与用例</a>
+<a href="#4-eplb-expert-parallelism-load-balancing" class="">4. EPLB（Expert Parallelism Load Balancing）— 深度重点</a>
+<a href="#4-1-core-vs-adaptor" class="l3">4.1 架构分层：core/ vs adaptor/</a>
+<a href="#4-2-policy" class="l3">4.2 核心算法：四种策略（policy/）</a>
+<a href="#4-3-eplbworker-eplbprocess" class="l3">4.3 核心进程：EplbWorker 与 EplbProcess</a>
+<a href="#4-4-d2d-d2dexpertweightloader" class="l3">4.4 D2D 权重迁移：D2DExpertWeightLoader</a>
+<a href="#4-5-eplbupdator" class="l3">4.5 编排器：EplbUpdator</a>
+<a href="#4-6-vllmeplbadaptor" class="l3">4.6 适配层：VllmEplbAdaptor</a>
+<a href="#4-7" class="l3">4.7 通信域</a>
+<a href="#5-memcache-comm-fence" class="">5. 通信/计算重叠：memcache_comm_fence</a>
+<a href="#5-1" class="l3">5.1 问题背景</a>
+<a href="#5-2" class="l3">5.2 机制</a>
+<a href="#5-3-ascend" class="l3">5.3 为什么 Ascend 需要显式门控</a>
+<a href="#6-moecommtype-ep" class="">6. MoECommType 与 EP 通信模式</a>
+<a href="#6-1-select-moe-comm-method" class="l3">6.1 选择逻辑（select_moe_comm_method）</a>
+<a href="#6-2-mc2-ep" class="l3">6.2 MC2 对 EP 带宽/延迟的影响</a>
+<a href="#6-3-eplb" class="l3">6.3 与 EPLB 的关联</a>
+<a href="#references" class="">关键文件 references</a>
+<a href="#" class="l3">分布式通信</a>
+<a href="#kv" class="l3">KV 传输</a>
+<a href="#" class="l3">权重传输</a>
+<a href="#eplb" class="l3">EPLB</a>
+<a href="#" class="l3">通信/计算重叠</a>
+</div>
+<h1 id="vllm-ascend-kv-eplb">vllm-ascend 架构分析 — 分布式通信、KV 传输、权重传输与 EPLB</h1>
+<blockquote>
+<p><strong>Slice</strong>: <code>distributed/</code>（device_communicators / kv_transfer / weight_transfer）、<code>eplb/</code>、<code>memcache_comm_fence.py</code>、<code>ascend_forward_context.py</code>（MoECommType）。
+<strong>深度重点</strong>: KV-cache PD 分离传输、EPLB 专家负载均衡。</p>
+</blockquote>
+<hr />
+<h2 id="1-hccl-device_communicators" id="1-hccl-device-communicators">1. HCCL 通信器层（device_communicators）</h2>
+<p>Ascend 的集合通信原语由 <strong>HCCL</strong>（Huawei Collective Communication Library）提供，语义上对标 NVIDIA 的 NCCL。vllm-ascend 在 <code>distributed/device_communicators/</code> 中封装了两层抽象。</p>
+<h3 id="11-ctypes-pyhccl_wrapperpy" id="1-1-ctypes-pyhccl-wrapper-py">1.1 底层 ctypes 直绑：<code>pyhccl_wrapper.py</code></h3>
+<p><code>HCCLLibrary</code> 通过 <code>ctypes.CDLL</code> 直接加载 HCCL 共享库（路径由 <code>find_hccl_library()</code> 或 <code>HCCL_SO_PATH</code> 环境变量决定），<strong>不依赖 torch.distributed 的 HCCL backend</strong>。它显式导出了 5 个 HCCL C 函数：</p>
+<table>
+<thead>
+<tr>
+<th>导出函数</th>
+<th>HCCL C 签名对应</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HcclGetErrorString</code></td>
+<td><code>const char* HcclGetErrorString(HcclResult)</code></td>
+<td>错误码转字符串</td>
+</tr>
+<tr>
+<td><code>HcclGetRootInfo</code></td>
+<td><code>HcclResult HcclGetRootInfo(HcclRootInfo*)</code></td>
+<td>rank 0 生成唯一 ID</td>
+</tr>
+<tr>
+<td><code>HcclCommInitRootInfo</code></td>
+<td><code>HcclResult HcclCommInitRootInfo(nRanks, rootInfo, rank, comm)</code></td>
+<td>基于 rootInfo 初始化 communicator</td>
+</tr>
+<tr>
+<td><code>HcclAllReduce</code></td>
+<td><code>HcclResult HcclAllReduce(sendBuf, recvBuf, count, dataType, op, comm, stream)</code></td>
+<td>AllReduce</td>
+</tr>
+<tr>
+<td><code>HcclBroadcast</code></td>
+<td><code>HcclResult HcclBroadcast(buf, count, dataType, root, comm, stream)</code></td>
+<td>Broadcast</td>
+</tr>
+<tr>
+<td><code>HcclCommDestroy</code></td>
+<td><code>HcclResult HcclCommDestroy(comm)</code></td>
+<td>销毁 communicator</td>
+</tr>
+</tbody>
+</table>
+<p>类型系统通过 <code>hcclDataTypeEnum</code>（支持 int8/16/32/64、uint8/16/32、fp16/32/64、bf16、int128）和 <code>hcclRedOpTypeEnum</code>（Sum/Prod/Max/Min）做 torch → HCCL 的映射。<code>hcclUniqueId</code> 是 4108 字节的 opaque 结构体（对标 NCCL 的 <code>ncclUniqueId</code>）。</p>
+<p><strong>关键设计点</strong>：
+- <strong>库缓存</strong>：<code>path_to_library_cache</code> / <code>path_to_dict_mapping</code> 两个 class attribute 避免同一 <code>.so</code> 被重复加载。
+- <strong>仅导出 AllReduce + Broadcast</strong>：没有 AllGather、ReduceScatter、AllToAll 的直接导出。这意味着更复杂的集合通信要么通过 <code>torch.distributed</code> 的 HCCL backend 走（在 <code>NPUCommunicator.all_to_all</code> 中可见），要么通过更高层封装（如 MC2、FlashComm）实现。</p>
+<h3 id="12-pyhcclcommunicatorpyhcclpy" id="1-2-pyhcclcommunicator-pyhccl-py">1.2 PyHcclCommunicator：<code>pyhccl.py</code></h3>
+<p><code>PyHcclCommunicator</code> 是 <code>HCCLLibrary</code> 的面向对象封装，<strong>绑定到单一 NPU device</strong>（构造时强制 <code>in_tensor.device == self.device</code>，否则报 &ldquo;illegal memory access&rdquo;）。</p>
+<p>初始化流程：
+1. 接受 <code>ProcessGroup | StatelessProcessGroup</code>。若是普通 <code>ProcessGroup</code>，<strong>断言其 backend 不是 HCCL</strong>（<code>"should be attached to a non-HCCL group"</code>）—— 这是为了与 torch 的全局 HCCL 进程组隔离，典型场景是 EPLB 权重传输、权重热更新等需要独立通信域的场景。
+2. rank 0 调用 <code>hcclGetUniqueId()</code> 生成 ID，通过 <code>dist.broadcast</code>（或 <code>StatelessProcessGroup.broadcast_obj</code>）分发给组内所有 rank。
+3. 各 rank 在 <code>torch.npu.device(device)</code> 上下文中 <code>hcclCommInitRank</code> 创建 communicator。
+4. <strong>Warmup</strong>：做一次小 tensor AllReduce + <code>stream.synchronize()</code>，避免首次通信冷启动延迟。</p>
+<p>暴露的接口：<code>all_reduce(tensor, op, stream)</code>、<code>broadcast(tensor, src, stream)</code>。两者都接受可选的 <code>stream</code> 参数（默认 <code>current_stream()</code>），支持异步执行。</p>
+<h3 id="13-npucommunicatornpu_communicatorpy" id="1-3-npucommunicator-npu-communicator-py">1.3 NPUCommunicator：<code>npu_communicator.py</code></h3>
+<p><code>NPUCommunicator(DeviceCommunicatorBase)</code> 是 vLLM 主框架要求的设备通信器。其特点：
+- <code>ca_comm = None</code>：<strong>没有自定义 AllReduce（custom AR）实现</strong>，注释明确说 &ldquo;Refer to CudaCommunicator&rsquo;s implementation to integrate PyHcclCommunicator&rdquo;。这意味着 Ascend 上未走 custom AR 的 kernel 融合路径。
+- <code>all_to_all</code> 通过 <code>dist.all_to_all</code>（torch.distributed，走 HCCL backend）实现，支持 scatter/gather sizes。
+- <code>_NpuAll2AllManager</code> 是 <strong>no-op</strong> 的 fault-tolerance manager（<code>support_fault_tolerance = False</code>），因为 Ascend 用 MC2 / AllGather 做 MoE 通信，不注册真正的 all2all_manager。</p>
+<h3 id="14-hccl-vs-nccl" id="1-4-hccl-vs-nccl">1.4 HCCL vs NCCL 语义差距与桥接</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>NCCL（CUDA）</th>
+<th>HCCL（Ascend）</th>
+<th>vllm-ascend 桥接方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自定义 AR</td>
+<td>custom AR kernel（如 DeepEP）</td>
+<td>无对应</td>
+<td><code>ca_comm = None</code>，未桥接</td>
+</tr>
+<tr>
+<td>P2P 通信</td>
+<td><code>ncclSend/ncclRecv</code></td>
+<td>HCCL 不直接暴露 P2P</td>
+<td>通过 <code>torch.distributed</code> 的 <code>isend/irecv</code>（EPLB D2D loader）或 <strong>Mooncake TransferEngine</strong>（RDMA，KV 传输）</td>
+</tr>
+<tr>
+<td>RDMA/高速互联</td>
+<td>NVLink + NVSwitch + RDMA</td>
+<td><strong>HCCS</strong>（Huawei Cache Coherence System，片间/模块内高速一致性互联）+ RDMA</td>
+<td>HCCL 内部封装了 HCCS/RDMA，<strong>未在 Python 层显式暴露</strong>；KV 传输层通过 Mooncake 引擎直接利用 RDMA</td>
+</tr>
+<tr>
+<td>进程组隔离</td>
+<td>多 <code>ncclComm_t</code></td>
+<td>多 <code>hcclComm_t</code></td>
+<td><code>StatelessProcessGroup</code> + <code>PyHcclCommunicator</code> 创建独立通信域</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：HCCL 层在 Python 侧仅显式暴露了 AllReduce 和 Broadcast 两个集合原语。HCCS/RDMA 等底层传输对 Python 层是<strong>不透明的</strong>（由 HCCL 内部选择），只有 KV 传输层通过 Mooncake 引擎绕开 HCCL、直接操作 RDMA。</p>
+<hr />
+<h2 id="2-kv-cache-pd" id="2-kv-cache-pd">2. KV-cache 传输（PD 分离）— 深度重点</h2>
+<p>vllm-ascend 实现了 <strong>Prefill-Decode（PD）分离架构</strong>：Prefill 节点生成 KV-cache，Decode 节点拉取 KV-cache 做自回归生成。这是 vLLM 社区 disaggregation RFC 的 Ascend 实现，但传输层走 <strong>Mooncake TransferEngine</strong>（基于 RDMA），而非 vanilla vLLM 的 <code>NixlConnector</code>（基于 NIXL/GDR）。</p>
+<h3 id="21-kv_transfer__init__py" id="2-1-kv-transfer-init-py">2.1 连接器全景（<code>kv_transfer/__init__.py</code> 注册）</h3>
+<p>通过 <code>KVConnectorFactory.register_connector</code> 注册了多类连接器：</p>
+<table>
+<thead>
+<tr>
+<th>连接器</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MooncakeConnectorV1</code></td>
+<td>P2P 直传</td>
+<td>主路径，基于 Mooncake RDMA</td>
+</tr>
+<tr>
+<td><code>MooncakeHybridConnector</code></td>
+<td>P2P 直传</td>
+<td>混合 KV cache 布局变体</td>
+</tr>
+<tr>
+<td><code>MooncakeLayerwiseConnector</code></td>
+<td>P2P 逐层</td>
+<td>逐层传输，与 attention 计算流水线重叠</td>
+</tr>
+<tr>
+<td><code>AscendStoreConnector</code></td>
+<td>Pool（KV Pool）</td>
+<td>基于共享内存池的 KV 缓存，支持 mooncake/memcache/yuanrong 后端</td>
+</tr>
+<tr>
+<td><code>UCMConnector</code></td>
+<td>Pool</td>
+<td>统一缓存管理</td>
+</tr>
+<tr>
+<td><code>LMCacheAscendConnector</code></td>
+<td>Pool</td>
+<td>LMCache 适配</td>
+</tr>
+<tr>
+<td><code>AscendSimpleCPUOffloadConnector</code></td>
+<td>CPU offload</td>
+<td>覆盖上游实现，用 <code>aclrtMemcpyBatchAsync</code></td>
+</tr>
+<tr>
+<td><code>RecomputeCPUOffloadConnector</code></td>
+<td>CPU offload + 重计算</td>
+<td>抢占恢复场景</td>
+</tr>
+<tr>
+<td><code>AscendMultiConnector</code></td>
+<td>多连接器组合</td>
+<td>继承上游 <code>MultiConnector</code>，Ascend 覆盖版</td>
+</tr>
+</tbody>
+</table>
+<p><code>AscendMultiConnector</code> 的关键增强：
+- 要求所有子连接器支持 <strong>HMA</strong>（Hybrid Memory Attention，<code>SupportsHMA</code>），否则断言失败。
+- <code>get_num_new_matched_tokens</code> 优先处理 <code>has_preempted_request</code>（重计算 offload 的未哈希部分块）。
+- <code>request_finished_all_groups</code> 聚合多个子连接器的 async_save 与 <code>kv_txfer_params</code>。</p>
+<h3 id="22-mooncakeconnector-p2p" id="2-2-mooncakeconnector-p2p">2.2 MooncakeConnector 生命周期（核心 P2P 路径）</h3>
+<p><code>MooncakeConnector(KVConnectorBase_V1, SupportsHMA)</code> 严格遵循 vLLM v1 连接器设计，分 <strong>Scheduler 侧</strong> 和 <strong>Worker 侧</strong> 两个角色。</p>
+<h4 id="221-worker">2.2.1 初始化与握手（Worker 侧）</h4>
+<p><code>MooncakeConnectorWorker.__init__</code> 中：
+1. 从 <code>kv_transfer_config</code> 的 extra_config 读取 <strong>prefill/decode 的 tp_size、dp_size、pp_size</strong>（PD 两侧可不对称，但要求 <code>prefill_tp_size &gt;= decode_tp_size</code>，<code>decode_pp_size == 1</code>）。
+2. 通过 <code>global_te.get_transfer_engine(hostname, device_name)</code> 获取 <strong>Mooncake TransferEngine</strong> 单例。Mooncake 引擎初始化走 <code>"P2PHANDSHAKE"</code> 模式 + <code>"ascend"</code> 设备标识。
+3. 计算 <code>handshake_port</code>（基于 <code>kv_port + dp_rank * tp * pp * pcp + device_index</code>），确保每个 NPU 有独立端口。
+4. 计算 <code>tp_num_need_pulls</code>：DeepSeek MLA 模型为 1；否则 <code>num_d_block_heads // num_p_block_heads</code>（decode 侧每块需从 prefill 侧拉的 TP 分片数）。</p>
+<h4 id="222-register_kv_caches">2.2.2 register_kv_caches：元数据注册</h4>
+<p>这是 KV 传输的核心准备步骤：</p>
+<ol>
+<li><strong>构建 <code>kv_group2layeridx</code></strong>：将 KV cache group 按 spec 类型（FullAttention / MLA / Mamba / SlidingWindow / UniformType）拆分为 transfer group，每个 group 序列化为 <code>{layer_names, kv_cache_spec_type, kv_cache_spec, num_kv_heads}</code> 字典 + 物理 layer 索引列表。支持 MTP（speculative decoding）层的 ID 重分配。</li>
+<li><strong>逐层注册元数据</strong>：为每个 layer 的每个 cache tensor（K 或 V）计算：
+   - <code>kv_caches_base_addr[layer][cache]</code>：<code>data_ptr()</code> 基址
+   - <code>block_size_scale</code>：tensor 块数 / 逻辑块数
+   - <code>block_len_per_addr</code>：单块字节数
+   - <code>block_stride_per_addr</code>：块间字节步长</li>
+<li><strong>注册内存到 Mooncake</strong>：根据布局类型选择注册策略：
+   - Mamba 组 → <code>_get_registered_kv_tensor_buffers</code>（按 tensor 整体注册）
+   - Hybrid（HMA）→ <code>_get_registered_kv_tensor_buffers_hybrid</code>
+   - 普通 attention → <code>collect_storage_merged_register_regions</code>（合并共享底层存储的注册区域，避免超过 HCCL 每进程 region 上限）
+   - 要求基址 <strong>2MB 对齐</strong>（<code>base_addr % (2*1024*1024) == 0</code>）
+   - 最终调用 <code>global_te.register_buffer(ptrs, lengths)</code> 注册到 Mooncake 引擎。</li>
+<li><strong>构建握手元数据</strong> <code>MooncakeAgentMetadata</code>（msgspec Struct）：包含 <code>engine_id</code>、<code>te_rpc_port</code>、<code>kv_group2layeridx</code>、<code>block_size</code>、<code>kv_caches_base_addr</code>、<code>block_size_scale</code>、<code>num_blocks</code>、<code>block_lens</code>、<code>block_strides</code>、<code>local_ip</code>、<code>handshake_port</code>。</li>
+<li><strong>启动收发线程</strong>：kv_producer 启动 <code>KVCacheSendingThread</code>，kv_consumer 启动 <code>KVCacheRecvingThread</code>，等待 <code>ready_event</code>（超时 5 分钟）。</li>
+</ol>
+<h4 id="223-scheduler-worker">2.2.3 传输生命周期（Scheduler → Worker）</h4>
+<p><strong>Scheduler 侧</strong>（<code>MooncakeConnectorScheduler</code>）：
+1. <code>get_num_new_matched_tokens</code>：若 <code>kv_transfer_params["do_remote_prefill"]</code>，返回 <code>(actual - computed, True)</code> —— 标记异步加载。
+2. <code>update_state_after_alloc</code>：将需接收的请求加入 <code>_reqs_need_recv</code>。
+3. <code>build_connector_meta</code>：将 <code>_reqs_need_recv</code> 转换为 <code>MooncakeConnectorMetadata</code>（含 <code>ReqMeta</code> 列表），清空待处理队列。
+4. <code>request_finished</code>：对 <code>do_remote_decode</code> 的请求，延迟释放块，生成 <code>kv_transfer_params</code>（含 <code>remote_block_ids</code>、<code>remote_engine_id</code>、<code>remote_host/port</code>、<code>remote_pcp/dcp_size</code> 等），供下次 prefill 节点拉取。</p>
+<p><strong>Worker 侧传输核心</strong>（<code>KVCacheRecvingThread._transfer_kv_cache_all_groups</code>）：</p>
+<div class="highlight"><pre><span></span><code># 关键传输逻辑（简化）
+session_id = f&quot;{remote_host}:{remote_transfer_port}&quot;
+src_list, dst_list, length_list = [], [], []
+
+for group_pull in group_pulls:
+    for layer_idx in layer_indices:
+        for cache_idx in range(num_cache_tensors):
+            # 计算 src/dst 物理地址（考虑 block_stride、inner_offset、tp_num_need_pulls 分片）
+            src = src_layer_base_addr + local_block_id[0] * block_stride + inner_offset * inner_block_len
+            dst = dst_layer_base_addr + remote_block_id[0] * remote_block_stride
+            length = inner_block_len * len(local_block_id)
+            src_list.append(src); dst_list.append(dst); length_list.append(length)
+
+# 批量同步 RDMA 读（consumer 主动读 producer 侧 KV）
+ret = self.engine.batch_transfer_sync_read(session_id, src_list, dst_list, length_list)
+</code></pre></div>
+<p><strong>关键语义</strong>：
+- 传输方向是 <strong><code>batch_transfer_sync_read</code></strong> —— <strong>Decode 节点主动 RDMA 读取 Prefill 节点的 KV-cache</strong>（pull 模型），而非 prefill push。
+- 地址完全由 <code>kv_caches_base_addr</code> + <code>block_stride</code> + <code>block_len</code> 在用户态计算，<strong>零拷贝</strong>（直接操作 NPU device memory 的 <code>data_ptr</code>）。
+- 支持 <strong>CP（Context Parallelism）</strong> 的 block 映射：<code>_local_kernel_ids_for_shard</code> 处理 P/D 侧 block_size 不对称、CP rank 交错等复杂情况。
+- 支持 <strong>Mamba 状态组</strong>（非 block 对齐，整体传输 conv/ssm state）。
+- 支持 <strong>GQA 多 pull 重格式化</strong>：<code>reformat_kv_cache_hybrid_linear_torch</code> 将 <code>[block, split, token, head_per_split, dim]</code> 转回 <code>[block, token, split, head_per_split, dim]</code>。
+- 支持 <strong>KV NZ 格式</strong>（Ascend 特定 fused attention 布局，<code>enable_kv_nz</code>）。</p>
+<h4 id="224">2.2.4 完成与资源回收</h4>
+<ul>
+<li><code>KVCacheTaskTracker</code> 跟踪每个请求的传输状态，支持 <strong>延迟释放</strong>（<code>delayed_free_requests</code>）和 <strong>超时强制释放</strong>（<code>VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT</code>）。</li>
+<li>传输完成后发送 <code>DONE_RECVING_MSG</code>（zmq）通知 producer 释放资源。</li>
+<li><code>get_finished</code> 返回 <code>(done_sending, done_recving)</code> 集合，供 vLLM 调度器判断请求是否可调度。</li>
+</ul>
+<h3 id="23-ascendstoreconnectorpool" id="2-3-ascendstoreconnector-pool">2.3 AscendStoreConnector（Pool 路径）</h3>
+<p><code>AscendStoreConnector(KVConnectorBase_V1, SupportsHMA)</code> 是另一条路径，基于 <strong>KV Pool</strong>（共享内存池）：
+- Scheduler 侧：<code>KVPoolScheduler</code> + <code>LookupKeyServer</code>（zmq REP 服务，处理 token hash 查找）。
+- Worker 侧：<code>KVPoolWorker</code> + 多组 <code>KVTransferThread</code>（<code>KVCacheStoreSendingThread</code>、<code>KVCacheStoreRecvingThread</code>、<code>KVCacheStoreLayerSendingThread</code> 等）。
+- 后端可插拔：<code>MooncakeBackend</code>、<code>MemcacheBackend</code>、<code>YuanrongBackend</code>（<code>backend.py</code> 抽象接口）。
+- 支持 <strong>layerwise</strong> 模式（<code>use_layerwise</code>），逐层 save/load 与计算重叠。
+- 使用 <code>KVEventAggregator</code> 聚合多 worker 的 KV cache 事件，仅保留 common events。</p>
+<h3 id="24-vanilla-vllm-nixlconnector" id="2-4-vanilla-vllm-nixlconnector">2.4 与 vanilla vLLM NixlConnector 的对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>NixlConnector（vanilla vLLM）</th>
+<th>MooncakeConnector（Ascend）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>传输引擎</td>
+<td>NIXL（NVIDIA Inter-node eXchange Library，GDR/GPUDirect）</td>
+<td>Mooncake TransferEngine（RDMA，<code>"P2PHANDSHAKE"</code> 模式）</td>
+</tr>
+<tr>
+<td>传输语义</td>
+<td>push / pull 可配</td>
+<td><strong>pull 为主</strong>（<code>batch_transfer_sync_read</code>，consumer 主动读）</td>
+</tr>
+<tr>
+<td>地址计算</td>
+<td>NIXL 管理注册内存</td>
+<td>用户态手动计算 <code>data_ptr + block_stride * block_id</code>，2MB 对齐</td>
+</tr>
+<tr>
+<td>元数据握手</td>
+<td>NIXL agent 协调</td>
+<td>自研 <code>MooncakeAgentMetadata</code>（msgspec）+ zmq 侧信道</td>
+</tr>
+<tr>
+<td>混合 KV 布局</td>
+<td>标准</td>
+<td>支持 HMA（Hybrid Memory Attention）、Mamba state、MLA、SlidingWindow、compress_ratio</td>
+</tr>
+<tr>
+<td>CP 支持</td>
+<td>有限</td>
+<td>完整 P/D 不对称 block_size + CP rank 交错映射</td>
+</tr>
+<tr>
+<td>重格式化</td>
+<td>无</td>
+<td>GQA multi-pull transpose、KV NZ fused 格式</td>
+</tr>
+<tr>
+<td>Pool 模式</td>
+<td>无</td>
+<td>AscendStore（mooncake/memcache/yuanrong 后端）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心差异</strong>：Ascend 的 Mooncake 路径是 <strong>用户态 RDMA</strong>（绕过 HCCL），直接操作 NPU 显存物理地址，因此需要做复杂的 block 地址计算和布局重格式化；而 Nixl 依赖 NVIDIA 的 GDR 生态，对上层更透明。</p>
+<hr />
+<h2 id="3-weight_transfer" id="3-weight-transfer">3. 权重传输引擎（weight_transfer）</h2>
+<p>权重传输用于 <strong>动态权重热更新</strong>：外部训练器（trainer）将更新后的模型权重广播到 vLLM 推理 worker。典型场景包括 <strong>RL（强化学习）的在线权重同步</strong>、<strong>MoE 专家热插拔</strong>（与 EPLB 配合）。</p>
+<h3 id="31-hccl-hccl_enginepy" id="3-1-hccl-hccl-engine-py">3.1 HCCL 引擎：<code>hccl_engine.py</code></h3>
+<p><code>HCCLWeightTransferEngine</code> 基于 HCCL <strong>Broadcast</strong>（trainer rank 0 → 所有 worker）：</p>
+<ul>
+<li><strong>通信域隔离</strong>：通过 <code>StatelessProcessGroup.create</code> + <code>PyHcclCommunicator</code> 创建独立于推理通信域的 HCCL 组（trainer 是 rank 0，worker 从 <code>rank_offset</code> 开始）。</li>
+<li><strong>两种传输模式</strong>：</li>
+<li><strong>非 packed</strong>：逐参数 <code>broadcast(weight, src=0)</code>，简单但通信次数多。</li>
+<li><strong>Packed</strong>（默认推荐）：<code>packed_broadcast_producer/consumer</code> 将多个参数 <strong>cat 到 1GB 缓冲区</strong>（<code>DEFAULT_PACKED_BUFFER_SIZE_BYTES = 1GB</code>），用 <strong>2 缓冲（double buffering）+ 独立 NPU stream</strong> 实现广播与 pack 的流水线重叠，显著减少 HCCL 通信开销。</li>
+<li><strong>Layerwise reload</strong>：<code>start_weight_update</code> / <code>finish_weight_update</code> 调用 vLLM 的 <code>initialize_layerwise_reload</code> / <code>finalize_layerwise_reload</code>，支持逐层加载避免 OOM。</li>
+<li><strong>Trainer 侧</strong>：<code>trainer_send_weights</code> 静态方法，支持 dict 或 <code>HCCLTrainerSendWeightsArgs</code> 参数。</li>
+</ul>
+<h3 id="32-npu-ipc-npu_ipc_enginepy" id="3-2-npu-ipc-npu-ipc-engine-py">3.2 NPU IPC 引擎：<code>npu_ipc_engine.py</code></h3>
+<p><code>NPUIPCWeightTransferEngine</code> 基于 <strong>Ascend NPU IPC</strong>（进程间共享内存），适用于 <strong>trainer 与 worker 共置同一物理 NPU 芯片</strong> 的场景：</p>
+<ul>
+<li><strong>UUID 机制</strong>：<code>npu_generate_uuid()</code> 生成 <code>{host_ip}-{physical_chip_id}</code>，通过 <code>ASCEND_RT_VISIBLE_DEVICES</code> 映射逻辑设备到物理芯片。Trainer 和 worker 必须生成相同 UUID 才能匹配 IPC handle。</li>
+<li><strong>IPC handle 传递</strong>：通过 <code>reduce_tensor</code> 获取 IPC rebuild args，支持 <strong>ray</strong> 和 <strong>http</strong> 两种传输模式（http 模式下 IPC handle 经 base64 + pickle 序列化，需 <code>VLLM_ALLOW_INSECURE_SERIALIZATION=1</code>）。</li>
+<li><strong>多 NPU 聚合</strong>：<code>_all_gather_and_merge_handles</code> 跨 rank all_gather IPC handle dict，使每个 worker 能找到自己 UUID 对应的 handle。</li>
+<li><strong>Packed 模式</strong>：<code>packed_npu_ipc_producer/consumer</code> 分块传输，bounded memory。</li>
+<li><strong>无 layerwise reload</strong>：<code>start_weight_update</code> / <code>finish_weight_update</code> 是 no-op。</li>
+</ul>
+<h3 id="33" id="3-3">3.3 对比与用例</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>HCCL 引擎</th>
+<th>NPU IPC 引擎</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>传输介质</td>
+<td>HCCL（HCCS/RDMA，跨节点）</td>
+<td>NPU IPC（共享内存，节点内）</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>跨节点权重同步、RL 在线更新</td>
+<td>共置 trainer+worker、低延迟热更新</td>
+</tr>
+<tr>
+<td>通信模式</td>
+<td>Broadcast（1 → N）</td>
+<td>IPC handle 共享（零拷贝）</td>
+</tr>
+<tr>
+<td>内存效率</td>
+<td>packed 1GB 缓冲 + double buffer</td>
+<td>packed 分块</td>
+</tr>
+<tr>
+<td>Layerwise</td>
+<td>支持</td>
+<td>不支持</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-eplbexpert-parallelism-load-balancing" id="4-eplb-expert-parallelism-load-balancing">4. EPLB（Expert Parallelism Load Balancing）— 深度重点</h2>
+<p>EPLB 解决 <strong>EP（Expert Parallelism）MoE 中的专家负载不均衡</strong> 问题：路由器的 skew 导致部分 NPU 上的专家过热（hot expert），成为延迟瓶颈。Ascend 的 EPLB 是独立于 vanilla vLLM 的完整实现（注释多次提到 &ldquo;Once vllm-project/vllm#24069 is merged, remove this&rdquo;），包含 <strong>监控 → 决策 → 迁移</strong> 的闭环。</p>
+<h3 id="41-core-vs-adaptor" id="4-1-core-vs-adaptor">4.1 架构分层：core/ vs adaptor/</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>目录</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>core/</strong></td>
+<td><code>eplb/core/</code></td>
+<td>核心算法与进程管理：策略（policy）、worker 子进程、D2D 加载器、工具函数</td>
+</tr>
+<tr>
+<td><strong>adaptor/</strong></td>
+<td><code>eplb/adaptor/</code></td>
+<td>vLLM 模型适配：<code>VllmEplbAdaptor</code> 桥接 MoE 层参数、expert_map、moe_load</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-policy" id="4-2-policy">4.2 核心算法：四种策略（policy/）</h3>
+<p><code>PolicyFactory.generate_policy(policy_type)</code> 根据 <code>eplb_policy_type</code> 选择策略：</p>
+<table>
+<thead>
+<tr>
+<th>type</th>
+<th>策略</th>
+<th>算法类别</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>RandomLoadBalance</code></td>
+<td>随机交换</td>
+<td>每层随机（固定种子 42）交换 card 1 和 card 3 的最后一个专家。<strong>基线对照</strong>，非生产用</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>DefaultEplb</code></td>
+<td>贪心装箱 + 冗余分裂</td>
+<td>原始动态 EPLB 策略</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>SwiftBalanceEplb</code></td>
+<td>冗余重分配 + 交换</td>
+<td>V2：约束 shuffle 次数的局部交换</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>FlashLB</code></td>
+<td>树搜索 + LPT 部署</td>
+<td>联合优化、多 shot 增强、增量调整</td>
+</tr>
+</tbody>
+</table>
+<h4 id="421-defaulteplbtype-1">4.2.1 DefaultEplb（type 1）—— 贪心装箱</h4>
+<p>核心循环（<code>rebalance_experts</code>）：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. 聚合冗余专家的 workload 到原始专家</span>
+<span class="n">layer_workloads</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">add_redundant</span><span class="p">(</span><span class="n">placement_table</span><span class="p">,</span> <span class="n">workload_table</span><span class="p">,</span> <span class="n">num_original_expert</span><span class="p">)</span>
+
+<span class="c1"># 2. 逐层计算全局平衡部署</span>
+<span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">layer_num</span><span class="p">):</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="p">[(</span><span class="n">expert_id</span><span class="p">,</span> <span class="n">workload</span><span class="p">)</span> <span class="k">for</span> <span class="n">expert_id</span><span class="p">,</span> <span class="n">workload</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">layer_workloads</span><span class="p">[</span><span class="n">layer</span><span class="p">])]</span>
+    <span class="c1"># 贪心分裂热专家为冗余专家，然后装箱到 num_npus 个 box</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">layer_deployment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">original_compute_balanced_pack_redundancy</span><span class="p">(</span>
+        <span class="n">weights</span><span class="p">,</span> <span class="n">num_npus</span><span class="p">,</span> <span class="n">num_redundancy_expert</span>
+    <span class="p">)</span>
+    <span class="n">global_deployment</span><span class="p">[</span><span class="n">layer</span><span class="p">]</span> <span class="o">=</span> <span class="n">layer_deployment</span>
+
+<span class="c1"># 3. 约束局部交换（保持与旧部署的最大重叠）</span>
+<span class="n">new_global_deployment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">constraint_expert_local_exchange</span><span class="p">(</span><span class="n">current_expert_table</span><span class="p">,</span> <span class="n">global_deployment</span><span class="p">)</span>
+
+<span class="c1"># 4. 按层优先级排序（改善比例最大的优先）</span>
+<span class="n">layer_changed_ratio</span> <span class="o">=</span> <span class="p">[</span><span class="n">max_heat_after</span> <span class="o">/</span> <span class="n">max_heat_before</span><span class="p">]</span>
+<span class="n">per_layer_priority</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">layer_changed_ratio</span><span class="p">)</span>
+
+<span class="c1"># 5. 仅当整体热度下降 5% 以上才触发更新</span>
+<span class="n">change</span> <span class="o">=</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">npu_heat_all_after</span> <span class="o">&lt;</span> <span class="mf">0.95</span> <span class="o">*</span> <span class="n">npu_heat_all_origin</span> <span class="k">else</span> <span class="mi">0</span>
+</code></pre></div>
+<p><code>original_compute_balanced_pack_redundancy</code> 的贪心逻辑：
+- 每次将当前 workload 最高的专家分裂出一个冗余副本（<code>route_expert_redundancy[hot_expert].append(new_id)</code>），并重新计算该专家的 <code>avg_weight = raw_weight / (redundancy_count + 1)</code>。
+- 然后将所有专家（含冗余副本）按 <strong>Best-Fit-Decreasing</strong> 装箱到 <code>card_num</code> 个 box：每次将专家放入当前总重量最轻且未满的 box。</p>
+<h4 id="422-swiftbalanceeplbtype-2">4.2.2 SwiftBalanceEplb（type 2）—— 冗余重分配 + 交换</h4>
+<p>更精细的两阶段算法：</p>
+<ol>
+<li>
+<p><strong>冗余重分配</strong>（<code>redundancy_again</code>）：
+   - <code>statistics_expert_distribution</code>：统计每个 rank 上的冗余专家位置。
+   - <code>compute_redundant_assignments</code>：按 workload 贪心将冗余副本分配给热专家（<code>new_avg_weight = original_weight * (r+1)/(r+2)</code>）。
+   - <code>distribute_redundant_experts</code>：将冗余专家分配到负载最轻的 rank（约束 <code>num_max_com</code> 限制跨 rank 通信量）。
+   - <code>fill_in_undeployed_ranks</code>：填充未分配完的 rank。</p>
+</li>
+<li>
+<p><strong>专家交换</strong>（<code>expert_exchange_between_ranks</code>）：
+   <div class="highlight"><pre><span></span><code><span class="k">while</span> <span class="n">max_swap_times</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">max_load_rank</span> <span class="o">=</span> <span class="n">argmax</span><span class="p">(</span><span class="n">rank_loads</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">swap_rank_id</span> <span class="ow">in</span> <span class="n">sorted_rank_idx</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">num_com_between_rank</span><span class="p">[</span><span class="n">swap_rank</span><span class="p">][</span><span class="n">max_rank</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">num_max_com</span><span class="p">:</span>
+            <span class="c1"># 找最优交换对（max_rank 的重专家 ↔ swap_rank 的轻专家）</span>
+            <span class="n">max_expert</span><span class="p">,</span> <span class="n">swap_expert</span><span class="p">,</span> <span class="n">max_weight</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">swap_experts_between_ranks</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">max_rank_load</span> <span class="o">-</span> <span class="n">max_weight</span> <span class="o">&lt;</span> <span class="n">swap_threshold</span><span class="p">:</span> <span class="k">continue</span>
+            <span class="c1"># 执行交换，更新 rank_loads 和 num_com_between_rank</span>
+</code></pre></div>
+   这是一个 <strong>局部搜索</strong>：每次找负载最重的 rank，尝试与轻 rank 交换专家以降低最大负载，直到收敛或达到 <code>max_swap_times</code>。</p>
+</li>
+</ol>
+<h4 id="423-flashlbtype-3-lpt">4.2.3 FlashLB（type 3）—— 树搜索 + LPT（最复杂）</h4>
+<p><code>FlashLB</code> 是生产级策略，核心创新：</p>
+<ol>
+<li>
+<p><strong>滑动窗口统计</strong>（<code>register_hotness</code>）：维护每层专家的 load 时间序列（<code>hotness_window</code>），支持增量更新（<code>incremental_update_stats</code>）和滑动更新（<code>sliding_update_stats</code>），计算 <code>mu</code>、<code>var</code>、<code>cov</code>（专家间协方差）。</p>
+</li>
+<li>
+<p><strong>FlashTree 树搜索</strong>（<code>optimize_balanceness</code>）：
+   - 将专家按 <code>weight = mu + z_score * sqrt(var)</code> 降序排列。
+   - 分 <code>depth</code> 层（默认 4），每层将专家分成 <code>interval_size = ceil(num_experts / depth)</code> 组。
+   - 对每组用 <code>make_replica</code> 分配冗余副本数（三种方法：<code>min_max_replica</code> / <code>max_delta_replica</code> / <code>percentage_replica</code>，均用 numba <code>@njit</code> 加速）。
+   - <code>neighbor_search</code> 在 <code>[initial-max_range, initial+max_range]</code> 范围内搜索最优副本数（<code>width</code> 默认 8）。
+   - 最终用 <code>lpt_deployment</code>（Largest Processing Time）贪心部署：每次将副本放到 <strong>风险最小</strong>（<code>risk = mu + z_score * sqrt(var)</code>，含协方差项）的设备。</p>
+</li>
+<li>
+<p><strong>最小化重部署</strong>（<code>minimize_redeploy_with_inner_permutation</code>）：用 <strong>匈牙利算法</strong>（<code>linear_sum_assignment</code>）将新部署与旧部署对齐，最小化专家移动。</p>
+</li>
+<li>
+<p><strong>触发条件</strong>（<code>need_update</code>）：当 <code>average_to_peak_ratio &lt; past_ratio * 0.9</code> 或 <code>&lt; 0.85</code> 时触发。</p>
+</li>
+<li>
+<p><strong>评分函数</strong>（<code>compute_score</code>）：<code>(max_device_load * num_devices) / total_load</code>，越低越好。</p>
+</li>
+</ol>
+<h3 id="43-eplbworker-eplbprocess" id="4-3-eplbworker-eplbprocess">4.3 核心进程：EplbWorker 与 EplbProcess</h3>
+<p><code>EplbWorker</code> 运行在<strong>独立子进程</strong>中（<code>EplbProcess</code> 通过 <code>multiprocessing.Process</code> 启动），通过 <code>shared_dict</code>（<code>Manager().dict()</code>）与主进程通信：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># EplbWorker.do_update 核心循环</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">do_update</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="c1"># 1. 读取当前 expert_map 和 moe_load</span>
+    <span class="n">old_expert_maps</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_init_expert_maps</span><span class="p">()</span>          <span class="c1"># shared_dict[&quot;expert_maps&quot;]</span>
+    <span class="n">load_info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fetch_and_sum_load_info</span><span class="p">()</span>            <span class="c1"># shared_dict[&quot;moe_load&quot;]</span>
+
+    <span class="c1"># 2. 全局 → 局部 placement 转换</span>
+    <span class="n">old_placement</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">global2local</span><span class="p">(</span><span class="n">old_expert_maps</span><span class="p">,</span> <span class="n">num_local_experts</span><span class="p">)</span>
+
+    <span class="c1"># 3. 调用策略计算新部署</span>
+    <span class="n">changed</span><span class="p">,</span> <span class="n">priority</span><span class="p">,</span> <span class="n">new_placement</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span><span class="o">.</span><span class="n">rebalance_experts</span><span class="p">(</span><span class="n">old_placement</span><span class="p">,</span> <span class="n">load_info</span><span class="p">)</span>
+
+    <span class="c1"># 4. 校验（无重复专家、无 NPU 内移动）</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">check_expert_placement</span><span class="p">(</span><span class="n">old_placement</span><span class="p">,</span> <span class="n">new_placement</span><span class="p">)</span>
+
+    <span class="c1"># 5. 局部 → 全局转换，计算每层的 send/recv 计划</span>
+    <span class="n">new_expert_maps</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">local2global</span><span class="p">(</span><span class="n">new_placement</span><span class="p">)</span>
+    <span class="n">update_info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compose_expert_update_info_greedy</span><span class="p">(</span><span class="n">new_expert_maps</span><span class="p">,</span> <span class="n">old_expert_maps</span><span class="p">)</span>
+
+    <span class="c1"># 6. 打包返回（send/recv/log2phy_map/layer_id）</span>
+    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">pack_update_info</span><span class="p">(</span><span class="n">update_info</span><span class="p">)</span>
+</code></pre></div>
+<p><code>compose_expert_update_info_greedy</code> 生成每层的 <strong>P2P send/recv 计划</strong>：
+- <code>dst_rank_indices, experts_to_recv = where((current == -1) &amp; (updated != -1))</code> —— 需要接收的专家。
+- <code>src_rank_indices, experts_to_send = where((current != -1) &amp; (updated == -1))</code> —— 需要发送的专家。
+- 贪心选择源 rank（<code>candidate_src_rank_indices[0]</code>），TODO 提到未来考虑节点内/节点间拓扑。</p>
+<h3 id="44-d2d-d2dexpertweightloader" id="4-4-d2d-d2dexpertweightloader">4.4 D2D 权重迁移：D2DExpertWeightLoader</h3>
+<p><code>D2DExpertWeightLoader</code> 执行实际的专家权重搬运，状态机：</p>
+<div class="highlight"><pre><span></span><code>WAITING → generate_expert_d2d_transfer_task() → READY
+       → asyn_expert_weight_transfer()         → TRANSFERRING
+       → update_expert_map_and_weight()        → WAITING
+</code></pre></div>
+<ul>
+<li><strong>传输方式</strong>：<code>dist.batch_isend_irecv</code>（torch.distributed P2P，走 HCCL backend），在 <code>get_dynamic_eplb_group()</code> 通信域内。</li>
+<li><strong>异步执行</strong>：<code>asyn_expert_weight_transfer</code> 在<strong>异步流</strong>上发起 P2P，不阻塞主计算流。</li>
+<li><strong>三要素更新</strong>：每层传输完成后，依次更新 <code>expert_map</code>（逻辑→物理映射）、<code>log2phy_map</code>（路由表）、<code>expert_weight</code>（实际权重 tensor，<code>copy_</code> 到模型参数）。</li>
+</ul>
+<h3 id="45-eplbupdator" id="4-5-eplbupdator">4.5 编排器：EplbUpdator</h3>
+<p><code>EplbUpdator</code> 是主进程侧的编排器，按 <strong>三阶段循环</strong> 驱动 EPLB：</p>
+<div class="highlight"><pre><span></span><code>[heat_collection_interval] → [algorithm_execution_interval] → [num_moe_layers (weight update)]
+         ↑ 收集 moe_load      ↑ 唤醒子进程计算新部署      ↑ 逐层 D2D 迁移权重
+</code></pre></div>
+<p>关键方法：
+- <code>forward_end</code>：每个 forward 步调用，按 <code>cur_iterations</code> 判断当前阶段。
+- <code>wakeup_eplb_worker_flag</code>：<code>cur_iterations == heat_collection_interval - 1</code> 时，<code>all_gather</code> 收集全局 <code>moe_load</code> 到 <code>shared_dict</code>，唤醒子进程。
+- <code>get_update_info_flag</code>：子进程计算完成后取 <code>update_info</code>。
+- <code>update_expert_weight_flag</code>：逐层执行 D2D 迁移。
+- <code>warm_up_eplb</code>：预热 P2P 通信域（batch_isend_irecv 空 tensor）。</p>
+<h3 id="46-vllmeplbadaptor" id="4-6-vllmeplbadaptor">4.6 适配层：VllmEplbAdaptor</h3>
+<p><code>VllmEplbAdaptor</code> 桥接 vLLM 模型与 EPLB 核心：
+- <strong>注册机制</strong>：<code>register_layer</code> 静态方法在 MoE 层初始化时收集层引用（<code>PPMissingLayer</code> 不注册，自然过滤掉非本 PP rank 的层）。
+- <strong>参数索引</strong>：<code>init_expert_param_per_layer</code> 按量化类型（NONE/W8A8/W4A8/MXFP）和 fused MC2 开关选择权重名（<code>w13_weight</code>、<code>w2_weight</code>、scale、bias 等），建立 <code>expert_param_per_layer[layer][expert]</code> 索引。
+- <strong>Buffer 预分配</strong>：<code>init_buffer_tensor</code> 预分配接收 buffer（<code>torch.empty_like</code>），避免传输时分配。
+- <strong>负载采集</strong>：<code>get_rank_expert_workload</code> 从每层的 <code>layer.moe_load</code> 采集负载。
+- <strong>更新执行</strong>：<code>do_update_expert_map</code>、<code>do_update_log2phy_map</code>、<code>do_update_expert_weight</code> 将新部署和权重写回模型。</p>
+<h3 id="47" id="4-7">4.7 通信域</h3>
+<p>EPLB 使用独立的 <code>dynamic_eplb</code> 进程组（<code>get_dynamic_eplb_group()</code>），在 <code>parallel_state.py</code> 中基于与 MC2 相同的 <code>group_ranks</code> 拓扑初始化，但独立于推理通信域，避免 P2P 权重传输干扰正常推理通信。</p>
+<hr />
+<h2 id="5-memcache_comm_fence" id="5-memcache-comm-fence">5. 通信/计算重叠：memcache_comm_fence</h2>
+<p><code>memcache_comm_fence.py</code> 实现 <strong>AttentionComputeStartGate</strong> —— 一个连接 compute stream 与 MemCache 传输线程的门控机制。</p>
+<h3 id="51" id="5-1">5.1 问题背景</h3>
+<p>Ascend 上存在 <strong>异步通信与计算的重叠</strong>（如 KV 传输、权重 D2D）。MemCache worker 线程需要在 attention 计算开始前启动 H2D/L2D 传输，但如果仅依赖 Python 调用点触发（&rdquo;Python call site reached&rdquo;），此时 compute stream 可能尚未真正到达 attention 边界 —— 导致传输过早启动，数据未就绪。</p>
+<h3 id="52" id="5-2">5.2 机制</h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AttentionComputeStartGate</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="c1"># attention 路径在提交 attention op 前，在当前 compute stream 上 record 一个 NPU event</span>
+        <span class="n">event</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+        <span class="n">event</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">stream</span> <span class="ow">or</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">current_stream</span><span class="p">())</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_condition</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_event</span> <span class="o">=</span> <span class="n">event</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_condition</span><span class="o">.</span><span class="n">notify_all</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">wait</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">10.0</span><span class="p">):</span>
+        <span class="c1"># MemCache worker 线程等待该 event 完成（即 compute stream 真正到达 attention 边界）</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_condition</span><span class="p">:</span>
+            <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_event</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_condition</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">)</span>
+        <span class="n">event</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+</code></pre></div>
+<ul>
+<li><code>record_attention_compute_start()</code>：attention 计算路径调用，在提交 attention op <strong>之前</strong> record event。</li>
+<li><code>wait()</code>：MemCache worker 线程调用，阻塞直到 event 完成。</li>
+<li><strong>逐层重置</strong>：<code>reset_attention_compute_start_gate()</code> 为每层创建新 gate，layerwise prefetch 任务持有当前 gate 的引用。</li>
+</ul>
+<h3 id="53-ascend" id="5-3-ascend">5.3 为什么 Ascend 需要显式门控</h3>
+<p>Ascend 的 NPU stream 模型与 CUDA 类似但 event 语义有差异。通过显式 event 门控，确保传输启动时机与 compute stream 的实际进度严格同步，避免：
+1. 传输过早 → 数据在 buffer 中等待，浪费内存带宽。
+2. 传输过晚 → attention 计算等待数据，增加延迟。</p>
+<p>这是 Ascend 特有的 <strong>async comm/compute overlap</strong> 正确性保障机制。</p>
+<hr />
+<h2 id="6-moecommtype-ep" id="6-moecommtype-ep">6. MoECommType 与 EP 通信模式</h2>
+<p><code>ascend_forward_context.py</code> 定义了 <code>MoECommType</code> 枚举，决定 MoE 层的专家并行通信策略：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MoECommType</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">ALLGATHER</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># AllGather 方式（无 EP 或 EP=1 时的 fallback）</span>
+    <span class="n">MC2</span> <span class="o">=</span> <span class="mi">1</span>         <span class="c1"># Matrix Compute Combine（华为定制的融合 AllGather+MatMul）</span>
+    <span class="n">ALLTOALL</span> <span class="o">=</span> <span class="mi">2</span>    <span class="c1"># AllToAll（标准 EP 通信）</span>
+    <span class="n">FUSED_MC2</span> <span class="o">=</span> <span class="mi">3</span>   <span class="c1"># 融合 MC2（decode 阶段 w8a8_dynamic 量化优化）</span>
+</code></pre></div>
+<h3 id="61-select_moe_comm_method" id="6-1-select-moe-comm-method">6.1 选择逻辑（<code>select_moe_comm_method</code>）</h3>
+<p>按 <strong>芯片代际</strong>（A2/A3/A310P/A5）和 <strong>token 数</strong> 动态选择：</p>
+<table>
+<thead>
+<tr>
+<th>芯片</th>
+<th>条件</th>
+<th>选择</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任意</td>
+<td>非 MoE 或 EP=1</td>
+<td><code>ALLGATHER</code></td>
+<td>无 EP 通信开销</td>
+</tr>
+<tr>
+<td>A2</td>
+<td><code>experts_per_device &lt;= 24</code>、<code>EP &gt;= 16</code>、<code>tokens &lt;= mc2_capacity</code></td>
+<td><code>MC2</code></td>
+<td>小专家+大 EP 时 MC2 效率高</td>
+</tr>
+<tr>
+<td>A2</td>
+<td>其他</td>
+<td><code>ALLGATHER</code></td>
+<td></td>
+</tr>
+<tr>
+<td>A3</td>
+<td><code>tokens &lt;= capacity</code> + w8a8 + 小 EP + 非 speculative</td>
+<td><code>FUSED_MC2</code></td>
+<td>decode 阶段融合优化</td>
+</tr>
+<tr>
+<td>A3</td>
+<td><code>tokens &lt;= capacity</code></td>
+<td><code>MC2</code></td>
+<td></td>
+</tr>
+<tr>
+<td>A3</td>
+<td>大 token</td>
+<td><code>ALLTOALL</code></td>
+<td></td>
+</tr>
+<tr>
+<td>A5</td>
+<td><code>tokens &lt;= capacity</code> + <code>world_size &gt; 1</code></td>
+<td><code>MC2</code></td>
+<td></td>
+</tr>
+<tr>
+<td>A5</td>
+<td><code>world_size &lt;= top_k</code></td>
+<td><code>ALLGATHER</code></td>
+<td></td>
+</tr>
+<tr>
+<td>A5</td>
+<td>其他</td>
+<td><code>ALLTOALL</code></td>
+<td></td>
+</tr>
+<tr>
+<td>310P</td>
+<td>任意</td>
+<td><code>ALLGATHER</code></td>
+<td>无 MC2 支持</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-mc2-ep" id="6-2-mc2-ep">6.2 MC2 对 EP 带宽/延迟的影响</h3>
+<p><strong>MC2（Matrix Compute Combine）</strong> 是华为 Ascend 的定制原语，核心思想：
+- 将 <strong>AllGather（token 分发）+ MatMul（专家计算）</strong> 融合为一个算子，减少显存读写和通信启动次数。
+- <code>set_mc2_tokens_capacity</code> 预计算 MC2 的 token 容量上限（<code>min(ceil(max_tokens / tp_size), 512) * tp_size</code>），并预分配 <code>mc2_mask</code>（bool tensor，标记实际 token 位置）。
+- <code>mmrs_fusion</code>（<code>npu_mm_reduce_scatter_base</code> 融合）在 TP ≤ 8 时启用，但 MoE 模型强制关闭（<code>mmrs_fusion = False</code>）。</p>
+<p><strong>FUSED_MC2</strong> 进一步在 decode 阶段将 dispatch + FFN + combine 融合（<code>dispatch_ffn_combine</code>），要求 EP ≤ 32、w8a8_dynamic 量化。</p>
+<p><strong>带宽/延迟影响</strong>：
+- <strong>MC2 vs AllGather</strong>：MC2 减少了一次显存读写（AllGather 的输出直接进 MatMul），在 <strong>小 token、大 EP</strong> 场景下延迟显著降低（避免了 AllGather 的 all-to-all 通信瓶颈）。
+- <strong>MC2 vs AllToAll</strong>：AllToAll 在大 token 时更优（通信量与 token 线性，但计算也线性）；MC2 在小 token 时更优（融合开销摊薄）。<code>mc2_tokens_capacity</code> 是切换阈值。
+- <strong>FUSED_MC2</strong>：在 MC2 基础上再融合 combine 阶段，decode 阶段延迟进一步降低，但约束更严（量化类型、EP 大小、非 speculative）。</p>
+<h3 id="63-eplb" id="6-3-eplb">6.3 与 EPLB 的关联</h3>
+<ul>
+<li><code>forward_context.eplb_heat_collection_status</code> 标志位控制 EPLB 的负载采集。</li>
+<li><code>VllmEplbAdaptor</code> 的 <code>expert_weight_key</code> 选择依赖 <code>enable_fused_mc2</code>（<code>expert_weight_key = (quant_type, enable_fused_mc2 == 1)</code>），影响 EPLB 权重迁移时传输哪些参数（fused MC2 时有额外的 <code>fused_w1_scale_list</code> / <code>fused_w2_scale_list</code>）。</li>
+<li>EPLB 的 <code>dynamic_eplb</code> 通信组与 MC2 组共享相同的 <code>group_ranks</code> 拓扑（<code>parallel_state.py</code>），确保权重迁移的 P2P 路径与 EP 通信拓扑一致。</li>
+</ul>
+<hr />
+<h2 id="references" id="references">关键文件 references</h2>
+<h3 id="_1" id="">分布式通信</h3>
+<ul>
+<li><code>distributed/device_communicators/pyhccl_wrapper.py</code> — HCCL ctypes 绑定（AllReduce/Broadcast 导出）</li>
+<li><code>distributed/device_communicators/pyhccl.py</code> — PyHcclCommunicator（单 device 绑定、warmup、独立通信域）</li>
+<li><code>distributed/device_communicators/npu_communicator.py</code> — NPUCommunicator（vLLM 框架适配、no-op custom AR）</li>
+<li><code>distributed/parallel_state.py:94-98</code> — <code>dynamic_eplb</code> 进程组初始化</li>
+<li><code>distributed/parallel_state.py:225-227</code> — <code>get_dynamic_eplb_group()</code></li>
+</ul>
+<h3 id="kv" id="kv">KV 传输</h3>
+<ul>
+<li><code>distributed/kv_transfer/__init__.py</code> — 连接器工厂注册</li>
+<li><code>distributed/kv_transfer/ascend_multi_connector.py</code> — AscendMultiConnector（HMA 支持、多连接器编排）</li>
+<li><code>distributed/kv_transfer/kv_p2p/mooncake_connector.py:1411-1528</code> — MooncakeConnector（Scheduler/Worker 双角色）</li>
+<li><code>distributed/kv_transfer/kv_p2p/mooncake_connector.py:1866-2362</code> — MooncakeConnectorWorker（register_kv_caches 元数据、收发线程启动）</li>
+<li><code>distributed/kv_transfer/kv_p2p/mooncake_connector.py:408-983</code> — KVCacheRecvingThread（<code>batch_transfer_sync_read</code> RDMA 传输核心）</li>
+<li><code>distributed/kv_transfer/kv_p2p/mooncake_connector.py:244-407</code> — KVCacheSendingThread</li>
+<li><code>distributed/kv_transfer/utils/mooncake_transfer_engine.py</code> — GlobalTE（Mooncake TransferEngine 单例、P2PHANDSHAKE 模式）</li>
+<li><code>distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py</code> — AscendStoreConnector（Pool 模式）</li>
+</ul>
+<h3 id="_2" id="">权重传输</h3>
+<ul>
+<li><code>distributed/weight_transfer/hccl_engine.py</code> — HCCLWeightTransferEngine（Broadcast + packed 1GB 缓冲）</li>
+<li><code>distributed/weight_transfer/npu_ipc_engine.py</code> — NPUIPCWeightTransferEngine（IPC handle、ray/http 传输）</li>
+<li><code>distributed/weight_transfer/packed_tensor.py</code> — packed_broadcast_producer/consumer（double buffer + stream 流水线）</li>
+</ul>
+<h3 id="eplb" id="eplb">EPLB</h3>
+<ul>
+<li><code>eplb/core/policy/policy_abstract.py</code> — EplbPolicy 抽象基类</li>
+<li><code>eplb/core/policy/policy_factory.py</code> — PolicyFactory（type 0-3 策略映射）</li>
+<li><code>eplb/core/policy/policy_default_eplb.py</code> — DefaultEplb（贪心装箱 + 冗余分裂）</li>
+<li><code>eplb/core/policy/policy_swift_balancer.py</code> — SwiftBalanceEplb（冗余重分配 + 交换）</li>
+<li><code>eplb/core/policy/policy_flashlb.py</code> — FlashLB（FlashTree 树搜索 + LPT 部署 + 匈牙利对齐）</li>
+<li><code>eplb/core/policy/policy_random.py</code> — RandomLoadBalance（基线对照）</li>
+<li><code>eplb/core/eplb_worker.py:29-335</code> — EplbWorker（do_update 核心循环、send/recv 计划生成）</li>
+<li><code>eplb/core/eplb_worker.py:337-411</code> — EplbProcess（子进程启动）</li>
+<li><code>eplb/core/eplb_device_transfer_loader.py</code> — D2DExpertWeightLoader（P2D D2D 权重迁移状态机）</li>
+<li><code>eplb/adaptor/vllm_adaptor.py</code> — VllmEplbAdaptor（MoE 层参数桥接）</li>
+<li><code>eplb/eplb_updator.py</code> — EplbUpdator（三阶段循环编排：采集→计算→迁移）</li>
+</ul>
+<h3 id="_3" id="">通信/计算重叠</h3>
+<ul>
+<li><code>memcache_comm_fence.py</code> — AttentionComputeStartGate（compute stream event 门控）</li>
+<li><code>ascend_forward_context.py:27-32</code> — MoECommType 枚举</li>
+<li><code>ascend_forward_context.py:240-367</code> — MC2/AllGather/AllToAll 选择逻辑（按芯片代际和 token 数）</li>
+<li><code>ascend_forward_context.py:198-237</code> — MC2 token 容量与 mc2_mask 预分配</li>
+</ul>
+</div>
+<footer>Report 04 — source <code>agent_reports/04_distributed_eplb.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

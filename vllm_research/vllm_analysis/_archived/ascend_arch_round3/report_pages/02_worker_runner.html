@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>02 · Worker / Model Runner / Compilation — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>vllm-ascend · Worker / Model Runner / Compilation</h1>
+  <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
+</div></header>
+<nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="active">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
+<div class="wrap">
+<h1 class="doc">02 · Worker / Model Runner / Compilation</h1>
+<div class="toc"><b>Contents</b>
+<a href="#1-worker-lifecycle" class="">1. Worker lifecycle</a>
+<a href="#init-order-key-sequence-in-init-init-device" class="l3">Init order (key sequence in __init__ + init_device)</a>
+<a href="#memory-profiling-amp-graph-capture-compile-or-warm-up-model-worker-py-698-788" class="l3">Memory profiling &amp; graph capture (compile_or_warm_up_model, worker.py:698-788)</a>
+<a href="#how-npu-deviates-from-cuda-at-the-worker-layer" class="l3">How NPU deviates from CUDA at the worker layer</a>
+<a href="#2-model-runner-v1-deep-dive" class="">2. Model Runner v1 deep-dive</a>
+<a href="#2-1-init-lines-266-594-notable-ascend-additions" class="l3">2.1 __init__ (lines 266-594) — notable Ascend additions</a>
+<a href="#2-2-execution-hot-path-execute-model-lines-1951-2403" class="l3">2.2 Execution hot-path: execute_model (lines 1951-2403)</a>
+<a href="#2-3-forward-context-population-amp-moecommtype" class="l3">2.3 Forward-context population &amp; MoECommType</a>
+<a href="#2-4-cudagraph-npugraph-mapping-amp-capture-differences" class="l3">2.4 CUDAGraph → NPUGraph mapping &amp; capture differences</a>
+<a href="#3-worker-v2-vs-v1" class="">3. Worker v2 vs v1</a>
+<a href="#structural-differences" class="l3">Structural differences</a>
+<a href="#what-problem-v2-solves" class="l3">What problem v2 solves</a>
+<a href="#v1-v2-shim-mechanics" class="l3">v1→v2 shim mechanics</a>
+<a href="#4-block-table-amp-input-batch" class="">4. Block Table &amp; Input Batch</a>
+<a href="#blocktable-worker-block-table-py" class="l3">BlockTable (worker/block_table.py)</a>
+<a href="#npuinputbatch-worker-npu-input-batch-py" class="l3">NPUInputBatch (worker/npu_input_batch.py)</a>
+<a href="#5-compilation-passes" class="">5. Compilation passes</a>
+<a href="#5-1-pass-by-pass-transforms" class="l3">5.1 Pass-by-pass transforms</a>
+<a href="#5-2-why-ascend-needs-its-own-pass-pipeline" class="l3">5.2 Why Ascend needs its own pass pipeline</a>
+<a href="#5-3-ascend-specific-compiler-backend-ascendcompiler-compiler-interface-py-226" class="l3">5.3 Ascend-specific compiler backend (AscendCompiler, compiler_interface.py:226)</a>
+<a href="#6-acl-graph-torch-compile-and-triton-when-each-is-used" class="">6. ACL graph, torch.compile, and Triton — when each is used</a>
+<a href="#encoder-vit-graphs" class="l3">Encoder / ViT graphs</a>
+<a href="#kvcomp-kv-compression-sparse-attention-metadata" class="l3">kvcomp (KV compression / sparse attention metadata)</a>
+<a href="#key-file-references" class="">Key file references</a>
+</div>
+<h1 id="worker-model-runner-block-table-compilation-passes-ascend-deep-dive">Worker, Model Runner, Block Table &amp; Compilation Passes — Ascend Deep-Dive</h1>
+<blockquote>
+<p>Scope: <code>/vllm_ascend/worker/</code> and <code>/vllm_ascend/compilation/</code>. This slice covers the NPU
+worker lifecycle, the v1 model runner hot path (<code>execute_model</code> → forward), the v2 model
+runner rewrite, NPU-block table / input-batch extensions for MLA + PCP, and the full
+<code>torch.compile</code> pass pipeline (fusion + rewrites) that adapts vLLM&rsquo;s CUDA-centric graph
+stack to Ascend&rsquo;s ACL/NPUGraph execution model.</p>
+</blockquote>
+<hr />
+<h2 id="1-worker-lifecycle" id="1-worker-lifecycle">1. Worker lifecycle</h2>
+<p><code>NPUWorker(WorkerBase)</code> lives at <code>worker/worker.py</code>. It is the per-NPU process owner:
+it owns the distributed environment, the device, the KV cache, and the model runner.</p>
+<h3 id="init-order-key-sequence-in-__init__-init_device" id="init-order-key-sequence-in-init-init-device">Init order (key sequence in <code>__init__</code> + <code>init_device</code>)</h3>
+<ol>
+<li><strong>Patch vLLM &amp; register NPU ops</strong> (<code>worker.py:108-119</code>):
+   <code>adapt_patch()</code> is applied, dummy fusion ops registered, ATB extensions loaded for
+   non-A5 silicon, custom ops registered, <code>AscendConfig</code> and soc version initialized.</li>
+<li><strong><code>super().__init__</code></strong> — the vLLM <code>WorkerBase</code> scaffold (cache dtype, profiler stub,
+   sleep-mode manager <code>SleepWakeupManager</code>).</li>
+<li><strong><code>_init_device()</code> → <code>self.device</code></strong> (<code>worker.py:399-501</code>):
+   - <strong>DP-aware local-rank shift</strong>: mirrors upstream <code>gpu_worker</code> — <code>local_rank +=
+     dp_local_rank * tp_pp_world_size</code> so each DP group binds a distinct NPU slice, with
+     an explicit bypass when <code>--device-ids</code> (<code>assigned_physical_gpu_ids</code>) pre-shards
+     devices (lines 404-416). This is an Ascend-specific guard absent in vanilla vLLM.
+   - Device binding via <code>torch.npu.set_device</code>.
+   - <code>torch_npu._inductor</code> imported lazily <strong>after</strong> <code>set_device</code> to avoid
+     re-initialization in worker subprocesses (lines 454-457) — required for the
+     Triton/Ascend graph mode path.
+   - A5-only local comm resource init; <strong>memory snapshot</strong> (<code>MemorySnapshot</code>) taken;
+     <code>gpu_memory_utilization</code> sanity-checked against <code>free_memory</code> (lines 466-478).</li>
+<li><strong>Distributed env (<code>_init_worker_distributed_environment</code>, <code>worker.py:981-994</code>)</strong>:
+   batch-invariance init, <code>init_distributed_environment(..., "hccl")</code> (note <strong><code>"hccl"</code></strong>
+   backend, not NCCL), <code>ensure_model_parallel_initialized</code> with both prefill and decode
+   CP sizes, <code>init_ascend_model_parallel</code>, and EC-transfer init.</li>
+<li><strong>Model runner construction</strong> (<code>worker.py:512-518</code>):
+   <div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_v2_model_runner</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">vllm_ascend.worker.v2.model_runner</span><span class="w"> </span><span class="kn">import</span> <span class="n">NPUModelRunner</span> <span class="k">as</span> <span class="n">NPUModelRunnerV2</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">model_runner</span> <span class="o">=</span> <span class="n">NPUModelRunnerV2</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">vllm_config</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">model_runner</span> <span class="o">=</span> <span class="n">NPUModelRunner</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">vllm_config</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+</code></pre></div>
+   The v2 path is gated behind <code>use_v2_model_runner</code> and is force-disabled on vLLM 0.24.0.</li>
+</ol>
+<h3 id="memory-profiling-graph-capture-compile_or_warm_up_model-workerpy698-788" id="memory-profiling-amp-graph-capture-compile-or-warm-up-model-worker-py-698-788">Memory profiling &amp; graph capture (<code>compile_or_warm_up_model</code>, <code>worker.py:698-788</code>)</h3>
+<ul>
+<li>Iterates <code>warmup_sizes</code> in <strong>descending</strong> order calling <code>_dummy_run</code>.</li>
+<li>Removes <code>cudagraph_capture_sizes</code> from warmup (those get a dedicated capture call),
+  and appends range-end sizes to ensure every compile range compiles at least once.</li>
+<li>Graph capture: <code>self.model_runner.capture_model()</code> (NPU-side warmup + NPU graph capture).</li>
+<li>Emits a <code>--kv-cache-memory=</code> suggestion derived from <strong>weights + peak activation +
+  non-torch + npugraph memory</strong>, with a 150 MiB safety margin for ACL/HCCL/driver
+  overhead.</li>
+<li>Special ATB matmul warmup (<code>_warm_up_atb</code>) for non-A5, then CPU binding.</li>
+</ul>
+<h3 id="how-npu-deviates-from-cuda-at-the-worker-layer" id="how-npu-deviates-from-cuda-at-the-worker-layer">How NPU deviates from CUDA at the worker layer</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>CUDA (vanilla vLLM)</th>
+<th>Ascend (NPUWorker)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Comm backend</td>
+<td>NCCL</td>
+<td><strong>HCCL</strong> (<code>"hccl"</code> arg)</td>
+</tr>
+<tr>
+<td>Device APIs</td>
+<td><code>torch.cuda.*</code></td>
+<td><code>torch.npu.*</code> (plus CUDA→NPU shim)</td>
+</tr>
+<tr>
+<td>DP rank shift</td>
+<td>GPU <code>assigned_physical_gpu_ids</code></td>
+<td>same logic + explicit <code>--device-ids</code> bypass</td>
+</tr>
+<tr>
+<td>Graph</td>
+<td><code>CUDAGraph</code></td>
+<td><code>NPUGraph</code> via <code>ACLGraphWrapper</code> + <strong>two</strong> capture backends</td>
+</tr>
+<tr>
+<td>Sleep/wake</td>
+<td>GPU mem pool</td>
+<td><code>CaMemAllocator</code> + <code>SleepWakeupManager</code> + NZ-mode guards</td>
+</tr>
+<tr>
+<td>Weight reload</td>
+<td>standard</td>
+<td>HCCL weight-transfer engine, layerwise reload, NZ-mode禁令</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-model-runner-v1-deep-dive" id="2-model-runner-v1-deep-dive">2. Model Runner v1 deep-dive</h2>
+<p><code>NPUModelRunner(GPUModelRunner)</code> at <code>worker/model_runner_v1.py:265</code> (5188 lines) is the
+execution hot path. It subclasses <code>GPUModelRunner</code> and overrides most of the
+input-prepare / forward / sample path. Class-level enabler:
+<code>torch.npu.config.allow_internal_format = True</code> — permits NZ (fractal) weight layouts.</p>
+<h3 id="21-__init__-lines-266-594-notable-ascend-additions" id="2-1-init-lines-266-594-notable-ascend-additions">2.1 <code>__init__</code> (lines 266-594) — notable Ascend additions</h3>
+<ul>
+<li><strong>PCP pad budget</strong>: <code>max_pcp_pad_tokens = pcp_size * 2 * max_num_seqs</code> is temporarily
+  added to <code>max_num_batched_tokens</code> before <code>super().__init__</code>, then removed (lines
+  271-332) — a workaround until upstream PR #28988 merges.</li>
+<li>Ascend buffers beyond the CUDA set: <code>query_start_loc</code> (<strong>+2</strong> for FIA padding),
+  <code>group_len</code>, <code>group_key_idx</code>, <code>group_key_cache_idx</code> (MLA/DSA bookkeeping), a
+  <code>gdn_query_start_loc</code> unpadded clone for GDN, plus CPU pinned <code>_positions_np_buf</code> /
+  <code>_dsa_positions_np_buf</code> for position computation (lines 306-456).</li>
+<li>Attention backend selection, <code>use_compress</code> (DSA compressed-KV via <code>compress_ratios</code>),
+  <code>use_sparse</code> (DSA top-k), <code>use_sparse_c8</code>, PCP manager (<code>PCPManager</code>), EPLB
+  (<code>D2DExpertWeightLoader</code> + <code>EPLbProcess</code> + <code>multiprocessing.Manager</code> shared dict for
+  expert-load heat), and <code>NPUInputBatch</code> construction (lines 488-558).</li>
+<li>NPU-graph decision: <code>self.use_aclgraph = cudagraph_mode != NONE &amp;&amp; mode ==
+  VLLM_COMPILE &amp;&amp; !enforce_eager</code> (lines 655-660).</li>
+</ul>
+<h3 id="22-execution-hot-path-execute_model-lines-1951-2403" id="2-2-execution-hot-path-execute-model-lines-1951-2403">2.2 Execution hot-path: <code>execute_model</code> (lines 1951-2403)</h3>
+<p>The method is structured in five phases. The central orchestration (greatly condensed):</p>
+<div class="highlight"><pre><span></span><code>execute_model(scheduler_output, intermediate_tensors)
+ ├─ [pre-work] ngram deepcopy / PP new_token_ids / KV preemption handle
+ ├─ [prepare input]  (synchronize_input_prep)
+ │     _update_states → _prepare_inputs(scheduler_output, num_scheduled_tokens)
+ │       ├─ block_table.commit_block_table          (overlap copy w/ CPU work)
+ │       ├─ positions, req_indices, cu_num_tokens
+ │       ├─ PCP/DCP: slot_mapping pre-split, pcp_manager.init_batch_info
+ │       ├─ query_start_loc / gdn clone / M-RoPE / X-DRoPE
+ │       ├─ discard_request mask (optimistic seq_lens), num_accepted_tokens sync
+ │       ├─ num_computed_tokens GPU update (async-spec-decode correction)
+ │       └─ slot_mapping (non-PCP, GPU kernel)
+ │     → _determine_batch_execution_and_padding → (cudagraph_mode, batch_desc, ...)
+ │     → _build_attention_metadata → AscendCommonAttentionMetadata + per-group builder
+ ├─ [preprocess] _preprocess → input_ids/positions/intermediate_tensors/model_kwargs
+ ├─ [forward] set_ascend_forward_context(...) wrapping:
+ │     _model_forward → self.model(...) ; optional flash_comm all_gather
+ └─ [post process] compute_logits → append ExecuteModelState; return None (continues in sample_tokens)
+</code></pre></div>
+<p>The CUDA-graph mode is resolved <strong>per forward</strong> by <code>_determine_batch_execution_and_padding</code>
+(lines 2955-3052): it decides FULL vs PIECEWISE vs NONE, pads to TP size for sequence
+parallelism, and critically <strong>coordinates DP ranks</strong> via <code>_sync_metadata_across_dp</code>
+(packed <code>num_tokens</code> + <code>cudagraph_mode.value</code> tensor, all-reduced; optional NPU-side
+all-reduce <code>dp_allreduce_on_npu</code> to avoid CPU-side dirty data, lines 662-710).</p>
+<h3 id="23-forward-context-population-moecommtype" id="2-3-forward-context-population-amp-moecommtype">2.3 Forward-context population &amp; MoECommType</h3>
+<p><code>set_ascend_forward_context</code> (<code>ascend_forward_context.py:57-195</code>) extends vLLM&rsquo;s
+<code>ForwardContext</code> with Ascend-specific fields. The pivotal dispatch is
+<code>select_moe_comm_method</code> (lines 303-367):</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MoECommType</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">ALLGATHER</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">MC2</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span> <span class="n">ALLTOALL</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span> <span class="n">FUSED_MC2</span> <span class="o">=</span> <span class="mi">3</span>
+</code></pre></div>
+<p>Selection is <strong>device-generation × token-count × EP-size × quant</strong> conditioned:
+- A2: <code>MC2</code> when <code>num_experts_per_device &lt;= 24 &amp;&amp; ep &gt;= 16 &amp;&amp; tokens &lt;= mc2_capacity</code>.
+- A3: <code>FUSED_MC2</code> for w8a8_dynamic + small EP + dispatch_ffn_combine; else MC2/ALLTOALL.
+- A5: <code>MC2</code> within capacity; <code>ALLGATHER</code> when <code>world &lt;= topK</code>; else <code>ALLTOALL</code>.
+- 310P: always <code>ALLGATHER</code>.</p>
+<p>The context also sets <code>mmrs_fusion</code> (TP≤8), <code>flash_comm_v1_enabled</code>
+(<code>enable_sp &amp;&amp; tokens &gt; 1000</code>, the 1000-token empirical threshold),
+<code>flashcomm_v2_enabled</code>, <code>pad_size</code>/<code>padded_length</code> (TP-divisible padding for the
+FlashComm collective), <code>mc2_mask</code>, <code>sinks</code>, <code>layer_idx</code>, and
+<code>eplb_heat_collection_status</code>. V1 vs V2 context access is unified by
+<code>_ExtraForwardContextProxy</code> (<code>_EXTRA_CTX</code>, lines 370-430): in V2 it reads/writes
+<code>ctx.additional_kwargs</code> instead of attributes, so the same Ascend extra fields work
+transparently across both runners.</p>
+<p><code>_model_forward</code> (lines 2860-2896) captures the context, builds <code>model_inputs</code>, and—when
+<code>ENPU_ENABLE</code> (soft-segmentation) is on—calls <code>_update_full_graph_params_if_needed</code>
+<strong>before</strong> the forward so the full-graph attention params are current; otherwise after.</p>
+<h3 id="24-cudagraph-npugraph-mapping-capture-differences" id="2-4-cudagraph-npugraph-mapping-amp-capture-differences">2.4 CUDAGraph → NPUGraph mapping &amp; capture differences</h3>
+<p>Ascend does <strong>not</strong> use PyTorch&rsquo;s CUDA graph directly. Two related-but-distinct mechanisms:</p>
+<p><strong>a) ACLGraphWrapper</strong> (<code>compilation/acl_graph.py:60-267</code>) — piecewise + full capture of
+<code>self.model</code>. On <code>__call__</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">graph</span><span class="p">(</span><span class="n">aclgraph</span><span class="p">,</span> <span class="n">pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">graph_pool</span><span class="p">):</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">runnable</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="n">get_offloader</span><span class="p">()</span><span class="o">.</span><span class="n">join_after_forward</span><span class="p">()</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="n">weak_ref_tensors</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>   <span class="c1"># last-graph mem saving</span>
+<span class="n">entry</span><span class="o">.</span><span class="n">aclgraph</span> <span class="o">=</span> <span class="n">aclgraph</span>
+</code></pre></div>
+<p>Capture-time nuances: <code>forward_context.capturing = True</code>; offloader sync
+(<code>sync_prev_onload</code> / <code>join_after_forward</code>); GC disabled for all-but-first piecewise
+graph (<code>patch("gc.collect", ...)</code>, lines 167-176); workspace weak-refing
+(<code>weak_ref_workspaces</code>); and Ascend-specific error translation (<code>Alloc sq cq fail</code> →
+upgrade HDK; stream-resource exhaustion → reduce capture sizes). Replay enforces
+<strong>input-address stability</strong> (debug-mode assert, lines 243-250) and a <code>synchronize()</code>
+barrier for async-scheduling ordering (lines 262-265).</p>
+<p><strong>b) <code>graph_capture</code> context manager</strong> (<code>model_runner_v1.py:212-240</code>) — swaps the current
+NPU stream so captured kernels are isolated from background default-stream work.</p>
+<p><strong>c) <code>capture_model</code> (v1)</strong> (lines 5035-5045) — wraps the upstream
+<code>GPUModelRunner.capture_model</code> inside <code>_torch_cuda_wrapper()</code> +
+<code>_replace_gpu_model_runner_function_wrapper()</code>:
+<code>_torch_cuda_wrapper</code> (lines 5112-5154) monkey-patches <code>torch.cuda.*</code> → <code>torch.npu.*</code>
+(Event/Stream/stream/synchronize/mem_get_info); the function-replace wrapper injects the
+Ascend <code>graph_capture</code> + <code>EncoderAclGraphManager</code> into the GPU module namespace just
+for the capture call, keeping the upstream <code>GPUModelRunner.capture_model</code> body reusable.</p>
+<hr />
+<h2 id="3-worker-v2-vs-v1" id="3-worker-v2-vs-v1">3. Worker v2 vs v1</h2>
+<p><code>worker/v2/</code> is the experimental <strong>Model Runner V2</strong>, gated by <code>VLLM_USE_V2_MODEL_RUNNER</code>.
+Per its README, it tracks vLLM&rsquo;s v2 scheduler/worker split and is tracked in issue #5208.</p>
+<h3 id="structural-differences" id="structural-differences">Structural differences</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>v1 (<code>worker/</code>)</th>
+<th>v2 (<code>worker/v2/</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Class</td>
+<td><code>NPUModelRunner(GPUModelRunner)</code></td>
+<td><code>NPUModelRunner(GPUModelRunner)</code> (different <code>GPUModelRunner</code> — <code>vllm.v1.worker.gpu.model_runner</code>)</td>
+</tr>
+<tr>
+<td>Request state</td>
+<td><code>InputBatch</code> (persistent batch + block table)</td>
+<td><code>AscendRequestState(RequestState)</code> — adds <code>num_computed_tokens_cpu</code> (Ascend attn backends require CPU seq_lens that upstream v2 deprecated)</td>
+</tr>
+<tr>
+<td>Input buffer</td>
+<td><code>NPUInputBatch</code></td>
+<td><code>AscendInputBuffers</code> (+ <code>seq_lens_cpu</code> / <code>positions</code>)</td>
+</tr>
+<tr>
+<td>Speculative decoder</td>
+<td>drafters (<code>AscendEagleProposer</code>, …)</td>
+<td><code>AscendEagleSpeculator</code> + <code>init_speculator</code></td>
+</tr>
+<tr>
+<td>Graph manager</td>
+<td><code>ACLGraphWrapper</code> + <code>capture_model</code></td>
+<td><code>ModelAclGraphManager(ModelCudaGraphManager)</code></td>
+</tr>
+<tr>
+<td>CP / PCP / EPLB</td>
+<td>full</td>
+<td><strong>NotImplemented</strong> (PCP, dcp, dynamic_eplb all raise)</td>
+</tr>
+<tr>
+<td>Forward context</td>
+<td>via <code>set_ascend_forward_context</code></td>
+<td>inherited GPU path + <code>override_mrv2_in_profile_run</code> ContextVar for the MC2 profile dummy run</td>
+</tr>
+</tbody>
+</table>
+<p>The v2 runner&rsquo;s <code>__init__</code> (<code>v2/model_runner.py:61-140</code>) deletes the upstream <code>req_states</code>
+/ <code>input_buffers</code> / <code>speculator</code> and re-creates Ascend-specific versions, re-adding
+CPU-side <code>num_computed_tokens_cpu</code> + a dedicated <code>num_computed_tokens_stream</code>/<code>Event</code> to
+copy computed-token counts back to CPU for seq_lens reconstruction. For full-graph mode it
+creates an <code>update_stream</code> used by <code>run_fullgraph</code> to push attention params.</p>
+<h3 id="what-problem-v2-solves" id="what-problem-v2-solves">What problem v2 solves</h3>
+<p>The v1 runner couples input preparation, DP sync, PCP splitting, and EPLB bookkeeping in
+one monolithic <code>execute_model</code>/<code>_prepare_inputs</code>. v2 adopts upstream&rsquo;s <strong>separation of
+<code>prepare_inputs</code> (pure, padded, DP-coordinated) from <code>postprocess</code></strong> and reuses upstream
+<code>execute_model</code> by only overriding <code>prepare_inputs</code>, <code>postprocess</code>,
+<code>postprocess_sampled</code>, <code>_update_seq_lens_cpu</code>, and the graph manager. This is visible in
+<code>run_fullgraph</code> (<code>aclgraph_utils.py:71-101</code>): v2 injects <code>model_runner</code> into
+<code>ModelAclGraphManager</code> precisely so it can <strong>inherit</strong> upstream <code>execute_model</code> and only
+hook <code>update_full_graph_params</code> — whereas v1 must carry the whole forward orchestration.</p>
+<h3 id="v1v2-shim-mechanics" id="v1-v2-shim-mechanics">v1→v2 shim mechanics</h3>
+<ul>
+<li><code>torch_cuda_wrapper</code> (<code>v2/utils.py:10-27</code>): wraps <code>torch.cuda.*</code>→<code>torch.npu.*</code>
+  including <code>graph_pool_handle</code>, <code>CUDAGraph = NPUGraph</code>, and <code>graph = torch_npu_graph_wrapper</code>.</li>
+<li><code>torch_npu_graph_wrapper</code> (<code>v2/utils.py:48-56</code>): exits the graph context by
+  weak-reffing the graph workspaces (<code>weak_ref_workspaces</code>) — an MRV2-specific cleanup
+  that avoids another upstream monkey patch.</li>
+<li><code>communicator_switch</code> (<code>v2/utils.py:31-44</code>): swaps <code>CudaCommunicator</code>→<code>NPUCommunicator</code>
+  for capture.</li>
+<li><code>ModelWithContext</code> (<code>aclgraph_utils.py:135-163</code>): wraps <code>self.model</code> so that inside
+  capture <code>capturing=True</code>, <code>is_draft_model</code>, <code>is_draft_model_prefill</code> are set on
+  <code>_EXTRA_CTX</code> — letting Ascend inherit upstream <code>_capture_full_graph</code> unchanged.</li>
+</ul>
+<p>Known v2 gaps (README): <code>set_cos_and_sin</code> (MLA RoPE), custom KV-init (2M-alignment, PD
+disagg), the graph-manager↔model_runner coupling, and the speculator graph-manager coupling
+all still need to be upstreamed before the v1-only workarounds can be deleted.</p>
+<hr />
+<h2 id="4-block-table-input-batch" id="4-block-table-amp-input-batch">4. Block Table &amp; Input Batch</h2>
+<h3 id="blocktable-workerblock_tablepy" id="blocktable-worker-block-table-py">BlockTable (<code>worker/block_table.py</code>)</h3>
+<p><code>BlockTable</code> + <code>MultiGroupBlockTable</code> extend vLLM&rsquo;s block management with three Ascend
+concerns:</p>
+<ol>
+<li><strong>Compressed-KV (MLA/DSA) scaling</strong> — <code>compress_ratio</code> is read off
+   <code>UniformTypeKVCacheSpecs</code> and <code>max_num_blocks_per_req</code> is <strong>divided</strong> by it
+   (lines 33-49). DSA&rsquo;s &ldquo;compress-head&rdquo; layout stores fewer logical blocks per request.</li>
+<li><strong>Hybrid (kernel) blocks</strong> — <code>kernel_sizes</code> selects a kernel block size that evenly
+   divides <code>physical_block_size</code>; <code>blocks_per_phys_block</code> splits a physical block into
+   multiple logical blocks (<code>use_hybrid_blocks</code>), with <code>_convert_physical_to_logical_blocks</code>
+   (lines 61-309). Required so attention kernels that assume a small block size can address
+   a coarser physical allocation.</li>
+<li><strong>PCP/DCP context-parallel slot mapping</strong> — <code>compute_slot_mapping</code> dispatches to the
+   GPU Triton <code>_compute_slot_mapping_kernel</code> for the plain case (with <code>CP_KV_CACHE_INTERLEAVE_SIZE</code>,
+   <code>PAD_ID</code>, <code>KV_CACHE_BLOCK_SIZE</code>, <code>BLOCKS_PER_KV_BLOCK</code> constexprs), and to
+   <code>_compute_pcp_dcp_slot_mapping</code> (lines 240-285) for CP. The CP path uses a
+   <strong>virtual block</strong> = <code>physical_block_size * cp_world_size</code>, computes a per-rank mask
+   <code>virtual_block_offsets // cp_kv_cache_interleave_size % total_cp == current_rank</code>, and
+   interleaves slots across ranks — DCP stores KV with a rank-interleaved layout so each
+   token <code>i</code> lives on the NPU with <code>dcp_rank == i % pcp_world_size</code> (per the code comment).</li>
+</ol>
+<p><code>MultiGroupBlockTable</code> (lines 329-467) maintains one <code>BlockTable</code> per KV-cache group
+(MLA vs standard attention vs Mamba vs encoder-only), skipping Mamba groups in
+<code>compute_slot_mapping</code>. It is constructed in <code>NPUInputBatch.__init__</code> with per-group
+<code>block_sizes</code>, <code>kernel_block_sizes</code>, and <code>kv_cache_groups</code>.</p>
+<h3 id="npuinputbatch-workernpu_input_batchpy" id="npuinputbatch-worker-npu-input-batch-py">NPUInputBatch (<code>worker/npu_input_batch.py</code>)</h3>
+<p><code>NPUInputBatch(InputBatch)</code> (<code>:33</code>) carries the persistent batch. Ascend-specifics over
+upstream:</p>
+<ul>
+<li><code>block_table = MultiGroupBlockTable(...)</code> holding multi-group block tables.</li>
+<li>M-RoPE / X-DRoPE handled in the runner (<code>_calc_mrope_positions</code>, <code>_calc_xdrope_positions</code>).</li>
+<li><code>prev_sampled_token_ids</code>, <code>prev_req_id_to_index</code> for async spec-decode token
+  re-insertion; <code>req_prompt_embeds</code> dict for multimodal prompt embeddings.</li>
+<li>Sampling metadata (<code>temperature/top_p/top_k</code>, penalties, logits processors) duplicated
+  as <code>{gpu, cpu_tensor, numpy}</code> triplets for non-blocking CPU→GPU copies via
+  <code>copy_snapshot_to_gpu</code> (<code>worker/utils.py:15-18</code>), the canonical &ldquo;pinned snapshot
+  copy&rdquo; helper. This helper is used pervasively in <code>_prepare_inputs</code> to overlap CPU
+  compute with GPU upload.</li>
+</ul>
+<p>The batch flow is: <code>_update_states</code> (writes new token ids into <code>token_ids_cpu</code>,
+allocates blocks), then <code>_prepare_inputs</code> (positions → slot_mapping →
+commit_block_table → GPU copy). The <code>num_accepted_tokens</code> / <code>num_computed_tensors</code> sync
+between CPU and GPU is the mechanism that makes optimistic async spec-decode safe.</p>
+<hr />
+<h2 id="5-compilation-passes" id="5-compilation-passes">5. Compilation passes</h2>
+<p>Ascend cannot rely on vLLM&rsquo;s Triton-centric Inductor path, so it defines a <strong>separate pass
+manager + compiler interface</strong> and a library of IR-level rewrites. Two execution backends
+are supported, selected by <code>ascend_compilation_config.enable_npugraph_ex</code>:</p>
+<ul>
+<li><strong>fusion_pass_compile</strong> (<code>compiler_interface.py:47-68</code>) → <code>GraphFusionPassManager</code> →
+  <code>torch.compile</code> Inductor pattern-matcher passes (Triton generation, the path actually
+  used for custom Triton kernels like <code>muls_add_triton</code>).</li>
+<li><strong>npugraph_ex_compile</strong> (<code>compiler_interface.py:149-223</code>) → <code>npugraph_ex</code> /
+  <code>torchair</code> NPU-backend compilers that lower FX → Ascend IR → ACL operators; also runs
+  the same <code>GraphFusionPassManager</code> <strong>inside</strong> its inner compile via <code>compile_inner</code>.</li>
+</ul>
+<p><code>GraphFusionPassManager</code> (<code>graph_fusion_pass_manager.py</code>) is the Ascend analog of vLLM&rsquo;s
+<code>PostGradPassManager</code> (&ldquo;Since <code>torch_npu</code> does not support triton for now, we define our
+own pass manager&rdquo;). <code>configure</code> (<code>:49-79</code>) toggles each fusion via
+<code>ascend_compilation_config</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
+<th>File</th>
+<th>Toggle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AddRMSNormQuantFusionPass</code></td>
+<td><code>norm_quant_fusion_pass.py</code></td>
+<td><code>fuse_norm_quant</code> (default on, off on 310P)</td>
+</tr>
+<tr>
+<td><code>QKNormRopeFusionPass</code></td>
+<td><code>qknorm_rope_fusion_pass.py</code></td>
+<td><code>fuse_qknorm_rope</code> (default on)</td>
+</tr>
+<tr>
+<td><code>MatmulAllReduceAddRMSNormPass</code></td>
+<td><code>allreduce_rmsnorm_fusion_pass.py</code></td>
+<td><code>fuse_allreduce_rms</code> (default on)</td>
+</tr>
+<tr>
+<td><code>MulsAddFusionPass</code></td>
+<td><code>muls_add_pass.py</code></td>
+<td><code>fuse_muls_add</code> (default on, off on 310P)</td>
+</tr>
+<tr>
+<td><code>SequenceParallelismPass</code></td>
+<td><code>sequence_parallelism.py</code></td>
+<td><code>pass_config.enable_sp</code></td>
+</tr>
+<tr>
+<td><code>SequenceParallelismMoePass</code></td>
+<td><code>sequence_parallelism_moe.py</code></td>
+<td><code>pass_config.enable_sp</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>BasePattern</code> (<code>base_pattern.py</code>) is the uniform abstraction: <code>get_pattern</code> /
+<code>get_replacement</code> / <code>get_inputs</code> feed <strong>both</strong> the Inductor <code>PatternMatcherPass</code>
+(<code>pm.register_replacement</code>) and the NPU graph <code>nge.register_replacement</code> with an
+<code>extra_stream_scope_check</code> (<code>npugraph_ex_utils_check</code>). Duplicate registration is avoided
+by a global <code>_registered_patterns</code> set.</p>
+<h3 id="51-pass-by-pass-transforms" id="5-1-pass-by-pass-transforms">5.1 Pass-by-pass transforms</h3>
+<p><strong>QKNormRopeFusionPass</strong> (<code>qknorm_rope_fusion_pass.py:187</code>) — fuses QKV-split + per-head
+RMSNorm + RoPE into one <code>DeviceOperator.split_qkv_rmsnorm_rope</code>:</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># pattern (lines 53-76)</span>
+<span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">qkv</span><span class="o">.</span><span class="n">split</span><span class="p">([</span><span class="n">q_size</span><span class="p">,</span> <span class="n">kv_size</span><span class="p">,</span> <span class="n">kv_size</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">q_by_head</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="n">q_norm_out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">npu_rms_norm</span><span class="p">(</span><span class="n">q_by_head</span><span class="p">,</span> <span class="n">q_weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
+<span class="n">k_by_head</span> <span class="o">=</span> <span class="n">k</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="n">k_norm_out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">npu</span><span class="o">.</span><span class="n">npu_rms_norm</span><span class="p">(</span><span class="n">k_by_head</span><span class="p">,</span> <span class="n">k_weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
+<span class="n">q_rope</span><span class="p">,</span> <span class="n">k_rope</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">vllm</span><span class="o">.</span><span class="n">npu_rotary_embedding</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">q_flat</span><span class="p">,</span> <span class="n">k_flat</span><span class="p">,</span> <span class="n">cos_sin_cache</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rope_dim</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+<span class="c1"># → replacement</span>
+<span class="n">DeviceOperator</span><span class="o">.</span><span class="n">split_qkv_rmsnorm_rope</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">qkv</span><span class="p">,</span> <span class="n">q_weight</span><span class="o">=</span><span class="p">,</span> <span class="n">k_weight</span><span class="o">=</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+Why: collapses 2× split + 2× reshape + 2× rms_norm + 1× rope into a single ACL op launch;
+only active for head_dim=128, eps ∈ {1e-5,1e-6}, with/+bias variants.</p>
+<p><strong>MatmulAllReduceAddRMSNormPass</strong> (<code>allreduce_rmsnorm_fusion_pass.py:134</code>) — matmul +
+TP all-reduce + residual-add + RMSNorm → <code>torch.ops._C_ascend.matmul_allreduce_add_rmsnorm</code>:</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># pattern (lines 57-64)                       # replacement (lines 68-84)</span>
+<span class="n">mm</span> <span class="o">=</span> <span class="n">unquantized_gemm</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">weight</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>        <span class="n">out0</span><span class="p">,</span> <span class="n">out1</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span> <span class="n">x</span> <span class="n">weight</span> <span class="n">residual</span>
+<span class="n">ar</span> <span class="o">=</span> <span class="n">tensor_model_parallel_all_reduce</span><span class="p">(</span><span class="n">mm</span><span class="p">)</span>      <span class="n">rmsnorm_weight</span><span class="p">,</span> <span class="n">tp_group_name</span><span class="p">,</span> <span class="n">tp_size</span><span class="p">,</span>
+<span class="n">chunk</span> <span class="o">=</span> <span class="n">maybe_chunk_residual</span><span class="p">(</span><span class="n">ar</span><span class="p">,</span> <span class="n">residual</span><span class="p">)</span>     <span class="n">local_rank</span><span class="p">,</span> <span class="n">eps</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">False</span>
+<span class="n">out</span>  <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span><span class="n">ar</span><span class="p">,</span> <span class="n">chunk</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+The fused op internally performs <strong>ReduceScatter+AllGather</strong> instead of AllReduce, halving
+traffic. Gate: <code>compile_range.start &gt; 512</code> (<code>ALLREDUCE_NORM_FUSE_THRESHOLD</code>) to avoid
+hurting small-batch latency (lines 154-159).</p>
+<p><strong>AddRMSNormQuantFusionPass</strong> (<code>norm_quant_fusion_pass.py:679</code>) — the largest pass family;
+fuses <code>AddRMSNorm</code> + quantization into single ACL ops, e.g.:</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># pattern (lines 50-67)                         # replacement (lines 72-89)</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span><span class="n">inp</span><span class="p">,</span> <span class="n">res</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="n">out</span> <span class="o">=</span> <span class="n">npu</span><span class="o">.</span><span class="n">npu_add_rms_norm_quant</span><span class="p">(</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">vllm</span><span class="o">.</span><span class="n">quantize</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">scale</span><span class="p">,</span> <span class="n">s_recip</span><span class="p">,</span> <span class="n">off</span><span class="p">)</span>      <span class="n">inp</span><span class="p">,</span> <span class="n">res</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">epsilon</span><span class="o">=</span><span class="n">eps</span><span class="p">)</span>
+</code></pre></div>
+Variants: <code>±bias</code>, <code>+SP</code> (<code>maybe_all_gather_and_maybe_unpad</code> kept <strong>after</strong> the fused op),
+<strong>dynamic</strong> (<code>npu_dynamic_quant</code>→<code>npu_add_rms_norm_dynamic_quant</code>), and <strong>MXFP</strong>
+(<code>npu_dynamic_mx_quant</code>→<code>npu_add_rms_norm_dynamic_mx_quant</code>/<code>npu_rms_norm_dynamic_mx_quant</code>,
+fp8_e4m3). W4A4-int4 models explicitly disable this pass (lines 658-676).</p>
+<p><strong>MulsAddFusionPass</strong> (<code>muls_add_pass.py:76</code>) — element-wise <code>x * routed_scaling_factor + y</code>
+→ <code>torch.ops.vllm.muls_add</code> (a <strong>Triton</strong> kernel, the rare Ascend path that uses Triton):</p>
+<p><div class="highlight"><pre><span></span><code><span class="n">tmp</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span>                 <span class="c1"># → vllm.muls_add(x, y, self.scale)</span>
+<span class="n">out</span>  <span class="o">=</span> <span class="n">tmp</span> <span class="o">+</span> <span class="n">y</span>
+</code></pre></div>
+The <code>scale</code> is the model&rsquo;s <code>routed_scaling_factor</code> (MoE silu-scale).</p>
+<p><strong>SequenceParallelismPass</strong> (<code>sequence_parallelism.py:187</code>) rewrites middle/layer SP
+epilogues. The SP minimum-token threshold is <strong>1 for MoE, 1000 for dense</strong> (<code>get_sp_min_token_num</code>, lines 16-20), because MoE benefits from SP even at tiny batches. The core
+rewrite for <code>MiddleAllReduceRMSNormPattern</code> (lines 76-99):</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># pattern                               # replacement</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">all_reduce</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>                   <span class="n">rs</span> <span class="o">=</span> <span class="n">reduce_scatter</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
+<span class="n">r</span><span class="p">,</span><span class="n">_</span><span class="p">,</span><span class="n">res</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span>        <span class="n">res</span> <span class="o">=</span> <span class="n">maybe_chunk_residual</span><span class="p">(</span><span class="n">rs</span><span class="p">,</span> <span class="n">res</span><span class="p">)</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">residual</span><span class="p">,</span> <span class="n">weight</span><span class="p">,</span> <span class="n">eps</span><span class="p">)</span>       <span class="n">r</span><span class="p">,</span><span class="n">_</span><span class="p">,</span><span class="n">res</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span><span class="n">rs</span><span class="p">,</span><span class="n">res</span><span class="p">,</span><span class="n">weight</span><span class="p">,</span><span class="n">eps</span><span class="p">)</span>
+                                        <span class="k">return</span> <span class="n">all_gather</span><span class="p">(</span><span class="n">r</span><span class="p">),</span> <span class="n">res</span>
+</code></pre></div>
+Plus a <code>Qwen3VLM</code> variant (+ <code>deepstack_input_embeds</code> add). Runs <strong>only</strong> when
+<code>compile_range.start &gt;= min_tokens</code>.</p>
+<p><strong>SequenceParallelismMoePass</strong> (<code>sequence_parallelism_moe.py:165</code>) is the <strong>AllGather</strong>
+epilogue pass for MoE. <code>MiddleLayerAllgatherAddRMSNormPattern</code> (lines 32-52) moves the
+all_gather <strong>after</strong> rmsnorm to avoid middle-layer shape explosion:</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># pattern                                   # replacement</span>
+<span class="n">ag</span> <span class="o">=</span> <span class="n">all_gather</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>                       <span class="n">res</span> <span class="o">=</span> <span class="n">maybe_chunk_residual</span><span class="p">(</span><span class="nb">input</span><span class="p">,</span> <span class="n">res</span><span class="p">)</span>
+<span class="n">sl</span> <span class="o">=</span> <span class="n">ag</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span>                         <span class="n">r</span><span class="p">,</span><span class="n">_</span><span class="p">,</span><span class="n">res</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span><span class="nb">input</span><span class="p">,</span><span class="n">res</span><span class="p">,</span><span class="n">weight</span><span class="p">,</span><span class="n">eps</span><span class="p">)</span>
+<span class="n">r</span><span class="p">,</span><span class="n">_</span><span class="p">,</span><span class="n">res</span> <span class="o">=</span> <span class="n">npu_add_rms_norm_bias</span><span class="p">(</span><span class="n">sl</span><span class="p">,</span><span class="n">res</span><span class="p">,</span><span class="o">...</span><span class="p">)</span>  <span class="k">return</span> <span class="n">all_gather</span><span class="p">(</span><span class="n">r</span><span class="p">),</span> <span class="n">res</span>
+</code></pre></div>
+Plus <code>AllGatherChunkNoOpPattern</code> folding <code>all_gather + sequence_parallel_chunk_impl → identity</code>.</p>
+<p><strong>NoOpEliminationPass</strong> (<code>noop_elimination.py:11</code>) and
+<strong>AllGatherChunkNoOpCleanupPass</strong> (<code>allgather_chunk_noop_pass.py:10</code>) clean up identity
+view/reshape and all_gather+chunk pairs that would otherwise become graph breaks or
+wasted kernels. NoOpElimination walks FX nodes, compares input/output shapes via
+<code>statically_known_true</code>, and erases no-op <code>view</code>/<code>reshape</code>. Both are preconditioning for
+capture: the fewer dead ops, the smaller/replayable the captured graph.</p>
+<h3 id="52-why-ascend-needs-its-own-pass-pipeline" id="5-2-why-ascend-needs-its-own-pass-pipeline">5.2 Why Ascend needs its own pass pipeline</h3>
+<ol>
+<li><strong>CUDA→Ascend operator lowering</strong> — <code>/vllm.npu_rms_norm</code>, <code>/vllm.npu_add_rms_norm_quant</code>,
+   <code>/vllm.matmul_allreduce_add_rmsnorm</code> are ACL operators with no Triton equivalent; Inductor
+   cannot emit them, so they must be pattern-matched and rewritten.</li>
+<li><strong>Communication–compute fusion</strong> — ReduceScatter+AllGather, AllReduce→AddRMSNorm, and the
+   matmul+allreduce atomics hide latency and halve interconnect traffic on HCCL.</li>
+<li><strong>Graph-break removal</strong> — Triton kernel captures, all_gather+chunk noops, and reshape/view
+   folding produce piecewise-capturable subgraphs.</li>
+<li><strong>Structural shuffle</strong> — moving all_gather before/after rmsnorm (SP passes) and the TP
+   token-padding (<code>_pad_for_sequence_parallelism</code>) reshape the FX graph into a form the NPU piecewise
+   graph replay expects.</li>
+</ol>
+<h3 id="53-ascend-specific-compiler-backend-ascendcompiler-compiler_interfacepy226" id="5-3-ascend-specific-compiler-backend-ascendcompiler-compiler-interface-py-226">5.3 Ascend-specific compiler backend (<code>AscendCompiler</code>, <code>compiler_interface.py:226</code>)</h3>
+<ul>
+<li><code>compute_hash</code> factors in <code>torch_npu_version</code>, <code>enable_npugraph_ex</code>, <code>enable_static_kernel</code>
+  (lines 236-249) so graph caches invalidate on CANN/driver upgrades.</li>
+<li><code>compile</code> branches on <code>enable_npugraph_ex</code> → <code>npugraph_ex_compile</code> (preferred) else
+  <code>fusion_pass_compile</code> (Inductor/Triton). The npugraph_ex path selects <code>nge</code> or <code>torchair</code>,
+  and configures <code>_configure_backend</code> (lines 82-146):</li>
+<li><code>npugraph_ex</code>: <code>force_eager=True</code>, <code>inplace_pass=False</code> (avoids Gelu→CPU fallback),
+    <code>clone_input/output=False</code>, optional <code>static_kernel_compile</code> for decode sizes.</li>
+<li><code>torchair</code>: <code>mode="reduce-overhead"</code>, <code>debug.run_eagerly=True</code>,
+    <code>disable_reinplace_inplaceable_ops_pass=True</code>, optional <code>_aclnn_static_shape_kernel</code>.</li>
+<li><code>LOCAL_WORLD_SIZE</code> is synthesized from <code>local_world_size * data_parallel_size_local</code> for
+    static-kernel Gloo groups (lines 97-108) because vLLM doesn&rsquo;t set it like torchrun does.</li>
+<li>Cache/load serialize compiled <code>py_code</code>, but <strong>skip</strong> graphs containing Triton kernels
+  (their <code>kernel_side_table</code> indices are process-local and non-serializable, lines 186-198).</li>
+</ul>
+<hr />
+<h2 id="6-acl-graph-torchcompile-and-triton-when-each-is-used" id="6-acl-graph-torch-compile-and-triton-when-each-is-used">6. ACL graph, torch.compile, and Triton — when each is used</h2>
+<p>Ascend has <strong>three</strong> execution modes, selected per-build/not-per-op:</p>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Where invoked</th>
+<th>When chosen</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ACL Graph</strong> (piecewise or full)</td>
+<td><code>ACLGraphWrapper.__call__</code> / <code>ModelAclGraphManager.run_fullgraph</code></td>
+<td><code>cudagraph_mode != NONE &amp;&amp; mode==VLLM_COMPILE &amp;&amp; !enforce_eager</code> (<code>_use_aclgraph</code>). FULL = whole model per BatchDescriptor; PIECEWISE = per-layer segments (re-captured with GC disabled). Replayed via <code>entry.aclgraph.replay()</code>. Uses <code>torch.npu.NPUGraph</code> from a <code>current_platform.get_global_graph_pool()</code>.</td>
+</tr>
+<tr>
+<td><strong>torch.compile</strong> (Inductor/Triton)</td>
+<td><code>fusion_pass_compile</code> → <code>GraphFusionPassManager</code></td>
+<td>Default compilation; needed to emit <strong>Triton</strong> kernels (e.g. <code>muls_add_triton</code>, <code>_zero_kv_blocks_kernel</code> in <code>worker/utils.py:21</code>, <code>_compute_slot_mapping_kernel</code>). The Ascend Triton path runs via <code>torch_npu._inductor</code>.</td>
+</tr>
+<tr>
+<td><strong>npugraph_ex / torchair</strong></td>
+<td><code>npugraph_ex_compile</code></td>
+<td>When <code>enable_npugraph_ex=True</code>. FX→Ascend IR→ACL; replaces Inductor as the lowering backend. Still runs the same fusion passes.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>ACL graph is layered on top of torch.compile</strong> in Ascend: <code>compile_or_warm_up_model</code>
+runs Inductor/compile (which applies the fusion passes and picks a backend), and the
+resulting callable is what <code>ACLGraphWrapper</code> captures into an <code>NPUGraph</code>. So the typical
+production path is: dynamo → FX → <strong>fusion passes</strong> → <code>npugraph_ex</code>/<code>torchair</code> lowering →
+<strong>ACL graph capture</strong> (FULL or PIECEWISE) → replay.</p>
+<h3 id="encoder-vit-graphs" id="encoder-vit-graphs">Encoder / ViT graphs</h3>
+<p>Vision encoders use a <strong>separate</strong> ACL-graph path for the FIA (fusion-in-attention) tasks:
+<code>EncoderCudaGraphManager</code> from vLLM is monkey-patched to <code>EncoderAclGraphManager</code>
+(<code>worker/encoder_acl_graph.py</code>, injected via <code>_replace_gpu_model_runner_function_wrapper</code>),
+with <code>EncoderGraphParams</code> keyed by <strong>token budget</strong> rather than batch size
+(<code>set_encoder_graph_params(token_budgets)</code>, lines 37-62). The V2 manager uses the same budget
+bookkeeping in <code>ModelAclGraphManager</code>.</p>
+<h3 id="kvcomp-kv-compression-sparse-attention-metadata" id="kvcomp-kv-compression-sparse-attention-metadata">kvcomp (KV compression / sparse attention metadata)</h3>
+<p><code>worker/kvcomp_utils.py</code> binds <strong>hash-k caches</strong> for sparse attention (DSA top-k / SFA):
+<code>bind_hashk_cache</code> / <code>bind_hashk_cache_nope</code> allocate per-layer hash-key caches, insert them
+into the <code>forward_context</code> for each <code>Attention</code> layer, and maintain a runner-side list ordered by
+<code>extract_layer_index</code>. This is the runtime metadata plumbing that the sparse-attention
+kernels (<code>build_kvcomp_metadata</code>, <code>AscendKVBlockZeroer</code>) consume alongside the block table.</p>
+<hr />
+<h2 id="key-file-references" id="key-file-references">Key file references</h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>worker/worker.py</code></td>
+<td><code>NPUWorker(WorkerBase)</code>: device init (DP shift, HCCL <code>"hccl"</code>), memory profiling, <code>compile_or_warm_up_model</code>, sleep/weight-transfer engines.</td>
+</tr>
+<tr>
+<td><code>ascend_forward_context.py</code></td>
+<td><code>set_ascend_forward_context</code>, <code>MoECommType</code> selection (A2/A3/A310P/A5), <code>_EXTRA_CTX</code> proxy for v1/v2. Defines <code>select_moe_comm_method</code>.</td>
+</tr>
+<tr>
+<td><code>worker/model_runner_v1.py</code></td>
+<td><code>NPUModelRunner(GPUModelRunner)</code>: 5188-line hot path — <code>execute_model</code>, <code>_prepare_inputs</code>, <code>_build_attention_metadata</code>, <code>_model_forward</code>, <code>_determine_batch_execution_and_padding</code>, <code>capture_model</code>, KV alloc, <code>_torch_cuda_wrapper</code>.</td>
+</tr>
+<tr>
+<td><code>worker/v2/model_runner.py</code></td>
+<td>V2 runner: reuses upstream <code>execute_model</code>; overrides <code>prepare_inputs</code>/<code>postprocess</code>/<code>_update_seq_lens_cpu</code>; adds <code>AscendRequestState</code>/<code>AscendInputBuffers</code>/<code>update_stream</code>.</td>
+</tr>
+<tr>
+<td><code>worker/v2/aclgraph_utils.py</code></td>
+<td><code>ModelAclGraphManager</code> (+ <code>ModelWithContext</code>, <code>communicator_switch</code> helpers).</td>
+</tr>
+<tr>
+<td><code>worker/v2/states.py</code></td>
+<td><code>AscendRequestState</code> — reinstates <code>num_computed_tokens_cpu</code>.</td>
+</tr>
+<tr>
+<td><code>worker/block_table.py</code></td>
+<td><code>BlockTable</code> / <code>MultiGroupBlockTable</code>: compressed-KV scaling, hybrid kernel blocks, PCP/DCP slot mapping.</td>
+</tr>
+<tr>
+<td><code>worker/npu_input_batch.py</code></td>
+<td><code>NPUInputBatch(InputBatch)</code>: persistent batch + multi-group block table + M-RoPE support.</td>
+</tr>
+<tr>
+<td><code>worker/utils.py</code></td>
+<td><code>copy_snapshot_to_gpu</code>, <code>AscendKVBlockZeroer</code> + <code>_zero_kv_blocks_kernel</code> (Triton).</td>
+</tr>
+<tr>
+<td><code>worker/pcp_utils.py</code></td>
+<td><code>PCPManager</code>, PCP async-spec-decode rebuild, MTP/position/m-rope helpers.</td>
+</tr>
+<tr>
+<td><code>worker/kvcomp_utils.py</code></td>
+<td><code>bind_hashk_cache</code> / <code>bind_hashk_cache_nope</code>: sparse/MLA hash-k cache binding.</td>
+</tr>
+<tr>
+<td><code>worker/encoder_acl_graph.py</code></td>
+<td><code>EncoderGraphParams</code> / <code>EncoderAclGraphManager</code>: ViT ACL-graph budget bookkeeping.</td>
+</tr>
+<tr>
+<td><code>compilation/acl_graph.py</code></td>
+<td><code>ACLGraphWrapper</code> (FULL/PIECEWISE capture+replay), <code>GraphParams</code>, weak-ref workspace, capture-error translation.</td>
+</tr>
+<tr>
+<td><code>compilation/graph_fusion_pass_manager.py</code></td>
+<td><code>GraphFusionPassManager</code>: Ascend analog of <code>PostGradPassManager</code>; configures the fusion-pass set.</td>
+</tr>
+<tr>
+<td><code>compilation/compiler_interface.py</code></td>
+<td><code>AscendCompiler(CompilerInterface)</code>, <code>fusion_pass_compile</code>, <code>npugraph_ex_compile</code>, <code>load</code>, <code>_configure_backend</code>.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/base_pattern.py</code></td>
+<td><code>BasePattern</code> abc — registers rewrites into both Inductor <code>PatternMatcherPass</code> and <code>nge</code>.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/qknorm_rope_fusion_pass.py</code></td>
+<td>QKV-split + RMSNorm + RoPE fusion.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/allreduce_rmsnorm_fusion_pass.py</code></td>
+<td>Matmul + AllReduce + AddRMSNorm fusion (ReduceScatter+AllGather).</td>
+</tr>
+<tr>
+<td><code>compilation/passes/norm_quant_fusion_pass.py</code></td>
+<td>AddRMSNorm + quant (static/dynamic/MXFP) fusion; W4A4 guard.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/muls_add_pass.py</code></td>
+<td><code>x*scale+y</code> → Triton <code>muls_add</code>.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/sequence_parallelism.py</code></td>
+<td>SP reduce-scatter/all-gather rewrites (dense + Qwen3-VL).</td>
+</tr>
+<tr>
+<td><code>compilation/passes/sequence_parallelism_moe.py</code></td>
+<td>MoE SP AllGather epilogue + all_gather+chunk no-op fold.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/noop_elimination.py</code></td>
+<td>No-op view/reshape elimination.</td>
+</tr>
+<tr>
+<td><code>compilation/passes/allgather_chunk_noop_pass.py</code></td>
+<td>all_gather + sequence_parallel_chunk → identity.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<footer>Report 02 — source <code>agent_reports/02_worker_runner.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
+</body>
+</html>

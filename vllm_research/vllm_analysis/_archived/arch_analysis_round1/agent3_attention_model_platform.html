@@ -1,0 +1,424 @@
+<!doctype html><html lang="head"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>L3 注意力/模型/平台/编译 · vLLM Arch</title><link rel="stylesheet" href="report.css"></head>
+<body><div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>L3 注意力/模型/平台/编译</h1><div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
+<article><h1 id="layer-3-attention-backends-modelexecutor-platform-device-abstraction-compilationgraph-capture">Layer 3 — Attention Backends, ModelExecutor, Platform Device Abstraction, Compilation/Graph Capture</h1>
+<blockquote>
+<p>Companion note to the vLLM architecture series. Audience: inference architects, systems/parallel-computing engineers, DSA engineers.
+Scope: vLLM upstream <code>vllm/v1/attention/</code>, <code>vllm/v1/worker/</code>, <code>vllm/platforms/</code>, <code>vllm/_custom_ops.py</code>, <code>vllm/compilation/</code>, and the full <strong>vLLM-Ascend</strong> overlay.</p>
+</blockquote>
+<hr />
+<h2 id="1-the-attention-abstraction-stack">1. The Attention abstraction stack</h2>
+<p>vLLM v1 splits attention into <strong>three collaborating interfaces</strong>, stripped of any op-code:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>File</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AttentionBackend</code> (ABC)</td>
+<td><code>vllm/v1/attention/backend.py:56</code></td>
+<td>Static factory for <em>name</em>, <em>impl class</em>, <em>builder class</em>, <em>KV-cache shape</em>, <em>capability predicates</em> (<code>supports_head_size</code>, <code>supports_mla</code>, <code>indexes_kv_by_block_stride</code>). State: none — it is resolved once and cached.</td>
+</tr>
+<tr>
+<td><code>AttentionLayer</code> (Protocol)</td>
+<td><code>backend.py:757</code></td>
+<td>Carries per-layer Q/K/V scales (<code>_q_scale</code>, <code>_k_scale</code>, <code>_prob_scale</code>, float variants). The <strong>only</strong> thing the attention impl reads from a layer besides cache tensors.</td>
+</tr>
+<tr>
+<td><code>AttentionImpl(AttentionImplBase)</code></td>
+<td><code>backend.py:871</code></td>
+<td>Stateful per-layer kernel owner (<code>forward(layer, q, k, v, kv_cache, attn_metadata, output, ...) → output</code>). MLA uses <code>MLAAttentionImpl</code> (<code>backend.py:954</code>) with <code>forward_mha</code> / <code>forward_mqa</code>.</td>
+</tr>
+<tr>
+<td><code>AttentionMetadataBuilder(ABC, Generic[M])</code></td>
+<td><code>backend.py:607</code></td>
+<td>Turns <code>CommonAttentionMetadata</code> (from the model runner) into backend-specific metadata <code>M</code> via <code>build()</code>. Also owns cudagraph support level (<code>_cudagraph_support</code>), batch reorder threshold, and <code>update_block_table</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The registry (<code>vllm/v1/attention/backends/registry.py</code>) makes this hierarchy <strong>swappable at runtime</strong> without recompiling vLLM core:</p>
+<ul>
+<li><code>AttentionBackendEnum</code> (<code>registry.py:34</code>) maps every canonical backend to a fully-qualified class path string (FLASH_ATTN → <code>vllm.v1.attention.backends.flash_attn.FlashAttentionBackend</code>, …).</li>
+<li><code>_ATTN_OVERRIDES: dict[AttentionBackendEnum, str]</code> stores live rewrites. <code>register_backend(AttentionBackendEnum.CUSTOM)</code> (<code>registry.py:233</code>) is a <strong>decorator</strong> (<code>@register_backend(...) class MyBackend</code>) that writes <code>cls.__module__.__qualname__</code> into the override table.</li>
+<li><code>backend.get_class()</code> (<code>registry.py:141</code>) resolves the override via <code>resolve_obj_by_qualname</code> and <strong>lazily imports</strong> the backend. Enums are <code>__getitem__</code>-patched (<code>registry.py:21</code>) so <code>AttentionBackendEnum.FLASH_ATTN</code> returns the loaded class.</li>
+</ul>
+<h3 id="11-how-a-backend-is-resolved-the-init-time-contract">1.1 How a backend is <strong>resolved</strong> (the init-time contract)</h3>
+<p><code>selector.get_attn_backend(...)</code> (<code>selector.py:69</code>) → builds an <code>AttentionSelectorConfig</code> NamedTuple of all capability flags → <code>_cached_get_attn_backend</code> (<code>selector.py:106</code>) → <code>current_platform.get_attn_backend_cls(backend, attn_selector_config, num_heads)</code>.</p>
+<p><strong>Key insight:</strong> the platform <strong>is</strong> the tie-breaker. Upstream CUDA's <code>CudaPlatform.get_attn_backend_cls</code> (<code>platforms/cuda.py:396</code>) does <strong>not</strong> return an enum member — it returns a <em>class path string</em>, optionally selected by capability (<code>get_device_capability()</code>, <code>get_valid_backends</code>, priorities) when the user did not pin <code>--attention-backend</code>. It also calls <code>backend.get_required_kv_cache_layout()</code> and pushes it into the global KV layout store. So selection is <strong>two-factor</strong>: enum hint + platform-side policy + backend self-validation (<code>validate_configuration</code>).</p>
+<p>On the GPU runner, <code>init_attn_backend</code> (<code>vllm/v1/worker/gpu/attn_utils.py:80</code>) groups layers sharing the same <code>(backend_name, KVCacheSpec, num_heads_q)</code> tuple into <code>AttentionGroup</code>s, creates a metadata builder per group, picks a <strong>common kernel block size</strong> per group (<code>prepare_kernel_block_sizes</code>), and reduces cudagraph support to the <strong>minimum</strong> across all groups. Per-layer backends come from <code>attn_layer.get_attn_backend()</code>, so heterogeneous attention (MLA decode + MHA prefill) co-exists.</p>
+<h3 id="12-paged-attention-reads-kv-by-block-id">1.2 Paged attention reads KV by block id</h3>
+<p><code>vllm/v1/attention/ops/paged_attn.py:15 (PagedAttention)</code> — the only place a backend externalizes the block mapping. <code>write_to_paged_cache(slot_mapping, ...)</code> calls <code>ops.reshape_and_cache(...)</code> (a registered fake op on <code>_C::reshape_and_cache</code>), storing K/V keyed by <code>slot</code>. The "block table" is a <code>[batch, max_pages]</code> tensor of page indices carried inside <code>common_attn_metadata.block_table_tensor</code>. <code>utils.py:276</code> pads/remaps it into a per-local-batch <code>block_table_local</code>; <code>make_block_table</code> lambda re-indexes. The trick: backends <strong>don't</strong> materialize the full gather; they hand the block table to a kernel that dereferences <code>page_idx = block_table[b, p]</code> to fetch the p-th page of request b.</p>
+<p>For reshape-and-cache across devices, vLLM-Ascend backfills <code>torch_npu</code> equivalents via a per-op dispatch (see §5).</p>
+<hr />
+<h2 id="2-modelexecutor-modelrunner-contract">2. ModelExecutor / ModelRunner contract</h2>
+<p><code>GPUModelRunner</code> (<code>vllm/v1/worker/gpu_model_runner.py:446</code>) implements the <strong>implicit</strong> runner Protocol surfaced by <code>WorkerBase</code> + mirroring classes:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>File:line</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__(self, vllm_config, ...)</code></td>
+<td><code>gpu_model_runner.py:449</code></td>
+<td>Builds model, cudagraph dispatcher, sampling, async-output plumbing.</td>
+</tr>
+<tr>
+<td><code>execute_model(scheduler_output, intermediate_tensors)</code></td>
+<td><code>gpu_model_runner.py:4098</code></td>
+<td>The hot path: takes a <code>SchedulerOutput</code> (per-req token counts, KV state ids, connector metadata), returns <code>ModelRunnerOutput \| IntermediateTensors \| None</code>.</td>
+</tr>
+<tr>
+<td><code>_update_states(scheduler_output)</code></td>
+<td><code>gpu_model_runner.py:1163</code></td>
+<td>Refreshes <code>input_batch</code> from the scheduler — the "prepare model inputs" step.</td>
+</tr>
+<tr>
+<td><code>_prepare_inputs</code></td>
+<td><code>gpu_model_runner.py:1931</code></td>
+<td>Builds <code>input_ids/positions</code>, slot mappings, kv-shares.</td>
+</tr>
+<tr>
+<td><code>_build_attention_metadata</code></td>
+<td><code>gpu_model_runner.py:2255</code></td>
+<td>Iterates <code>attn_groups</code>, calls each builder's <code>build()</code>, populates cudagraph key dispatch.</td>
+</tr>
+<tr>
+<td><code>_model_forward(input_ids, positions, intermediate_tensors, **kwargs)</code></td>
+<td><code>gpu_model_runner.py:3811</code></td>
+<td>Pure <code>self.model(...)</code> wrapper — deliberately kept inspectable as a separate method.</td>
+</tr>
+<tr>
+<td><code>sample_tokens(logits)</code> / <code>_sample</code></td>
+<td><code>gpu_model_runner.py:3624</code></td>
+<td>Sampling is <em>part</em> of the runner, not the model.</td>
+</tr>
+<tr>
+<td><code>load_model()</code></td>
+<td>(inherited)</td>
+<td>Return type <code>None</code>; used to set <code>self.model</code>.</td>
+</tr>
+<tr>
+<td><code>determine_num_available_blocks(...)</code></td>
+<td>(implicit, in the <code>worker_base</code>/GPU worker)</td>
+<td>Returns <code>(num_gpu_blocks, num_cpu_blocks)</code> — the capacity contract for KV block budget.</td>
+</tr>
+<tr>
+<td><code>get_model()</code></td>
+<td><code>gpu_model_runner.py:3276</code></td>
+<td>Returns bare <code>nn.Module</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The "model runner consumes a prepared input" pattern</strong>:</p>
+<p><code>execute_model</code> → <code>_update_states</code> (fills <code>self.input_batch : InputBatch</code>) → <code>_prepare_inputs</code> → <code>_build_attention_metadata</code> → <code>_preprocess</code> → <code>_model_forward</code> → <code>_sample</code> → <code>_bookkeeping_sync</code>. The model <strong>only</strong> receives position-aligned <code>input_ids</code>, <code>positions</code>, KV-cache references, and per-layer metadata tensors; all scheduling state lives in <code>input_batch</code>, never in the model. This is why the SUT (System Under Test — model architecture) stays device-agnostic.</p>
+<p>The runner's only non-trivial device-specific responsibility is <strong>attention backend orchestration</strong> + <strong>cudagraph capture/scheduling</strong>, and those are both delegated to composable components.</p>
+<hr />
+<h2 id="3-platform-device-abstraction">3. Platform device abstraction</h2>
+<p><code>vllm/platforms/interface.py:134 class Platform</code> — the <strong>single</strong> extension surface a new device must subclass. Everything upstream touches hardware <em>through</em> this ABC; <code>current_platform</code> is a module-level active instance set by <code>Platform.{set_device, import_kernels, pre_register_and_update}</code> during init.</p>
+<h3 id="31-minimal-mandatory-interface-raise-notimplementederror">3.1 Minimal-mandatory interface (raise <code>NotImplementedError</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Method (classmethod)</th>
+<th>File:line</th>
+<th>Why it's mandatory</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_device_name(device_id)</code></td>
+<td><code>interface.py:496</code></td>
+<td>Logs, device-capability dispatch, error messages.</td>
+</tr>
+<tr>
+<td><code>get_device_uuid(device_id)</code></td>
+<td><code>interface.py:501</code></td>
+<td>RDMA NIC↔GPU routing (<code>VLLM_GPU_NIC_PCIE_MAPPING</code>) for mooncake-backed KV connectors.</td>
+</tr>
+<tr>
+<td><code>get_device_total_memory(device_id)</code></td>
+<td><code>interface.py:506</code></td>
+<td><code>determine_num_available_blocks</code> → KV budget.</td>
+</tr>
+<tr>
+<td><code>set_device(device)</code></td>
+<td><code>interface.py:534</code></td>
+<td>Device-current setup; CPU/TPU/NPU diverge.</td>
+</tr>
+<tr>
+<td><code>get_attn_backend_cls(selected, cfg, num_heads)</code></td>
+<td><code>interface.py:373</code></td>
+<td>Returns <strong>""</strong> by default; NPU/ROCm override to implement backend fallbacks.</td>
+</tr>
+<tr>
+<td><code>manual_seed_all(seed)</code></td>
+<td><code>interface.py:541</code></td>
+<td>Reproducibility; device-specific RNG.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-memorymodel-capability-methods">3.2 Memory‑model + capability methods</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>File:line</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_device_capability(device_id)</code></td>
+<td><code>interface.py:420</code></td>
+<td>Returns <code>DeviceCapability | None</code>; gated by has/is_device_capability[_family]. Selects FA versions, FP8 path.</td>
+</tr>
+<tr>
+<td><code>get_current_memory_usage(device)</code></td>
+<td><code>interface.py:1002</code></td>
+<td>Memory accounting for scheduler.</td>
+</tr>
+<tr>
+<td><code>inference_mode()</code></td>
+<td><code>interface.py:524</code></td>
+<td>Used by vLLM per-process context manager (TPU → no_grad fall-back).</td>
+</tr>
+<tr>
+<td><code>visible_device_id_to_physical_device_id</code></td>
+<td><code>interface.py:341</code></td>
+<td>Reverses <code>VISIBLE_DEVICES</code>.</td>
+</tr>
+<tr>
+<td><code>visible_device_id_to_logical_device_id</code> / <code>set_assigned_physical_gpu_ids</code></td>
+<td><code>interface.py:280+</code></td>
+<td>Multi-rail logical mapping (Ascend, multi-instance).</td>
+</tr>
+</tbody>
+</table>
+<p>Optional, default-sensible: <code>get_punica_wrapper</code> (LoRA punica variant), <code>get_device_communicator_cls</code>, <code>is_pin_memory_available</code>, <code>is_integrated_gpu</code>, <code>supports_mx</code>, <code>pre_register_and_update</code> (out-of-tree config bootstrap), <code>get_supported_vit_attn_backends</code>.</p>
+<h3 id="33-ascends-implementation-of-the-interface">3.3 Ascend's implementation of the interface</h3>
+<p><code>vllm_ascend/platform.py:128 class NPUPlatform(Platform)</code> — 1255 lines, the single largest out-of-tree file. Notable wiring:</p>
+<ul>
+<li><strong>Device identity</strong>: <code>_enum = PlatformEnum.OOT</code>, <code>device_name = "npu"</code>, <code>device_type = "npu"</code>, <code>device_control_env_var = "ASCEND_RT_VISIBLE_DEVICES"</code>, <code>dispatch_key = "PrivateUse1"</code> (the PyTorch device backend tag torch-npu registers). <code>ray_device_key = "NPU"</code> plugs the Ray resource manager.</li>
+<li><strong>Backend resolution replaces CUDA priorities.</strong> <code>NPUPlatform.get_attn_backend_cls</code> (<code>platform.py:784</code>) does <strong>not</strong> call into CUDA's priority machine; it picks from a static <code>key → class-path</code> map keyed by <code>(use_mla, use_sparse, use_compress)</code>:</li>
+<li><code>(False,False,False)</code> → standard <code>"vllm_ascend.attention.attention_v1.AscendAttentionBackend"</code></li>
+<li><code>(True,False,False)</code> → MLA <code>"vllm_ascend.attention.mla_v1.AscendMLABackend"</code></li>
+<li><code>(True,True,False)</code> → sparse <code>"vllm_ascend.attention.sfa_v1.AscendSFABackend"</code></li>
+<li><code>(True,False,True)</code> → compressed DSA <code>"vllm_ascend.attention.dsa_v1.AscendDSABackend"</code></li>
+<li>310P silicon collapses to a single path (<code>backend_map_310</code>).</li>
+<li>FA3 is opt-in via <code>flash_attn_npu_v3</code> and gated by <code>use_batch_invariant</code> (<code>_validate_fa3_backend</code>, <code>platform.py</code>).</li>
+<li><strong><code>simple_compile_backend = "eager"</code></strong> (<code>platform.py</code>): a deliberate <strong>opt-out</strong> of torch.compile globally. This switches the driver to Ascend's own compilation stack (§4).</li>
+<li><strong>Memory</strong>: <code>get_current_memory_usage</code> uses <code>torch.npu.max_memory_allocated</code>; <code>is_cumem_allocator_available → True</code> (wires Ascend's <code>CaMemAllocator</code> from <code>vllm_ascend.device_allocator.camem</code>), so KV-cache/block allocation terminates in not the upstream cumem path but Ascend's own pinned-NPU allocator.</li>
+</ul>
+<p><strong>Design insight:</strong> <code>NPUPlatform</code> proves the Platform contract was <em>right-sized</em>: Ascend only reimplements (a) device identity, (b) backend policy, (c) compile-backend hooks, (d) memory accounting, and (e) kv-allocator availability. Everything above — scheduling, distributed comms flows, cudagraph timestamp formats, the <code>execute_model</code> structure itself — is inherited wholesale.</p>
+<hr />
+<h2 id="4-compilation-graph-capture">4. Compilation / Graph capture</h2>
+<h3 id="41-upstream-cuda-graphs-torchcompile">4.1 Upstream CUDA Graphs + torch.compile</h3>
+<p><code>vllm/v1/cudagraph_dispatcher.py:15 class CudagraphDispatcher</code> (350 lines) is the runtime CUDA-graph selector:</p>
+<ul>
+<li><code>initialize_cudagraph_keys(...)</code> builds a <code>keys[CUDAGraphMode, set[BatchDescriptor]]</code> table. A key encodes <code>(num_tokens_padded, num_reqs_or_None, uniform, has_lora, num_active_loras)</code>. Two modes: <code>FULL</code> (whole model, fixed-shape) vs <code>PIECEWISE</code> (embedding+attention+inner-forward split, captures cudagraph per backward/forward segment — <code>compilation/piecewise_backend.py</code>).</li>
+<li><code>dispatch(num_tokens, uniform_decode, has_lora, ...)</code> (<code>cudagraph_dispatcher.py:235</code>) returns <code>(CUDAGraphMode, BatchDescriptor)</code>. Decision tree: if <code>num_tokens &gt; max_cudagraph_capture_size</code> → NONE; else look up <code>FULL</code> key, then <code>PICEWISE</code> with a <em>relaxed</em> batch descriptor (<code>num_reqs=None, uniform=False</code>); fallback NONE. LoRA count is "rounded up" to captured power-of-2 when <code>cudagraph_specialize_lora</code>.</li>
+<li>Capture is driven by <code>get_capture_descs()</code> returning PIECEWISE-first (sorted large→small) so that bigger graphs get warm-up slots first. Inside the model forward, <code>get_forward_context()</code> carries the chosen mode+key for <code>self.model(...)</code> and the attention wrappers replay accordingly.</li>
+<li><code>AttentionBackend._cudagraph_support: ClassVar[AttentionCGSupport]</code> (<code>backend.py:610</code>) — one per builder — lets backends opt out of full/partial graphing, and <code>init_attn_backend</code> reduces to the min across groups, so a single non-graphing backend disables graphs for the whole GPU runner.</li>
+</ul>
+<p>Upstream torch.compile passes <code>CompilationConfig</code> to <code>torch._inductor.compile_fx</code>; the <strong>Optane</strong> <code>pass_manager_*</code> use <code>current_platform.pass_key</code> to register custom inductor passes (Ascend rewires this to its own <code>GraphFusionPassManager</code>).</p>
+<h3 id="42-ascends-acl-graph-substitute-why-cuda-graphs-are-unusable">4.2 Ascend's ACL-graph substitute — why CUDA graphs are unusable</h3>
+<p>Ascend does <strong>not</strong> reuse CUDA graphs — the hardware command stream (<code>ACL</code>) is ISA-disjoint from CUDA, and <code>torch.npu.NPUGraph</code> has a different capture API. vLLM-Ascend's overlay therefore compiles a <code>CUDAGraphMode</code>-compatible shim:</p>
+<p><code>vllm_ascend/compilation/acl_graph.py</code>:</p>
+<ul>
+<li><strong><code>ACLGraphEntry</code></strong> (<code>acl_graph.py:50</code>) holds <code>BatchDescriptor + torch.npu.NPUGraph | None + output + input_addresses</code>. An <code>NPUGraph</code> is the NPU analog of <code>torch.cuda.CUDAGraph</code>.</li>
+<li><strong><code>ACLGraphWrapper</code></strong> (<code>acl_graph.py:60</code>) is the replay/capture proxy. On <code>__init__</code> it asserts <code>runtime_mode != NONE</code> and acquires <code>global_graph_pool</code> from <code>current_platform.get_global_graph_pool()</code> — a device-level stream pool for graph capture without halting serving.</li>
+<li>Dispatch mirrors upstream: wrapper trust the <code>(runtime_mode, batch_descriptor)</code> carried on <code>forward_context</code>; if mismatch → call runnable directly. Capture path builds a new <code>ACLGraphEntry</code>, replays existing. Notably <strong>no persistent buffers</strong> are managed by the wrapper — unlike CUDA graphs in upstream (which static-copy inputs), Ascend exposes <em>dynamic batch-size</em> inputs and leaves input staging to the outer runner. Input-addresses are traced for DEBUG-time stability check (<code>_runnable_str</code>, <code>VLLM_LOGGING_LEVEL</code>).</li>
+<li>Error handling is hardware-aware: <code>_is_stream_resource_capture_error</code> and <code>_is_old_hdk_capture_error</code> (error code <code>207008</code>, markers <code>insufficient_stream_resources</code> / <code>alloc sq cq fail</code>) swallow &amp; recover from known NPU-side capture failures.</li>
+</ul>
+<h3 id="43-ascends-torch-compile-fork">4.3 Ascend's Torch-compile fork</h3>
+<p>Ascend replaces the inductor path with two custom components (<code>compiler_interface.py</code>):</p>
+<ul>
+<li><strong><code>compile_fx</code></strong> (<code>compiler_interface.py:39</code>) calls <code>aot_autograd(fw_compiler=inner_compile)</code> where the inner compiler is <code>compile_inner</code> which pulls <code>current_pass_manager = compiler_config[COMPILATION_PASS_KEY]</code> and runs it (<code>graph = current_pass_manager(graph)</code>). Entry point: <code>set_custom_compile_config</code> wraps a torch.compile-style compile of the runnable.</li>
+<li><strong><code>AscendCompiler(CompilerInterface)</code></strong> (<code>compiler_interface.py:226</code>) is what the <code>get_compile_backend</code> (<code>platform.py:813</code> → <code>"vllm_ascend.compilation.compiler_interface.AscendCompiler"</code>) returns. It implements <code>configure_compile_backend</code>, <code>_create_pass_manager</code>, and <code>compile(...)</code> (<code>compiler_interface.py:255</code>).</li>
+</ul>
+<p><strong>Pass catalogue</strong> (<code>compilation/passes/*.py</code>, 70 classes in ~30 files):</p>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
+<th>Pattern</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>QKNormRopeFusionPass</code></td>
+<td>QK-Norm + RoPE sequence</td>
+<td>Removes dtype round-trips between norm &amp; rotary.</td>
+</tr>
+<tr>
+<td><code>MatmulAllReduceAddRMSNormPass</code> (middle + last layer variants)</td>
+<td>matmul → allreduce → add → rmsnorm</td>
+<td>Matches the classic pre/post-layernorm MoE chassis, fuses into a single CANN op.</td>
+</tr>
+<tr>
+<td><code>AddRMSNormQuantFusionPass</code> (+ SP / dynamic / MX variants)</td>
+<td>rmsnorm + quant → FP8/INT8</td>
+<td>Backfills FP8 KV-cache path with CANN quant kernels.</td>
+</tr>
+<tr>
+<td><code>SequenceParallelismPass</code> / <code>MulsAddFusionPass</code> / <code>NoOpEliminationPass</code> / <code>AllGatherChunkNoOpCleanupPass</code></td>
+<td>SP/T-COMM patterns</td>
+<td>Cleans <code>all_gather</code>/<code>reduce-scatter</code> scaffolding that HCCL emits.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Three mechanisms coexist on Ascend (contrast table)</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Upstream (CUDA)</th>
+<th>Ascend (NPU)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full CUDA graph</td>
+<td><code>CUDAGraphDispatcher</code> + <code>torch.cuda.CUDAGraph</code></td>
+<td><code>ACLGraphWrapper</code> + <code>torch.npu.NPUGraph</code> (same <code>CUDAGraphMode</code> enum, same <code>BatchDescriptor</code> key)</td>
+</tr>
+<tr>
+<td>Piecewise torch.compile</td>
+<td><code>piecewise_backend</code> + <code>inductor</code></td>
+<td><code>AscendCompiler</code> + <code>GraphFusionPassManager</code> (custom inductor pass manager via <code>pass_key</code>)</td>
+</tr>
+<tr>
+<td>Custom Triton / CANN kernels</td>
+<td><code>_custom_ops.py</code> on <code>_C</code> / <code>_rocm_C</code> (cuDNN/FlashAttention)</td>
+<td><code>torch_npu</code> JIT kernels + <code>_C_ascend.*</code> (CANN-authored)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Design insight:</strong> the CUDAGraphDispatcher was explicitly designed as a <em>key-dispatch proxy</em> rather than a capture library, which is exactly why Ascend could slot in a parallel implementation. If vLLM had baked <code>torch.cuda.CUDAGraph</code> into the dispatcher itself, this overlay would have been a rewrite, not a subclass.</p>
+<hr />
+<h2 id="5-ops-kernels-layer">5. Ops &amp; kernels layer</h2>
+<h3 id="51-upstream-_custom_opspy">5.1 Upstream _custom_ops.py</h3>
+<p><code>vllm/_custom_ops.py</code> is the <strong>Python-side registry</strong> of device-specific C++ kernels. Two styles co-exist:</p>
+<ol>
+<li><strong>Global function registry</strong> with auto-generated wrappers: <code>paged_attention_rocm</code>, <code>merge_attn_states</code>, <code>rotary_embedding</code>, <code>rms_norm</code>, <code>fused_add_rms_norm</code>, <code>cutlass_scaled_mm</code>, <code>silu_and_mul_per_block_quant</code>, <code>awq_dequantize</code>, AWQ/GPTQ/T-Rocm kernels, etc. These build on <code>torch.library</code> op names like <code>_C::awq_dequantize</code>, <code>_rocm_C::gptq_gemm_rdna3</code>, <code>torch.ops._rocm_C.*</code>.</li>
+<li><strong>Fake (abstract) implementations for torch.compile</strong>: <code>@register_fake("_C::scaled_fp4_quant")</code> (<code>_custom_ops.py:97</code>) returns the tensor shape/stride info inductor needs for opaque C calls. Every C kernel typically ships both a real impl (in <code>_C.cpython-...so</code>) and a fake registration so compile can reason about memory.</li>
+</ol>
+<p><code>current_platform.import_kernels()</code> (<code>interface.py:363</code>) calls <code>import vllm._C</code> then <code>import vllm._moe_C_stable_libtorch</code> with <code>contextlib.suppress(ImportError)</code>. Overriding on a new device is just a matter of providing <code>vllm/_C</code>-compatible shims; the platform class itself does not register new ops.</p>
+<h3 id="52-ascends-backfill-of-cann-kernels">5.2 Ascend's backfill of CANN kernels</h3>
+<p>Ascend <strong>cannot</strong> inherit vLLM's <code>_C</code> (NVIDIA CUTLASS/cuDNN/FlashAttention) and so mounts three parallel paths:</p>
+<p><strong>Path A — per-op PyTorch custom hook: <code>vllm_ascend/ops/register_custom_ops.py</code></strong>.</p>
+<p>Uses <code>vllm.utils.torch_utils.direct_register_custom_op</code> (a stable wrapper over <code>torch.library.define + impl</code>). Hooks:</p>
+<ul>
+<li><code>_maybe_chunk_residual_impl</code> — SP-aware residual TP-chunking (pads <code>residual[pads:]</code>, <code>torch.chunk(residual, tp_size)[tp_rank]</code>).</li>
+<li><code>_maybe_all_gather_and_maybe_unpad_impl</code> — EP-aware all-gather that honors <code>dp_metadata.num_tokens_across_dp_cpu</code> (DP+EP overlap).</li>
+<li><code>_maybe_pad_and_reduce_impl</code> — replace allreduce with <code>reduce_scatter</code> under <code>flash_comm_v1_enabled</code> / <code>enable_sp_by_pass</code>. This is the comm/compute overlap path that mirrors upstream's <code>allreduce+layernorm</code> fusions but for HCCL.</li>
+</ul>
+<p><strong>Path B — torch_npu native ops</strong>: <code>torch_npu.npu_fusion_attention</code>, <code>torch_npu.npu.distributed.all_reduce</code>, <code>torch.npu.NPUGraph</code>. Called from attention impls and workers directly. <code>ops/ops_initializer</code> (the V0-compat layer) wires the dispatch table so <code>DeviceOperator.reshape_and_cache</code>, <code>DeviceOperator.reshape_and_cache_flash</code>, etc. route to the right NPU kernels per cache layout.</p>
+<p><strong>Path C — Triton-for-NPU</strong>: <code>vllm_ascend/ops/triton/</code> packages Triton kernels (<code>rms_norm.py</code>, <code>layernorm_gated.py</code>, <code>split_qkv_rmsnorm_rope.py</code>, <code>split_qkv_rmsnorm_mrope.py</code>, <code>split_qkv_tp_rmsnorm_rope.py</code>) — these run on NPU via <code>torch_npu</code>'s Triton JIT backend and let Ascend share kernel code with upstream's Triton backends where CANN coverage is thin.</p>
+<p><strong>Path D — CANN-authored C++ in <code>vllm_ascend/C_ascend*</code></strong> (the <code>_C_ascend</code> torch op lib, registered with <code>@register_fake</code> on higher-level ops): <code>torch.ops._C_ascend.npu_vllm_quant_lightning_indexer_metadata</code> (<code>dsa_v1.py:820</code>) for DSA sparse attention, MoE fused kernels in <code>ops/fused_moe/fused_moe.py</code>, MLA kernels in <code>ops/mla.py</code>.</p>
+<p><strong>Design insight:</strong> Ascend's strategy is "put the four kernel sources behind one dispatcher" (<code>DeviceOperator</code>), so attention backends can call <code>DeviceOperator.reshape_and_cache</code> without knowing whether the target kernel is <code>torch_npu</code>, Triton, or <code>_C_ascend</code>. This mirrors vLLM's own wrinkle: <code>_custom_ops.py</code> serves the same role upstream.</p>
+<hr />
+<h2 id="6-design-insights-for-an-inference-architect-ranked-by-adaptation-cost">6. Design insights for an inference architect (ranked by adaptation cost)</h2>
+<h3 id="61-attentionbackend-the-raison-detre-of-vllms-multi-hardware-portability">6.1 AttentionBackend — the <em>raison d'être</em> of vLLM's multi-hardware portability</h3>
+<p>Splitting "AttentionBackend / AttentionImpl / AttentionMetadataBuilder" was the <strong>single most important abstraction</strong> for multi-hardware. It lets vLLM swap <code>flash_attn</code>, <code>triton</code>, <code>flashinfer</code>, <code>flex_attention</code>, and NPU kernels <em>at runtime</em> while the heavy model body (<code>model_runner._model_forward</code>, sampling, scheduler) stays device-agnostic. Ascend demonstrates the cost asymmetry perfectly: implementing <code>AscendAttentionBackend + AscendAttentionBackendImpl + AscendAttentionMetadataBuilder</code> (~1408 lines) covers <strong>all non-MLA</strong> attention; separate <code>AscendMLABackend</code> + <code>AscendSFABackend</code> + <code>AscendDSABackend</code> variants add another ~1000 lines to serve DeepSeek-style MLA/DFA/DSA. Compare to the ~60k-line model runner. <strong>Attention is the 2–5% of code that must be rewritten per device.</strong></p>
+<p>Ranking extension surfaces by <strong>"cost of adaptation for a new DSA"</strong>:</p>
+<ol>
+<li><strong>MUST (no device boots without them)</strong> — <code>Platform</code> interface (identity, memory, attn-backend policy, device-set), at least <strong>one AttentionBackend</strong> with a working <code>forward</code> that reads KV via <code>block_table</code>, and the <strong>Op backfill</strong> for <code>rms_norm/rope/reshape_and_cache</code> or equivalents.</li>
+<li><strong>SHOULD (for production quality)</strong> — the <strong>MLA/SFA/DSA</strong> backends if your DSA targets long-context / sparse attention; the <strong>custom-op registry</strong> (<code>direct_register_custom_op</code> equivalents) for quant/dequant GEMM; <strong>distributed communicator</strong> (<code>get_device_communicator_cls</code>) since HCCL vs NCCL semantics diverge on collectives ordering.</li>
+<li><strong>OPTIONAL but recommended</strong> — compilation variant (<code>ACLGraphWrapper</code> is a production necessity for decode latency on Ascend; but a new DSA could start with eager-only). The <code>Piecewise CUDA graph</code> dispatcher is optional; Ascend forked it. <code>torch.compile</code> passes are optional; Ascend forked them aggressively because upstream inductor doesn't target CANN.</li>
+<li><strong>Cosmetic</strong> - ViT backend selection, LoRA <code>punica</code> wrapper, integrated-GPU detection.</li>
+</ol>
+<h3 id="62-why-ascends-overlay-works-a-taxonomic-view">6.2 Why Ascend's overlay works — a <strong>taxonomic</strong> view</h3>
+<table>
+<thead>
+<tr>
+<th>Ascend overlay</th>
+<th>~ size</th>
+<th>Is subclass / new?</th>
+<th>What it reuses from upstream vLLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NPUPlatform(Platform)</code></td>
+<td>1255 lines</td>
+<td>Subclass</td>
+<td>Scheduling, connector plumbing, cudagraph-mode enum, KV-cache config</td>
+</tr>
+<tr>
+<td>7 Attention backends</td>
+<td>~1400 – 2000 lines each (mla/dsa/sfa/cp)</td>
+<td>Subclass of v1 ABCs</td>
+<td><code>execute_model</code> flow, <code>init_attn_backend</code> grouping, <code>BatchDescriptor</code>/CG support scaffold</td>
+</tr>
+<tr>
+<td><code>ACLGraphWrapper/Entry</code></td>
+<td>~350 lines</td>
+<td>New, <strong>replaces</strong> <code>CUDAGraphReplayOrCapture</code></td>
+<td><code>CUDAGraphMode</code>, <code>BatchDescriptor</code>, <code>CUDAGraphOptions</code>, forward-context key dispatch</td>
+</tr>
+<tr>
+<td><code>GraphFusionPass</code> (70 classes)</td>
+<td>~5000 lines</td>
+<td>New</td>
+<td>Inductor pass-key hookup, <code>CompilerInterface</code></td>
+</tr>
+<tr>
+<td>4 kernel sources (CANN/_Triton/torch_npu/ascend ops)</td>
+<td>~distributed</td>
+<td>New <code>DeviceOperator</code> dispatcher</td>
+<td><code>_custom_ops.py</code> layout contract</td>
+</tr>
+<tr>
+<td><code>NPUWorker(NPUWorkerBase)</code> / <code>model_runner_v1.py</code></td>
+<td>5187 lines (mirrors gpu_model_runner length)</td>
+<td>Subclass — trimmed</td>
+<td>All scheduling, all cudagraph bookkeeping, all sampling</td>
+</tr>
+</tbody>
+</table>
+<p>The punchline: Ascend rewrites <strong>only the device-specific ~20%</strong> — it's not a fork but a <strong>subclass stack</strong> that flows through <code>forward_context</code> key dispatch. The <code>model_runner_v1.py</code> mirror is large not because every method is rewritten, but because it inherits the GPU orchestration and has to add NPU-only branches (profiling-chunk, DSA prefill/decode, pcp). Everywhere vLLM calls <code>current_platform.*</code> or <code>ops.*</code>, Ascend inserts its handler.</p>
+<h3 id="63-one-subtle-trap-for-dsa-architects-forwarded-from-ascends-experience">6.3 One subtle trap for DSA architects forwarded from Ascend's experience</h3>
+<p>The attention impl's <code>can_return_lse_for_decode</code> + <code>lse_base_on_e</code> (<code>backend.py:806</code>) and DCP <code>supports_dcp</code>, <code>supports_mtp_with_cp_non_trivial_interleave_size</code> are <strong>bit-structural contracts</strong> for decode/prefill context parallelism and spec decoding. A new DSA that sets <code>lse_base_on_e = False</code> (contrary to the FlashAttention default) will silently corrupt the cross-shard softmax denominator inside <code>cp_lse_ag_out_rs / dcp_a2a_lse_reduce</code> (<code>vllm/v1/attention/ops/common.py</code>). <strong>This is one line of metadata but a whole class of silent bugs.</strong> Any new backend that changes LSE semantics must also patch the DCP combine kernels.</p>
+<hr />
+<h2 id="key-file-reference-map">Key file reference map</h2>
+<pre><code>vllm/v1/attention/backend.py                AttentionBackend, AttentionImpl (ABC), MLAAttentionImpl,
+                                            AttentionLayer Protocol, AttentionMetadataBuilder, AttentionCGSupport
+vllm/v1/attention/selector.py               get_attn_backend(), platform.get_attn_backend_cls() dispatch
+vllm/v1/attention/backends/registry.py      AttentionBackendEnum, _ATTN_OVERRIDES, register_backend()
+vllm/v1/attention/backends/utils.py         CommonAttentionMetadata, init_attn_backend helpers,
+                                            PerLayerParameters, KVSharingFastPrefillMetadata
+vllm/v1/attention/ops/paged_attn.py         PagedAttention reshape_and_cache, write_to_paged_cache (block_table dereference)
+vllm/v1/worker/gpu/attn_utils.py            init_attn_backend()  layer grouping + builder construction
+vllm/v1/worker/gpu_model_runner.py          execute_model, _update_states, _prepare_inputs,
+                                            _build_attention_metadata, _model_forward (the &quot;prepared input&quot; contract)
+vllm/v1/cudagraph_dispatcher.py             CudagraphDispatcher FULL/PIECEWISE/NONE keys + BatchDescriptor
+vllm/compilation/compiler_interface.py      CompilerInterface; upstream inductor wiring
+vllm/_custom_ops.py                         C++ kernel registry + torch.compile fake imps
+vllm/platforms/interface.py                 Platform ABC; the new-device contract
+vllm/platforms/cuda.py                      CudaPlatform.get_attn_backend_cls priority policy
+
+vllm_ascend/platform.py                     NPUPlatform subclass; backend map, memory, device identity
+vllm_ascend/attention/attention_v1.py       AscendAttentionBackend + AscendAttentionBackendImpl (torch_npu path)
+vllm_ascend/attention/mla_v1.py             AscendMLABackend (forward_mqa/mha) + ChunkedContextMetadata
+vllm_ascend/attention/sfa_v1.py             AscendSFABackend, sparse (Sparse Flash Attention) path
+vllm_ascend/attention/dsa_v1.py             AscendDSABackend, DSA sparse + indexer (DSV4) path
+vllm_ascend/compilation/acl_graph.py        ACLGraphWrapper, ACLGraphEntry (NPUGraph capture/replay)
+vllm_ascend/compilation/compiler_interface.py  AscendCompiler(CompilerInterface) + FusionPass compile_fx
+vllm_ascend/compilation/pass*.py            ~30 inductor-style fusion passes (QK-Norm/RoPE, matmul+allreduce, quant)
+vllm_ascend/ops/register_custom_ops.py      SP/EP SP-aware collective hooks via direct_register_custom_op
+vllm_ascend/ops/ (layernorm,linear,rope,mla,fused_moe,triton/)   CANN/Triton/ascend kernel sources
+vllm_ascend/worker/model_runner_v1.py       AscendGPUModelRunner overrides (~NPU branches in execute_model)
+vllm_ascend/device_allocator/camem.py       NPU pinned/ cumem-compatible allocator
+</code></pre></article>
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div></body></html>

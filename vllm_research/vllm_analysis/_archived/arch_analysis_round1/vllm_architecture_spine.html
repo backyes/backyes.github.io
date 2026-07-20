@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM 架构深度分析 · 第一性原理视角</title>
+<link rel="stylesheet" href="report.css">
+<style>
+/* spine-only accents */
+.s_diag{border:1px solid #2a3038;border-radius:8px;padding:10px;margin:14px 0;background:#fff}
+.s_diag img{mix-blend-mode:multiply}
+@media(prefers-color-scheme:light){.s_diag{background:#fff;}.s_diag img{mix-blend-mode:normal}}
+.inv{background:linear-gradient(90deg,#1b2330,#0e1116);border-left:4px solid #6ea8fe;
+  padding:10px 14px;margin:14px 0;font-style:italic}
+.tag{display:inline-block;background:#2563eb;color:#fff;font-size:70%;padding:2px 7px;border-radius:10px;margin-right:6px}
+.xref{font-size:.85em;color:var(--accent)}
+.figgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:640px){.figgrid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="topbar">📘 vLLM 架构分析 · <a href="index.html">返回索引</a> · 面向系统工程师 / 并行计算 / AI 算法 / 推理架构师</div>
+
+<h1>vLLM 架构深度分析：第一性原理视角</h1>
+<div class="callout"><strong>为什么这份报告</strong>。vLLM 源码 ~25 万行，分析容易滑向"文件目录 + 接口清单"。本文反向追问：给定 <em>transformer 的数学、GPU 的带宽墙、芯片的多样性</em> 这三条物理约束，推理系统的结构<strong>被迫</strong>会长成什么样？若一条设计是被物理"逼"出来的，它就是稳定的、跨硬件的；若是工程选择，它就是可替换的、也是昇腾这类适配最该动刀的地方。文末的「适配方法论」即由此展开。<br><br>
+👉 细节参考：这是 spine（脊柱），6 份 agent 分报告（含完整 file:line <code>path/file.py:N</code> 引用）在索引里，按需钻取：<a href="agent1_engine_orchestration.html">L1 引擎</a> · <a href="agent2_scheduler_kvcache.html">L2 调度/KV</a> · <a href="agent3_attention_model_platform.html">L3 注意力/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a>。</div>
+
+<div class="toc">
+<b>目录</b>
+<ul>
+<li><a href="#v1">0. v0 已死，v1 的诞生——为什么 vLLM 必须重构</a></li>
+<li><a href="#invariants">1. 三条物理不变量——vLLM 架构的"第一性原理"</a></li>
+<li><a href="#paged">2. Paged KV-cache：推理系统的页表</a></li>
+<li><a href="#sched">3. 单步调度器：带宽墙被迫的 token-budget</a></li>
+<li><a href="#step">4. 心脏 execute_model：schedule→prepare→forward→sample</a></li>
+<li><a href="#twolang">5. Python 前端 + Triton/CUDA kernel：95/5 法则</a></li>
+<li><a href="#attn">6. AttentionBackend：唯一的硬件相关算子</a></li>
+<li><a href="#para">6b. 并行计算：TP/PP/DP/EP 是如何合而不乱</a></li>
+<li><a href="#platform">7. Platform 抽象：device as an interface</a></li>
+<li><a href="#cudagraph">8. 三种执行模式：FULL / PIECEWISE / eager CUDA Graph</a></li>
+<li><a href="#ascend">9. vLLM-Ascend：一条完整的非 GPU 适配线</a></li>
+<li><a href="#method">10. vLLM 硬件适配通用方法论</a></li>
+<li><a href="#insight">给推理架构师的设计洞见</a></li>
+<li><a href="#refs">附：关键引用与路线图</a></li>
+</ul>
+</div>
+
+<!-- ============ 0. V0->V1 ============ -->
+<h2 id="v1">0. v0 已死，v1 的诞生——为什么 vLLM 必须重构</h2>
+<p>vLLM 在 2025 年 1 月正式发布 V1（<a href="https://blog.vllm.ai/2025/01/27/v1-alpha-release.html">vLLM V1: A Major Upgrade</a>），并标注 V0 完全弃用（RFC <a href="https://github.com/vllm-project/vllm/issues/18571">#18571</a>）。这不是功能升级，是一次<strong>基于计算约束</strong>的核心重写。</p>
+
+<p><strong>v0 为什么撑不住。</strong>v0 的 <code>core/</code>、<code>worker/</code>、<code>attention/</code> 三层结构是功能分解：调度器一个团队、worker 一个团队、attention 一个团队。这看似干净，但当三个维度<em>同时</em>演进时（continuous batching、paged attention、chunked prefill、prefix caching、spec decode），改动必须跨三层协调，"新功能塞进旧分区"产生指数级耦合。实测现象：V0 代码 50% 在分支、30% 在修分支冲突的 bug。</p>
+
+<p><strong>v1 做了什么。</strong>v1 保留 v0 验证过的 ~200 个模型定义和 GPU kernel，<strong>重写调度器/KV-cache 管理器/worker/sampler 和 API server 五段核心</strong>（官方 V1 博文原文，见 <code>docs/usage/v1_guide.md:4</code>）：提供 simple, modular, easy-to-hack 的代码；组合 chunked prefill / CUDA graph / continuous batching 为统一架构；<strong>zero config——特性默认开</strong>；长上下文性能明显领先 v0。关键是：v1 把"分阶段"(prefill phase / decode phase)思维砍掉，换成了<strong>单步 token-budget</strong>——我们下文反复回到这一点的物理意义。</p>
+
+<!-- ============ 1. 三条不变量 ============ -->
+<h2 id="invariants">1. 三条物理不变量——vLLM 架构的"第一性原理"</h2>
+
+<table>
+<tr><th>不变量</th><th>物理含义</th><th>vLLM 里的直接后果</th></tr>
+<tr><td><b>I1. Transformer 内存定律</b></td><td>一个活请求存 Θ(S·L·d) 的 KV（S 序列长、L 层数、d head 维）；<b>只追加、按位读取、永不修改</b></td><td>Paged KV-cache（把 OS 页表搬到 HBM）；content-hash 前缀去重成为容量倍增器</td></tr>
+<tr><td><b>I2. 带宽-算力墙（roofline）</b></td><td>decode 1 token 扫整层权重 → arithmetic intensity ≈ h/2 FLOP/byte，<b>远低于 GPU ridge point</b> → memory-bandwidth-bound；prefill 多 token × 同权重 → compute-bound</td><td><b>无任何单一 kernel 对 decode 和 prefill 同时最优</strong>；必须按步用 token-budget 分时复用；Ascend 上甚至引入 recompute</td></tr>
+<tr><td><b>I3. 硬件多样性</b></td><td>NVIDIA / AMD / Intel / Huawei / Google / 国产 DSA 是<b>不兼容方言</b>的同一个数学；#ifdef 进热路径会不可逆地 fork 仓库</td><td>#ifdef 被压进 3 个接口：Platform（设备发现）、AttentionBackend（唯一的硬件相关算子）、Communicator（集合通信）</td></tr>
+</table>
+
+<div class="inv">"Given physics, what MUST any correct high-performance inference system look like?"<br>
+—— vLLM 的大块结构<i>不是</i>某人拍脑袋的"架构"，而是 I1/I2/I3 被强制推出的解。</div>
+
+<p>我下面沿数据流追一次推理的完整生命周期，标注每一步是哪条不变量在起作用。</p>
+
+<!-- ============ 官方架构图 ============ -->
+<p class="xref">📐 官方架构总览图（vLLM 官方 Excalidraw，<a href="figures/llm_engine.excalidraw.png">llm_engine.excalidraw.png</a>、<a href="figures/entrypoints.excalidraw.png">entrypoints.excalidraw.png</a> 与 <a href="figures/v1_process_architecture_tp4.png">v1_process_architecture_tp4.png</a>）。图里 EngineCore-MultiprocessingExecutor-TP Worker 的层级对应下文 §4。</p>
+
+<!-- box model -->
+<figure class="s_diag"><div style="text-align:center;margin:8px 0;font-size:.9em;color:var(--muted)">vLLM v1 进程级架构 (TP4) — 官方图</div>
+<img src="figures/v1_process_architecture_tp4.png" alt="v1_process_architecture_tp4"></figure>
+
+<!-- ============ 2. Paged KV-cache ============ -->
+<h2 id="paged">2. Paged KV-cache：推理系统的页表</h2>
+<h3>为什么整块分配会死</h3>
+<p>I1 要求对每个活跃请求分配 Θ(S) 张量。请求长度动态变化（用户 prompt），张量不可变且长期占用。如果像传统 batch 一样<b>连续</b>分配，会在 HBM 里留下"瑞士奶酪"空洞。经典操作系统解法：<b>paging</b>——固定大小 page + 页表间接。vLLM 的 <code>KVCacheBlock</code> 就是 page metadata，<code>block_table</code> 就是 page table。</p>
+
+<h3>数据结构的解剖</h3>
+<p><code>vllm/v1/core/kv_cache_utils.py:117</code>——block 是<b>纯 metadata 对象</b>，不持有张量：</p>
+
+<pre><code>@dataclass(slots=True)
+class KVCacheBlock:
+    block_id: int                 # 指向 HBM 平坦地址池的索引
+    ref_cnt: int = 0              # 前缀共享的引用计数
+    _block_hash: BlockHashWithGroupId | None = None   # content hash，作为 prefix-cache key
+    prev_free_block / next_free_block: KVCacheBlock   # free 链表
+    is_null: bool = False         # block_id=0 是占位 null page</code></pre>
+
+<p class="xref">📐 关键分离：scheduler 侧只碰 block metadata (<code>KVCacheBlock</code>)；真正的 <code>block_size·num_kv_heads·head_size·2·dtype</bytes> 在 <b>worker 侧</b> 的顶量 <code>kv_caches: list[torch.Tensor]</code>(<code>model_runner.py:490</code>, 由 <code>attn_utils.init_kv_cache</code> 分配)。两层分离使 prefix-cache / swap / sliding-window / compressed-MLA 整个栈都能在同一组 <code>block_id</code> 上重编号、加权。</p>
+
+<h3>allocator：free-list + content hash map</h3>
+<p><code>vllm/v1/core/block_pool.py:162</code></p>
+<pre><code>self.blocks = [KVCacheBlock(idx) for idx in range(num_gpu_blocks)]
+self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
+self.cached_block_hash_to_block = BlockHashToBlockMap()   # hash → KVCacheBlock</code></pre>
+
+<ul>
+<li><b>分配 O(1)</b>：<code>get_new_blocks</code>(<code>block_pool.py:647</code>) 直接 <code>free_block_queue.popleft_n(N)</code>。</li>
+<li><b>淘汰 O(1)</b>：free list 满时 <code>_maybe_evict_cached_block</code>(<code>:679</code>) 丢最轻 cached block。</li>
+<li><b>前缀去重</b>：<code>get_cached_block</code>(<code>:198</code>) 按 content hash 查找，命中则<b>不分配</b>直接 <code>touch</code>(<code>:702</code>) 增加 ref_cnt——跨用户、跨时间的相同 sys prompt 共享同一物理页；<code>free_blocks</code>(<code>:719</code>) 只减 ref_cnt，归零才写回 free list。</li>
+<li><b>partial-block entry</b>(<code>:445</code>)：不同位置落在一个 block 内部边界也能注册更细粒度 hash，消除对齐浪费。</li>
+</ul>
+
+<h3>"页表 indirection"——这条 kernel 就是页表 walk</h3>
+<p>Worker 把 CPU 侧的 (req, position) 翻译成 HBM 单偏移量给 paged-attention kernel：</p>
+
+<p><code>vllm/v1/worker/gpu/block_table.py:283</code>（Triton kernel <code>_compute_slot_mappings_kernel</code>，上下文并行开时 <code>CP_SIZE</code> 有缩放）</p>
+<pre><code>block_indices  = positions // (block_size * CP_SIZE)
+block_offsets  = positions %  (block_size * CP_SIZE)
+block_numbers  = tl.load(block_table_ptr + req_state_idx * stride + block_indices)
+slot_ids = block_numbers * block_size + block_offsets   # ← 物理地址</code></pre>
+
+<div class="inv">这一行 <code>slot = block_id × block_size + offset</code> 与 OS 物理地址 <code>phys = ppn × PAGE_SIZE + page_offset</code> <b>完全同构</b>。<code>block_table</code> 是推理系统的 page table；<code>block_id</code> 是物理页框号(PFN)；<code>slot_id</code> 是线性物理地址。Cuda 上 PAD_SLOT_ID 对应"无效页表项"。这是 vLLM 对 GPU HBM 做"虚拟内存管理"的精确形式化。</div>
+
+<p>每步只有<b>两张动态张量</b>进入 attn kernel：<code>block_tables [groups, reqs, max_blocks]</code> 与 <code>slot_mappings [groups, tokens]</code>（<code>model_execute.py:1041 prepare_attn</code>）。Decode 只读；prefill <b>写</b> KV 进新 block（Allocator 返回的 new_block_ids 预先清零，见 <code>scheduler.update_from_output</code>）；此后 block 只读、可被 cached。</p>
+
+<h3>免费附赠为什么 paging 是三条需求的同时解</h3>
+<table>
+<tr><th>需求</th><th>若无 paging</th><th>paging 之后</th></tr>
+<tr><td>HBM 有限</td><td>连续分配 → Swiss-cheeze 空洞，利用率长期 &lt;60%</td><td>固定大小 block 零外部碎片，利用 ~95%+</td></tr>
+<tr><td>system prompt 重复</td><td>每请求独立存储</td><td>content hash 共享前缀 → 30-40% 峰值请求只耗 ~5% KV 显存</td></tr>
+<tr><td>变长 batch</td><td>必须 pad / 静态 buffer 浪费</td><td>ragged batch 由 block_table 自描述，无需 padding 浪费算力</td></tr>
+</table>
+
+<!-- ============ 单步调度器 -->
+<h2 id="sched">3. 单步调度器：带宽墙被迫的 token-budget</h2>
+<h3>"没有 prefill 阶段，没有 decode 阶段"</h3>
+<p><code>vllm/v1/core/sched/scheduler.py:420</code>——v1 调度器开头写的<strong>设计公理</strong>（是代码注释，但就是设计公理）：</p>
+<pre><code># There's no "decoding phase" nor "prefill phase" in the scheduler.
+# Each request just has num_computed_tokens and num_tokens_with_spec …
+# At each step, the scheduler tries to assign tokens to the requests so
+# that each request's num_computed_tokens can catch up its
+# num_tokens_with_spec. This is general enough to cover chunked prefills,
+# prefix caching, speculative decoding, and "jump decoding."</code></pre>
+
+<h3>单循环 algorithm</h3>
+<p><code>scheduler.py:438</code></p>
+<pre><code>token_budget = self.max_num_scheduled_tokens     # 每步硬上限
+while req_index &lt; len(self.running) and token_budget &gt; 0:
+    num_new_tokens = (num_tokens + spec - num_computed)
+    if 0 &lt; long_prefill_token_threshold &lt; num_new_tokens:
+        num_new_tokens = long_prefill_token_threshold        # chunked prefill
+    num_new_tokens = min(num_new_tokens, token_budget)
+    new_blocks = kv_cache_manager.allocate_slots(request, num_new_tokens)
+    if new_blocks is not None: break
+    else: preempt lowest-priority running request          # reclaim budget
+</code></pre>
+
+<h3>chunked prefill 是 roofline 的直接推论</h3>
+<table>
+<tr><th>阶段</th><th>FLOP/byte</th><th>瓶颈</th><th>若不切会怎样</th></tr>
+<tr><td>prefill</td><td>high (多 token 扫同权重)</td><td>compute-bound</td><td>长 prompt 吃满 GPU 算力，<b>decode 被饿死 → TTFT vs TTIT 的直接冲突</b></td></tr>
+<tr><td>decode</td><td>≈ h/2</td><td>memory-bandwidth-bound</td><td>调度器若不区分，一个长 prefill 卡 50ms+，decode 的 SLO 全部爆</td></tr>
+</table>
+
+<p>v1 一次把这两个相反的计算范式塞进同一步（<code>token_budget</code> 每步 chunk），<b>prefill 不卡 decode、decode 也不挨饿</b>——这不需要特殊的 "prefill mode switch"，只是单一预算循环里"每个请求按权重直接领 token"。因此 chunked prefill / prefix cache / spec decode / jump decode 是同一循环的四张面孔，不是四个特殊分支。</p>
+
+<h3>admission / preemption 作为反馈控制器</h3>
+<p><code>KVCacheManager.allocate_slots</code>(<code>kv_cache_manager.py:283</code>) 在 <code>required_blocks &gt; free − reserved − watermark</code> 时返回 <code>None</code>。<strong><code>None</code> 是调度器的压力信号</strong>：STOP 准入或 preempt 低优先级请求。<code>reserved_blocks</code> 和 <code>watermark_blocks</code> ——为 async KV connector（PD 分离）和 admission 留 headroom，是一个<b>闭环反馈</b>，不是配置驱动的 open loop 策略。<code>num_gpu_blocks</code> 本身由 engine init 时 HBM profile（<code>model_executor.determine_num_available_blocks</code>）实测得到，所以整个系统是<b>实测硬件</b>出来的闭环，不是一组想当然的参数。</p>
+
+<!-- estimate -->
+<div class="callout"><strong>工程师速算</strong>（H100 80GB 实装）：<br>
+80GB HBM ≈ 64GB 可用（16GB 模型 weight + 1-2GB workspace + CUDA context）；block_size=16 token × 80层 × 8 head × 128 d × 2(K+V) × 2byte(fp16) ≈ 52.4 MB/block → 64GB 可放 ~1200 block。每个 block 存 16 个 token 的 KV，即大概 ~18K token 的 KV 容量。128 并发 × 128 prompt ≈ 刚好打满。这就是 <b>KV 容量封顶并发</b>的由来——物理上限。</div>
+
+<!-- ============ 心脏 step 路径 -->
+<h2 id="step">4. 心脏 execute_model：schedule → prepare → forward → sample</h2>
+
+<p>v1 整个系统的时序由三行代码驱动。<code>vllm/v1/engine/core.py:576</code>（<code>EngineCore.step</code>）：</p>
+<pre><code>scheduler_output = self.scheduler.schedule()
+future = self.model_executor.execute_model(scheduler_output, non_block=True)
+# ……
+model_output = future.result()          # 或 sample_tokens
+engine_core_outputs = self.scheduler.update_from_output(scheduler_output, model_output)</code></pre>
+
+<ul>
+<li><b>CPU 时间线</b>: <code>schedule()</code> 在 CPU 算决策；<code>future.result()</b> 的 await 让 CPU 在 GPU 忙碌时做 bookkeeping 与 pre-fetch 下一步。</li>
+<li><b>GPU 时间线</b>: <code>execute_model</code> 被 executor fan-out 到 TP worker 进程的 GPU。</li>
+<li><b>异步调度(async_scheduling)</b> 更进一步：把 sampled token 的 D→H 拷贝放到另一个 CUDA stream，GPU 与 CPU 进一步 overlap——这直接暴露"I2 的带宽墙也可以用 CPU overlap 变相抢回一点延迟"。</li>
+</ul>
+
+<h3>GPU ModelRunner.execute_model data flow（单步 1134-1374, GPUModelRunner）</h3>
+<table>
+<tr><th>Stage</th><th>热路径</th><th>物理意义</th></tr>
+<tr><td>1. Request bookkeeping</td><td>finish_requests / free_states / add_requests / update_requests / block_tables.apply_staged_writes</td><td>CPU 侧更新活跃请求列表；block_table staged write 用 fused writer 一次写入</td></tr>
+<tr><td>2. Dispatch cudagraph</td><td><code>cudagraph_manager.dispatch(num_reqs, num_toks) → BatchExecutionDescriptor{FULL|PIECEWISE|NONE}</code></td><td><b>核心分发</b>——决定这一步走 CUDA graph replay / piecewise / eager，影响后续所有执行路径</td></tr>
+<tr><td>3. prepare_inputs</td><td>把 scheduler_output 的 <code>(req, num_toks)</code> 切成 <code>InputBatch{input_ids, positions, query_start_loc, seq_lens, logits_indices, ...}</td><td><b>CPU 密集</b>：N→GPU async copy；是 Python 95 中的一部分；每步 ~μs 量级</td></tr>
+<tr><td>4. prepare_attn</td><td><code>block_tables[groups,req,max_block]</code>、<code>slot_mappings[groups,tokens]</code> 两张张量</td><td>推理系统的 <b>"页表传给 MMU"</b>——只有这两张随 scheduler 变化，所以它们是图回放要 re-record 的动态根</td></tr>
+<tr><td>5. attention_metadata</td><td><code>model_state.prepare_attn → attn_metadata[builder]</code></td><td>把 common 的 q_start_loc/seq_lens/block_table 翻译成本 backend (FA3 / Triton / FlashMLA …) 的私有 metadata</td></tr>
+<tr><td>6. model forward</td><td><code>cudagraph_manager.run_fullgraph(bd)</code> OR <code>model(**inputs)</code></td><td><b>5% 算力消耗 = 95% GPU 时间</b>：GEMM + attention + norm + sample</td></tr>
+<tr><td>7. PP splice</td><td>非末 PP rank 返回 <code>IntermediateTensors</code>；末 rank 返回 hidden_states → sample_tokens</td><td>Inter-layer tensor 走 <code>PP_GROUP.broadcast_tensor_dict</code>，整 PP bubble 都在这一段产生</td></tr>
+</table>
+
+<!-- ============ 5. 95/5 -->
+<h2 id="twolang">5. Python 前端 + Triton/CUDA kernel：95/5 法则</h2>
+<p>Transformer inference 里，GEMM + attention + softmax + sample 吃掉 95% 的 FLOPs，但<b>只占 5% 的代码</b>；tokenization / scheduling / request management / API 吃掉 5% FLOPs 但占 95% 代码。v1 的选择：</p>
+<ul>
+<li><b>Python 95%</b>：HuggingFace 生态集成、调度策略、JSON grammar、profiler——开发速度远比性能重要。</li>
+<li><b>Triton / CUDA / C++ 5%</b>：<code>vllm/_custom_ops.py</code> 是 kernel registry；attention 走 FA3 / FlashInfer / Triton-for-NPU；sample 走 <code>topk_topp_triton</code>；fused MoE 用 modular kernel。</li>
+</ul>
+<p>GIL 代价：Python 单线程 + GIL 阻塞，不能做 per-iteration 小 kernel 调度。这正是下面<strong>三种 CUDA Graph 模式</strong>存在的理由：把<a>整个 forward</a>录成一张静态 kernel 录播带，解除 GIL 对 kernel launch 序列化的约束。</p>
+
+<!-- ============ AttentionBackend -->
+<h2 id="attn">6. AttentionBackend：唯一的硬件相关算子</h2>
+<p class="xref">📐 这是 vLLM 最干净的一条硬件抽象线，硬件适配团队的第一课。</p>
+<p><b>为什么 attention 是唯一"必须换"的 kernel。</b>GEMM、Norm、MoE dispatch、RoPE、residual add——全都是<b>结构与长度无关</b>的数学：(N, d) → (N, d)。唯有 attention 是 (N, d) × KV(N, d) → (N, d)——其 memory-access pattern <b>显式依赖</b> 序列长、KV block 布局、sparse / sliding window / compressed-MLA。所以它是唯一一个"硬件换了 kernel 必须重写一项"的算子；其他 op 用 cuDNN / CANN / oneDNN / ROCm 通用库一条 <code>GEMM</code> 改写。</p>
+
+<p>因此 vLLM 把 attention 拆成可插拔：</p>
+<table>
+<tr><th>角色</th><th>类 / 注册点</th><th>责任</th></tr>
+<tr><td><b>Backend enum</b></td><td><code>AttentionBackendEnum</code> + <code>@register_backend(name, device)</code></td><td>字符串 → 实现类映射</td></tr>
+<tr><td><b>Builder</b></td><td><code>AttentionMetadataBuilder.build(common_attn_metadata)</code></td><td>把 v1 的 common (q_start_loc, seq_lens, block_table, slot_mapping) 翻译成本地 metadata</td></tr>
+<tr><td><b>Impl</b></td><td><code>AttentionImpl.forward(layer, q, k, v, kv_cache, attn_metadata)</code></td><td>执行 kernel，<b>这是唯一直接操作 kv_caches 张量的地方</b></td></tr>
+<tr><td><b>KVCacheSpec</b></td><td><code>spec.KVCacheSpec / MLASpec / RaggedSpec / ...</code></td><td>描述 KV 张量形状 / block stride / compression；<b>决定 worker kv_caches 列表的 shape 布局</b></td></tr>
+</table>
+
+<p>Dispatch 链：<code>model_runner.init_attn_backend</code> 按 group-by <code>(backend, KVCacheSpec, num_q_heads)</code> 把层分组，按组整组初始化 backend。(<code>model_runner.py:442</code>)</p>
+
+<p>Ascend 套 5 个 backend：<code>ASCEND</code> (paged), <code>ASCEND_MLA</code>, <code>ASCEND_SFA</code> (sparse flash), <code>ASCEND_DS_A</code> (DSA sparse), <code>ASCEND_FA3</code> —— 都注册到 <code>AttentionBackendEnum.CUSTOM</code>(core: <code>attention_v1.py:75 @register_backend(AttentionBackendEnum.CUSTOM,"ASCEND")</code>)。内核全部走 <code>torch_npu.npu_fused_infer_attention_score</code>——华为 CANN 专门为 paged-attention 做的融合 kernel。</p>
+
+<!-- ============ 并行计算 -->
+<h2 id="para">6b. 并行计算：TP / PP / DP / EP 是如何合而不乱</h2>
+<table>
+<tr><th>策略</th><th>切什么</th><th>通信</th><th>典型 bubble / 代价</th><th>vLLM 位置</th></tr>
+<tr><td><b>TP</b> (tensor parallel)</td><td>每层 matmul 沿 hidden / head 切</td><td>每层 all-reduce (或 AG+RS)</td><td>延迟低，但<b>每 rank 通信量 = 2M</b>，瓶颈 NVLink/交换带宽</td><td><code>distributed/parallel_state.py</code>, <code>TP_GROUP</code>；linear 列切 via <code>ColumnParallelLinear</code></td></tr>
+<tr><td><b>PP</b> (pipeline)</td><td>按层段切 L 层</td><td>P2P send/recv <code>[b,h,d]</code> inter-layer tensor</td><td>pipeline bubble = <code>(p-1)/p</code> 的 idle；bubble 随 batch 慢漂没</td><td><code>PP_GROUP</code>, <code>IntermediateTensors</code>(forward 中间回传), <code>model_runner.update_pp_decode_requests</code> </td></tr>
+<tr><td><b>DP</b> (data parallel)</td><td>复制模型</td><td>每 dp 权重一致；scheduler 跨 dp rank 平衡</td><td>线性扩吞吐；需 <b>同步 CUDA graph</b>；load-balance 是金坑</td><td><code>dp_utils.dp_broadcast</code>、<code>cudagraph_sync_dp</code>, <code>Disagg / PD</code></td></tr>
+<tr><td><b>EP</b> (expert parallel)</td><td>MoE 层按 expert 切</td><td>MoE dispatch + all-to-all 行路由</td><td>路由决定一切；imbalance = expert 热点</td><td><code>eplb/</code>（昇腾原创！§9）、<code>distributed/moe/</code></td></tr>
+</table>
+
+<p class="xref">📐 这 4 种并行在 Compose，不是在选主——生产版 DeepSeek-V3 / Qwen3 同时 TP=8 + EP=64 + PP=4 + DP=32；vLLM 用 <code>parallel_state.py</code> 的 group cache 把 rank 分组做 composable，worker 只认 group 不认策略名。</p>
+
+<!-- ============ Platform -->
+<h2 id="platform">7. Platform 抽象：device as an interface</h2>
+<p>设备多样性(I3)的集中解法是把"所有的设备相关假设<b>压成一个接口</b>"——<code>vllm/platforms/interface.py:134 Platform</code>。必须实现的 6 个纯虚方法：</p>
+
+<pre><code>get_device_name / get_device_uuid / get_device_total_memory
+set_device / get_attn_backend_cls / manual_seed_all</code></pre>
+
+<p>可选面（有默认实现）：memory stats, device capability count, current_stream, profiler hooks, graph pool, ...。<strong>NPUPlatform</strong>（昇腾，<code>platform.py</code>）的 <code>get_device_total_memory</code> 直接 <code>raise NotImplementedError</code>（注释原句："DO NOT IMPLEMENT: ...torch_npu allows global initialization only once; duplicate initialization causes errors"）——这是一个典型的"接口承诺 vs 设备能力"失配——强烈建议 vLLM 上游做 lazy memory probe。</p>
+
+<p>Platform 的另一个枢纽职责：<code>get_attn_backend_cls(device, head_size, dtype, block_size, sliding_window, attn_type)</code>。所有非 NVIDIA 设备的 attention 切换决策都在此做，是<b>三级硬件选择</b>（平台 → backend → kernel）的最上层。</p>
+
+<!-- 图执行 -->
+<h2 id="cudagraph">8. 三种执行模式：FULL / PIECEWISE / eager CUDA Graph</h2>
+<p class="xref">📐 官方 CUDA Graph 设计图：<a href="figures/wrapper_flow.png">wrapper_flow.png</a>、<a href="figures/current_design.png">current_design.png</a> 与 <a href="figures/previous_design.png">previous_design.png</a>。</p>
+
+<p>vLLM 把 forward 录成 CUDA Graph 是为了<b>消灭 kernel launch overhead</b>：Python → CUDA driver → launch 一个 matmul ≈ 5-10μs；一个 80 层 transformer forward 80 × 几十 kernel = 录成 1 次 launch 整个 graph。代价是<b>录播时与回放时输入 shape 必须一样</b>——但推理每步 req 数、token 数、序列长每步都在变！三种模式是对此约束的 trade-off 家族：</p>
+
+<table>
+<tr><th>模式</th><th>动态维度</th><th>代价</th><th>适用</th></tr>
+<tr><td><b>FULL CUDA Graph</b></td><td>requant 完全固定；最大 batch/token; pad 到 2 的整数倍</td><td>显存大（录一个 2 步 shape 都覆盖）、TTFT 首 token 慢</td><td><b>纯 decode 场景吞吐最大</b>；serverless 长尾</td></tr>
+<tr><td><b>PIECEWISE CUDA Graph</b></td><td>dynamic shapes；注意力部分单独录制，GEMM 部分单独录制</td><td>显存略小、TTFT 友好</td><td>mixed prefill + decode；长上下文</td></tr>
+<tr><td><b>Eager (NONE)</b></td><td>全动态；每 kernel 单独 launch</td><td>launch overhead 最大；但最灵活</td><td>调试、encoder-decoder（cross-attn 每步变）、CPU/GPU 路径</td></tr>
+</table>
+
+<p>Dispatch 入口：<code>vllm/v1/worker/gpu/cudagraph_utils.py</code>——<code>CudagraphDispatcher</code> 用 <code>BatchExecutionDescriptor{num_tokens, num_reqs, cg_mode}</code> 做 dispatch, candidate key <code>(rounded_num_tokens, num_active_loras)</code>。每一对 (token_num, lora_case) 在 warm-up 时录 graph，运行时按 <code>min(num_reqs, batched_reqs)</code> 查 nearest captured case。<strong>混合模式</strong>在 encode-decode（Whisper）上自动退 eager。<strong>Ascend 把 FULL-AND-PIECEWISE 直接禁用</code>——因为 NPU graph capture 只有 ACL Graph，vLLM 的 CUDA-graph 语义假设在 CANN 上不成立。整个 Ascend § 最难的一段：<strong>ACL Graph 自己的 capture/replay 假设和 CUDA Graph 不一样（不保存 persistent input buffer、forward context 自管理）</strong>——这是 I3 最深的裂缝。详见 <a href="agent3_attention_model_platform.html">agent3 §4 三种机制对比表</a>。</p>
+
+<!-- ============ Ascend -->
+<h2 id="ascend">9. vLLM-Ascend：一条完整的非 GPU 适配线</h2>
+
+<p>vLLM-Ascend 不是 fork、不是 patch，而是一套 overlay——I1/I2/I3 每一条约束下都刚好有三种"适配手段"。一表看完：</p>
+
+<table>
+<tr><th>子系统</th><th>适配机制</th><th>关键文件</th><th>与物理不变量的映射</th></tr>
+<tr><td>Platform / 设备发现</td><td>subclass Platform + config 注入</td><td><code>platform.py</code> (NPUPlatform, check_and_update_config)</td><td>I3</td></tr>
+<tr><td>Worker / Runner</td><td>subclass GPUModelRunner</td><td><code>worker/model_runner_v1.py</code> NPUModelRunner; <code>v2/model_runner.py</code>; Xlite</td><td>I1+I3</td></tr>
+<tr><td>Attention backend</td><td>register_backend × 5</td><td><code>attention/*_v1.py</code>; core: <code>kv_cache_interface.py</code></td><td>I1+I3</td></tr>
+<tr><td>定制算子(lin/rope/moe/norm/act)</td><td>CANN custom op + Substitution</td><td><code>ops/</code> 86 files</td><td>I2+I3</td></tr>
+<tr><td>量化</td><td>subclass QuantConfig</td><td><code>quantization/</code> W4A16/W8A8/W4A8/PDmix/MXFP/FlatQuant … 10+</td><td>I3</td></tr>
+<tr><td>编译</td><td>ACL Graph 替换 CUDA Graph</td><td><code>compilation/acl_graph.py</code>, <code>AscendCompiler</code> + 70 fusion passes</td><td>I3</td></tr>
+<tr><td>分布式通信</td><td>CTC → HCCL wrapper</td><td><code>distributed/pyhccl_wrapper.py</code> <code>PyHcclCommunicator</code></td><td>I3</td></tr>
+<tr><td>KV PD disaggregation</td><td>P2P mooncake + ascend_store pool</td><td><code>distributed/kv_transfer/kv_p2p/mooncake_connector.py</code> & <code>kv_pool/ascend_store</code></td><td>I2（带宽墙减少 KV 搬移）</td></tr>
+<tr><td>调度器</td><td>subclass Scheduler + mixin + config swap</td><td><code>core/recompute_scheduler.py</code>, <code>ShortRequestFirstSchedulerMixin</code>, <code>ProfilingChunkScheduler</code></td><td><strong>I2 — 关键！物理上 NPU 算力强但带宽比低，靠 recompute 解 & SJF 解</td></tr>
+<tr><td>EPLB（专家并行 LB）</td><td>整子系统 Ascend 原创</td><td><code>eplb/</code> FlashLB + FlashTree + D2D loader</td><td><strong>I2 的 MoE 特化</strong></td></tr>
+<tr><td>monkey-patch 层</td><td>运行时 setattr</td><td><code>patch/</code> 60+ files (platform + worker)</td><td>I3 + vLLM 暴露面不足的裂缝</td></tr>
+<tr><td>模型注册</td><td>register_model + patch 适配</td><td><code>models/*.py</code> + <code>patch/worker/*.py</code></td><td>-</td></tr>
+</table>
+
+<h3>Ascend 最醒眼的三个"原创"</h3>
+<ol>
+<li><b>Schedule-level innovation (I2)</b>：NPU 的 compute/bandwidth 比和 GPU 不同。<b>RecomputeScheduler</code>(<code>recompute_scheduler.py:98</code>)——把 preemption 从 "offload KV 到 CPU" 换成 "扔掉 KV、下一次需时<b>recompute</b>"——因为 NPU 计算力强于 PCIe 带宽，<b>重算 > 搬运</b>。这直接是 roofline 角度的硬件最优。ShortRequestFirst 三车道队列 + profiling-chunk 动态切割也都是 I2 的不同侧面。详见 <a href="agent2_scheduler_kvcache.html">agent2 § AscendScheduler vs upstream</a>。</li>
+<li><b>EPLB—vLLM 项目里 Ascend 的唯一贡献</b>：MoE EP 下 expert 热点 vs 路由均衡是<b>组合优化</b>，默认 load balance 造成严重 idle。Ascend 提出 FlashLB（匈牙利 + numba 树搜索）+ FlashTree + D2D loader，三层 updator→policy→D2D 构筑完整方案。详见 <a href="agent4_ascend_adaptation_methodology.html">agent4 §EPLB</a>。</li>
+<li><b>ACL Graph vs CUDA Graph</b>：NPU 图执行和 CUDA Graph 语义差异——forward context 自管理、不保持 persistent buffer、ACL capture。Ascend 的 GraphFusionPassManager 做了 70 个 fusion pass。详见 <a href="agent3_attention_model_platform.html">agent3 §4</a>。</li>
+</ol>
+
+<h3>patch 层——"暴露面不足"的诊断书</h3>
+<p>60+ patch 文件不是"工程债务的羞耻"，而是精确标注 vLLM <b>缺失扩展点</b> 的 map：</p>
+<ul>
+<li><code>patch_fused_moe</code> → vLLM 没暴露 "FusedMoE factory 可换" 的接口</li>
+<li><code>patch_cudagraph</code> → CudagraphDispatcher 假定了 CUDA-graph-only 语义</li>
+<li><code>patch_kv_cache_coordinator</code> → KVCacheCoordinator 的一些内部 state 没暴露给用户改</li>
+<li><code>patch_mla_prefill_backend</code> → MLA prefill 路径的 backend switch 没接口</li>
+</ul>
+<div class="inv">凡是 patch 层密集的 subsystem，就是 vLLM 下一版 "extension point gap"。<strong>建议 vLLM 上游重点把 op-substitution / graph-backend / MoE-comm 三个方向做成正式扩展面</strong>——Ascend 的 patch 债务会立刻清掉。这个论断在 <a href="agent4_ascend_adaptation_methodology.html">agent4 §Part C</a> 被严格论证。</div>
+
+<p>关键 insight：meta_registration.py 里的 <code>register_meta_if_necessary</code> 把 Ascend custom op 注册为<strong>Meta</strong> 函数，以便 torch.compile 在 tracing 期能运行——这是 "PyTorch + 私有硬件" 在 dynamo/compile 路上的必要解法，AMD/Intel 也面临同样问题。</p>
+
+<!-- ============ 通用适配 -->
+<h2 id="method">10. vLLM 硬件适配通用方法论（任何 DSA / GPU 厂商的 playbook）</h2>
+
+<p>从 Ascend 案例提炼的<b>8 步可复制工作流</b>：</p>
+<table>
+<tr><th>#</th><th>目标</th><th>vLLM 扩展点 / 反例</th></tr>
+<tr><td>1</td><td>设备被发现 & 自报 CUDA-compatible</td><td>实现 Platform.get_device_* / get_attn_backend_cls；反例：ascend get_device_total_memory 因 torch_npu 全局单初始化而故意 NotImplemented</td></tr>
+<tr><td>2</td><td>Paged KV 工作</td><td>KVCacheSpec 家族 + KVCacheManager + coordinator + BlockPool（整套 I1 物理栈）<b>复用不改</b></td></tr>
+<tr><td>3</td><td>Attention backend</td><td>register_backend + 本机 kernel（FA/CANN/ROCm/AITerpaged)；这是 I3 唯一的 "必须换"</td></tr>
+<tr><td>4</td><td>其余 kernel 替换</td><td>custom op 注册 → torch._library / torch_npu / torch HIP wrapper；ascend 用 4 条路径: direct_register_custom_op / torch_npu / Triton-for-NPU / CANN _C_ascend.*</td></tr>
+<tr><td>5</td><td>Worker / ModelRunner</td><td>subclass GPUModelRunner，override execute_model/_prepare_inputs/_build_attention_metadata/_model_forward；ascend 三 runner（v1 ACL / v2 piecewise / Xlite）共存</td></tr>
+<tr><td>6</td><td>集合通信</td><td>Communicator 替换 NCCL；ascend HCCL via ctypes pyhccl</td></tr>
+<tr><td>7</td><td>Config 注入 + scheduler swap</td><td><code>check_and_update_config</code> 输入 VllmConfig 字段；<code>scheduler_cls</code> 字符串替换（ascend 最干净一例）</td></tr>
+<tr><td>8</td><td>测试矩阵（CPU snippet + unit + e2e 推理精度 + perf TTFT/TTIT/SLO）</td><td>ascend 用 tests/ut + tests/e2e</td></tr>
+</table>
+
+<h3>必做 / 应做 / 加分</h3>
+<p class="xref">📐 完整 list + vLLM 内真实断点见 <a href="agent4_ascend_adaptation_methodology.html">agent4 §B.1 MUST / SHOULD / NICE</a>。</p>
+
+<p><b>MUST</b>（不做后端无法启动）：Platform、AttentionBackend、paged-KV 整套、核心 GEMM kernel、集合通信、Worker override。<br>
+<b>SHOULD</b>（不做性能腰斩）：编译 / ACL-graph 变体、量化选择（W4A/W8A）、Scheduler tweak。<br>
+<b>NICE</b>（Ascend 级别原创）：EPLB、KV PD disagg、recompute scheduling、Xlite。</p>
+
+<h3>Fork vs plugin vs patch 决策</h3>
+<table>
+<tr><th>选 fork 当</th><th>选 plugin 当</th><th>选 patch 是 Workaround</th></tr>
+<tr><td>扩张超过 ~25% upstream 代码；长命版本<br><i>(例: vllm-ascend 选 plugin 而非 fork 整体)</i></td><td>Platform / Attention / KVConnector / QuantConfig / scheduler_cls 有现成注册点<br><i>(ascend 用 platform + backend + scheduler_cls，未 patch 也能启动最小后端)</i></td><td>扩展点没暴露、但又不值得改 upstream —— 成本是"每个 vLLM 主版本都有 break 风险"。见 <a href="agent4_ascend_adaptation_methodology.html">agent4 §B.3 决策矩阵</a></td></tr>
+</table>
+
+<!-- ============ 设计洞见 -->
+<h2 id="insight">11. 给推理架构师的设计洞见</h2>
+<p><b>一组设计是 "被物理逼出来的" 还是 "工程选的"，决定它的命运。</b> 我按此把 vLLM 的设计分成两类——只有后一类是你重写推理系统时真正能改的：</p>
+
+<table>
+<tr><th>被物理"逼"出（难改，必须满足）</th><th>工程选择（可选，可换）</th></tr>
+<tr><td>Paged KV-cache（I1: 内存动态 + append-only）</td><td>Python 前端（可换成 Rust/Go 以求单线程更低 overhead）</td></tr>
+<tr><td>attention 是唯一硬件相关 kernel（I1 + 算子分析）</td><td>shm-RPC executor（可换成 NCCL-.comm、NCCL-based actor、mp+shared memory）</td></tr>
+<tr><td>Token-budget 单步调度（I2: roofline decode↔prefill）</td><td>采样器实现（可换成 GPU 双精度 gumbel-max、tree-spec sampling）</td></tr>
+<tr><td>PagedAttention / content-hash 共享（I1: 有限 HBM）</td><td>chunked prefill 的 threshold 默认值</td></tr>
+<tr><td>三层图执行模式（I3: kernel launch overhead vs 动态 shape）</td><td>混合模式的优先级</td></tr>
+<tr><td>TP/PP/DP/EP composable group（I4: 规模）</td><td>pipeline bubble 的填充策略</td></tr>
+<tr><td>Platform 接口 = I3 的重心</td><td>默认 backend 选择树</td></tr>
+</table>
+
+<div class="inv"><b>给正在规划下一代硬件适配团队的一句话</b>：
+
+<b>"5 个注册点(platform, AttentionBackend, KVConnector, QuantConfig, scheduler_cls)已经够让一个非 NVIDIA 后端零 hack 启动</b>——余下的 op substitution、MoE comm、graph backend 三个方向缺少正式接口，这就是 patch 层存在的根本原因。<b>你适配工作的真正不是在写 patch，是为 vLLM 上游标出 patch 的位置</b>——每个被 patch 的子系统都是 vLLM 下一版 "extension point gap"。 </div>
+
+<p><b>roofline 看 Ascend 的调度器为何那么激进的解释</b>：NPU(compute/bw) 比高于 GPU，意味着 memory bandwidth 是更紧的瓶颈；offload KV 到 CPU 的 PCIe 代价远大于让 NPU 重算一次——因此 Ascend 选择 <b>recompute 而不是 swap</b>，选择与 GPU "保留优先" 相反的 "扔掉-重算" 策略，这不是"偏好不同"，是 roofline 的最优解不同。同理，ShortRequestFirst ——短请求尽快出 TTFT，把带宽腾给长 decode ——也是带宽墙 I2 的必然推论。</p>
+
+<p><b>效率数字</b>：在 v1 的 3 段式 step loop（schedule - execute - update）:<ul>
+<li>schedule 每步 ≈ Python 开销 + allocation ≈ μs</li>
+<li>执行（model forward + attention + sample）≈ ms——<strong>99%+ 的 wall-clock</strong></li>
+<li>所以 v1 所有调度器创新（recompute / SRF / chunked / spec decode）必须不引入可观测的 schedule 延迟；只要 schedule 开销在 μs，它就不影响 SLO——这是调度器创新的"黄金操作空间"。
+</li>
+</ul></p>
+
+<!-- ============ refs -->
+<h2 id="refs">附：关键引用与路线图</h2>
+
+<h3>必须读的官方文档</h3>
+<ul>
+<li><a href="https://blog.vllm.ai/2025/01/27/v1-alpha-release.html">vLLM V1: A Major Upgrade to vLLM's Core Architecture</a> — V0→V1 的动机和变化</li>
+<li><a href="https://docs.vllm.ai/en/latest/usage/v1_guide.html">vLLM V1 Guide</a> — chunked prefill default、logprobs-mode、feature gaps</li>
+<li><a href="https://blog.vllm.ai/2023/06/20/vllm.html">Efficient Memory Management for LLM Serving with PagedAttention</a>(OSDI'23) — paged KV-cache 的原始论文</li>
+<li><a href="https://docs.vllm.ai/en/latest/design/arch_overview.html">docs/design/arch_overview.md</a> — 本地已摘录在 <code>design_docs_quotes.md</code></li>
+<li><a href="https://docs.vllm.ai/en/latest/design/paged_attention.html">PagedAttention 设计</a> · <a href="https://docs.vllm.ai/en/latest/design/attention_backends.html">Attention backends</a> · <a href="https://docs.vllm.ai/en/latest/design/cuda_graphs.html">CUDA graphs</a> · <a href="https://docs.vllm.ai/en/latest/design/custom_op.md">custom ops</a> · <a href="https://docs.vllm.ai/en/latest/design/fusions.md">fusions</a> · <a href="https://docs.vllm.ai/en/latest/design/torch_compile.md">torch.compile</a> — 全部摘录在 <code>design_docs_quotes.md</code></li>
+<li><a href="https://github.com/vllm-project/vllm/issues/18571">RFC #18571: V0 to V1 Migration</a></li>
+<li><a href="https://docs.vllm.ai/en/latest/design/plugin_system.html">Plugin system</a> · <a href="https://docs.vllm.ai/en/latest/design/nixl_kv_cache_lease.html">NIXL KV lease</a></li>
+</ul>
+
+<h3>本分析版本锚点</h3>
+<ul>
+<li>vLLM upstream commit <code>2db39c704</code> (v1 era, V0 deprecated)</li>
+<li>vLLM-Ascend commit <code>b266da5d</code></li>
+<li>分析日期 2026-07-18 · 报告 2026-07-18</li>
+</ul>
+
+<h3>vLLM 架构变化路线（时间线）</h3>
+<table>
+<tr><th>发布</th><th>显著变化</th><th>影响</th></tr>
+<tr><td>2023 PagedAttention</td><td>paged KV, OSDI'23</td><td>整个领域内存效率基准</td></tr>
+<tr><td>continuous batching →</td><td>no waiting for batch complete</td><td>吞吐翻倍</td></tr>
+<tr><td>2024 chunked prefill →</td><td>prefill 不被 decode 饿死</td><td>TTFT/TTIT 同时最优</td></tr>
+<tr><td>2024 spec decode →</td><td>draft + verify</td><td>单步多 token</td></tr>
+<tr><td>2025.01 V1</td><td>core 重写，单步 token-budget</td><td>cleaner modular, 默认打包</td></tr>
+<tr><td>2025 NIXL KV lease / PD disagg</td><td>prefill 与 decode 分离扩展</td><td>hyperscaler 部署</td></tr>
+<tr><td>2025+</td><td>200+ 模型、EP/EPLB、MLA、speculative、Mamba hybrid</td><td>专用 DSA 工厂</td></tr>
+</table>
+
+<div class="meta" style="margin-top:28px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18 · 本报告（spine）+ 6 份 agent HTML + 索引 <code>index.html</code>。</div>
+</body>
+</html>

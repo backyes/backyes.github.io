@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM 软件架构第一性原理</title>
+<link rel="stylesheet" href="report.css">
+<style>
+.inv{background:linear-gradient(90deg,#1b2330,#0e1116);border-left:4px solid #6ea8fe;padding:10px 14px;margin:14px 0;font-style:italic}
+.tag{display:inline-block;background:#2563eb;color:#fff;font-size:70%;padding:2px 7px;border-radius:10px;margin-right:6px}
+code{background:#161b22;padding:1px 5px;border-radius:4px}
+pre{background:#161b22;padding:14px;border-radius:8px;overflow-x:auto;font-size:.84em}
+.callout{background:#1b2330;border-left:4px solid #6ea8fe;padding:10px 16px;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.9em}th,td{border:1px solid #2a3038;padding:6px 9px;text-align:left}
+th{background:#161b22}tr:nth-child(even)td{background:#161b22}
+.archgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.archgrid{grid-template-columns:1fr}table{font-size:.78em}th,td{padding:4px 5px}}
+.layer{border:1px solid #2a3038;border-radius:8px;padding:10px 14px;margin:10px 0;background:#161b22}
+.layer h3{margin-top:0;color:#6ea8fe}
+</style>
+</head>
+<body>
+<div class="topbar">📘 vLLM 架构分析 · <a href="index.html">返回索引</a> · 软件架构视角的第一性原理</div>
+
+<h1>vLLM 软件架构第一性原理</h1>
+<div class="callout"><b>这份报告回答什么问题</b>。不是"transformer 的数学是什么"或"GPU 的 roofline 是什么"——这些是物理约束,不是软件设计。这份报告追问:<br>
+<b>给定推理系统必须完成的任务,为什么 vLLM 被切成了 EngineCore / Scheduler / Worker / ModelRunner / AttentionBackend / KVCacheManager / KVConnector / Compilation 这些模块? 每个模块的唯一职责是什么? 边界为什么必须在这里? 跨模块合约(SchedulerOutput / ForwardContext / block_tables / slot_mappings)为什么必须这样切?</b><br>
+然后把这些设计决策映射到 P/D 分离、TP/EP/DP、算子融合、通算融合、KV-cache 内存管理这些具体场景,看它们如何"穿过"这些边界。</div>
+
+<div class="toc"><b>目录</b>
+<ol>
+<li><a href="#axiom">公理:软件模块化的第一性原理——"按变化速率切"</a></li>
+<li><a href="#bigpic">全景:vLLM v1 模块职责地图</a></li>
+<li><a href="#core">EngineCore:时间线的主人</a></li>
+<li><a href="#scheduler">Scheduler:纯决策函数</a></li>
+<li><a href="#worker">Worker:设备的主人</a></li>
+<li><a href="#modelrunner">ModelRunner:模型的前向执行器</a></li>
+<li><a href="#attn">AttentionBackend:唯一硬件相关的算子</a></li>
+<li><a href="#kv">KV 管理层:KVCacheManager / Coordinator / BlockPool / Connector 四层</a></li>
+<li><a href="#compilation">Compilation:把"录一次放多次"独立成一层的理由</a></li>
+<li><a href="#contracts">跨模块合约为什么必须这样切</a></li>
+<li><a href="#crosscut">横切视角:P/D · TP/EP/DP · 融合 · 通算 · KV tiering 如何穿过边界</a></li>
+<li><a href="#evolution">演化视角:v0→v1→v2 哪些边界被移动了、为什么</a></li>
+<li><a href="#insight">给架构师的设计洞见</a></li>
+</ol></div>
+
+<!-- ============ 公理 ============ -->
+<h2 id="axiom">1. 公理:软件模块化的第一性原理——"按变化速率切"</h2>
+<p>在讨论 vLLM 任何一个模块之前,先明确<strong>软件架构第一性原理</strong>(不是物理原理):</p>
+
+<div class="inv"><b>第一性原理 #0:一个模块的边界,应该切在"变化速率不同"的地方。</b><br>
+如果 A 和 B 总是同时变化,它们应该在同一模块;如果 A 每天变、B 每年变,它们必须分开,否则 A 的每次改动都要碰 B。</div>
+
+<p>这条原理的推论:</p>
+<table>
+<tr><th>变化速率</th><th>vLLM 里对应</th><th>所以被切到</th></tr>
+<tr><td><b>每天</b>——策略、参数、调度顺序</td><td>recompute/SRF/chunked/FCFS/Priority</td><td><b>Scheduler</b></td></tr>
+<tr><td><b>每周</b>——新模型、新模型变体</td><td>200+ model defs (DeepSeek/Qwen/GLM/Gemma/Kimi...)</td><td><b>models/</b> 目录</td></tr>
+<tr><td><b>每月</b>——新硬件、新 kernel</td><td>FA3 / FlashInfer / Triton / CANN / ROCm</td><td><b>AttentionBackend + ops/</b></td></tr>
+<tr><td><b>每季</b>——并行策略、通信拓扑</td><td>TP/PP/DP/EP/CP 组合</td><td><b>Worker + distributed/</b></td></tr>
+<tr><td><b>每年</b>——执行范式、图捕获</td><td>CUDA Graph / torch.compile / ACL Graph</td><td><b>Compilation</b></td></tr>
+<tr><td><b>永不</b>——推理的数学定义</td><td>"一个 step = schedule → forward → sample"</td><td><b>EngineCore.step</b></td></tr>
+</table>
+
+<p>这就是 vLLM 模块分层的<strong>真正第一性原理</strong>:不是"功能分解",是<strong>"变化速率分解"</strong>。每一层只容纳一种变化速率;层与层之间的合约就是<strong>"变化慢的那一边的稳定接口"</strong>。</p>
+
+<!-- ============ 全景 ============ -->
+<h2 id="bigpic">2. 全景:vLLM v1 模块职责地图</h2>
+
+<div class="archgrid">
+<div class="layer">
+<h3>① EngineCore <code>v1/engine/core.py</code></h3>
+<b>唯一职责:拥有时间线</b>。<br>
+• 持有 Scheduler + Executor<br>
+• 驱动 <code>step()</code> 主循环<br>
+• 处理请求入队 / abort / pause / resume / sleep / wakeup<br>
+• 协调 DP rank 间同步<br>
+• 把 SchedulerOutput → Executor,把 ModelRunnerOutput → Scheduler.update_from_output<br>
+<b>不碰</b>:设备、模型、tensor、调度策略
+</div>
+<div class="layer">
+<h3>② Scheduler <code>v1/core/sched/</code></h3>
+<b>唯一职责:纯决策函数</b>。<br>
+• 输入:当前请求状态 + KV-cache 可用块数<br>
+• 输出:<code>SchedulerOutput</code>(req→token 分配 + 新 block 分配 + 抢占列表)<br>
+• 策略:FCFS / Priority / SRF / recompute / profiling-chunk<br>
+• 持有 <code>KVCacheManager</code>(但只调用它的 allocate/free 接口)<br>
+<b>不碰</b>:设备、模型、kernel、通信
+</div>
+<div class="layer">
+<h3>③ Worker <code>v1/worker/</code></h3>
+<b>唯一职责:拥有设备</b>。<br>
+• 持有 GPU/NPU device handle<br>
+• 持有 <code>ModelRunner</code>(或 v2 的 <code>GPUModelRunner</code>)<br>
+• 持有 KV-cache 物理张量 <code>kv_caches: list[torch.Tensor]</code><br>
+• 负责 load_model / determine_available_memory / sleep / wakeup<br>
+• 负责 CPU binding / 设备初始化<br>
+<b>不碰</b>:调度策略、请求生命周期
+</div>
+<div class="layer">
+<h3>④ ModelRunner <code>v1/worker/gpu/model_runner.py</code></h3>
+<b>唯一职责:执行模型前向</b>。<br>
+• <code>execute_model(scheduler_output) → ModelRunnerOutput</code><br>
+• 把 SchedulerOutput 翻译成 InputBatch + block_tables + slot_mappings + attn_metadata<br>
+• 调用 <code>model(**inputs)</code> 或 <code>cudagraph_manager.run_*</code><br>
+• 持有 Sampler / EPLB state / spec decode drafter<br>
+<b>不碰</b>:请求入队、调度策略、设备发现
+</div>
+</div>
+
+<div class="archgrid">
+<div class="layer">
+<h3>⑤ AttentionBackend <code>v1/attention/</code></h3>
+<b>唯一职责:把"通用 attention 元数据"翻译成"硬件 kernel 私有元数据"</b>。<br>
+• Builder 把 common_attn_metadata → 本地 metadata<br>
+• Impl 执行 kernel<br>
+• 注册式:每个硬件一个 backend<br>
+<b>不碰</b>:模型结构、调度、KV-cache 管理
+</div>
+<div class="layer">
+<h3>⑥ KV 管理层(四层)</h3>
+<b>KVCacheManager</b>:请求生命周期 ↔ block 分配<br>
+<b>KVCacheCoordinator</b>:多 KV-cache group(MLA/GQA/SWA)的协调<br>
+<b>BlockPool</b>:物理 block 的 free-list + content-hash 缓存<br>
+<b>KVConnector</b>:跨 worker 的 KV 搬移(PD 分离 / offload)<br>
+<b>不碰</b>:调度策略、模型执行
+</div>
+<div class="layer">
+<h3>⑦ Compilation <code>compilation/</code></h3>
+<b>唯一职责:把"多次 kernel launch"变成"一次 graph replay"</b>。<br>
+• CudagraphDispatcher 决定 FULL / PIECEWISE / NONE<br>
+• PiecewiseBackend 分段编译<br>
+• PassManager 做 kernel fusion<br>
+• 平台通过 <code>get_static_graph_wrapper_cls()</code> 注入 ACLGraphWrapper<br>
+<b>不碰</b>:模型语义、调度
+</div>
+<div class="layer">
+<h3>⑧ Platform <code>platforms/</code></h3>
+<b>唯一职责:把"设备相关假设"压成一个接口</b>。<br>
+• 6 个必须实现的方法<br>
+• 持有 device capability / memory / stream / attn backend 选择<br>
+• 持有 graph pool / static graph wrapper 选择<br>
+<b>不碰</b>:一切上层逻辑
+</div>
+</div>
+
+<!-- ============ EngineCore ============ -->
+<h2 id="core">3. EngineCore:时间线的主人</h2>
+<p><code>vllm/v1/engine/core.py:101 class EngineCore</code></p>
+
+<h3>唯一职责</h3>
+<p><b>EngineCore 是"时间线"的唯一主人</b>。它拥有 Scheduler(决策)和 Executor(执行),驱动 <code>step()</code> 主循环。整个推理系统的"心跳"就是 <code>EngineCore.step()</code>。</p>
+
+<h3>为什么必须独立</h3>
+<p>EngineCore 把三件事<strong>串行化</strong>到同一个线程:</p>
+<pre><code>def step(self):
+    scheduler_output = self.scheduler.schedule()          # 1. 决策
+    future = self.executor.execute_model(scheduler_output, non_block=True)  # 2. 派发(异步)
+    model_output = future.result()                        # 3. 等待
+    engine_core_outputs = self.scheduler.update_from_output(...)  # 4. 更新</code></pre>
+<p>这三步必须串行,因为<strong>调度决策依赖上一步的输出</strong>(哪些请求完成了、哪些 block 被释放)。如果把这些逻辑散落在 Worker 或 Scheduler 里,就需要跨模块的锁或消息队列——复杂度爆炸。EngineCore 把它们收拢到一个线程,用<strong>单线程事件循环</strong>消除了所有并发竞争。</p>
+
+<h3>EngineCore 还管什么(容易被忽略)</h3>
+<ul>
+<li><b>请求生命周期</b>:<code>add_request / abort_requests / preprocess_add_request</code></li>
+<li><b>暂停/恢复</b>:<code>pause_scheduler / resume_scheduler / is_scheduler_paused</code></li>
+<li><b>睡眠/唤醒</b>:<code>sleep / wake_up</code>(把 KV-cache 腾到 CPU 或关 NPU 电源)</li>
+<li><b>LoRA 热插拔</b>:<code>add_lora / remove_lora / pin_lora / list_loras</code></li>
+<li><b>缓存重置</b>:<code>reset_prefix_cache / reset_encoder_cache / reset_mm_cache</code></li>
+<li><b>DP 协调</b>:<code>step_with_batch_queue</code>(多 DP rank 的 batch 队列同步)</li>
+<li><b>spec decode 草稿收集</b>:<code>post_step → take_draft_token_ids</code></li>
+</ul>
+<p class="xref">📐 这些看似杂乱的功能有一个共同点:<b>它们都是"时间线上的事件"</b>——请求来了、请求被取消了、系统要休眠了、LoRA 要换了。EngineCore 是"时间线主人"这个职责的自然推论。</p>
+
+<h3>EngineCore 不碰什么</h3>
+<p>EngineCore <b>不持有 device、不持有模型、不持有 tensor</b>。它只持有 Scheduler(纯 Python 对象)和 Executor(跨进程 RPC 句柄)。这意味着 EngineCore 可以跑在 CPU 的一个线程里,完全不知道 GPU 的存在——这是"控制面与数据面分离"的极端形式。</p>
+
+<!-- ============ Scheduler ============ -->
+<h2 id="scheduler">4. Scheduler:纯决策函数</h2>
+<p><code>vllm/v1/core/sched/scheduler.py:418 def schedule()</code></p>
+
+<h3>唯一职责</h3>
+<p><b>Scheduler 是一个纯决策函数</b>:输入当前请求状态 + KV-cache 可用块数,输出 <code>SchedulerOutput</code>(每个请求分多少 token、分配哪些新 block、抢占谁)。</p>
+
+<h3>为什么必须独立</h3>
+<p><b>调度策略是 vLLM 里变化最快的部分</b>。v0 只有 FCFS,v1 加了 chunked prefill,Ascend 又加了 recompute / SRF / profiling-chunk。如果调度逻辑散落在 EngineCore 或 Worker 里,每次加策略都要碰时间线或设备代码。</p>
+<p>Scheduler 的独立性体现在:</p>
+<ul>
+<li><b>不持有 device</b>:它只操作 <code>KVCacheBlock</code>(纯 metadata),不碰 HBM</li>
+<li><b>不持有模型</b>:它不知道模型结构、不知道 kernel</li>
+<li><b>不持有通信</b>:它不知道 TP/EP/DP 拓扑</li>
+<li><b>输入输出都是纯 Python 数据结构</b>:<code>SchedulerOutput = (req_ids, num_scheduled_tokens, req_to_new_blocks, preempted_reqs, ...)</code></li>
+</ul>
+
+<h3>Scheduler 与 KVCacheManager 的关系</h3>
+<p>Scheduler 持有 <code>KVCacheManager</code>,但只调用它的 <code>allocate_slots / free / get_computed_blocks</code> 接口。<strong>Scheduler 是"请求生命周期"的主人;KVCacheManager 是"block 分配"的主人</strong>。两者分开,因为:</p>
+<ul>
+<li>调度策略变化时(比如加 SRF),block 分配逻辑不变</li>
+<li>block 分配变化时(比如加 prefix cache / sliding window),调度策略不变</li>
+</ul>
+
+<h3>SchedulerOutput:跨边界的合约</h3>
+<p><code>vllm/v1/core/sched/output.py</code> 定义的 <code>SchedulerOutput</code> 是 <strong>Scheduler 与 Worker 之间的合约</strong>:</p>
+<pre><code>@dataclass
+class SchedulerOutput:
+    scheduled_new_reqs: list[Request]          # 新请求
+    scheduled_resumed_reqs: list[Request]      # 恢复的请求
+    scheduled_running_reqs: list[Request]      # 继续运行的请求
+    preempted_reqs: list[Request]              # 被抢占的请求
+    req_to_new_blocks: dict[str, KVCacheBlocks]  # 请求→新分配的 block
+    num_scheduled_tokens: dict[str, int]        # 请求→本步 token 数
+    scheduled_spec_decode_tokens: dict[str, list[int]]  # spec decode 草稿
+    scheduled_encoder_inputs: dict[str, list[int]]      # encoder 输入
+    has_structured_output_requests: bool       # 是否有结构化输出请求
+    finished_req_ids: set[str]                 # 本步完成的请求
+    encoder_cache_not_empty: bool              # encoder cache 是否非空</code></pre>
+<p class="xref">📐 这个合约的<strong>设计决策</strong>:<ul>
+<li><b>只传"决策",不传"数据"</b>:SchedulerOutput 里没有 tensor、没有模型输入,只有 block id 和 token 计数。这意味着这个合约可以跨进程、跨节点传输(PD 分离时 Scheduler 在 P 节点、Worker 在 D 节点)</li>
+<li><b>显式列出所有情况</b>:new / resumed / running / preempted 四类,而不是一个通用状态。这让 Worker 可以用最简单的 if-else 处理,不需要再查请求状态</li>
+<li><b>block 分配在 Scheduler 侧完成</b>:Worker 只"消费" block id,不参与分配决策。这保证了 block 分配策略(比如 prefix cache 命中)集中在 Scheduler</li>
+</ul></p>
+
+<!-- ============ Worker ============ -->
+<h2 id="worker">5. Worker:设备的主人</h2>
+<p><code>vllm/v1/worker/worker_base.py</code> + <code>v1/worker/gpu_worker.py</code></p>
+
+<h3>唯一职责</h3>
+<p><b>Worker 是"设备"的唯一主人</b>。它持有 GPU/NPU device handle、KV-cache 物理张量、ModelRunner。每个设备(每张卡)一个 Worker 进程。</p>
+
+<h3>为什么必须独立</h3>
+<p><b>设备相关代码是 vLLM 里变化第二快的部分</b>(仅次于调度策略)。新硬件、新驱动、新 CANN/torch_npu 版本、新 CPU binding 策略——这些变化不应该碰到调度或模型代码。Worker 把它们全部收拢。</p>
+
+<h3>Worker 的职责清单</h3>
+<table>
+<tr><th>职责</th><th>方法</th><th>为什么归 Worker</th></tr>
+<tr><td>设备初始化</td><td><code>init_device</code></td><td>需要 device handle、NPU 初始化、CPU binding</td></tr>
+<tr><td>模型加载</td><td><code>load_model / reload_weights</code></td><td>需要把权重搬到 HBM</td></tr>
+<tr><td>内存探测</td><td><code>determine_available_memory</code></td><td>需要实际分配 tensor 测 HBM 余量</td></tr>
+<tr><td>KV-cache 物理存储</td><td><code>kv_caches: list[torch.Tensor]</code></td><td>HBM 里的张量</td></tr>
+<tr><td>睡眠/唤醒</td><td><code>sleep / wake_up</code></td><td>需要操作 device power state</td></tr>
+<tr><td>LoRA 加载</td><td><code>add_lora / remove_lora / pin_lora</code></td><td>需要改 HBM 里的权重</td></tr>
+<tr><td>执行模型</td><td><code>execute_model</code></td><td>需要调 model forward</td></tr>
+<tr><td>采样</td><td><code>sample_tokens</code></td><td>需要调 Sampler</td></tr>
+<tr><td>健康检查</td><td><code>check_health</code></td><td>需要检查 device state</td></tr>
+</table>
+
+<h3>Worker 与 ModelRunner 的关系</h3>
+<p>Worker <strong>持有</strong> ModelRunner,但两者职责不同:</p>
+<ul>
+<li><b>Worker</b>:管"设备"——初始化、内存、加载、睡眠、健康</li>
+<li><b>ModelRunner</b>:管"模型执行"——把 SchedulerOutput 翻译成 kernel 调用</li>
+</ul>
+<p>分开是因为:<b>同一个设备可以跑不同的模型</b>(换 model 不用换 Worker);<b>同一个模型可以在不同设备上跑</b>(换 device 不用换 ModelRunner 的核心逻辑)。Ascend 的 <code>NPUWorker(NPUModelRunner)</code> 是子类化,但接口不变。</p>
+
+<h3>Worker 不碰什么</h3>
+<p>Worker <b>不持有 Scheduler、不做调度决策、不持有请求状态</b>。它只接收 <code>SchedulerOutput</code>(纯决策),翻译成 kernel 调用。这意味着 Worker 可以<strong>无状态地</strong>执行任何调度策略——调度策略变了,Worker 代码不动。</p>
+
+<!-- ============ ModelRunner ============ -->
+<h2 id="modelrunner">6. ModelRunner:模型的前向执行器</h2>
+<p><code>vllm/v1/worker/gpu/model_runner.py:1134 execute_model</code></p>
+
+<h3>唯一职责</h3>
+<p><b>ModelRunner 把 SchedulerOutput 翻译成 kernel 调用</b>。它是"决策"到"执行"的翻译层。</p>
+
+<h3>execute_model 的数据流(为什么必须独立)</h3>
+<p><code>execute_model</code> 做 5 件事,每件都是一种"翻译":</p>
+<table>
+<tr><th>阶段</th><th>输入 → 输出</th><th>翻译类型</th></tr>
+<tr><td>1. Request bookkeeping</td><td>SchedulerOutput → 更新本地 req_states</td><td>"调度决策" → "本地状态"</td></tr>
+<tr><td>2. prepare_inputs</td><td>req_states → InputBatch{input_ids, positions, query_start_loc, seq_lens, logits_indices}</td><td>"请求状态" → "模型输入张量"</td></tr>
+<tr><td>3. prepare_attn</td><td>req_states + block_pool → block_tables[groups,reqs,blocks] + slot_mappings[groups,tokens]</td><td>"block id" → "页表 + 物理偏移"</td></tr>
+<tr><td>4. model_state.prepare_attn</td><td>common_attn_metadata → attn_metadata[backend]</td><td>"通用元数据" → "硬件私有元数据"</td></tr>
+<tr><td>5. model forward / cudagraph replay</td><td>model_inputs → hidden_states / logits</td><td>"张量" → "计算结果"</td></tr>
+</table>
+
+<p class="xref">📐 <b>为什么这 5 步必须在同一个模块?</b> 因为它们共享一个<strong>中间表示</strong>(InputBatch + block_tables + slot_mappings)。如果把这些步骤散落在 Worker / AttentionBackend / Compilation 里,就需要在模块间传递这些中间表示——接口爆炸。ModelRunner 把它们收拢,对外只暴露 <code>execute_model(scheduler_output) → output</code> 一个接口。</p>
+
+<h3>ModelRunner 持有的"状态"vs"无状态"</h3>
+<p>ModelRunner <strong>持有执行状态</strong>(req_states、block_tables、kv_caches、sampler),但<strong>不持有调度状态</strong>(哪些请求在运行、哪些被抢占)。这是它与 Worker 的关键区别:</p>
+<ul>
+<li><b>Worker 状态</b>:设备级——device handle、HBM 占用、模型权重</li>
+<li><b>ModelRunner 状态</b>:执行级——当前 batch 的 block 映射、attention 元数据、采样状态</li>
+<li><b>Scheduler 状态</b>:调度级——请求队列、优先级、block 分配策略</li>
+</ul>
+<p>三层状态各自独立演化:<b>换设备不改执行状态,换模型不改调度状态,换策略不改设备状态</b>。</p>
+
+<!-- ============ AttentionBackend ============ -->
+<h2 id="attn">7. AttentionBackend:唯一硬件相关的算子</h2>
+<p><code>vllm/v1/attention/backend.py</code> + <code>v1/attention/backends/</code></p>
+
+<h3>唯一职责</h3>
+<p><b>AttentionBackend 把"通用 attention 元数据"翻译成"硬件 kernel 私有元数据"</b>。它是 vLLM 里<strong>唯一</strong>一个"必须为每个硬件单独实现"的模块。</p>
+
+<h3>为什么必须独立</h3>
+<p><b>Attention 是 vLLM 里唯一"内存访问模式随序列长和 KV 布局变化"的算子</b>。GEMM、Norm、MoE dispatch、RoPE 都是规整的 (N,d)→(N,d),只有 attention 是 (N,d) × KV(N,d) → (N,d)——它的性能取决于 KV 怎么排列(paged / ragged / compressed-MLA / sliding-window)。</p>
+<p>这意味着:<b>换硬件必须换 attention kernel;但换模型、换调度、换并行策略不应该换 attention kernel</b>。所以 attention 必须单独抽层。</p>
+
+<h3>AttentionBackend 的三明治结构</h3>
+<table>
+<tr><th>层</th><th>职责</th><th>变化速率</th></tr>
+<tr><td><b>AttentionBackendEnum + @register_backend</b></td><td>字符串 → 实现类映射</td><td>每硬件一次</td></tr>
+<tr><td><b>AttentionMetadataBuilder.build(common)</b></td><td>通用元数据 → 本地 metadata</td><td>每 backend 一次</td></tr>
+<tr><td><b>AttentionImpl.forward(layer, q, k, v, kv_cache, metadata)</b></td><td>执行 kernel</td><td>每硬件 × 每模型类型</td></tr>
+<tr><td><b>KVCacheSpec</b></td><td>描述 KV 张量形状 / block stride / 压缩</td><td>每模型类型一次</td></tr>
+</table>
+
+<p class="xref">📐 <b>KVCacheSpec 是这个设计的关键</b>。它把"KV 张量长什么样"从 ModelRunner 里抽出来:<ul>
+<li><code>FullAttentionSpec</code>:标准 KV,block_size = 逻辑块大小</li>
+<li><code>MLASpec</code>:压缩 KV,<code>storage_block_size ≠ block_size</code>(一个逻辑 block 对应多个物理存储块)</li>
+<li><code>RSWASpec</code>:滑动窗口,需要 window_size</li>
+<li><code>RaggedSpec</code>:变长,用于 encoder-decoder</li>
+</ul>
+ModelRunner 只认 KVCacheSpec,不认具体模型——这是"模型结构变化"与"KV 管理"解耦的关键。</p>
+
+<h3>为什么不是"模型的一部分"</h3>
+<p>如果 attention kernel 嵌在模型代码里(比如 <code>DeepSeekV3Attention</code> 里直接调 FA3),那么:<ul>
+<li>换硬件要改模型代码(200+ 模型 × N 硬件 = 爆炸)</li>
+<li>换 attention 实现(FA3 → FlashInfer → Triton)要改模型代码</li>
+<li>prefix cache / sliding window / MLA 的 KV 布局变化要改模型代码</li>
+</ul>
+单独抽成 AttentionBackend 后,<b>模型代码只调 <code>self.attn(q, k, v)</code>,不关心底层是 FA3 还是 CANN</b>。这是"变化速率分解"的又一个实例。</p>
+
+<!-- ============ KV 管理层 ============ -->
+<h2 id="kv">8. KV 管理层:为什么是四层而不是一层</h2>
+<p>v0 里 KV-cache 管理是一个 <code>BlockSpaceManager</code>。v1 拆成了四层:</p>
+
+<div class="archgrid">
+<div class="layer">
+<h3>① KVCacheManager</h3>
+<b>职责:请求生命周期 ↔ block 分配</b><br>
+• <code>allocate_slots(request, num_tokens) → KVCacheBlocks | None</code><br>
+• <code>free(request)</code><br>
+• <code>get_computed_blocks(request)</code>(prefix cache 命中查询)<br>
+• 持有 Coordinator + BlockPool<br>
+<b>变化速率</b>:调度策略级(每天)
+</div>
+<div class="layer">
+<h3>② KVCacheCoordinator</h3>
+<b>职责:多 KV-cache group 协调</b><br>
+• 一个模型可能同时有 MLA + GQA + SWA 层<br>
+• Coordinator 把"逻辑 block id"翻译成"每个 group 的物理 block id"<br>
+• 子类:Unitary / Hybrid / NoPrefixCache<br>
+<b>变化速率</b>:模型结构级(每周)
+</div>
+<div class="layer">
+<h3>③ BlockPool</h3>
+<b>职责:物理 block 的 free-list + content-hash 缓存</b><br>
+• <code>get_new_blocks / free_blocks / touch / evict_blocks</code><br>
+• <code>cached_block_hash_to_block</code>:hash → block 映射<br>
+• 纯数据结构,不感知请求<br>
+<b>变化速率</b>:算法级(每月)
+</div>
+<div class="layer">
+<h3>④ KVConnector</h3>
+<b>职责:跨 worker 的 KV 搬移</b><br>
+• <code>start_load_kv / wait_for_layer_load / save_kv_layer / wait_for_save / get_finished</code><br>
+• 实现:PD 分离 / CPU offload / KV Pool<br>
+• 持有 KV-cache 物理张量的引用<br>
+<b>变化速率</b>:部署拓扑级(每季)
+</div>
+</div>
+
+<h3>为什么必须拆四层</h3>
+<table>
+<tr><th>如果不拆</th><th>问题</th><th>拆开后</th></tr>
+<tr><td>Manager + Coordinator 不分</td><td>加新 KV 布局(MLA)要改 Manager 的 allocate 逻辑</td><td>Coordinator 封装"多 group 翻译",Manager 只调 Coordinator</td></tr>
+<tr><td>Coordinator + BlockPool 不分</td><td>加 prefix cache 要改 block 分配算法</td><td>BlockPool 封装"free-list + hash",Coordinator 只调 BlockPool</td></tr>
+<tr><td>Manager + Connector 不分</td><td>PD 分离 / offload 的搬移逻辑污染 Manager</td><td>Connector 独立实现搬移,Manager 只调 Connector 的 get_finished</td></tr>
+</table>
+
+<p class="xref">📐 <b>关键设计决策:allocate_slots 返回 None 而不是抛异常</b>。<code>KVCacheManager.allocate_slots</code> 在 HBM 不足时返回 <code>None</code>,Scheduler 收到 None 后触发抢占。这个设计把"分配失败"从"异常"降级为"正常控制流",让 Scheduler 可以用统一的 while 循环处理:<pre><code>while True:
+    new_blocks = kv_cache_manager.allocate_slots(request, num_new_tokens)
+    if new_blocks is not None: break
+    preempted = self.running.pop()   # 抢占最低优先级
+    self._preempt_request(preempted)</code></pre>
+如果 allocate_slots 抛异常,Scheduler 就要 try/except,抢占逻辑和正常分配逻辑会混在一起——<strong>把"分配失败"设计成返回值而不是异常,是"控制流统一"的关键</strong>。</p>
+
+<h3>KVCacheBlocks:跨边界的 block 容器</h3>
+<p><code>vllm/v1/core/kv_cache_manager.py:30 KVCacheBlocks</code> 是 Scheduler → Worker 之间传递 block id 的容器:</p>
+<pre><code>@dataclass
+class KVCacheBlocks:
+    blocks: tuple[list[KVCacheBlock], ...]   # 每个 group 一个 list
+    def get_block_ids(self) -> tuple[list[int], ...]   # 返回每个 group 的 block id 列表</pre></pre>
+<p>它<strong>只传 block id,不传 tensor</strong>。这意味着这个容器可以跨进程、跨节点传输(PD 分离时 P 节点分配 block、D 节点消费 block id)。</p>
+
+<!-- ============ Compilation ============ -->
+<h2 id="compilation">9. Compilation:把"录一次放多次"独立成一层的理由</h2>
+<p><code>vllm/compilation/</code> + <code>v1/worker/gpu/cudagraph_utils.py</code></p>
+
+<h3>唯一职责</h3>
+<p><b>Compilation 把"多次 kernel launch"变成"一次 graph replay"</b>。它解决的是<strong>kernel launch overhead</strong>问题:Python → CUDA driver → launch 一个 matmul ≈ 5-10μs,80 层 transformer forward 几十次 kernel = 录成 1 次 launch 整个 graph。</p>
+
+<h3>为什么必须独立</h3>
+<p><b>图捕获与回放是一种"执行范式",不是"模型逻辑"或"调度逻辑"</b>。它独立于:</p>
+<ul>
+<li><b>模型</b>:同一个模型可以 eager / piecewise / full graph 执行</li>
+<li><b>调度</b>:同一个调度策略可以 eager / graph 执行</li>
+<li><b>硬件</b>:CUDA Graph / ACL Graph / torch.compile 是不同的捕获后端</li>
+</ul>
+如果图捕获逻辑嵌在 ModelRunner 里,那么加一种新图模式(比如 piecewise)要改 ModelRunner——但 ModelRunner 已经有 1600 行。独立成 Compilation 模块后,ModelRunner 只调 <code>cudagraph_manager.run_*()</code>,不关心捕获细节。</p>
+
+<h3>三种图模式:为什么是三种而不是一种</h3>
+<table>
+<tr><th>模式</th><th>动态维度</th><th>显存</th><th>TTFT</th><th>适用</th></tr>
+<tr><td><b>FULL</b></td><td>完全固定</td><td>大</td><td>慢(首 token 要录)</td><td>纯 decode 吞吐最大</td></tr>
+<tr><td><b>PIECEWISE</b></td><td>动态 shapes</td><td>中</td><td>快</td><td>mixed prefill + decode</td></tr>
+<tr><td><b>Eager (NONE)</b></td><td>全动态</td><td>小</td><td>最快</td><td>调试 / encoder-decoder</td></tr>
+</table>
+<p>三种模式的存在是因为<strong>"图捕获的收益(消除 launch overhead)"与"图捕获的代价(显存 + 首 token 延迟 + 形状约束)"之间的 trade-off 没有单一最优解</strong>。Compilation 模块把这个 trade-off 暴露给用户,而不是硬编码一种。</p>
+
+<h3>平台注入点:get_static_graph_wrapper_cls()</h3>
+<p>vLLM 通过 <code>NPUPlatform.get_static_graph_wrapper_cls()</code> 返回 <code>ACLGraphWrapper</code>,让 Ascend 的图捕获逻辑(需要 <code>update_graph_params()</code> hook)可以注入,而不需要改 vLLM 的 CudagraphDispatcher。这是<strong>"平台差异通过接口注入,不改上层"</strong>的又一个实例。</p>
+
+<!-- ============ 跨模块合约 ============ -->
+<h2 id="contracts">10. 跨模块合约为什么必须这样切</h2>
+
+<h3>合约 #1:SchedulerOutput(Scheduler → ModelRunner)</h3>
+<p><b>设计决策</b>:只传"决策"(block id + token 计数),不传"数据"(tensor)。</p>
+<p><b>为什么</b>:Scheduler 可以跑在 CPU 的一个线程里,不持有 device;ModelRunner 跑在 GPU 上。如果 SchedulerOutput 里带 tensor,就需要跨进程传 tensor(昂贵)。只传 block id(整数)和 token 计数(整数),传输代价 O(1)。</p>
+
+<h3>合约 #2:block_tables + slot_mappings(ModelRunner → AttentionBackend)</h3>
+<p><b>设计决策</b>:ModelRunner 把 SchedulerOutput 翻译成两张张量:<ul>
+<li><code>block_tables[groups, reqs, max_blocks]</code>:每个请求的 block id 列表</li>
+<li><code>slot_mappings[groups, tokens]</code>:每个 token 的物理 KV 偏移</li>
+</ul>然后 AttentionBackend 的 Builder 把它们打包成硬件私有 metadata。</p>
+<p><b>为什么</b>:block_tables 是"页表",slot_mappings 是"页表 walk 后的物理地址"。这两张张量是<strong>"调度决策"到"kernel 输入"之间的唯一翻译</strong>。如果跳过这步,让 AttentionBackend 自己从 SchedulerOutput 算 slot_mappings,那么每个 backend 都要重复实现页表 walk——代码重复 N 次(N = 硬件数)。ModelRunner 做一次,所有 backend 共享。</p>
+
+<h3>合约 #3:ForwardContext(ModelRunner → model forward)</h3>
+<p><code>vllm/forward_context.py:132 class ForwardContext</code> 是 model forward 的"执行上下文":</p>
+<pre><code>@dataclass
+class ForwardContext:
+    attn_metadata: dict[str, AttentionMetadata]   # 每层一个 metadata
+    slot_mapping: dict[str, torch.Tensor]         # 每层一个 slot_mapping
+    dp_metadata: DPMetadata | None                # DP 协调信息
+    cudagraph_runtime_mode: CUDAGraphMode         # 当前图模式
+    batch_descriptor: BatchDescriptor | None      # batch 描述(用于 LoRA dispatch)
+    is_padding: torch.Tensor | None               # padding mask
+    skip_compiled: bool = False                   # 是否跳过编译路径</code></pre>
+<p><b>为什么单独一层</b>:ForwardContext 是<strong>"model 代码"与"执行框架"之间的防火墙</strong>。model 代码(200+ 模型定义)只读 ForwardContext,不直接碰 SchedulerOutput / block_tables / cudagraph_manager。这意味着:<ul>
+<li>改调度策略:model 代码不动</li>
+<li>改图模式:model 代码不动</li>
+<li>改并行策略:model 代码不动</li>
+<li>加新模型:只需要从 ForwardContext 读数据,不需要理解调度/图/并行</li>
+</ul></p>
+
+<h3>合约 #4:KVCacheSpec(ModelRunner ↔ AttentionBackend ↔ BlockPool)</h3>
+<p><b>设计决策</b>:KVCacheSpec 描述"KV 张量长什么样"(shape / stride / block_size / compression),由 ModelRunner 在 init 时计算,传给 AttentionBackend 和 BlockPool。</p>
+<p><b>为什么</b>:MLA 的 <code>storage_block_size ≠ block_size</code>(一个逻辑 block 对应多个物理存储块)。如果 BlockPool 不知道这个映射,就会分配错大小的 block。KVCacheSpec 把这个映射<strong>显式化</strong>,让 BlockPool 和 AttentionBackend 都按同一个 spec 工作。</p>
+
+<!-- ============ 横切视角 ============ -->
+<h2 id="crosscut">11. 横切视角:具体场景如何穿过这些边界</h2>
+
+<h3>P/D 分离:在 Worker 边界上切了一刀</h3>
+<p>P/D 分离<strong>没有引入新模块</strong>。它是在原有 Worker 边界上切了一刀:</p>
+<table>
+<tr><th>节点</th><th>拥有</th><th>不拥有</th></tr>
+<tr><td><b>P 节点(Prefiller)</b></td><td>Scheduler + Worker(P 侧) + KVConnector(P→D)</td><td>D 节点的 HBM、decode 循环</td></tr>
+<tr><td><b>D 节点(Decoder)</b></td><td>Scheduler + Worker(D 侧) + KVConnector(D←P)</td><td>P 节点的 HBM、prefill 计算</td></tr>
+</table>
+<p><b>关键设计决策</b>:P 节点的 Scheduler 在 prefill 完成后,通过 <code>KVConnector.request_finished()</code> 把 KV 交给 D 节点,然后<strong>释放 P 节点的 block</strong>(但不释放请求状态)。D 节点的 Scheduler 收到请求后,标记为 <code>WAITING_FOR_REMOTE_KVS</code>,通过 <code>KVConnector.start_load_kv()</code> 拉取 KV,然后开始 decode。</p>
+<p class="xref">📐 <b>为什么 P/D 分离没有改 Scheduler 的核心逻辑</b>:因为 Scheduler 只认 <code>KVCacheBlocks</code>(block id 列表),不认 block 在哪个节点。P 节点分配的 block id 通过 KVConnector 传到 D 节点,D 节点用同样的 block id 在自己的 HBM 里分配物理存储。<strong>Scheduler 的"请求生命周期"与"KV 物理位置"解耦</strong>——这是 KVCacheManager 独立于 Scheduler 的直接回报。</p>
+
+<h3>TP/EP/DP:为什么在 Worker 侧不在 Scheduler 侧</h3>
+<table>
+<tr><th>策略</th><th>Scheduler 知道吗</th><th>Worker 做什么</th></tr>
+<tr><td><b>TP</b></td><td><b>不知道</b>——Scheduler 只认"一个请求",不认"一个请求被切到多张卡"</td><td>Worker 在每层 forward 后调 all-reduce / all-gather,把部分结果合并</td></tr>
+<tr><td><b>EP</b></td><td><b>不知道</b>——Scheduler 不关心 expert 分布</td><td>Worker 在 MoE 层做 all-to-all dispatch / combine,把 token 路由到对应 expert 的卡</td></tr>
+<tr><td><b>DP</b></td><td><b>知道一点</b>——Scheduler 知道 DP size,用于 prefill balancing</td><td>Worker 在每 step 前后做 DP broadcast,同步 batch descriptor</td></tr>
+</table>
+<p><b>为什么 Scheduler 不知道 TP/EP</b>:因为 Scheduler 的决策粒度是"请求",不是"token 在哪个卡上"。如果 Scheduler 要知道 TP/EP,它就需要知道模型结构(MoE 有几层、每层几个 expert)——这违反了"调度策略与模型结构解耦"的原则。</p>
+<p><b>Worker 怎么知道 TP/EP 而不污染 ModelRunner</b>:通过 <code>forward_context.dp_metadata</code> 和 <code>model.forward()</code> 内部的 <code>self.moe_router</code>。ModelRunner 不直接碰 TP/EP 通信,它只调 <code>model(**inputs)</code>;模型内部的 <code>ColumnParallelLinear / RowParallelLinear / MoEDispatch</code> 自己处理通信。这是<strong>"并行策略下沉到模型层,不进入执行框架"</strong>的设计。</p>
+
+<h3>算子融合:为什么下沉到 Compilation 而不是 ModelRunner</h3>
+<table>
+<tr><th>融合在哪</th><th>例子</th><th>为什么</th></tr>
+<tr><td><b>Compilation PassManager</b></td><td>AllReduce+RMSNorm、QK-Norm+Rope、AllGather chunk noop</td><td>融合是"把多个 kernel 合成一个",不改变模型语义——所以是"执行优化",不是"模型逻辑"</td></tr>
+<tr><td><b>ops/ 层</b></td><td>fused_moe、CustomLinearOp(Matmul+AllReduce)</td><td>融合需要直接操作底层 API——所以是"算子实现",不是"模型逻辑"</td></tr>
+<tr><td><b>不在 ModelRunner</b></td><td>——</td><td>ModelRunner 只调 <code>model(**inputs)</code>,不直接调 kernel——所以融合逻辑放 ModelRunner 里无法触达 kernel</td></tr>
+</table>
+
+<h3>通算融合:为什么 comm_utils 独立演进</h3>
+<p>Ascend 的 <code>ops/fused_moe/comm_utils.py</code> 和 <code>distributed/device_communicators/</code> 实现了<strong>通信与计算的 overlap</strong>(比如 AllGather 与 Matmul 的 pipeline)。这些代码独立于:</p>
+<ul>
+<li><b>Scheduler</b>:调度策略不关心通信怎么 overlap</li>
+<li><b>ModelRunner</b>:ModelRunner 只调 <code>model(**inputs)</code>,不直接调通信</li>
+<li><b>模型</b>:模型代码只调 <code>self.moe_linears</code>,不关心底层是 HCCL 还是 NCCL</li>
+</ul>
+<p><b>为什么独立</b>:因为通算融合是<strong>"通信拓扑"与"计算调度"之间的横向优化</strong>——它横跨多个模块,但不属于任何一个。把它放在 <code>comm_utils</code> 里,让通信专家和计算专家各自独立演化。</p>
+
+<h3>KV-cache 内存管理:从 v0 到 v1 的演化</h3>
+<table>
+<tr><th>版本</th><th>KV 管理</th><th>问题</th></tr>
+<tr><td><b>v0</b></td><td>单一 <code>BlockSpaceManager</code></td><td>请求生命周期 + block 分配 + prefix cache + swap 全耦合,改任何一项都碰其他</td></tr>
+<tr><td><b>v1</b></td><td>KVCacheManager + Coordinator + BlockPool + Connector 四层</td><td>每层只负责一种变化:策略 / 多 group / 物理池 / 跨节点搬移</td></tr>
+</table>
+<p class="xref">📐 <b>v1 拆四层的直接动机</b>:MLA 的出现。MLA 的 <code>storage_block_size ≠ block_size</code>,意味着"逻辑 block id"和"物理存储块"之间多了一层映射。如果还是 v0 的单一 Manager,这个映射逻辑会散落在 allocate / free / prefix-cache 各处。拆成 Coordinator 后,这个映射被封装在 Coordinator 里,Manager 只调 Coordinator 的接口——<strong>"多 group 映射"的变化被隔离在 Coordinator 一层</strong>。</p>
+
+<!-- ============ 演化视角 ============ -->
+<h2 id="evolution">12. 演化视角:v0 → v1 → v2 哪些边界被移动了</h2>
+
+<table>
+<tr><th>变化</th><th>v0</th><th>v1</th><th>为什么移动</th></tr>
+<tr><td><b>调度器与 worker 的关系</b></td><td>Scheduler 在 Worker 进程里,与 model forward 共享线程</td><td>Scheduler 在 EngineCore 进程里,与 Worker 跨进程</td><td>消除调度与执行的相互阻塞:长 prefill 不再卡住调度器</td></tr>
+<tr><td><b>调度循环</b></td><td>prefill phase + decode phase 两阶段</td><td>单一 token-budget 循环(无阶段)</td><td>chunked prefill / spec decode / jump decode 需要统一循环</td></tr>
+<tr><td><b>KV-cache 管理</b></td><td>单一 Manager</td><td>Manager + Coordinator + BlockPool + Connector 四层</td><td>MLA / prefix cache / PD disagg 需要独立演化</td></tr>
+<tr><td><b>图捕获</b></td><td>在 ModelRunner 里直接调 CUDA Graph</td><td>独立 Compilation 模块 + 平台注入</td><td>ACL Graph / piecewise / breakable graph 需要独立于 ModelRunner</td></tr>
+<tr><td><b>Attention</b></td><td>嵌在模型代码里</td><td>独立 AttentionBackend + Builder + Impl 三层</td><td>200+ 模型 × N 硬件的 kernel 选择需要抽象</td></tr>
+<tr><td><b>Platform</b></td><td>无(假设 CUDA)</td><td>Platform 接口 + 6 个必须方法</td><td>非 CUDA 硬件需要注入 device / graph / attn backend</td></tr>
+</table>
+
+<p class="xref">📐 <b>演化方向总结</b>:vLLM 的模块边界一直在<strong>"按变化速率切"</strong>的原则下移动:<ul>
+<li><b>变化快的往里收</b>:调度策略收到 Scheduler,kernel 收到 AttentionBackend,图模式收到 Compilation</li>
+<li><b>变化慢的往外推</b>:执行范式(schedule→forward→sample)固化在 EngineCore.step,设备抽象固化在 Platform</li>
+<li><b>新变化速率出现就加新层</b>:MLA → 加 Coordinator;PD disagg → 加 KVConnector;ACL Graph → 加 ACLGraphWrapper</li>
+</ul></p>
+
+<!-- ============ 设计洞见 ============ -->
+<h2 id="insight">13. 给架构师的设计洞见</h2>
+
+<h3>判断框架:模块边界的"变化速率匹配度"</h3>
+<table>
+<tr><th>健康信号</th><th>警告信号</th></tr>
+<tr><td>模块内所有代码随同一个因素变化</td><td>模块内部分代码随 A 变、部分随 B 变 → 应该拆</td></tr>
+<tr><td>跨模块合约是"纯数据"(整数 / 枚举 / 不可变 dataclass)</td><td>跨模块合约是"可变状态"或"回调函数" → 边界切错了</td></tr>
+<tr><td>改策略不动执行代码,改执行代码不动策略代码</td><td>改调度策略要改 Worker → 调度与执行没解耦</td></tr>
+<tr><td>新硬件只需要实现 N 个接口,不改上层</td><td>新硬件要改 Scheduler / ModelRunner → Platform 抽象不够</td></tr>
+</table>
+
+<h3>vLLM 做得最好的 5 个边界</h3>
+<table>
+<tr><th>边界</th><th>为什么好</th></tr>
+<tr><td><b>Scheduler ↔ Executor</b></td><td>Scheduler 是纯函数,可以单测、可以替换(Ascend 的 RecomputeScheduler 只改了 preemption 逻辑,没碰 Manager)</td></tr>
+<tr><td><b>ModelRunner ↔ AttentionBackend</b></td><td>200+ 模型 × N 硬件的 kernel 选择被压缩成"一个 Builder + 一个 Impl"</td></tr>
+<tr><td><b>Platform 注入</b></td><td>Ascend 只改了 Platform + ACLGraphWrapper + 5 个 attn backend,没改 vLLM 核心</td></tr>
+<tr><td><b>ForwardContext 防火墙</b></td><td>model 代码只读 ForwardContext,改调度/图/并行不动模型</td></tr>
+<tr><td><b>KVCacheBlocks 容器</b></td><td>只传 block id,不传 tensor → 可以跨进程、跨节点传输(PD 分离的基础)</td></tr>
+</table>
+
+<h3>vLLM 做得不够好的 3 个边界</h3>
+<table>
+<tr><th>边界</th><th>问题</th><th>建议</th></tr>
+<tr><td><b>patch 层</b></td><td>60+ patch 文件说明 vLLM 内部很多函数没有暴露 hook</td><td>把 op-substitution / graph-backend / MoE-comm 做成正式扩展点</td></tr>
+<tr><td><b>SchedulerOutput 膨胀</b></td><td>随着 spec decode / multimodal / encoder-decoder 加入,字段越来越多</td><td>考虑拆成"核心字段 + 扩展字段"(类似 protobuf 的 optional)</td></tr>
+<tr><td><b>ModelRunner 1600 行</b></td><td>execute_model 承载了太多职责(bookkeeping + prepare + attn + forward + sample)</td><td>把 prepare_inputs / prepare_attn 抽成独立阶段对象(类似 Pipeline)</td></tr>
+</table>
+
+<h3>一句话总结</h3>
+<div class="inv"><b>vLLM 软件架构的第一性原理:把"随 X 变化的部分"和"不随 X 变化的部分"切开。</b><br>
+• 调度策略(每天变) ↔ 执行范式(每年变) → EngineCore 把它们串行化<br>
+• 模型结构(每周变) ↔ 执行框架(每年变) → ForwardContext 把它们隔离<br>
+• 硬件 kernel(每月变) ↔ 模型语义(不变) → AttentionBackend 把它们隔离<br>
+• 部署拓扑(每季变) ↔ 请求生命周期(不变) → KVConnector 把它们隔离<br>
+• 图执行模式(每季变) ↔ 模型语义(不变) → Compilation 把它们隔离<br>
+• 设备差异(每年变) ↔ 上层逻辑(不变) → Platform 把它们隔离<br><br>
+<b>每一个模块边界,都是"变化速率不匹配"的产物。</b> 这就是 vLLM 软件架构的第一性原理——不是物理定律,是<strong>软件演化定律</strong>。</div>
+
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18 · 软件架构视角的第一性原理</div>
+</body>
+</html>

@@ -1,0 +1,1588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>vLLM / vLLM_Ascend 架构深析：KVCache on HBM 与 DSA index→pageattention 查表机制</title>
+<style>
+:root{
+  --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+  --muted:#8b949e; --accent:#58a6ff; --accent2:#7ee787; --warn:#d29922; --code:#c9d1d9;
+  --dim:#6e7681;
+}
+*{box-sizing:border-box;-webkit-text-size-adjust:100%}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;font-size:15px;padding:12px;}
+h1{font-size:1.5em;margin:.4em 0 .6em;color:var(--accent2);border-bottom:1px solid var(--border);padding-bottom:8px}
+h2{font-size:1.25em;color:var(--accent);margin-top:1.6em;border-left:3px solid var(--accent);padding-left:10px}
+h3{font-size:1.05em;color:var(--accent2);margin-top:1.3em}
+p,li{color:var(--text)}
+.muted{color:var(--muted);font-size:.85em}
+.warn{color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin:10px 0}
+code{background:#1c2128;padding:1px 5px;border-radius:4px;font-size:.88em;color:var(--accent2);word-break:break-all}
+pre{background:#0d1117;border:1px solid var(--border);border-left:3px solid var(--accent);
+  padding:12px;border-radius:6px;overflow-x:auto;font-size:.82em;line-height:1.5;
+  white-space:pre-wrap;word-break:break-all}
+pre code{background:none;padding:0;color:var(--code)}
+.toc a{color:var(--accent);text-decoration:none;display:block;padding:3px 0}
+.toc a:hover{text-decoration:underline}
+.tag{display:inline-block;background:#1f6feb22;border:1px solid #1f6feb;color:var(--accent);
+  border-radius:10px;padding:0 8px;font-size:.75em;margin-right:5px}
+.tag.g{background:#2ea04322;border-color:#2ea043;color:var(--accent2)}
+.tag.w{background:#d2992222;border-color:#d29922;color:var(--warn)}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.85em}
+th,td{border:1px solid var(--border);padding:6px 8px;text-align:left}
+th{background:#161b22;color:var(--accent)}
+.flow{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:14px;margin:12px 0;
+  font-family:monospace;font-size:.82em;line-height:1.7;overflow-x:auto;white-space:pre}
+.src{font-size:.78em;color:var(--dim);margin-top:4px}
+.src a{color:var(--accent);text-decoration:none}
+.src a:hover{text-decoration:underline}
+.highlight{background:#d2992215;border:1px solid #d2992255;border-radius:6px;padding:10px 12px;margin:10px 0}
+ul,ol{padding-left:22px}
+li{margin:3px 0}
+.footer{border-top:1px solid var(--border);margin-top:30px;padding-top:12px;color:var(--muted);font-size:.8em}
+</style>
+</head>
+<body>
+
+<h1>vLLM / vLLM_Ascend 架构深析</h1>
+<p class="muted">KVCache on HBM · DSA 稀疏索引 · index_id → pageattention 查表机制<br>
+分析基于本地代码：vLLM <code>2db39c70</code> / vLLM_Ascend <code>b266da5d</code> · 2026-07-16</p>
+
+<nav class="toc card">
+<b>目录</b>
+<a href="#t1">1. 问题定义与分析边界</a>
+<a href="#t2">2. vLLM v1 的 Paged KVCache 抽象</a>
+<a href="#t3">3. slot_mapping → block_table → HBM 物理化</a>
+<a href="#t4">4. vLLM_Ascend 的三种 Attention Stack</a>
+<a href="#t5">5. DSA 全景：多层 cache 与多段压缩</a>
+<a href="#t6">6. 核心：DSA indexer 如何算出 index</a>
+<a href="#t7">7. 关键转换：index_id → pageattention 查表</a>
+<a href="#t8">8. 数据流总图：端到端 index 生命周期</a>
+<a href="#t9">9. 关键设计洞察（芯片/系统视角）</a>
+<a href="#t10">10. 索引过程有 hash 计算么？三种选择机制的辨析</a>
+<a href="#t11">11. 关键代码文件索引</a>
+<a href="#t12">12. 调研方法与溯源</a>
+<a href="#t13">13. batch prefill 查表：多请求如何共享 block_table</a>
+<a href="#t14">14. block_table.py 该放在 worker/ 下吗？职责与位置分析</a>
+<a href="#t15">15. worker 模块系统总结（目标/模块/代码/挑战）</a>
+<a href="#t16">16. 三条查表路径对比（DSA / SFA / kvcomp Hamming）</a>
+<a href="#t17">17. 多级 cache 分离机制（compressor_attn / compressor_kv_state / indexer 四变量解读）</a>
+<a href="#t18">18. SFA 完整解读（后端 / indexer / gather / C8 / 与 DSA 差异）</a>
+<a href="#t19">19. kvcomp_attn Hamming Sparse 算法起源（SimHash → HashEvict → 现代发展）</a>
+</nav>
+
+<!-- 1. 问题定义 -->
+<h2 id="t1">1. 问题定义与分析边界</h2>
+<p>本报告聚焦三个递进问题：</p>
+<ol>
+<li><b>vLLM 如何把 token 位置映射到 HBM 上的物理 KV 块？</b>—— block_table / slot_mapping 抽象。</li>
+<li><b>vLLM_Ascend 的 DSA（DeepSeek Sparse Attention）如何为每个 query token 算出"要 attend 哪些 KV block"？</b>—— lightning indexer。</li>
+<li><b>DSA 算出的 index_id 最终如何驱动 paged KVCache 的查表（pageattention gather）？</b>—— 这是本报告的核心。</li>
+</ol>
+<div class="highlight">
+<b>为什么这个问题关键：</b>Ascend 上不是"全量 SWA/MLA"，而是"HBM 上的 paged KVCache + DSA 稀疏索引"。只有理清 <code>index_id → block_table → pageattention</code> 这条线，才能理解 Ascend attention 的数据流本质——indexer 的输出不是一个 dense 的 token 列表，而是一组 block 级别的索引，它必须经过 block_table 的二次寻址才能落到 HBM 物理页。
+</div>
+
+<!-- 2. vLLM v1 Paged KVCache -->
+<h2 id="t2">2. vLLM v1 的 Paged KVCache 抽象</h2>
+<p>vLLM v1（本代码库已完全 v1 化，无 <code>vllm/core/</code>）把 KVCache 管理拆成三层：</p>
+
+<div class="card">
+<table>
+<tr><th>层</th><th>文件</th><th>职责</th><th>是否持 HBM</th></tr>
+<tr><td>BlockPool / Coordinator / Manager</td><td><code>vllm/v1/core/block_pool.py</code>,<br><code>kv_cache_coordinator.py</code>,<br><code>kv_cache_manager.py</code></td><td>block 元数据、分配、驱逐、prefix caching</td><td><b>否</b>（纯 metadata）</td></tr>
+<tr><td>BlockTable</td><td><code>vllm/v1/worker/block_table.py</code></td><td>per-batch block id 矩阵 + slot_mapping</td><td>否（CPU/GPU buffer）</td></tr>
+<tr><td>HBM 真实分配</td><td><code>vllm/v1/worker/gpu_model_runner.py:7168</code></td><td><code>torch.zeros(device=device)</code> + 按层 view</td><td><b>是</b></td></tr>
+</table>
+</div>
+
+<p><b>BlockPool</b>（<code>block_pool.py:143</code>）只持有 <code>KVCacheBlock</code> 元数据对象（block_id、ref_cnt、双向链表用于 prefix caching），<b>不持有 HBM</b>。<code>KVCacheManager.allocate_slots</code>（<code>kv_cache_manager.py:283</code>）是分配入口，调用 <code>coordinator.allocate_new_blocks</code>。</p>
+
+<p><b>HBM 真实分配</b>发生在 <code>GPUModelRunner._allocate_kv_cache_tensors</code>（<code>gpu_model_runner.py:7168-7209</code>），它 <code>torch.zeros(...)</code> 一块 packed backing tensor，再按层通过 <code>get_kv_cache_shape</code> 切出 <code>[num_blocks, block_size, heads, head_dim]</code> 视图。</p>
+
+<p class="src">溯源：<code>vllm/v1/core/block_pool.py:175</code> · <code>vllm/v1/worker/gpu_model_runner.py:7187</code> · Explore agent 报告 §3</p>
+
+<!-- 3. slot_mapping → block_table -->
+<h2 id="t3">3. slot_mapping → block_table → HBM 物理化</h2>
+<p>这是所有 paged attention 的基石。核心公式（两处等价实现）：</p>
+
+<h3>3.1 Triton kernel（vLLM 主路径，<code>block_table.py:388-411</code>）</h3>
+<pre><code>virtual_block_indices = pos // virtual_block_size
+block_indices = virtual_block_indices * BLOCKS_PER_KV_BLOCK
+               + local_block_offsets // block_size
+block_numbers = tl.load(block_table_ptr + row_offset + block_indices)  # 物理块号
+slot_offsets = local_block_offsets % block_size
+slot_ids = block_numbers * block_size + slot_offsets
+slot_ids = tl.where(is_local, slot_ids, PAD_ID)</code></pre>
+
+<h3>3.2 NumPy 路径（Ascend 310P，<code>_310p/block_table.py:44-49</code>）</h3>
+<pre><code>logical_block_idx = positions // self.block_size
+block_table_indices = self._get_block_table_indices(req_indices, logical_block_idx)
+block_numbers = self.block_table.np.ravel()[block_table_indices]   # = block_table[req, logical_block_idx]
+block_offsets = positions % self.block_size
+np.add(block_numbers * self.block_size, block_offsets, out=self.slot_mapping.np[:num_tokens])</code></pre>
+
+<div class="card">
+<b>统一公式：</b><br>
+<code>slot_mapping[token] = block_table[req, pos // block_size] * block_size + (pos % block_size)</code><br>
+即：<b>逻辑块号 → block_table 查表得物理块号 → 乘 block_size 加 inblock offset = HBM 上的 flat slot</b>。
+</div>
+
+<h3>3.3 block_table 矩阵本身</h3>
+<p><code>BlockTable.__init__</code>（<code>worker/block_table.py:97</code>）分配 <code>[max_num_reqs, max_num_blocks_per_req]</code> int32 矩阵，第 <code>i</code> 行记录请求 <code>i</code> 被分配的物理 block id 列表，由 <code>append_row</code>（<code>worker/block_table.py:114-130</code>）写入。<code>_get_block_table_indices</code>（<code>_310p/block_table.py:53-55</code>）给出行内偏移：<code>req_indices * row_stride + logical_block_idx</code>。</p>
+
+<p class="src">溯源：<code>vllm_ascend/_310p/block_table.py:19-55</code> · <code>vllm_ascend/worker/block_table.py:80-130</code></p>
+
+<!-- 4. 三种 Attention Stack -->
+<h2 id="t4">4. vLLM_Ascend 的三种 Attention Stack</h2>
+<p>vLLM_Ascend <b>没有</b> <code>attention/backends/</code> 覆盖目录——它直接在 <code>attention/*_v1.py</code> 里定义继承 vLLM ABC 的 backend。三栈并列：</p>
+
+<div class="card">
+<table>
+<tr><th>Stack</th><th>文件</th><th>场景</th><th>核心 kernel</th></tr>
+<tr><td><b>MLA</b></td><td><code>ops/mla.py</code> + <code>attention/mla_v1.py</code></td><td>标准 paged MQA</td><td><code>npu_fused_infer_attention_score_v2</code></td></tr>
+<tr><td><b>DSA</b></td><td><code>ops/dsa.py</code> + <code>attention/dsa_v1.py</code></td><td>DeepSeek-V4 风格稀疏/压缩 attention</td><td><code>npu_vllm_quant_lightning_indexer</code> → <code>npu_sparse_attn_sharedkv</code></td></tr>
+<tr><td><b>SFA</b></td><td><code>attention/sfa_v1.py</code></td><td>Sparse Flash Attention, per-token top-k</td><td><code>npu_sparse_flash_attention</code></td></tr>
+</table>
+</div>
+
+<p>三栈共享同一套 <code>Worker → BlockTable → CommonAttentionMetadata → 各 backend metadata builder → kernel</code> 主路径，差异仅在"如何选 block"。</p>
+
+<p class="src">溯源：Explore agent 报告 §5 · <code>vllm_ascend/attention/dsa_v1.py:184</code> · <code>mla_v1.py:72</code></p>
+
+<!-- 5. DSA 全景 -->
+<h2 id="t5">5. DSA 全景：多层 cache 与多段压缩</h2>
+<p>DSA 的"稀疏"不是单一操作，而是 <b>多层 cache + 压缩 + 索引</b> 的组合。<code>compress_ratio</code> 决定层级：</p>
+
+<div class="card">
+<table>
+<tr><th>compress_ratio</th><th>激活的 cache 层</th><th>indexer</th></tr>
+<tr><td>&lt;=1</td><td>仅 SWA（sliding window）</td><td>无</td></tr>
+<tr><td>4</td><td>SWA + compressor + <b>indexer</b>（lightning）</td><td>有（index_topk 个 block）</td></tr>
+<tr><td>128</td><td>SWA + compressor（粗压缩）</td><td>无</td></tr>
+</table>
+</div>
+
+<h3>5.1 _build_kv_cache：6-7 元 cache 元组</h3>
+<p><code>ops/dsa.py:228-287</code> 的 <code>_build_kv_cache</code> 把各层 cache 组装成 tuple 送入 <code>impl.forward</code>：</p>
+<pre><code>def _build_kv_cache(self, forward_context):
+    # 按 compress_ratio 决定哪些槽位非 None
+    # [0]=compress_kv_cache  [1]=swa_kv_cache   [2]=state_cache(compressor state)
+    # [3]=indexer_state_cache [4]=indexer_k_cache [5]=indexer_scale_cache
+    # [6]=indexer_full_cache (A5 only)
+    kv_cache = tuple(unfold_kvcache(c) for c in (...))
+    return kv_cache</code></pre>
+
+<h3>5.2 forward 入口拆分</h3>
+<p><code>AscendDSAImpl.forward</code>（<code>dsa_v1.py:1658</code>）先把 <code>hidden_states</code> 按 <code>[decode | prefill]</code> 切分，分别走 <code>_forward_decode</code> / <code>_forward_prefill</code>，最后统一 <code>o_proj</code>。两段路径结构对称。</p>
+
+<h3>5.3 attn_metadata 是 5 元素 list</h3>
+<p>DSA 的 metadata 按 key 排序后解包为：</p>
+<pre><code>compress_ratio == 4:
+  [compressor_attn, compressor_kv_state, indexer.compressor.state_cache,
+   indexer.k_cache, swa_cache]   # 5 段
+compress_ratio == 128:
+  [compressor_attn, compressor_kv_state, swa_cache]  # 3 段</code></pre>
+<p>每段都自带独立的 <code>block_table</code>、<code>slot_mapping</code>、<code>sas_metadata</code>、<code>qli_metadata</code>——这是理解"index 如何查到 pageattention"的关键前提：<b>indexer 有自己独立的 block_table</b>。</p>
+
+<p class="src">溯源：<code>vllm_ascend/ops/dsa.py:228-287</code> · <code>vllm_ascend/attention/dsa_v1.py:1658-1728, 1839-1851</code></p>
+
+<!-- 6. DSA indexer 如何算出 index -->
+<h2 id="t6">6. 核心：DSA indexer 如何算出 index</h2>
+<p>indexer 的任务：为每个 query token 选出"最相关的 index_topk 个 KV block"。实现是 NPU 自定义 op <code>npu_vllm_quant_lightning_indexer</code>（lightning indexer）。</p>
+
+<h3>6.1 入口：indexer_select_qli（<code>dsa_v1.py:2630</code>）</h3>
+<pre><code>def indexer_select_qli(self, x, qr, kv_cache, attn_metadata, cos, sin,
+                       actual_seq_lengths_query, ...):
+    # 1) 准备 indexer 的 q/kv + 写 indexer_state_cache
+    q, kv, ik, isc, ifc, indexer_kv_state_meta, isc_meta, indexer_slot_mapping, wp = \
+        self._indexer_qkv_prepare(x, qr, kv_cache, attn_metadata, ...)
+    # 2) 学到的 indexer weights
+    weights = self.weights_proj(x) * (self.indexer_softmax_scale * self.indexer_heads**-0.5)
+    # 3) quant + scatter + 调用 lightning indexer
+    return self._indexer_qli_finish(q, kv, weights, ik, isc, ifc, ...)</code></pre>
+
+<h3>6.2 _indexer_qkv_prepare：indexer 的 Q/KV prolog（<code>dsa_v1.py:2434</code>）</h3>
+<p>这段做三件事：</p>
+<ol>
+<li><b>Q 投影</b>：<code>q = indexer_wq_b(qr)</code> → RoPE → Hadamard 旋转（<code>rotate_activation</code>）。</li>
+<li><b>KV 压缩写入</b>：调用 <code>torch.ops._C_ascend.compressor</code> 把当前 token 的 KV 压缩写入 <code>indexer_state_cache</code>（走 <code>state_block_table</code> 查表 scatter）。</li>
+<li>返回 <code>indexer_k_cache</code>、<code>indexer_scale_cache</code>、<code>indexer_slot_mapping</code> 等供下一步用。</li>
+</ol>
+
+<h3>6.3 _indexer_qli：lightning indexer 调用（<code>dsa_v1.py:2584-2628</code>）—— 算出 index 的瞬间</h3>
+<pre><code>def _indexer_qli(self, q, weights, q_scale, indexer_k_cache, indexer_scale_cache,
+                 indexer_kv_scale_metadata, with_prefill):
+    # 取 indexer 自己的 block_table 和 qli_metadata
+    block_table = indexer_kv_scale_metadata.prefill.block_table   # ← indexer 独立 block_table
+    qli_metadata = indexer_kv_scale_metadata.prefill.qli_metadata
+
+    topk_idxs, _ = torch.ops._C_ascend.npu_vllm_quant_lightning_indexer(
+        query=q_quant,           # indexer query (int8)
+        key=indexer_k_cache,     # indexer 的量化 key cache
+        weights=...,             # 学到的 block 级权重
+        query_dequant_scale=...,
+        key_dequant_scale=...,
+        actual_seq_lengths_query=qlens,
+        actual_seq_lengths_key=kvlens,
+        block_table=block_table, # ← 关键：indexer 在 paged cache 上做 top-k
+        metadata=qli_metadata,
+        layout_query="TND",
+        layout_key="PA_BSND",    # ← paged-attention block-slot-ND 布局
+        sparse_count=self.index_topk,  # kv_budget，如 256
+        sparse_mode=3,
+        cmp_ratio=4,
+    )
+    return topk_idxs   # [num_tokens, index_topk] 的 block 级索引</code></pre>
+
+<div class="highlight">
+<b>关键洞察：</b>lightning indexer 的输入 <code>layout_key="PA_BSND"</code> 和 <code>block_table</code> 表明——<b>indexer 本身就是在 paged KVCache 上做评分</b>。它不是输出 token 级别的索引，而是输出 <b>block 级别的 top-k 索引</b>（<code>topk_idxs</code> 的每个元素是"该 query token 应该 attend 的第 k 个 block 在 block_table 行内的位置"）。<br>
+<b>关于 hash：</b>DSA indexer 路径里出现的所有 <code>hadamard</code>/<code>rotate_activation</code> 都是<b> Hadamard 正交旋转</b>（量化友好），<b>不是 hash</b>。代码库中另有基于真 SimHash + 汉明距离的独立稀疏路径（<code>kvcomp_attn</code>）以及与 KV 索引无关的 MoE 路由 hash——详见 <a href="#t10">§10</a> 三种机制的完整辨析。
+</div>
+
+<h3>6.4 IndexCache：跨层复用 index</h3>
+<p><code>_get_indexcache_topk_indices</code> / <code>_update_indexcache_topk_indices</code>（<code>dsa_v1.py:1473-1491</code>）在 <code>skip_topk</code> 或 <code>use_index_cache</code> 时让 DSA 跨层复用同一组 topk 索引，避免每层重算 indexer。decode 段占 buffer 前段、prefill 段占 <code>[num_decode_tokens:]</code>。</p>
+
+<p class="src">溯源：<code>vllm_ascend/attention/dsa_v1.py:2584-2628, 2434-2538, 1473-1491</code></p>
+
+<!-- 7. 关键转换 index_id → pageattention -->
+<h2 id="t7">7. 关键转换：index_id → pageattention 查表</h2>
+<p><b>这是本报告的核心。</b>DSA indexer 输出的 <code>compress_topk_idxs</code>（block 级 top-k 索引）如何最终驱动 paged KVCache 的 gather？</p>
+
+<h3>7.1 答案：index 直接作为 sparse attention op 的 <code>cmp_sparse_indices</code> 参数</h3>
+<p>在 <code>_forward_prefill</code>（<code>dsa_v1.py:2081-2101</code>）和 <code>_forward_decode</code>（<code>dsa_v1.py:2390-2410</code>）中：</p>
+
+<pre><code># ===== prefill, compress_ratio == 4 (dsa_v1.py:2081) =====
+attn_op = DeviceOperator.get_dsa_sparse_attn_op()
+attn_output = attn_op(
+    q,
+    ori_kv=swa_kv_cache,                    # 滑动窗口 cache
+    cmp_kv=compress_kv_cache,               # 压缩 cache
+    cmp_sparse_indices=compress_topk_idxs,  # ← indexer 的输出直接喂进来！
+    ori_block_table=swa_prefill_metadata.block_table,
+    cmp_block_table=compressor_prefill_metadata.block_table,  # ← 压缩 cache 的 block_table
+    cu_seqlens_q=actual_seq_lengths_query,
+    seqused_kv=actual_seq_lengths_key,
+    sinks=self.attn_sink,
+    metadata=compressor_prefill_metadata.sas_metadata,
+    softmax_scale=self.softmax_scale,
+    cmp_ratio=self.compress_ratio,
+    ori_mask_mode=4,        # sliding window
+    cmp_mask_mode=3,        # causal
+    layout_q="TND",
+    layout_kv="PA_ND",      # ← paged attention 布局
+    **extra_attn_kwargs,
+)[0]</code></pre>
+
+<h3>7.2 attn_op 是什么？（<code>device/device_op.py:752</code>）</h3>
+<pre><code># 非 A5 (如 910B):
+def get_dsa_sparse_attn_op():
+    return torch.ops._C_ascend.npu_sparse_attn_sharedkv
+
+# A5:
+def get_dsa_sparse_attn_op():
+    return torch.ops._C_ascend.npu_kv_quant_sparse_attn_sharedkv</code></pre>
+
+<h3>7.3 index_id → pageattention 的转换语义</h3>
+<div class="card">
+<b>在 <code>npu_sparse_attn_sharedkv</code> 内部发生的融合操作：</b><br><br>
+对每个 query token <code>t</code>，对每个 top-k 位置 <code>k</code>：
+<pre>
+block_index = compress_topk_idxs[t, k]          # indexer 输出的 block 级 index_id
+physical_block_id = cmp_block_table[req, block_index]  # ← 二次寻址：index_id → 物理块号
+kv_block = cmp_kv_cache[physical_block_id]      # ← pageattention gather：物理块号 → HBM 上的 KV 页
+</pre>
+然后对 gather 出的 <code>index_topk</code> 个 KV 块做 fused attention matmul。
+</div>
+
+<p>也就是说：<b>不存在独立的 gather kernel</code>——<code>cmp_sparse_indices</code> + <code>cmp_block_table</code> + <code>layout_kv="PA_ND"</code> 三个参数一起，让 sparse attention op 在内部完成"index_id → block_table 查表 → 物理页 gather → attention"的融合</b>。</p>
+
+<h3>7.4 与 SFA 路径的对照（更清晰的 reference）</h3>
+<p>SFA（Sparse Flash Attention）的 <code>npu_sparse_flash_attention</code>（<code>device/device_op.py:656</code>）显式暴露了同样模式：</p>
+<pre><code>attn_output, _, _ = torch.ops._C_ascend.npu_sparse_flash_attention(
+    query=ql_nope, key=kv, value=kv,
+    sparse_indices=topk_indices,   # ← per-token block index
+    block_table=block_table,       # ← paged block table
+    layout_query="TND", layout_kv="PA_BSND",
+    sparse_mode=3, attention_mode=2, ...)
+</code></pre>
+<p>这印证了 Ascend 上"稀疏索引 + paged block_table"是统一的编程范式。</p>
+
+<h3>7.5 与 vLLM GPU 侧 sparse path 的对照</h3>
+<p>vLLM GPU 侧 MLA sparse（<code>vllm/v1/attention/backends/mla/flashmla_sparse.py</code>）用 Triton kernel <code>_convert_req_index_to_global_index_kernel</code>（<code>sparse_utils.py:12</code>）做完全同构的转换：</p>
+<pre><code># vllm/v1/attention/backends/mla/sparse_utils.py:73-86
+block_id = local_idx // BLOCK_SIZE
+inblock_off = local_idx % BLOCK_SIZE
+base = tl.load(bt_ptr, ...)          # = block_table[req, block_id]
+out_val = base * BLOCK_SIZE + inblock_off   # → 全局 HBM slot</code></pre>
+<p>GPU 侧是"先转成全局 slot 再喂 FlashMLA"，Ascend 侧是"把 index_id + block_table 一起喂 sparse attention op 内部融合"——<b>语义等价，融合度更高</b>。</p>
+
+<p class="src">溯源：<code>vllm_ascend/attention/dsa_v1.py:2081-2101, 2390-2410</code> · <code>vllm_ascend/device/device_op.py:752, 656</code> · <code>vllm/v1/attention/backends/mla/sparse_utils.py:73-86</code></p>
+
+<!-- 8. 数据流总图 -->
+<h2 id="t8">8. 数据流总图：端到端 index 生命周期</h2>
+<div class="flow">
+┌─ Worker ─────────────────────────────────────────────────────────────┐
+│  BlockTable.append_row(block_ids, req)   → 写入物理块号              │
+│  BlockTable.compute_slot_mapping(req, pos)                           │
+│    → slot = block_table[req, pos//B]*B + pos%B                       │
+│    → format_dsa_slot_mapping: [block_idx, offset] 2D 形式            │
+│  → CommonAttentionMetadata{block_table_tensor, slot_mapping}         │
+└──────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─ AscendDSAMetadataBuilder.build ────────────────────────────────────┐
+│  为 5 段子 metadata 各自构建:                                         │
+│    swa.block_table / compressor.block_table /                        │
+│    compressor_state.block_table / indexer_state.block_table /        │
+│    indexer_kv_scale.block_table  ← indexer 独立的 block_table!       │
+│    + sas_metadata (npu_sparse_attn_sharedkv_metadata)                │
+│    + qli_metadata (npu_vllm_quant_lightning_indexer_metadata)        │
+└──────────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┴──────────────────────┐
+        ▼                                            ▼
+┌─ scatter 写入 ───┐                    ┌─ indexer 评分 ──────────────┐
+│ dsa_kv_compress_  │                    │ _indexer_qkv_prepare:       │
+│ scatter →         │                    │   q = Q_proj(qr)+RoPE+Hadamard
+│ npu_scatter_nd_   │                    │   compressor 写 indexer_    │
+│ update_v2(cache,  │                    │   state_cache (经其 block_table)
+│   slot_mapping,kv)│                    │ _indexer_qli:               │
+│ 写入 swa / cmp /  │                    │   lightning_indexer(        │
+│ indexer 各 cache   │                    │     q, indexer_k_cache,     │
+└───────────────────┘                    │     weights,                │
+                                        │     block_table=indexer_    │
+                                        │       kv_scale.block_table, │
+                                        │     layout_key="PA_BSND",   │
+                                        │     sparse_count=index_topk) │
+                                        │   → compress_topk_idxs       │
+                                        │     [T, index_topk]          │
+                                        └──────────────┬──────────────┘
+                                                       │
+                                                       ▼
+                                        ┌─ sparse attention gather ───┐
+                                        │ npu_sparse_attn_sharedkv(   │
+                                        │   q,                        │
+                                        │   ori_kv=swa_kv_cache,      │
+                                        │   cmp_kv=compress_kv_cache, │
+                                        │   cmp_sparse_indices=       │
+                                        │     compress_topk_idxs,     │ ← index_id
+                                        │   cmp_block_table=          │
+                                        │     compressor.block_table, │ ← 二次寻址
+                                        │   layout_kv="PA_ND",        │
+                                        │   cmp_mask_mode=3)          │
+                                        │                             │
+                                        │ 内部融合:                    │
+                                        │  physical = cmp_block_table  │
+                                        │    [req, compress_topk_idxs] │
+                                        │  gather cmp_kv[physical]     │
+                                        │  → fused attention          │
+                                        └─────────────────────────────┘
+</div>
+
+<p class="src">溯源：<code>vllm_ascend/ops/dsa.py</code> · <code>vllm_ascend/attention/dsa_v1.py</code> · <code>vllm_ascend/device/device_op.py</code> · <code>vllm_ascend/_310p/block_table.py</code></p>
+
+<!-- 9. 设计洞察 -->
+<h2 id="t9">9. 关键设计洞察（芯片/系统视角）</h2>
+
+<h3>9.1 indexer 拥有独立的 block_table 是核心架构决策</h3>
+<p>DSA 不是"一套 block_table 打天下"。swa / compressor / indexer 各有独立 block_table，因为它们的<b>物理分页不同</b>：SWA 存原始 sliding-window token，compressor 存压缩后的 block，indexer_k_cache 存量化后的 indexer key。indexer 在自己的 paged cache 上评分，选出的是"compressor cache 的行内 block 索引"，再经 compressor 的 block_table 二次寻址到 HBM。<b>两层 indirection 是 DSA 稀疏性的物理基础</b>。</p>
+
+<h3>9.2 "index_id → pageattention"是融合语义，不是两步 kernel</h3>
+<p>与 GPU 侧 FlashMLA sparse 先 Triton 转全局 slot 再调 kernel 不同，Ascend 把 <code>cmp_sparse_indices</code> + <code>cmp_block_table</code> 作为 sparse attention op 的<b>输入参数</b>，在 kernel 内部完成"index_id → 物理页 → gather → matmul"融合。这减少了中间 tensor 的 HBM 往返，对 Ascend 的 HBM 带宽利用更友好。</p>
+
+<h3>9.3 slot_mapping 的 2D 格式化是 Ascend 特有</h3>
+<p><code>format_dsa_slot_mapping</code>（<code>device_op.py:903</code>）把 slot 拆成 <code>[block_idx, offset]</code> 2D 形式，供 <code>npu_scatter_nd_update_v2</code> 直接做 scatter——这是 NPU DMA 的偏好格式（块+偏移分离），区别于 GPU 用 flat slot。</p>
+
+<h3>9.4 multistream 重叠：indexer 与 Q/KV 计算双流水</h3>
+<p><code>cv_indexer_select_qli</code>（<code>dsa_v1.py:2670</code>）把 indexer 的 <code>weights_proj</code> 放在 aux_stream 与 main stream 的 q_quant/kv_scatter 并行（4-block 分段），是典型的 Cube/Vector 引擎重叠策略。<code>_mla_prolog_multistream</code>（<code>dsa_v1.py:1730</code>）也是同样模式。</p>
+
+<h3>9.5 compress_ratio 是架构可扩展的"旋钮"</h3>
+<p>通过 <code>compress_ratio ∈ {1, 4, 128}</code>，同一套代码覆盖：纯 SWA（轻量）、SWA+粗压缩（128）、SWA+细压缩+indexer（4）。<b>indexer 只在 compress_ratio=4 时启用</b>——这是 DeepSeek-V4 风格原生稀疏注意力的配置点。</p>
+
+<!-- 10. 索引过程有 hash 计算么？三种选择机制辨析 -->
+<h2 id="t10">10. 索引过程有 hash 计算么？三种选择机制的辨析</h2>
+<p>这是本报告的核心追问之一。精确答案是：<b>取决于走哪条 attention 路径</b>。vLLM_Ascend 里存在<b>三套独立的"选 block"机制</b>，它们是互斥的代码路径、不会同时生效。</p>
+
+<h3>10.1 结论先行：对比表</h3>
+<div class="card">
+<table>
+<tr><th>机制</th><th>路径 A：DSA lightning indexer</th><th>路径 B：kvcomp_attn Hamming sparse</th><th>路径 C：MoE 路由 hash</th></tr>
+<tr><td><b>有 hash 计算？</b></td><td>❌ 否（Hadamard 旋转 + int8 点积评分）</td><td>✅ <b>是</b>（签名哈希 + 汉明距离 top-k）</td><td>✅ 是（但属于 MoE 路由，与 KV 索引无关）</td></tr>
+<tr><td><b>代码位置</b></td><td><code>attention/dsa_v1.py</code></td><td><code>attention_v1.py</code> + <code>attention/kvcomp_attn/</code></td><td><code>models/deepseek_v4.py</code> + <code>ops/fused_moe/</code></td></tr>
+<tr><td><b>启用条件</b></td><td>DSA 栈 + <code>compress_ratio==4</code></td><td><code>additional_config.enable_hamming_sparse</code>（默认关），明确不支持 C8 量化</td><td><code>layer_idx &lt; num_hash_layers</code>（仅前几层）</td></tr>
+<tr><td><b>选 block 准则</b></td><td>量化点积 q·k + learned weights</td><td>签名码 sign(xW) 与 k cache 的汉明距离</td><td>token→expert 查表，与 KV 无关</td></tr>
+<tr><td><b>与 pageattention 的关系</b></td><td>直接驱动 cmp_sparse_indices + cmp_block_table gather</td><td>通过 npu_hamming_dist_top_k 选 block 重写 block_table 给 full-attn 用</td><td>无</td></tr>
+</table>
+</div>
+
+<h3>10.2 路径 A —— DSA indexer 的"Hadamard"不是 hash</h3>
+<p>DSA indexer 路径里出现的 <code>rotate_activation</code> / <code>hadamard</code> 容易被误认为是"hash"，但它是 <b>Hadamard 正交旋转变换</b>，不是 hash：</p>
+<pre><code># attention/dsa_v1.py:82-84
+def rotate_activation(x, hadamard):
+    return hadamard_transform_ref(x, hadamard=hadamard, scale=hidden_size**-0.5)
+    # 本质：out = x @ H * scale，H = scipy.linalg.hadamard 生成的正交矩阵
+
+# 构造 (dsa_v1.py:432-454)：QR-orthogonalized Hadamard 矩阵，归一化到 bf16
+AscendDSAMetadataBuilder.hadamard = torch.tensor(
+    hadamard(dim_padded, dtype=float), ...).to(torch.bfloat16)</code></pre>
+<p><b>query 和 key 两侧都施加同一矩阵</b>（<code>dsa_v1.py:2482</code> q 侧、<code>:2526</code> kv 侧）。正交变换保内积：<code>(Hq)·(Hk) = q·k</code>。它的作用是在 int8 动态量化评分之前旋转激活分布，使量化误差对点积的扰动最小——是<b>量化友好旋转</b>，没有任何二值化、降维、桶冲突等 hash 特征。</p>
+<div class="highlight">
+<b>判定依据：</b>哈希的核心是"把输入映射到有限桶空间并允许冲突"。Hadamard 旋转是正交可逆线性变换，输入输出维度相同，没有信息丢弃或桶映射 → 它不是 hash。
+</div>
+
+<h3>10.3 路径 B —— kvcomp_attn：真正的 SimHash + 汉明距离 top-k</h3>
+<p>vLLM_Ascend 里<b>唯一用于 KV block 选择的真哈希路径</b>，挂载在 <code>attention_v1.py</code>（标准 full/MLA attention）上，和 DSA 是<b>两条互斥的 attention 栈</b>：</p>
+<pre><code># attention/kvcomp_attn/attention_utils.py:145
+def is_enable_hamming_sparse(enable_c8_quant):
+    additional_config.get("enable_hamming_sparse", False)   # 默认关闭
+    assert not enable_c8_quant  # 明确不支持 C8 KV cache 量化</code></pre>
+<p><code>HashEncoder</code>（<code>worker/kvcomp_utils.py:366-460</code>）实现的是 <b>经典 SimHash</b>：</p>
+<pre><code># worker/kvcomp_utils.py:399-404 投影权重：QR 正交化的高斯随机矩阵
+random_weights = torch.normal(mean=0, std=2, size=(input_dim, hash_bits), ...)
+Q, R = torch.linalg.qr(random_weights)
+self.hash_weights = Q * torch.sign(torch.diag(R))
+
+# worker/kvcomp_utils.py:456-460 compute_hash: sign(x @ W) 二值化 + bit-pack
+xW = torch.matmul(x_flat, self.hash_weights)        # [N, hash_bits]
+packed_codes_flat = torch.ops._C_ascend.npu_sign_bits_pack(xW_flat, size=1)
+return packed_codes  # shape: (..., hash_bits//8)</code></pre>
+<p>五步数据流（<code>attention/kvcomp_attn/attention_utils.py:81-135</code>）：</p>
+<pre><code>① hashk = hash_encoder.compute_hash(key)                # key → 签名码
+② npu_reshape_and_cache_bnsd(hashk_op, hashk_cache_op, slot_mapping, ...)  # 写 hash cache
+③ hashq = hash_encoder.compute_hash(query)               # query → 签名码
+④ new_block_table, _ = npu_hamming_dist_top_k(          # ★ 按汉明距离选 block
+       hashq_op, hashk_cache_op, topk_for_hamming, seq_lens, ...)</code></pre>
+<p>与 DSA 的关键对照：</p>
+<div class="card">
+<table>
+<tr><th>维度</th><th>DSA lightning indexer</th><th>kvcomp_attn SimHash</th></tr>
+<tr><td><b>评分函数</b></td><td>int8 量化点积 q·k + learned weights（连续值）</td><td>sign(xW) 二值码的汉明距离（离散 bit 差异数）</td></tr>
+<tr><td><b>可学习性</b></td><td>weights_proj 可学习，indexer_k_cache 是量化 KV</td><td>hash_weights 是初始化后固定的随机投影（QR 正交化）</td></tr>
+<tr><td><b>精度-效率权衡</b></td><td>更高精度（保留幅度信息），代价是 int8 matmul</td><td>更高效率（XOR + popcount 汉明距离），代价是二值化信息损失</td></tr>
+</table>
+</div>
+
+<h3>10.4 路径 C —— MoE 路由 hash（与 KV 索引无关，仅辨识）</h3>
+<p><code>deepseek_v4.py:412</code> 的 <code>self.hash = layer_idx &lt; num_hash_layers</code> 控制 DeepSeek-V4 <b>前几层 token→expert 路由</b>：<code>torch.ops._C_ascend.moe_gating_top_k_hash</code> 做 expert dispatch，用可学习查表 <code>tid2eid</code> 替代 softmax gating。和 KVCache/pageattention 完全无关。</p>
+
+<h3>10.5 为什么有两套稀疏选择机制？</h3>
+<p>这反映了 vLLM_Ascend 的<b>架构演进</b>：</p>
+<ul>
+<li><b>kvcomp_attn (SimHash)</b> 是较早的稀疏方案——固定随机投影 + 汉明距离，硬件友好（XOR/popcount），精度有限。</li>
+<li><b>DSA lightning indexer</b> 是 DeepSeek-V4 风格的原生稀疏注意力——可学习 indexer + 量化点积，与 MLA 压缩 cache 深度耦合，是<b>当前主力路径</b>。</li>
+<li>两者通过配置开关互斥，共享底层的 paged KVCache / block_table 基础设施，但"选 block 的准则"完全不同。</li>
+</ul>
+
+<p class="src">溯源：<code>vllm_ascend/attention/dsa_v1.py:65-84, 432-454, 2482, 2526</code>（Hadamard 旋转）· <code>vllm_ascend/worker/kvcomp_utils.py:366-460</code>（HashEncoder）· <code>vllm_ascend/attention/kvcomp_attn/attention_utils.py:81-135, 145-150</code>（Hamming 数据流 + 启用条件）· <code>vllm_ascend/models/deepseek_v4.py:412-424</code> · <code>vllm_ascend/ops/fused_moe/experts_selector.py:269</code>（MoE 路由 hash）</p>
+
+<!-- 11. 代码文件索引 -->
+<h2 id="t11">11. 关键代码文件索引</h2>
+<div class="card">
+<table>
+<tr><th>文件</th><th>行数</th><th>在本分析中的角色</th></tr>
+<tr><td><code>vllm_ascend/attention/dsa_v1.py</td><td>2820</td><td>DSA backend + metadata builder + AscendDSAImpl（indexer + prefill/decode 主逻辑）</td></tr>
+<tr><td><code>vllm_ascend/ops/dsa.py</td><td>293</td><td>AscendDeepseekSparseAttention 包装 + dsa_forward custom op + _build_kv_cache</td></tr>
+<tr><td><code>vllm_ascend/device/device_op.py</td><td>1971</td><td>DeviceOperator：所有 NPU op 选择器、scatter、quant、index→pageattention 桥</td></tr>
+<tr><td><code>vllm_ascend/_310p/block_table.py</td><td>202</td><td>slot_mapping 构建（NumPy 路径，含核心公式）</td></tr>
+<tr><td><code>vllm_ascend/worker/block_table.py</td><td>467</td><td>BlockTable 基类：block_table 矩阵 + compute_slot_mapping</td></tr>
+<tr><td><code>vllm_ascend/attention/mla_v1.py</td><td>-</td><td>MLA 栈（标准 paged MQA 对照）</td></tr>
+<tr><td><code>vllm_ascend/attention/sfa_v1.py</td><td>-</td><td>SFA 栈（per-token top-k 对照）</td></tr>
+<tr><td><code>vllm/v1/worker/block_table.py</td><td>-</td><td>vLLM 主路径 BlockTable + Triton slot_mapping kernel</td></tr>
+<tr><td><code>vllm/v1/attention/backends/mla/sparse_utils.py</td><td>-</td><td>GPU 侧 index→全局 slot 的 Triton 对照实现</td></tr>
+<tr><td><code>vllm_ascend/worker/kvcomp_utils.py</td><td>-</td><td>HashEncoder：SimHash 签名码 encode（QR 随机投影 + sign + bit-pack）</td></tr>
+<tr><td><code>vllm_ascend/attention/kvcomp_attn/attention_utils.py</td><td>-</td><td>kvcomp_attn 数据流：hashk cache 写入 + npu_hamming_dist_top_k block 选择</td></tr>
+<tr><td><code>vllm_ascend/models/deepseek_v4.py</td><td>-</td><td>MoE 路由 hash 入口：self.hash / num_hash_layers / tid2eid 查表</td></tr>
+<tr><td><code>vllm_ascend/ops/fused_moe/experts_selector.py</td><td>-</td><td>moe_gating_top_k_hash：token→expert dispatch 用 hash（与 KV 索引无关）</td></tr>
+</table>
+<p>以上文件完整副本保存在 <code>./key_code/</code>，8 个关键代码片段在 <code>./key_code/snippets/</code>。</p>
+</div>
+
+<!-- 12. 调研方法与溯源 -->
+<h2 id="t12">12. 调研方法与溯源</h2>
+<div class="card">
+<p><b>代码来源</b>（本地，非联网）：</p>
+<ul>
+<li>vLLM：<code>/Users/backyes/work/vllm_research/vllm @ 2db39c70</code></li>
+<li>vLLM_Ascend：<code>/Users/backyes/work/vllm_research/vllm-ascend @ b266da5d</code></li>
+</ul>
+<p><b>互联网调研</b>：尝试通过 WebSearch + WebFetch 检索 vLLM block_table / PagedAttention / DSA 公开技术博客。<b>结果：docs.vllm.ai 被 block，web research agent 因多次阻塞后超时失败（详见 <code>raw_web/</code> 目录，为空）。</b></p>
+<p><b>因此本报告的"外部洞察"主要来自：</b></p>
+<ul>
+<li>对本地源码的直接深读（主路径，token 效率高）</li>
+<li>两个 Explore agent 对 vLLM 和 vLLM_Ascend 代码库的并行探索报告</li>
+<li>vLLM GPU 侧 sparse_utils.py 的对照（同代码库内）</li>
+</ul>
+<p><b>访问失败/受限的 URL：</b></p>
+<ul>
+<li>https://docs.vllm.ai/ （blocked）</li>
+<li>GitHub vLLM README / discussions（agent 未成功 fetch 即超时）</li>
+</ul>
+<p><b>关键过程记录：</b></p>
+<ul>
+<li>设计 prompt → 并行派发 2 个 Explore agent（vLLM 侧 + vLLM_Ascend 侧）→ 定位关键文件</li>
+<li>直接深读 <code>dsa_v1.py</code> 的 forward / indexer_select / lightning_indexer 调用段（~1200 行）</li>
+<li>直接深读 <code>_310p/block_table.py</code> + <code>worker/block_table.py</code>（slot_mapping 公式）</li>
+<li>直接深读 <code>device_op.py</code> 的 sparse_attn op 选择器 + scatter ops</li>
+<li><b>追问"hash？"</b>：对 attention/ ops/ device/ models/ 做 hash/hadamard/SimHash 全量 grep，发现三套独立机制。深读 <code>kvcomp_utils.py</code> HashEncoder、<code>kvcomp_attn/attention_utils.py</code>（真 SimHash + Hamming）、<code>deepseek_v4.py</code>（MoE 路由 hash），明确 DSA 的 Hadamard 旋转 ≠ hash</li>
+<li>保存 5 个关键源码文件 + 8 个代码片段到本地</li>
+<li>追问"batch prefill 多请求如何共享 block_table"：精读 <code>worker/block_table.py</code>（行=请求的二维矩阵）、<code>attention/utils.py</code>（query_start_loc 累积边界）、<code>dsa_v1.py:842-865</code>（prefill metadata 同时携带 block_table + query_start_loc），确认"行=请求 + query_start_loc 请求寻址 + index_id 行内 block 寻址"两级索引机制</li>
+<li>追问"block_table.py 该放在 worker/ 下吗"：对比 vLLM 上游目录（同样在 worker/）、分析 BlockTable 全部依赖（硬件无关、无 NPU 专有 import）、调查 core/ 目录（已有 kv_cache_interface 等更合适的归宿）、对比 v1 独立实现 vs v2 继承 upstream 的差异，给出"短期保持对齐、长期下沉 core/"的判断</li>
+<li><b>系统总结（两 agent 并发）</b>：① worker 模块深析（设计目标/模块地图/9 个关键类解析/5 大挑战/与两条查表路径的衔接）；② 三条查表路径系统对比（DSA/SFA/kvcomp Hamming，确认 3 路径但仅 2 种独立 indexer 机制）</li>
+<li>追问"compressor_attn / compressor_kv_state / indexer.compressor.state_cache / indexer.k_cache 为什么独立"：精读 <code>ops/dsa.py:228-287</code>（元组顺序）、<code>attention/dsa_v1.py:1840-1844</code>（sorted keys 注释）、<code>dsa_v1.py:2003-2102</code>（主 compressor 写 + 主 attention 读）、<code>dsa_v1.py:2482-2628</code>（indexer compressor 写 + lightning indexer 评分），确认四级物理 cache 分离 + 两次独立压缩（主 compressor_wkv ≠ indexcom_wkv）</li>
+<li>追问"SFA 完整解读"：精读 <code>attention/sfa_v1.py</code>（backend/metadata/impl/forward/indexer_select/C8 hadamard）、<code>device/device_op.py:550-706</code>（3 个 indexer variant + 2 个 gather variant）、<code>attention/indexer.py</code>（AscendSFAIndexerBackend 占位后端）、<code>models/deepseek_v4.py:525</code>（模型层 Indexer forward()=None 占位），确认 SFA 与 DSA 数学同构（lightning indexer）但索引拓扑/ gather kernel/ cache 结构不同</li>
+<li>追问"Hamming sparse 算法起源"：研读 HashEvict (2412.16187)、Reformer (2001.04451)、H2O (2306.14048)、DASH-KV (2604.19351)、RaBitQCache (2606.31519)、COBS (2607.09052) 等已下载论文，确认 HashEvict 与 kvcomp_attn 算法同构（SimHash + Hamming 距离做 pre-attention KV 选择），建立从 Charikar 2002 SimHash → Reformer LSH Attention → H2O Heavy-Hitter → HashEvict → 现代扩展（DASH-KV/RaBitQCache/COBS）的完整算法谱系</li>
+<li>写成本 HTML 报告，新增 §10 辨析三种选择机制、§13 解析 batch 查表共享机制、§14 分析 block_table 位置、§15 worker 系统总结、§16 三条查表路径对比、§17 多级 cache 分离、§18 SFA 完整解读、§19 Hamming sparse 算法起源</li>
+</ul>
+</div>
+
+<!-- 13. batch prefill 查表：多请求共享 block_table 的机制 -->
+<h2 id="t13">13. batch prefill 查表：多请求如何共享 block_table</h2>
+<p>本章回答一个更底层的问题：<b>batched prefill 中，不同请求的 index_id（各自 0-N 的 block 序号）怎么共用一套 block_table 查表结构？</b></p>
+
+<h3>13.1 核心结论：行=请求的二维 tensor + query_start_loc 请求寻址</h3>
+<p><b>不是"共用一套逻辑表"，而是"每个请求独立一行，打包进同一个二维 tensor，用 query_start_loc 做请求寻址 + index_id 做行内 block 寻址"——两级索引天然隔离。</b></p>
+
+<h3>13.2 block_table 是二维矩阵，行 = 请求</h3>
+<pre><code># worker/block_table.py:97
+self.block_table = self._make_buffer(max_num_reqs, logical_table_size, dtype=torch.int32)
+# shape: [max_num_reqs, max_num_blocks_per_req]
+#  第 i 行 = 请求 i 被分配的物理 block id 列表（append_row 写入, :114-120）</code></pre>
+<p>每个请求在 block_table 里占<b>独立一行</b>，行号 = 请求在 batch 中的索引。不同请求的 <code>index_id=0</code> 指向的是<b>各自行的第 0 列</b>，物理块号完全不同——<b>物理隔离靠的就是这个"行"。</b></p>
+
+<h3>13.3 query_start_loc：token → 请求 的映射表</h3>
+<p>kernel 拿到的是所有 prefill 请求 token 的拼接序列，它通过 <code>query_start_loc</code>（即 cu_seqlens_q）确定每个 token 属于哪个请求：</p>
+<pre><code>query_start_loc = [0, 128, 400, 1024]   # shape: [num_reqs + 1]，累积边界
+                    ↑    ↑    ↑     ↑
+                  req0  req1  req2  总 token 数
+
+token [0, 128)   → 请求 0 → block_table 第 0 行
+token [128, 400)  → 请求 1 → block_table 第 1 行
+token [400, 1024) → 请求 2 → block_table 第 2 行</code></pre>
+<p>kernel 内部用 token 位置查 <code>query_start_loc</code>（二分/顺序）确定 <code>req_idx</code>，再取 <code>block_table[req_idx]</code> 这一行。这是 vLLM 标准的"packed sequence + cu_seqlens"抽象。</p>
+
+<h3>13.4 index_id 是"请求内的 block 序号"，不是全局物理块号</h3>
+<p>indexer 输出的 <code>compress_topk_idxs[t, k]</code> 语义：</p>
+<div class="highlight">
+"token t 应该 attend 的<strong>第 k 个 block，在它所属请求的 block_table 行内的列位置</strong>"
+</div>
+<p>完整查表是两级：</p>
+<pre><code>req_idx         = query_start_loc 查 token t 属于哪个请求
+block_idx       = compress_topk_idxs[t, k]                   # 行内的 index_id (0-N)
+physical_block  = block_table[req_idx, block_idx]            # 最终物理块号
+kv_data         = kv_cache[physical_block]                   # HBM 上的页 → pageattention gather</code></pre>
+
+<h3>13.5 代码证据：kernel 调用时两者都传</h3>
+<pre><code># dsa_v1.py:842-865 —— prefill metadata 同时携带 block_table + query_start_loc
+return AscendDSAPrefillMetadata(
+    block_table=self.block_table[reqs_start:, ...],   # ← 只取 prefill 请求的行
+    query_start_loc=prefill_query_start_loc,           # ← token 边界
+    seq_lens=self.seq_lens[reqs_start:],               # ← 每个请求的 KV 长度
+    ...
+)
+
+# dsa_v1.py:2081-2101 —— 送入 sparse attention kernel
+attn_op(
+    q,                                                # 所有 prefill token 拼接
+    cmp_kv=compress_kv_cache,
+    cmp_sparse_indices=compress_topk_idxs,            # ← index_id (行内 block 序号)
+    cmp_block_table=compressorblock_table,            # ← 行=请求 的二维表
+    cu_seqlens_q=actual_seq_lengths_query,            # ← = query_start_loc，请求边界
+    seqused_kv=actual_seq_lengths_key,                # ← 每个请求的 KV 长度
+    layout_kv="PA_ND",                                # ← Paged Attention 布局
+    ...
+)</code></pre>
+
+<h3>13.6 为什么这样设计？（系统视角）</h3>
+<div class="card">
+<table>
+<tr><th>设计选择</th><th>原因</th></tr>
+<tr><td><b>行=请求的二维 tensor</b>，而非每请求一个独立 tensor</td><td>单次 kernel launch 处理整个 batch，避免 per-request 小 kernel 调度开销；GPU/NPU 对规整二维访存友好</td></tr>
+<tr><td><b>query_start_loc 做请求寻址</b></td><td>变长请求（各请求 token 数不同）无需 padding 到等长，紧凑拼接 + 累积边界即可</td></tr>
+<tr><td><b>index_id 是请求内序号</b></td><td>indexer 评分天然是"请求内"的（每个请求的 KV 独立），输出不需要知道自己在 batch 中的位置，<b>indexer 与 batch 解耦</b></td></tr>
+<tr><td><b>block_table 行内是物理块号</b></td><td>逻辑 block 序号 → 物理块号的映射由 block_table 完成，不同请求的逻辑 block 0 映射到不同物理页，<b>隔离性由分配器保证</b></td></tr>
+</table>
+</div>
+
+<h3>13.7 一张图总结：端到端查表</h3>
+<div class="flow">
+batch 内 3 个 prefill 请求，token 拼接为 [t0..t1023]
+query_start_loc = [0, 128, 400, 1024]
+
+┌──────────────── req 0 ────────────────┐┌──── req 1 ────┐┌──── req 2 ────┐
+│ t=50:  query_start_loc → req 0        ││ t=200: → req 1││ t=500: → req 2│
+│        indexer → topk = [3,7,1,...]   ││   → [2,5,...]  ││  → [0,4,...]   │
+│        block_table[0,3],[0,7],[0,1]    ││   [1,2],[1,5]  ││  [2,0],[2,4]   │
+│        → 物理块 [12, 45, 33]          ││   → [42, 15]   ││  → [8, 21]     │
+└───────────────────────────────────────┘└────────────────┘└────────────────┘
+                 │                                    │                  │
+                 └──── 所有 token 的 q 拼接 ──────────┴──────────────────┘
+                                    ↓
+                         attn_op(q, cmp_kv,
+                           cmp_sparse_indices=topk,       ← index_id (行内序号)
+                           cmp_block_table=block_table,     ← 行=请求
+                           cu_seqlens_q=query_start_loc,    ← 请求边界
+                           layout_kv="PA_ND")
+                                    ↓
+                     对每个 token: req_idx ← 查 bounds
+                                   physical ← block_table[req_idx, topk]
+                                   gather cmp_kv[physical]  → attention
+</div>
+<p><b>"共享"的本质是：内存上共享一个 tensor（高效），逻辑上靠行号 + query_start_loc 完全隔离（安全）。</b>index_id 从来不是全局的，它永远是"某个请求自己行内的列偏移"。</p>
+
+<p class="src">溯源：<code>vllm_ascend/worker/block_table.py:97-120</code>（矩阵结构 + append_row）· <code>vllm_ascend/attention/dsa_v1.py:842-865</code>（prefill metadata）· <code>vllm_ascend/attention/dsa_v1.py:2081-2101</code>（kernel 调用）· <code>vllm_ascend/attention/utils.py:249,409</code>（query_start_loc 累积边界）· <code>vllm_ascend/attention/dsa_v1.py:228-253</code>（AscendDSAPrefillMetadata 数据结构）</p>
+
+<!-- 14. block_table.py 位置分析 -->
+<h2 id="t14">14. block_table.py 该放在 worker/ 下吗？职责与位置分析</h2>
+<p>BlockTable 是 paged KVCache 的索引核心，但它被放在 <code>vllm_ascend/worker/</code> 下。从职责上看它更像核心数据结构，并不天然属于"worker 框架"。这是一个<b>"概念上可争议、实践中有道理"</b>的折中。</p>
+
+<h3>14.1 核心结论</h3>
+<div class="highlight">
+<b>BlockTable 类本身是硬件无关的纯数据结构 + 索引计算</b>（无 NPU 专有 import、无状态、无调度逻辑）。从职责纯粹性看，它更适合放在 <code>core/</code> 与 <code>kv_cache_interface</code> 同级。但放在 <code>worker/</code> 下有<b>与上游对齐 + InputBatch 生命周期</b>的合理理由。短期保持现状（对齐价值高），长期下沉到 <code>core/</code> 更干净。
+</div>
+
+<h3>14.2 事实：BlockTable 到底是什么？</h3>
+<pre><code># vllm_ascend/worker/block_table.py:14 —— 独立类，不继承上游
+class BlockTable:            # ← 不是 upstream BlockTable 的子类
+    self.block_table = self._make_buffer(max_num_reqs, logical_table_size, ...)
+    # shape [max_num_reqs, max_num_blocks_per_req]，纯数据 + slot_mapping 计算
+
+class MultiGroupBlockTable:  # 多组 block table 的容器</code></pre>
+<p>它的<b>全部依赖</b>（<code>worker/block_table.py:1-11</b>）：</p>
+<div class="card">
+<table>
+<tr><th>依赖</th><th>来源</th><th>性质</th></tr>
+<tr><td><code>CpuGpuBuffer</code></td><td><code>vllm/v1/utils.py</code></td><td><b>硬件无关</b>的 cpu↔gpu buffer</td></tr>
+<tr><td><code>PAD_SLOT_ID</code></td><td><code>vllm/v1/attention.backends.utils</code></td><td>常量</td></tr>
+<tr><td><code>_compute_slot_mapping_kernel</code></td><td><code>vllm/v1/worker/block_table.py</code></td><td>Triton kernel（计算，无状态）</td></tr>
+<tr><td><code>cdiv</code>, <code>get_dcp_group</code>, <code>get_pcp_group</code></td><td>vllm 核心工具</td><td>分布式原语</td></tr>
+<tr><td><code>vllm_version_is</code></td><td><code>vllm_ascend.utils</code></td><td>版本判断（<b>唯一的 Ascend 专有依赖</b>）</td></tr>
+</table>
+</div>
+<p><b>结论：BlockTable 类硬件无关、无状态、不 import <code>torch_npu</code>，也不持有 worker 调度逻辑。</b>从代码看，它确实不"属于"worker。</p>
+
+<h3>14.3 为什么放在 worker/ 下？（站得住脚的理由）</h3>
+
+<h4>理由 A：vLLM 上游也这么放（最强的理由）</h4>
+<pre><code>vllm/vllm/v1/worker/block_table.py          ← 上游
+vllm_ascend/worker/block_table.py           ← Ascend 镜像</code></pre>
+<p>vllm_ascend 作为 vLLM 的下游移植，<b>目录结构主动与上游对齐</b>——便于 upstream patch cherry-pick、贡献回上游时 diff 清晰、新同事从 vLLM 转来时心智模型一致。</p>
+
+<h4>理由 B：BlockTable 是 InputBatch 生命周期的一部分</h4>
+<pre><code># worker/npu_input_batch.py:113
+self.block_table = MultiGroupBlockTable(...)
+# worker/block_table.py:106-130
+append_row(block_ids, row_idx)   # 调度器分配 block 时逐行追加
+move_row(src, tgt)               # 请求迁移
+swap_row(src, tgt)               # 请求交换
+clear_row(row_idx)               # 请求结束释放</code></pre>
+<p>这些 <code>append_row/move_row/swap_row/clear_row</code> 是<b>调度器驱动的状态变更</b>，BlockTable 被 <code>InputBatch</code> 持有，而 <code>InputBatch</code> 是 worker 的核心运行时对象。</p>
+
+<h4>理由 C：历史分层：worker 管状态，attention 管计算</h4>
+<p>vLLM v1 的架构分层：<code>worker/</code> 管运行时状态（input batch, block table, slot mapping），<code>attention/</code> 管计算（kernels, backends）。BlockTable 是"状态"而非"计算"，放在 worker/ 符合这个分层。</p>
+
+<h3>14.4 但批评确实有道理（放在 worker/ 的问题）</h3>
+
+<h4>问题 A：worker/ 目录职责混杂</h4>
+<pre><code>worker/
+├── block_table.py          ← 纯数据结构（更像 core/）
+├── npu_input_batch.py      ← 运行时状态容器
+├── model_runner_v1.py      ← 框架编排
+├── worker.py               ← 框架编排
+├── kvcomp_utils.py         ← KV 压缩工具
+├── pcp_utils.py            ← 并行工具
+├── v2/                     ← 下一代</code></pre>
+<p><code>block_table.py</code> 和 <code>npu_input_batch.py</code> 是<b>被框架使用的组件</b>，而 <code>model_runner_v1.py</code> / <code>worker.py</code> 是<b>框架本身</b>。它们混在一起，违反了"依赖方向单向"的原则。</p>
+
+<h4>问题 B：core/ 目录是更自然的归宿</h4>
+<pre><code>core/
+├── kv_cache_interface.py              ← KV cache 抽象接口
+├── single_type_kv_cache_manager.py    ← cache 管理器
+├── recompute_scheduler.py</code></pre>
+<p><code>core/</code> 已经存放了 KV cache 管理的核心抽象。<b>BlockTable 作为 paged KVCache 的索引核心，与它们是同一类抽象</b>，放在 <code>core/</code> 下语义上更精确。</p>
+
+<h4>问题 C：Ascend 的 BlockTable 与上游完全解耦，"跟随上游"的理由弱化</h4>
+<pre><code># vllm_ascend/worker/block_table.py:14
+class BlockTable:                    # 独立实现，不继承 upstream
+
+# 对比 vllm_ascend/worker/v2/block_table.py:25
+class AscendBlockTables(BlockTables): # v2 反而继承了 upstream</code></pre>
+<p>v1 的 BlockTable 是<b>独立重写</b>的（只借了 <code>_compute_slot_mapping_kernel</code> 一个函数），并不受 upstream 类层次约束。"放在 worker/ 是为了和上游对齐"这个理由对 v1 版其实不够强。反倒是 v2 的 <code>AscendBlockTables(BlockTables)</code> 才真正需要和上游同目录。</p>
+
+<h3>14.5 总结对比与判断</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>当前位置 <code>worker/</code></th><th>更合理位置 <code>core/</code></th></tr>
+<tr><td><b>职责匹配</b></td><td>△ 是 InputBatch 的一部分</td><td>✅ 与 kv_cache_interface 同级</td></tr>
+<tr><td><b>依赖方向</b></td><td>⚠️ 与框架编排混在一起</td><td>✅ 被框架依赖，不依赖框架</td></tr>
+<tr><td><b>上游对齐</b></td><td>✅ 与 vLLM upstream 一致</td><td>✗ 偏离上游目录</td></tr>
+<tr><td><b>硬件无关性</b></td><td>⚠️ 在 NPU 专有 worker/ 里</td><td>✅ 在硬件无关 core/ 里</td></tr>
+</table>
+</div>
+<p><b>判断</b>：</p>
+<ul>
+<li><b>短期</b>：保持 <code>worker/</code> —— 与上游对齐的价值 > 职责纯粹性，且改动成本高（所有 import 路径要改）</li>
+<li><b>长期</b>：如果要与上游适度解耦、建立 Ascend 自己的核心抽象层，把 <code>block_table.py</code> + <code>npu_input_batch.py</code> 下沉到 <code>core/</code> 是更干净的选择。特别是 v2 已经在 <code>worker/v2/</code> 里重建了一套，v1 的 BlockTable 未来可能被废弃，届时 <code>core/</code> 版就是正统。</li>
+</ul>
+
+<p class="src">溯源：<code>vllm_ascend/worker/block_table.py:1-14</code>（独立类 + 硬件无关依赖）· <code>vllm_ascend/worker/v2/block_table.py:25</code>（v2 继承 upstream）· <code>vllm_ascend/core/</code>（已有 kv_cache_interface 等核心抽象）· <code>vllm_ascend/worker/npu_input_batch.py:113</code>（BlockTable 的实际持有者）· <code>vllm/vllm/v1/worker/block_table.py</code>（上游同位置）</p>
+
+<!-- 15. worker 模块系统总结 -->
+<h2 id="t15">15. worker 模块系统总结（目标 / 模块 / 代码 / 挑战）</h2>
+<p>worker 模块是 <code>vllm_ascend</code> 的 <b>NPU 端执行层</b>，负责把 vLLM 的 GPU -centric v1 推理流水线适配到华为 Ascend NPU 上。</p>
+
+<h3>15.1 设计目标</h3>
+<p>worker 解决的核心问题：vLLM 上游 <code>GPUModelRunner</code>/<code>GPUWorker</code> 假设 CUDA graph、CUDA stream、GPU 内存语义。worker 模块在<b>保留 vLLM 调度器合约</b>（<code>SchedulerOutput</code> 入、<code>ModelRunnerOutput</code> 出）的前提下，为 NPU/ACL 运行时重写每个硬件接触面：slot-mapping kernel、graph 捕获、H2D 拷贝、DP 同步、attention metadata。</p>
+<p>核心抽象是两个类：</p>
+<div class="card">
+<table>
+<tr><th>类</th><th>文件</th><th>角色</th></tr>
+<tr><td><code>NPUWorker</code></td><td><code>worker.py:90</code></td><td><b>进程级</b> actor：设备初始化、内存 profiling、模型加载、权重传输、sleep/wake、分布式环境。沟通 vLLM engine core 与 NPU 硬件</td></tr>
+<tr><td><code>NPUModelRunner</code></td><td><code>model_runner_v1.py:265</code></td><td><b>每步</b>执行引擎：持有 input batch、KV cache、attention backend，驱动 <code>execute_model</code>/<code>sample_tokens</code> 循环</td></tr>
+</table>
+</div>
+<p>推理步调用链（<code>worker.py:597</code> 起）：</p>
+<pre><code>NPUWorker.execute_model(scheduler_output)           # worker.py:597
+  → model_runner.execute_model(scheduler_output)     # model_runner_v1.py:1951
+      → _update_states()           # batch 状态、block table 提交
+      → _prepare_inputs()          # positions, query_start_loc, slot_mapping
+      → _build_attention_metadata()# AscendCommonAttentionMetadata
+      → _preprocess()              # input_ids → GPU
+      → _model_forward()           # NPU forward (set_ascend_forward_context)
+      → return ExecuteModelState (采样延迟到 sample_tokens)
+NPUWorker.sample_tokens(grammar_output)             # worker.py:662
+  → model_runner.sample_tokens()                     # model_runner_v1.py:2405</code></pre>
+
+<h3>15.2 关键模块地图</h3>
+
+<h4>核心运行时状态</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>npu_input_batch.py</code></td><td><code>NPUInputBatch(InputBatch)</code>：每步 batch 状态——token_ids、block 表、采样参数 (top_p/top_k/penalty)、LoRA mapping、prompt embeds</td></tr>
+<tr><td><code>block_table.py</code></td><td><code>BlockTable</code> + <code>MultiGroupBlockTable</code>：CPU/GPU 镜像 block 表 + slot-mapping 计算 + 混合 (kernel) block 分割 + PCP/DCP 虚拟 block 映射</td></tr>
+</table>
+</div>
+
+<h4>执行引擎</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>worker.py</code></td><td><code>NPUWorker(WorkerBase)</code>：进程生命周期、设备/内存初始化、模型加载、权重传输、sleep/wake、execute_model/sample_tokens 入口</td></tr>
+<tr><td><code>model_runner_v1.py</code></td><td><code>NPUModelRunner(GPUModelRunner)</code>：~5000 行核心——输入准备、attention metadata 构造、model forward、spec decode、EPLB、graph capture</td></tr>
+</table>
+</div>
+
+<h4>KV cache 管理</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>utils.py</code></td><td><code>copy_snapshot_to_gpu</code>（pinned→GPU async copy）+ <code>AscendKVBlockZeroer(KVBlockZeroer)</code>：Triton kernel 按绝对字节地址清零新分配的 KV block</td></tr>
+</table>
+</div>
+
+<h4>Graph / ACL 捕获</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>encoder_acl_graph.py</code></td><td><code>EncoderGraphParams</code>/<code>EncoderForwardContext</code>：ViT encoder FIA 任务的 per-token-budget ACL 图簿记</td></tr>
+<tr><td><code>v2/aclgraph_utils.py</code></td><td><code>ModelAclGraphManager</code>：v2 FULL-mode 图捕获管理器</td></tr>
+</table>
+</div>
+
+<h4>工具</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>kvcomp_utils.py</code></td><td><code>KVCompMetaData</code>、<code>initialize_kvcomp_metadata</code>、<code>bind_hashk_cache</code>：Hamming sparse (kvcomp) 状态——hash encoder、hamming 输出缓冲、绑定 hashk cache 到 attention 层</td></tr>
+<tr><td><code>pcp_utils.py</code></td><td><code>PCPManager</code>：Context Parallelism (PCP/DCP) 编排——slot mapping、sequence 切分、async spec-decode 重建</td></tr>
+</table>
+</div>
+
+<h4>v2 下一代栈 (<code>v2/</code>)</h4>
+<div class="card">
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>v2/model_runner.py</code></td><td>实验性 v2 runner；用 Ascend 变体替换 req_states/input_buffers；添加 MC2 MoE comm</td></tr>
+<tr><td><code>v2/block_table.py</code></td><td><code>AscendBlockTables(BlockTables)</code>：v2 block 表，重定义 slot_mappings 为 int32 适配 NPU reshape_and_cache</td></tr>
+<tr><td><code>v2/input_batch.py</code></td><td><code>AscendInputBuffers(InputBuffers)</code>：添加 seq_lens_cpu/seq_lens_np（NPU backend 需要 CPU seq_lens）</td></tr>
+<tr><td><code>v2/spec_decode/</code>, <code>v2/sample/</code></td><td>v2 speculators (dflash, dspark, eagle) + sampling kernels</td></tr>
+</table>
+</div>
+
+<h3>15.3 关键代码解析</h3>
+
+<h4>15.3.1 v1/v2 分叉点 — <code>worker.py:161-518</code></h4>
+<pre><code># worker.py:161-167 —— version-gated model-runner 选择
+self.use_v2_model_runner = self.vllm_config.use_v2_model_runner
+if self.use_v2_model_runner and vllm_version_is("0.24.0"):
+    # v2 仅在验证过的 vLLM main commit 上支持，否则回退 v1
+    self.use_v2_model_runner = False
+# worker.py:512-518 —— 运行时分支
+if self.use_v2_model_runner:
+    logger.warning("npu model runner v2 is in developing, some features doesn't work.")
+    self.model_runner = NPUModelRunnerV2(...)
+else:
+    self.model_runner = NPUModelRunner(...)</code></pre>
+
+<h4>15.3.2 <code>execute_model</code> 全流程 — <code>model_runner_v1.py:1951-2403</code></h4>
+<pre><code># model_runner_v1.py:2047 —— 延迟状态修正 + async 调度
+deferred_state_corrections_fn = self._update_states(scheduler_output)
+(attn_metadata, ...) = self._build_attention_metadata(...)
+hidden_states = self._model_forward(...)
+# batch 已 launch，现在等待前一步的修正、不破坏 async 调度
+if deferred_state_corrections_fn:
+    deferred_state_corrections_fn()
+return None   # None 表示采样延迟到 sample_tokens</code></pre>
+
+<h4>15.3.3 block table 提交与 CPU 重叠 — <code>model_runner_v1.py:874-1059</code></h4>
+<pre><code># model_runner_v1.py:874 —— 优化：先启动 block table 拷贝，与后续 CPU 操作重叠
+self.input_batch.block_table.commit_block_table(num_reqs)
+# model_runner_v1.py:1057-1059 —— query_start_loc 由累积 token 数构建
+self.query_start_loc.gpu[: num_reqs + 1].copy_(...)
+# slot mapping 由 BlockTable.compute_slot_mapping (Triton kernel) 内部计算</code></pre>
+
+<h4>15.3.4 <code>_build_attention_metadata</code>：worker → attention 的桥梁 — <code>model_runner_v1.py:3054-3374</code></h4>
+<pre><code># model_runner_v1.py:3181-3214 —— 构造 common metadata
+cm_base = AscendCommonAttentionMetadata(
+    query_start_loc=self.query_start_loc.gpu[: num_reqs_padded + 1],
+    seq_lens=self.seq_lens[:num_reqs_padded],
+    block_table_tensor=block_table_gid_0,
+    slot_mapping=slot_mapping_gid_0,
+    positions=self.positions,
+    positions_cpu=self._dsa_positions_cpu_buf if self.use_compress else None,
+    attn_state=self.attn_state, ...)
+# per-group 选择一个 builder 并调用 builder.build()：
+#   GDNAttentionMetadataBuilder / AscendDSAMetadataBuilder /
+#   AscendSFADCPMetadataBuilder / ...
+for builder in builders:
+    group_metadata = builder.build(cm_base, ...)</code></pre>
+<p>这是 <b>single most important connection point</b>：attention backend 需要的所有东西（block_table、slot_mapping、query_start_loc、seq_lens、positions）都经此流动。</p>
+
+<h4>15.3.5 attention backend 注入 — <code>model_runner_v1.py:4727-4803</code></h4>
+<pre><code># model_runner_v1.py:4752-4757 —— SFA indexer override
+if isinstance(layer_kv_cache_spec, AscendSFAIndexerCacheSpec):
+    from vllm_ascend.attention.indexer import AscendSFAIndexerBackend
+    attn_backend = AscendSFAIndexerBackend
+else:
+    attn_backend = layers[layer_name].get_attn_backend()
+# 稀疏模式标志在此设置：use_sparse(DSA index_topk), use_sparse_c8,
+# enable_hamming_sparse(kvcomp), use_compress(MLA compress_ratios)</code></pre>
+
+<h4>15.3.6 <code>BlockTable</code> 混合 kernel block + PCP/DCP — <code>block_table.py:62-87, 146-188</code></h4>
+<pre><code># block_table.py:62-87 —— hybrid (kernel) block 分割
+if kernel_sizes is None or kernel_sizes == [0]:
+    self.use_hybrid_blocks = False
+else:
+    selected_kernel_size = next(k for k in kernel_sizes if k&gt;0 and physical_block_size%k==0)
+    self.block_size = selected_kernel_size
+    self.blocks_per_phys_block = physical_block_size // logical_block_size
+    self.use_hybrid_blocks = (self.blocks_per_phys_block &gt; 1)
+# block_table.py:146-188 —— compute_slot_mapping 分派到 Triton kernel
+_compute_slot_mapping_kernel[(num_reqs + 1)](...)  # 或 _compute_pcp_dcp_slot_mapping (CP 场景)</code></pre>
+
+<h3>15.4 当前主要挑战</h3>
+
+<h4>15.4.1 v1 vs v2 共存</h4>
+<div class="card">
+<table>
+<tr><th>挑战</th><th>证据</th></tr>
+<tr><td>两套并行 runner：v1 (生产) + v2 (实验)</td><td><code>worker.py:513</code> "v2 is in developing, some features doesn't work"</td></tr>
+<tr><td>v2 重定义 AscendBlockTables、AscendInputBuffers —— 重复了 v1 的 block-table 逻辑</td><td><code>v2/block_table.py:25</code>, <code>v2/input_batch.py:31</code></td></tr>
+<tr><td>v2 README 列出 5 项 "Gaps with vLLM (To Be Addressed)"</td><td>cos/sin、KV cache 对齐、torch_npu_graph_wrapper...</td></tr>
+</table>
+</div>
+
+<h4>15.4.2 复杂度/条件分支热点</h4>
+<div class="card">
+<table>
+<tr><th>热点</th><th>证据</th></tr>
+<tr><td><code>execute_model</code> 450 行、深层嵌套：ngram_gpu copy / async deepcopy / PCP / mamba align / compress/DSA positions / cudagraph padding / PP pass-through</td><td><code>model_runner_v1.py:1951-2403</code></td></tr>
+<tr><td>Spec decode <code>propose_draft_token_ids</code> ~250 行，ngram/suffix/medusa/eagle/draft_model 各不同</td><td><code>model_runner_v1.py:1670-1917</code></td></tr>
+<tr><td>DP 同步 <code>_sync_metadata_across_dp</code> 即使在 eager 模式也不能跳过</td><td><code>model_runner_v1.py:673</code> FIXME: "harms performance"</td></tr>
+</table>
+</div>
+
+<h4>15.4.3 与上游 vLLM 的关系（override / patch 点）</h4>
+<div class="card">
+<table>
+<tr><th>维度</th><th>证据</th></tr>
+<tr><td>Ascend 覆写 ~30 个方法; adapt_patch() 做 monkey-patch</td><td><code>worker.py:109-111</code></td></tr>
+<tr><td>weight-loader patch：移除 UnquantizedLinearMethod</td><td><code>worker.py:155-159</code></td></tr>
+<tr><td><code>vllm_version_is("0.24.0")</code> gates 出现在多个文件</td><td><code>worker.py:162</code>, <code>model_runner_v1.py:463</code>, <code>block_table.py:170</code></td></tr>
+</table>
+</div>
+
+<h4>15.4.4 性能关键路径</h4>
+<div class="card">
+<table>
+<tr><th>路径</th><th>技术</th><th>证据</th></tr>
+<tr><td>Async H2D</td><td>pinned CPU→GPU non-blocking copy</td><td><code>utils.py:15-18</code></td></tr>
+<tr><td>Block table commit overlap</td><td>先启动拷贝，与 CPU 重叠</td><td><code>model_runner_v1.py:874</code></td></tr>
+<tr><td>Multi-stream async spec decode</td><td>side stream + event 重叠 D2H 拷贝</td><td><code>model_runner_v1.py:1647-1667</code></td></tr>
+<tr><td>Graph capture</td><td>capture_model + ACL graph replay</td><td><code>model_runner_v1.py:5035</code>, <code>encoder_acl_graph.py</code></td></tr>
+<tr><td>Microbatching (DBO)</td><td>ubatch slices，禁用 cascade attention</td><td><code>model_runner_v1.py:2109</code></td></tr>
+</table>
+</div>
+
+<h4>15.4.5 TODO / FIXME / 版本门控证据（节选）</h4>
+<pre><code>model_runner_v1.py:673    FIXME: DP allreduce "harms performance."
+model_runner_v1.py:1995   "deepcopy is expensive when there is a large number of requests, optimize it later."
+model_runner_v1.py:1669   "Once the PCP features are complete, it will fully inherit the classes from the VLLM community."
+model_runner_v1.py:3892   "refactor the logic of attention."
+encoder_acl_graph.py:41   TODO: Fully support upstream dual-path encoder graph on Ascend.
+kvcomp_utils.py:48        TODO: support multiple hashk caches for the same layer index later.
+model_runner_v1.py:3573+   multiple "temporary workaround" / "remove when FIA merges" notes.</code></pre>
+
+<h3>15.5 worker 与两条查表路径的衔接</h3>
+<p>两条路径都消费 worker/ 准备的<b>公共输入</b>：<code>block_table_tensor</code>、<code>slot_mapping</code>、<code>query_start_loc</code>、<code>positions</code>、<code>seq_lens</code>。分歧点在 <code>initialize_attn_backend</code> 选择的 backend。</p>
+<div class="card">
+<table>
+<tr><th>输入</th><th>由谁准备</th><th>被谁消费</th></tr>
+<tr><td><code>block_table_tensor</code></td><td><code>_build_attention_metadata</code> ← <code>BlockTable.get_device_tensor</code></td><td>DSA/SFA indexer + kvcomp hamming</td></tr>
+<tr><td><code>slot_mapping</code></td><td><code>BlockTable.compute_slot_mapping</code> (Triton kernel)</td><td>两条路径的 <code>reshape_and_cache</code></td></tr>
+<tr><td><code>query_start_loc</code></td><td><code>_prepare_inputs</code> (<code>model_runner_v1.py:1057-1059</code>)</td><td>indexer top-k + kvcomp query lens</td></tr>
+<tr><td><code>positions</code> / <code>positions_cpu</code></td><td><code>_prepare_inputs</code>；DSA positions 在 <code>model_runner_v1.py:2205</code></td><td>DSA indexer (CPU), all backends (GPU)</td></tr>
+<tr><td><code>seq_lens</code></td><td><code>_prepare_inputs</code> (<code>model_runner_v1.py:1076-1081</code>)</td><td>attention metadata builders</td></tr>
+</table>
+</div>
+
+<h3>15.6 关键文件:行速查</h3>
+<pre><code>worker.py:90   NPUWorker · :597 execute_model · :512 v1/v2 fork
+model_runner_v1.py:265 NPUModelRunner · :853 _prepare_inputs · :1951 execute_model
+  · :3054 _build_attention_metadata · :4727 initialize_attn_backend · :5035 capture_model
+npu_input_batch.py:33  NPUInputBatch
+block_table.py:14  BlockTable · :329 MultiGroupBlockTable
+utils.py:60        AscendKVBlockZeroer
+kvcomp_utils.py:492 KVCompMetaData · :516 initialize_kvcomp_metadata
+pcp_utils.py:75    PCPManager
+encoder_acl_graph.py:38  EncoderGraphParams
+v2/model_runner.py:58 · v2/block_table.py:25 · v2/input_batch.py:31</code></pre>
+
+<p class="src">溯源：Explore agent §1-5 全节。核心证据 <code>worker.py:90,161,512,597</code> · <code>model_runner_v1.py:265,853,874,1057,1951,2047,3054,3181,4727</code> · <code>npu_input_batch.py:33,113</code> · <code>block_table.py:14,62,146,329</code></p>
+
+<!-- 16. 三条查表路径对比（DSA / SFA / kvcomp Hamming） -->
+<h2 id="t16">16. 三条查表路径对比（DSA / SFA / kvcomp Hamming）</h2>
+<p>本章系统对比 vllm_ascend 中 <b>所有 KV-cache 查表/索引路径</b>。"查表方法"= (a) 决定每个 query token 应 attend 哪些 KV block 的机制 + (b) 该选择如何驱动 paged KVCache gather。</p>
+<div class="highlight">
+<b>核心发现：3 种活跃路径、但只有 2 种真正独立的 indexer 机制。</b>路径 A (DSA) 与路径 C (SFA) 共享同一 indexer <i>数学</i>（lightning indexer = 量化点积 + learned weights → top-k），仅 C++ op wrapper 和 gather kernel 不同。真正与两者都不同的是路径 B（kvcomp Hamming 哈希）。
+</div>
+
+<h3>16.1 路径 A — DSA Lightning Indexer（确认）</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>内容</th></tr>
+<tr><td><b>Indexer kernel</b></td><td><code>torch.ops._C_ascend.npu_vllm_quant_lightning_indexer</code>（+ <code>_metadata</code> builder）</td></tr>
+<tr><td><b>位置</b></td><td><code>attention/dsa_v1.py:2607</code>（<code>_indexer_qli</code>，prefill/decode 共用）</td></tr>
+<tr><td><b>选择准则</b></td><td>int8 量化点积（learned <code>wq_b(q_c)</code> + q/k 均 <code>npu_dynamic_quant</code>）+ learned per-head <code>weights_proj(x)</code> → block 级 top-k</td></tr>
+<tr><td><b>Gather kernel</b></td><td><code>torch.ops._C_ascend.npu_sparse_attn_sharedkv</code>（<code>attention/dsa_v1.py:2390</code>）</td></tr>
+<tr><td><b>Gather 输入</b></td><td><code>cmp_sparse_indices=compress_topk_idxs</code> + <code>cmp_block_table=compressor.block_table</code> + <code>sas_metadata</code></td></tr>
+<tr><td><b>启用条件</b></td><td>model 有 <code>compress_ratios</code> → <code>use_compress=True</code>；<code>platform.py:795</code>；<code>deepseek_v4.py:93</code>。<b>支持 C8</b></td></tr>
+<tr><td><b>索引结构</b></td><td><b>两张</b> paged block 表：<code>ori_block_table</code> (SWA) + <code>cmp_block_table</code> (compressed)。两级寻址：<code>query_start_loc</code> → 行 → top-k → 物理块</td></tr>
+<tr><td><b>应用场景</b></td><td><b>DeepSeek-V3/V4 风格 MLA 模型 WITH 压缩</b>（<code>compress_ratios ∈ {4,128}</code> + SWA 滑动窗口）</td></tr>
+</table>
+</div>
+<pre><code># attention/dsa_v1.py:2607 —— 通用 _indexer_qli（prefill & decode）
+topk_idxs, _ = torch.ops._C_ascend.npu_vllm_quant_lightning_indexer(
+    query=q, key=indexer_k_cache,
+    weights=DeviceOperator.prepare_dsa_indexer_weights(weights),
+    query_dequant_scale=..., key_dequant_scale=...,
+    actual_seq_lengths_query=qlens, actual_seq_lengths_key=kvlens,
+    block_table=block_table, metadata=qli_metadata,
+    layout_query="TND", layout_key="PA_BSND",
+    sparse_count=self.index_topk, sparse_mode=3,
+    cmp_ratio=4, return_value=False)
+# attention/dsa_v1.py:2390 —— gather（compress_ratio==4 的 decode 路径）
+attn_output = attn_op(
+    q, ori_kv=swa_kv_cache, cmp_kv=compress_kv_cache,
+    cmp_sparse_indices=compress_topk_idxs,
+    ori_block_table=swa_decode_metadata.block_table,
+    cmp_block_table=compressor_decode_metadata.block_table,
+    cu_seqlens_q=actual_seq_lengths_query, seqused_kv=actual_seq_lengths_key,
+    metadata=compressor_decode_metadata.sas_metadata,
+    layout_q="TND", layout_kv="PA_ND", cmp_mask_mode=3, ...)[0]</code></pre>
+
+<h3>16.2 路径 B — kvcomp_attn Hamming Sparse（确认）</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>内容</th></tr>
+<tr><td><b>Indexer kernel</b></td><td><code>HashEncoder.compute_hash</code>（<code>sign(xW)</code> + <code>npu_sign_bits_pack</code>）→ <code>npu_hamming_dist_top_k</code></td></tr>
+<tr><td><b>位置</b></td><td><code>worker/kvcomp_utils.py:423-460</code>（HashEncoder）+ <code>attention/kvcomp_attn/attention_utils.py:123</code>（hamming top-k）</td></tr>
+<tr><td><b>选择准则</b></td><td>query/block <b>签名码的汉明距离</b>（bit 差异数）→ kernel 返回<b>重排后的 new_block_table</b>（不是稀疏 index tensor）</td></tr>
+<tr><td><b>Gather kernel</b></td><td><code>npu_fused_infer_attention_score</code> / <code>_v2</code>（标准 paged FIA！）—— hamming 不直接调 sparse 重排 kernel，而是<b>替换 block_table</b></td></tr>
+<tr><td><b>启用条件</b></td><td><code>additional_config.enable_hamming_sparse</code>（默认关）+ <code>sparse_json</code>；<b>不能</b>是 spec decode；<b>不支持 C8</b>（<code>attention_utils.py:153</code> assert）。仅在 <b>decode</b> 生效</td></tr>
+<tr><td><b>索引结构</b></td><td>复用标准 paged <code>block_table</code>（被 hamming 重写）+ per-request <code>seq_lens_from_hamming</code></td></tr>
+<tr><td><b>应用场景</b></td><td><b>标准 MLA 模型（无压缩），用户通过配置开启 hamming 检索</b>。硬件友好（XOR/popcount），精度有限</td></tr>
+</table>
+</div>
+<pre><code># worker/kvcomp_utils.py:452-460 —— compute_hash: sign(x @ W) 二值化 + bit-pack
+xW = torch.matmul(x_flat, self.hash_weights)       # [N, hash_bits]
+packed = torch.ops._C_ascend.npu_sign_bits_pack(xW_flat, size=1)  # 8 bit → 1 uint8
+# attention/kvcomp_attn/attention_utils.py:123 —— 五步数据流
+# ① hashk = hash_encoder.compute_hash(key)
+# ② npu_reshape_and_cache_bnsd(hashk_op, hashk_cache_op, slot_mapping, ...)
+# ③ hashq = hash_encoder.compute_hash(query)
+# ④ new_block_table = npu_hamming_dist_top_k(
+#      hashq_op, hashk_cache_op, topk_for_hamming, seq_lens, ...,
+#      block_tables_for_hamming, valid_query_mask, hamming_output)
+# ⑤ 把 new_block_table 传给标准 npu_fused_infer_attention_score
+#    （attention/attention_v1.py:769-771 在 get_kvcomp_decode_params 中替换）</code></pre>
+
+<h3>16.3 路径 C — SFA (Sparse Flash Attention)（第三种活跃路径，但不是新 indexer 机制）</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>内容</th></tr>
+<tr><td><b>Indexer kernel</b></td><td><code>torch.ops._C_ascend.npu_lightning_indexer</code> / <code>npu_lightning_indexer_quant</code>（+ <code>torch_npu.npu_lightning_indexer</code> 给 glm_moe_dsa）</td></tr>
+<tr><td><b>位置</b></td><td><code>device/device_op.py:576,606</code>，由 <code>AscendSFAImpl._execute_sparse_flash_attention_process</code> 驱动（<code>attention/sfa_v1.py:1849</code>）</td></tr>
+<tr><td><b>选择准则</b></td><td><b>与路径 A 相同</b>（量化点积 + learned weights → top-k）—— 同一 lightning indexer 数学，不同 C++ op wrapper</td></tr>
+<tr><td><b>Gather kernel</b></td><td>非 C8：<code>npu_sparse_flash_attention</code>（<code>device/device_op.py:656</code>）；C8：<code>npu_kv_quant_sparse_flash_attention</code>（<code>device/device_op.py:687</code>）</td></tr>
+<tr><td><b>启用条件</b></td><td>model 有 <code>index_topk</code> 且<b>无</b> <code>compress_ratios</code>；<code>platform.py:794</code>；<code>utils.py:111</code>。<b>支持 C8</b>（packed KV）</td></tr>
+<tr><td><b>索引结构</b></td><td><b>单张</b> block 表 + sparse <code>topk_indices</code>（<code>sparse_indices</code>）</td></tr>
+<tr><td><b>应用场景</b></td><td><b>有原生稀疏注意力（index_topk）但无压缩的 MLA 模型</b></td></tr>
+</table>
+</div>
+<pre><code># device/device_op.py:606 —— 标准 SFA indexer variant
+topk_indices, _ = torch.ops._C_ascend.npu_lightning_indexer(
+    query=q_li, key=kv_cache[indexer_cache_idx], weights=weights,
+    block_table=attn_metadata.block_table,
+    layout_query="TND", layout_key="PA_BSND", sparse_count=2048, sparse_mode=3, ...)
+# device/device_op.py:656 —— 非 C8 gather
+attn_output, _, _ = torch.ops._C_ascend.npu_sparse_flash_attention(
+    query=ql_nope, key=kv, value=kv, sparse_indices=topk_indices,
+    block_table=block_table, query_rope=q_pe, key_rope=key_rope,
+    layout_query="TND", layout_kv="PA_BSND", sparse_mode=3, attention_mode=2, ...)
+# device/device_op.py:687 —— C8 packed-KV gather
+attn_output = torch_npu.npu_kv_quant_sparse_flash_attention(
+    query=cat([ql_nope,q_pe]), key=kv, ..., quant_scale_repo_mode=1, key_quant_mode=2, ...)</code></pre>
+
+<h3>16.4 对比总表</h3>
+<div class="card">
+<table>
+<tr><th></th><th>路径 A — DSA</th><th>路径 B — kvcomp Hamming</th><th>路径 C — SFA</th></tr>
+<tr><td><b>Indexer 机制</b></td><td>Lightning（量化点积 + learned w）</td><td><b>Hamming 哈希（sign(xW)）</b></td><td>Lightning（同 A，不同 wrapper）</td></tr>
+<tr><td><b>Indexer kernel</b></td><td><code>npu_vllm_quant_lightning_indexer</code></td><td><code>HashEncoder</code> + <code>npu_hamming_dist_top_k</code></td><td><code>npu_lightning_indexer</code> / <code>_quant</code></td></tr>
+<tr><td><b>选择准则</b></td><td>量化点积 + learned weights</td><td>汉明距离（bit 差异）</td><td>量化点积 + learned weights</td></tr>
+<tr><td><b>Gather kernel</b></td><td><code>npu_sparse_attn_sharedkv</code></td><td><code>npu_fused_infer_attention_score</code>（标准 paged FIA）</td><td><code>npu_sparse_flash_attention</code> / C8 <code>_quant_</code></td></tr>
+<tr><td><b>索引输出形态</b></td><td><code>cmp_sparse_indices</code> + 两张 block 表</td><td><b>重排后的 block_table</b>（非稀疏 index）</td><td>sparse <code>topk_indices</code> + 单张 block 表</td></tr>
+<tr><td><b>启用条件</b></td><td>有 <code>compress_ratios</code></td><td><code>enable_hamming_sparse</code>（默认关）</td><td>有 <code>index_topk</code> 无 <code>compress_ratios</code></td></tr>
+<tr><td><b>支持 C8</b></td><td>✅</td><td>❌（明确 assert 不支持）</td><td>✅</td></tr>
+<tr><td><b>生效阶段</b></td><td>Prefill + Decode</td><td><b>仅 Decode</b>（prefill 只写 hash cache）</td><td>Prefill + Decode</td></tr>
+<tr><td><b>应用场景</b></td><td><b>DeepSeek V3/V4 MLA + 压缩</b></td><td><b>标准 MLA，配置开启 hamming</b></td><td><b>原生稀疏 attention（index_topk）无压缩</b></td></tr>
+</table>
+</div>
+
+<h3>16.5 为什么是两套 indexer 而不是三套？</h3>
+<p>A 与 C 的区别<b>仅在 C++ op wrapper 和 gather kernel</b>——底层 indexer 数学相同（learned-query 与量化 KV cache 的点积 top-k）。A-vs-C 的判别器纯粹是 <code>compress_ratios</code>：</p>
+<pre><code>utils.py:111 —— model_uses_sfa_sparse:
+    hasattr(index_topk) AND NOT hasattr(compress_ratios) → SFA (路径 C)
+models/deepseek_v4.py:91 —— hasattr(compress_ratios) → DSA (路径 A)</code></pre>
+<p>模型层的 <code>Indexer</code> 类（<code>models/deepseek_v4.py:525</code>）只是<b>占位 plumbing</b>（其 <code>forward()</code> 返回 None，仅持有 <code>wq_b</code>/<code>weights_proj</code>/<code>k_cache</code> 权重），真正的索引全在 attention backend 完成。</p>
+
+<h3>16.6 决定三条路径差异的两个维度</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>分离的路径</th><th>差异本质</th></tr>
+<tr><td><b>Indexer 机制</b></td><td>A/C（Lightning） vs B（Hamming）</td><td>连续值量化点积 vs 离散二值汉明距离 —— 精度 vs 效率的权衡</td></tr>
+<tr><td><b>Gather kernel</b></td><td>A（sharedkv 双表） vs C（sparse_flash 单表） vs B（标准 dense paged）</td><td>A 区分 SWA/压缩两套 block 表；C 单表 + sparse index；B 完全不感知稀疏、只拿到重排表</td></tr>
+<tr><td><b>C8 兼容性</b></td><td>A、C 支持 vs B 不支持</td><td>B 明确 assert 不支持 C8（汉明距离在量化域无意义）</td></tr>
+</table>
+</div>
+<p>这三条路径反映了 vllm_ascend 的<b>架构演进</b>：Hamming（较早，硬件友好但精度有限）→ Lightning indexer（DeepSeek-V4 风格原生稀疏，可学习，当前主力）。两者通过配置互斥，共享 paged KVCache / block_table 基础设施。</p>
+
+<h3>16.7 候选路径排除</h3>
+<div class="card">
+<table>
+<tr><th>候选</th><th>结论</th><th>原因</th></tr>
+<tr><td><code>ops/gdn.py</code> / <code>ops/triton/kda/*</code> (KDA, fused_recurrent_kda_fwd)</td><td>超出 scope</td><td>Mamba / Gated Delta Rule 等线性循环模型，用 ssm_state + recurrent 更新，<b>不用 paged KV block gather</b></td></tr>
+<tr><td>Spec decode <code>spec_decode/</code></td><td>非独立</td><td>proposer 通过 <code>_maybe_share_topk_indices</code> (<code>llm_base_proposer.py:531</code>) <b>复用 target 模型的稀疏索引</b>，无新 indexer</td></tr>
+<tr><td><code>npu_fusion_attention</code></td><td>非查表方法</td><td>fp32 fallback dense attention，无 block 选择</td></tr>
+<tr><td><code>fa3_v1.py</code> / dense <code>npu_fused_infer_attention_score</code></td><td>基线 dense</td><td>full paged attention，非稀疏</td></tr>
+</table>
+</div>
+
+<p class="src">溯源：Explore agent §A/B/C 全节。关键证据 —— 路径 A: <code>attention/dsa_v1.py:2607,2390</code> · 路径 B: <code>worker/kvcomp_utils.py:366-460</code>, <code>attention/kvcomp_attn/attention_utils.py:81-142,153</code>, <code>attention/attention_v1.py:769,1148</code> · 路径 C: <code>device/device_op.py:576,606,656,687</code>, <code>attention/sfa_v1.py:1849</code>, <code>utils.py:111</code>, <code>platform.py:794-795</code>, <code>models/deepseek_v4.py:525</code></p>
+
+<!-- 17. 多级 cache 分离机制 -->
+<h2 id="t17">17. 多级 cache 分离机制（四个变量的函数意义与分离原因）</h2>
+<p>DSA 路径里有四个看似重复的 cache 变量：<b><code>compressor_attn</code>、<code>compressor_kv_state</code>、<code>indexer.compressor.state_cache</code>、<code>indexer.k_cache</code></b>。它们不是冗余，而是 DSA <b>多级 cache 流水线</b>的物理分离。</p>
+
+<h3>17.1 命名纠正：代码注释里的真实语义</h3>
+<p>代码注释明确了 metadata 的真实含义：</p>
+<pre><code># dsa_v1.py:1840 —— 5 段 metadata 的实际语义（排序后）
+# sorted keys: [attn, compressor.state_cache, indexer.compressor.state_cache, indexer.k_cache, swa_cache]
+#                 [0]         [1]                    [2]                       [3]         [4]</code></pre
+<div class="card">
+<table>
+<tr><th>变量名（代码中）</th><th>实际语义</th><th>metadata 位置</th></tr>
+<tr><td><code>compressor_attn_metadata</code></td><td><b>主 DSA attention 的 metadata</b>（消费压缩 KV 的那个 attention）</td><td>[0] "attn"</td></tr>
+<tr><td><code>compressor_kv_state_metadata</code></td><td><b>主 compressor 的 state cache 的 metadata</b>（压缩器写入目标）</td><td>[1] "compressor.state_cache"</td></tr>
+<tr><td><code>indexer.compressor.state_cache</code></td><td><b>indexer 内部 compressor 的 state cache</b>（indexer 先压缩到的中间态）</td><td>[2] "indexer.compressor.state_cache"（解包时被跳过）</td></tr>
+<tr><td><code>indexer.k_cache</code></td><td><b>indexer 的压缩 key cache</b>（lightning indexer 评分时读取的目标）</td><td>[3] "indexer.k_cache"</td></tr>
+</table>
+</div>
+
+<h3>17.2 对应的 cache 元组布局</h3>
+<p><code>ops/dsa.py:228-287</code> 的 <code>_build_kv_cache</code> 把各层 cache 组装成 6-7 元组：</p>
+<div class="card">
+<table>
+<tr><th>槽位</th><th>变量</th><th>角色</th></tr>
+<tr><td><code>[0]</code></td><td><code>compress_kv_cache</code></td><td>主压缩 KV（attention 读取）</td></tr>
+<tr><td><code>[1]</code></td><td><code>swa_kv_cache</code></td><td>滑动窗口 KV</td></tr>
+<tr><td><code>[2]</code></td><td><code>state_cache</code></td><td>主 compressor 写入的 state cache</td></tr>
+<tr><td><code>[3]</code></td><td><code>indexer_state_cache</code></td><td>indexer 内部 compressor 写入的 state cache</td></tr>
+<tr><td><code>[4]</code></td><td><code>indexer_k_cache</code></td><td>indexer 的压缩 key cache（评分读取目标）</td></tr>
+<tr><td><code>[5]</code></td><td><code>indexer_scale_cache</code></td><td>indexer 量纲 scale cache（反量化用）</td></tr>
+<tr><td><code>[6]</code></td><td><code>indexer_full_cache</code></td><td>A5 专用（仅 A5 设备）</td></tr>
+</table>
+</div>
+<p><code>device/device_op.py:880-896</code> 的 <code>unpack_dsa_forward_kv_cache</code> / <code>unpack_dsa_indexer_kv_cache</code> 把该元组解包给 forward 使用。</p>
+
+<div class="highlight">
+<b>核心结论先行：compress_kv_cache 和 state_cache 是两份不同的物理显存（不是同一 tensor 的两个 view）</b>。证据：<code>ops/dsa.py:239-240</code> 的 <code>_build_kv_cache</code> 分别从两个独立模块取 cache：<br>
+<code>compress_kv_cache = self.dsa_attn.kv_cache</code>（主 attention 层自己的 KV cache）<br>
+<code>state_cache = self.compressor.state_cache.kv_cache</code>（Compressor 模块的 AscendCompressorStateCache，<code>models/deepseek_v4.py:104-656</code>）<br>
+两者通过不同的 KVCacheSpec 分配物理页，维度不同（state_cache 的 head_size=state_dim=2×coff×head_dim，是累加态；compress_kv_cache 的 head_size=标准 MLA head_dim），block_size 也不同（<code>_dsv4_block_sizes()</code> 给出不同槽位的 block 配置）。
+</div>
+
+<h3>17.3 逐变量解读：为什么"写"和"读"必须分表</h3>
+
+<h4>（1）compressor_attn_metadata — 读端：主 attention 如何消费压缩 KV</h4>
+<p><b>命名陷阱</b>：听起来像"压缩器的 attention"，实际上是<b>"消费压缩 KV 的主 attention"</b>。这个 metadata 的 <code>block_table</code> 指向 <code>compress_kv_cache</code>（主 attention 层自己的 KV cache），驱动最终那个"同时 attend SWA + 压缩 KV"的主 sparse attention：</p>
+<pre><code># dsa_v1.py:2081 —— 主 attention 读 compress_kv_cache
+attn_output = attn_op(
+    q, ori_kv=swa_kv_cache,
+    cmp_kv=compress_kv_cache,                          # ← 读：主 attention 自己的 cache
+    cmp_sparse_indices=compress_topk_idxs,
+    ori_block_table=swa_prefill_metadata.block_table,
+    cmp_block_table=compressor_prefill_metadata.block_table,  # ← 读端 block_table
+    metadata=compressor_prefill_metadata.sas_metadata,        # ← 读端 sas_metadata
+    cmp_mask_mode=3, ori_mask_mode=4, ...)[0]</code></pre>
+<p><b>读端 block_table 形状</b>：行数 = <code>num_prefill_tokens</code>（原始 token 数 N）。主 attention 在"<b>原始 token 粒度</b>"上做 top-k 选 block——每个原始位置选 index_topk 个压缩 block 来 attend。读端请求边界 <code>cu_seqlens_q = actual_seq_lengths_query</code>（原始 token 的累积长度）。</p>
+<p><code>compress_common_attn_metadata = compressor_attn_metadata</code>（<code>dsa_v1.py:1844</code>）确认它是"common"（共享）attention 路径。</p>
+
+<h4>（2）compressor_kv_state_metadata — 写端：主 compressor 如何产生压缩态</h4>
+<p>这个 metadata 的 <code>block_table</code> 指向 <code>state_cache</code>（Compressor 的 <code>AscendCompressorStateCache</code>，<b>物理上不同于 compress_kv_cache</b>）。主 compressor 在 prefill 时<b>逐步累加</b>地把 token KV 压缩写入 state_cache：</p>
+<pre><code># dsa_v1.py:2003-2022 —— 主 compressor 写入 state_cache（累加态）
+compressed_kv = torch.ops._C_ascend.compressor(
+    hidden_states,                     # 当前 token 的 hidden state
+    self.compressor_wkv.weight,
+    self.compressor_wgate.weight,
+    state_cache.squeeze(-2),           # ← inout：累加态（kernel 内部读写 state_cache 做递归压缩）
+    self.compressor_ape,               # 绝对位置编码参数
+    self.compressor_norm.weight,
+    compress_sin, compress_cos,
+    state_block_table=compressor_state_prefill_metadata.block_table,  # ← 写端 block_table
+    start_pos=common_prefill_metadata.start_pos,
+    cmp_ratio=self.compress_ratio,     # 每 ratio 个 token 压缩成 1 个 entry
+    cache_mode=1, ...)                 # cache_mode=1 = 累加模式</code></pre>
+<p><b>写端 block_table 形状</b>：行数 = <code>num_compressed_tokens ≈ N // ratio + R</code>（<code>_num_compressor_metadata_rows</code>，<code>dsa_v1.py:530-544</code>）。<b>这就是写/读分表的根本原因：写端在"压缩粒度"（行数少），读端在"原始粒度"（行数多）。</b></p>
+
+<h4>为什么"写"和"读"不能合并成一张表？——关键算法差异</h4>
+<div class="card">
+<table>
+<tr><th>维度</th><th>写端 (compressor_kv_state)</th><th>读端 (compressor_attn)</th></tr>
+<tr><td><b>物理 cache</b></td><td><code>state_cache</code>（AscendCompressorStateCache，head_size=state_dim 大）</td><td><code>compress_kv_cache</code>（主 attention KV cache，head_size=标准 head_dim）</td></tr>
+<tr><td><b>block_table 行数</b></td><td><code>N // ratio + R</code>（压缩粒度，行数少）</td><td><code>N</code>（原始粒度，行数多）</td></tr>
+<tr><td><b>block_size</b></td><td>由 <code>_dsv4_block_sizes()</code> 决定（state cache 用更大的逻辑块存累加态）</td><td>标准 <code>cache_config.block_size</code>（如 128）</td></tr>
+<tr><td><b>slot_mapping</b></td><td><code>compress_slot_mapping</code>（2D [block_idx, offset]，按压缩位置寻址）</td><td>无独立 slot_mapping（读端走 paged block_table + paged attention gather）</td></tr>
+<tr><td><b>操作语义</b></td><td><b>累加写入</b>：kernel 递归更新 state_cache，每 ratio 个 token 产生 1 个 entry</td><td><b>选择性读取</b>：按 top-k indices gather 特定 block 做 attention</td></tr>
+<tr><td><b>访问模式</b></td><td>顺序写入（prefill 逐 token 流）</td><td>随机访问（按稀疏索引 gather 任意 block）</td></tr>
+</table>
+</div>
+<p><b>本质原因</b>：压缩器是<b>状态ful 的递归操作</b>——<code>state_cache</code> 是<b>累加态</b>（类似 RNN hidden state），每个新 token 到来时 kernel 在 state_cache 上做读-改-写（<code>cache_mode=1</code>）。这个累加态<b>必须单独存在</b>——不能在原始 token 粒度的 compress_kv_cache 上直接累加，否则会破坏正在被 attention 读取的已完成压缩数据。写完后，再通过 <code>dsa_kv_compress_scatter(compress_kv_cache, compressed_kv, ...)</code>（<code>dsa_v1.py:2040</code>）把"压缩好的最终结果"scatter 到 compress_kv_cache 的对应位置，供主 attention 读取。<b>state_cache 是草稿纸（写端），compress_kv_cache 是成品库（读端）</b>。</p>
+
+<h4>（3）indexer.compressor.state_cache（indexer_state_cache） — indexer 的写端</h4>
+<p><b>indexer 自己有独立的 compressor</b>（独立权重 <code>indexcom_wkv</code>/<code>indexcom_wgate</code>）。这个 compressor 把 token 压缩写入 <code>indexer_state_cache</code>（元组 [3]），作为 indexer 内部用于评分的累加态：</p>
+<pre><code># dsa_v1.py:2502-2521 —— indexer 的内部 compressor 写入 indexer_state_cache
+kv = torch.ops._C_ascend.compressor(
+    x,
+    self.indexcom_wkv.weight,        # ← indexer 专用压缩权重（与主 compressor_wkv 不同！）
+    self.indexcom_wgate.weight,
+    indexer_state_cache.squeeze(-2),  # ← inout：indexer 自己的累加态
+    self.indexcom_ape, self.indexcom_norm.weight,
+    state_block_table=kv_block_table, # ← indexer_state_metadata 的 block_table
+    cmp_ratio=self.compress_ratio, cache_mode=1, ...)</code></pre>
+<p><b>为什么不能合并到 (2)</b>：主 compressor 和 indexer compressor 是<b>两次独立的压缩递归</b>。主 compressor（<code>compressor_wkv</code>）给主 attention 提供压缩 KV；indexer compressor（<code>indexcom_wkv</code>）给 lightning indexer 提供用于 top-k 评分的 key 表示。两套权重训练目的不同、数值不同，<b>各自维护独立累加态</b>——合并会破坏递归状态，导致压缩结果错误。</p>
+
+<h4>（4）indexer.k_cache（indexer_k_cache） — indexer 的读端</h4>
+<p>这是 <b>lightning indexer 的评分目标</b>。indexer 从 indexer_state_cache（累加态）进一步派生出量化的 <code>indexer_k_cache</code>（元组 [4]）+ scale cache（元组 [5]），作为评分 key：</p>
+<pre><code># dsa_v1.py:2607-2628 —— lightning indexer 评分（读端）
+topk_idxs, _ = torch.ops._C_ascend.npu_vllm_quant_lightning_indexer(
+    query=q, key=indexer_k_cache,            # ← 读端：indexer 的量化 key cache
+    weights=...,                             # indexer 的 learned per-head weights
+    block_table=block_table,                 # indexer_scale_metadata 的 block_table（读端）
+    query_dequant_scale=q_scale,
+    key_dequant_scale=indexer_scale_cache,   # ← 读端量纲（元组 [5]）
+    metadata=qli_metadata,
+    sparse_count=self.index_topk, sparse_mode=3, ...)</code></pre>
+<p><b>为什么 (3) 和 (4) 不能合并</b>：(3) <code>indexer_state_cache</code> 是 indexer compressor 的<b>累加态</b>（fp32 高精度，head_size=2×coff×head_dim 大），<b>在压缩过程中反复读写</b>；(4) <code>indexer_k_cache</code> 是从累加态<b>派生出的量化评分 key</b>（int8/fp8 精度，head_size=标准 head_dim 小），<b>只读</b>。两者的物理存储格式、精度、block_table 行数都不同。混淆会让累加态被量化破坏，压缩递归无法正确进行。</p>
+
+<h3>17.4 流水线视角：为什么必须分离</h3>
+<div class="flow">
+token ──────────────────────────────────────────────────────────────────→
+  │
+  ├──→ [主 compressor] ──→ state_cache[2] ──→ compress_kv_cache[0]
+  │       (压缩写入)         ↑                    ↑
+  │    compressor_kv_state     |                    │
+  │    _metadata.block_table ──┘                    │
+  │    (决定写哪)                                     │
+  │                                                  │
+  │    [主 attention 读] ←──────────────────────────┘
+  │    compressor_attn_metadata.block_table (决定读哪)
+  │    + cmp_sparse_indices (决定读哪些 block)
+  │
+  ├──→ [indexer 内部 compressor] ──→ indexer_state_cache[3]
+  │       (压缩写入)                    ↑
+  │    indexer_kv_state_metadata        │
+  │    .block_table ───────────────────┘
+  │
+  │    indexer.k_cache = 从 indexer_state_cache 派生/量化出的评分 key cache
+  │
+  └──→ [lightning indexer 评分] ──→ topk_idxs
+       indexer_k_cache[4] (读)      (输出: 主 attention 该看哪些 block)
+       indexer_kv_scale_metadata
+       .block_table (决定读哪)
+       indexer_scale_cache[5] (反量化)
+</div>
+
+<h3>17.5 分离的根本原因</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>说明</th></tr>
+<tr><td><b>不同的物理 cache 区域</b></td><td>6-7 个 cache 槽位是独立的 GPU 显存分配，每个有独立的 block 分配</td></tr>
+<tr><td><b>不同的 block_table 映射</b></td><td>每个 cache 区域的逻辑块→物理页映射不同</td></tr>
+<tr><td><b>不同的角色</b></td><td>(1) 主 attention 读、(2) 主 compressor 写、(3) indexer compressor 写、(4) indexer 评分读</td></tr>
+<tr><td><b>不同的写入时序</b></td><td>compressor 写在前，attention 读在后（流水线 overlap）</td></tr>
+<tr><td><b>不同的权重</b></td><td>主 compressor（<code>compressor_wkv</code>）≠ indexer compressor（<code>indexcom_wkv</code>）</td></tr>
+<tr><td><b>不同的 block_table</b></td><td>每段 metadata 有独立的 block_table / slot_mapping / start_pos</td></tr>
+</table>
+</div>
+
+<h3>17.6 一张表总结</h3>
+<div class="card">
+<table>
+<tr><th>变量</th><th>cache 槽位</th><th>角色</th><th>block_table 用途</th><th>操作</th></tr>
+<tr><td><code>compressor_attn_metadata</code></td><td><code>[0]</code> compress_kv_cache</td><td><b>主 attention 消费端</b></td><td>读 compressed KV</td><td>读取</td></tr>
+<tr><td><code>compressor_kv_state_metadata</code></td><td><code>[2]</code> state_cache</td><td><b>主 compressor 写入端</b></td><td>写 state_cache</td><td>写入</td></tr>
+<tr><td><code>indexer.compressor.state_cache</code></td><td><code>[3]</code> indexer_state_cache</td><td><b>indexer compressor 写入端</b></td><td>写 indexer 内部态</td><td>写入</td></tr>
+<tr><td><code>indexer.k_cache</code></td><td><code>[4]</code> indexer_k_cache</td><td><b>lightning indexer 评分端</b></td><td>评分读</td><td>读取</td></tr>
+</table>
+</div>
+
+<p class="src">溯源：<code>ops/dsa.py:228-287</code>（<code>_build_kv_cache</code> 元组顺序）· <code>attention/dsa_v1.py:1840-1844</code>（sorted keys 注释）· <code>attention/dsa_v1.py:1959-2022</code>（主 compressor 写入）· <code>attention/dsa_v1.py:2081-2101</code>（主 attention 读取）· <code>attention/dsa_v1.py:2482-2534</code>（indexer compressor 写入）· <code>attention/dsa_v1.py:2607-2628</code>（lightning indexer 评分）· <code>device/device_op.py:872-896</code>（unpack 函数）</p>
+
+<!-- 18. SFA 完整解读 -->
+<h2 id="t18">18. SFA 完整解读（后端 / indexer / gather / C8 / 与 DSA 差异）</h2>
+<p>SFA (Sparse Flash Attention) 是 vllm_ascend 中<b>与 DSA 并列</b>的稀疏注意力路径。它与 DSA 共享相同的 lightning indexer <i>数学</i>（量化点积 + learned weights → top-k），但在<b>后端结构、gather kernel、索引拓扑</b>上显著不同。</p>
+
+<h3>18.1 后端概览</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>SFA</th><th>DSA（对照）</th></tr>
+<tr><td><b>文件</b></td><td><code>attention/sfa_v1.py</code> + <code>device/device_op.py:550-706</code></td><td><code>attention/dsa_v1.py</code> + <code>ops/dsa.py</code></td></tr>
+<tr><td><b>Backend 类</b></td><td><code>AscendSFABackend(AttentionBackend)</code> <code>sfa_v1.py:119</code></td><td><code>AscendDSABackend</code> <code>dsa_v1.py:184</code></td></tr>
+<tr><td><b>Metadata</b></td><td><code>AscendSFAMetadata</code>（单 block_table）<code>sfa_v1.py:188</code></td><td>多段 metadata（ori/cmp/indexer/swa）</td></tr>
+<tr><td><b>Impl</b></td><td><code>AscendSFAImpl(MLAAttentionImpl)</code> <code>sfa_v1.py:492</code></td><td><code>AscendDSAImpl(DSAAttentionImpl)</code></td></tr>
+<tr><td><b>Selector</b></td><td>model 有 <code>index_topk</code> 且<b>无</b> <code>compress_ratios</code></td><td>model 有 <code>compress_ratios</code></td></tr>
+<tr><td><b>平台入口</b></td><td><code>platform.py:794</code> (use_sparse=True, use_compress=False)</td><td><code>platform.py:795</code> (use_compress=True)</td></tr>
+</table>
+</div>
+
+<h3>18.2 SFA 的 indexer 机制</h3>
+<p>SFA 的 indexer 与 DSA <b>数学同构</b>：learned-query 与量化 KV cache 的点积 → top-k block。但有三处 C++ wrapper 差异：</p>
+<pre><code># device/device_op.py:576 —— C8 quant variant（Sparse C8 indexer）
+topk_indices = torch.ops._C_ascend.npu_lightning_indexer_quant(
+    query=q_li.view(q_li_shape_ori),
+    key=kv_cache[indexer_cache_idx],        # ← indexer 独立的 k cache
+    weights=weights,
+    query_dequant_scale=q_li_scale.view(q_li_shape_ori[:-1]),
+    key_dequant_scale=kv_cache[indexer_scale_cache_idx].squeeze(2),
+    block_table=attn_metadata.block_table,
+    layout_query="TND", layout_key="PA_BSND",
+    sparse_count=2048, sparse_mode=3, ...)
+
+# device/device_op.py:606 —— standard variant（非 C8）
+topk_indices, _ = torch.ops._C_ascend.npu_lightning_indexer(
+    query=q_li, key=kv_cache[indexer_cache_idx], weights=weights,
+    block_table=attn_metadata.block_table,
+    layout_query="TND", layout_key="PA_BSND",
+    sparse_count=2048, sparse_mode=3, ...)
+
+# device/device_op.py:593 —— torch_npu variant（仅 glm_moe_dsa）
+topk_indices, _ = torch_npu.npu_lightning_indexer(...)</code></pre>
+<p><b>注意</b>：SFA 的 <code>sparse_count=2048</code>（固定），DSA 的 <code>sparse_count=self.index_topk</code>（模型配置）。SFA 通过 <code>use_torch_npu_lightning_indexer</code> 标志切换 wrapper（<code>device_op.py:592</code>），是临时兼容分支。</p>
+
+<h3>18.3 Indexer cache 结构：物理分离</h3>
+<p>SFA 与 DSA 的关键结构差异：<b>indexer cache 与主 MLA cache 物理分离</b>：</p>
+<pre><code># sfa_v1.py:1460-1513 —— _compose_sfa_kv_cache
+def _compose_sfa_kv_cache(self, kv_cache):
+    main_cache = kv_cache                       # 主 MLA cache
+    indexer_cache = self.indexer.k_cache.kv_cache  # ← indexer 独立 cache（不同物理显存）
+    if self.use_sparse_c8_indexer:
+        # main: (packed_kv_cache,) + indexer: (indexer_k_cache, indexer_scale_cache)
+        return (main_cache[0], indexer_cache[0], indexer_cache[1])
+    # main: (k_cache, v_cache) + indexer: (indexer_k_cache,)
+    return (main_cache[0], main_cache[1], indexer_cache[0])</code></pre>
+<p>这由 <code>AscendSFAIndexerBackend</code>（<code>attention/indexer.py:14</code>）管理。它是<b>占位后端</b>——仅让 cache planner 为 indexer cache 分配独立物理 tensor、同时共享主 MLA cache group 的 block id，真正的索引计算在 <code>AscendSFAImpl</code> 内完成。模型层的 <code>Indexer</code> 类（<code>models/deepseek_v4.py:525-589</code>）其 <code>forward()</code> 直接 <code>return</code> None，只是权重容器。</p>
+
+<h3>18.4 Gather kernel：单表 + sparse_indices</h3>
+<p>SFA 与 DSA 最显著的差异：<b>SFA 用单张 block 表 + sparse_indices 驱动稀疏注意力</b>：</p>
+<pre><code># device/device_op.py:656 —— 非 C8 gather
+attn_output, _, _ = torch.ops._C_ascend.npu_sparse_flash_attention(
+    query=ql_nope, key=kv, value=kv,
+    sparse_indices=topk_indices,        # ← 稀疏 index（关键差异！）
+    scale_value=sfa_impl.scale,
+    sparse_block_size=1,
+    block_table=block_table,            # ← 单张 block 表
+    query_rope=q_pe, key_rope=key_rope,
+    layout_query="TND", layout_kv="PA_BSND",
+    sparse_mode=3, attention_mode=2, ...)
+
+# device/device_op.py:687 —— C8 packed-KV gather
+attn_output = torch_npu.npu_kv_quant_sparse_flash_attention(
+    query=cat([ql_nope, q_pe]), key=kv, value=kv,
+    sparse_indices=topk_indices,
+    block_table=block_table,
+    quant_scale_repo_mode=1, key_quant_mode=2, value_quant_mode=2,
+    tile_size=sfa_qsfa_tile_size, rope_head_dim=qk_rope_head_dim, ...)</code></pre>
+<p><b>与 DSA 的对比</b>：</p>
+<div class="card">
+<table>
+<tr><th>维度</th><th>SFA</th><th>DSA</th></tr>
+<tr><td><b>block 表数量</b></td><td><b>单张</b>（主 MLA block_table）</td><td><b>两张</b>：ori_block_table (SWA) + cmp_block_table (compressed)</td></tr>
+<tr><td><b>索引形态</b></td><td><code>sparse_indices</code>（显式 top-k 索引 tensor）</td><td><code>cmp_sparse_indices</code>（双表路径参数）</td></tr>
+<tr><td><b>Gather kernel</b></td><td><code>npu_sparse_flash_attention</code> / C8 <code>_quant_</code></td><td><code>npu_sparse_attn_sharedkv</code>（双表共享）</td></tr>
+<tr><td><b>SWA</b></td><td>❌（无 sliding window）</td><td>✅（ori_kv 专存）</td></tr>
+<tr><td><b>Compressor</b></td><td>❌（无压缩）</td><td>✅（compress_ratio 4 或 128）</td></tr>
+</table>
+</div>
+
+<h3>18.5 C8 量化支持</h3>
+<p>SFA 与 DSA 都支持 C8，但实现路径不同：</p>
+<pre><code># sfa_v1.py:759-766 —— SFA 的 hadamard 旋转（C8 indexer 保内积）
+if self.has_indexer and self.use_sparse_c8_indexer and AscendSFAImpl.q_hadamard is None:
+    AscendSFAImpl.q_hadamard = torch.tensor(scipy.linalg.hadamard(128), ...) / (128**0.5)
+if self.has_indexer and self.use_sparse_c8_indexer and AscendSFAImpl.k_hadamard is None:
+    AscendSFAImpl.k_hadamard = torch.tensor(scipy.linalg.hadamard(128), ...) / (128**0.5)
+
+# sfa_v1.py:1323-1327, 1397-1401 —— C8 indexer q/k 两侧都施加 hadamard
+if self.use_sparse_c8_indexer:
+    k_li = k_li @ AscendSFAImpl.k_hadamard         # k 侧旋转
+    k_li, k_li_scale = torch_npu.npu_dynamic_quant(k_li, dst_type=c8_k_cache_dtype)
+if self.use_sparse_c8_indexer:
+    q_li = q_li @ AscendSFAImpl.q_hadamard          # q 侧旋转
+    q_li, q_li_scale = torch_npu.npu_dynamic_quant(q_li, dst_type=c8_k_cache_dtype)</code></pre>
+<p>SFA 的 C8 路径<b>复用 DSA 的 hadamard 方案</b>（scipy.linalg.hadamard 128 阶正交矩阵），是 vllm_ascend 的通用 C8 策略。C8 gather 由 <code>npu_kv_quant_sparse_flash_attention</code> 处理 packed-KV。</p>
+
+<h3>18.6 SFA 与 DSA 的判别器</h3>
+<pre><code># utils.py:111 —— model_uses_sfa_sparse 判别
+def model_uses_sfa_sparse(model_config):
+    return (hasattr(hf_text_config, "index_topk")
+            and not hasattr(hf_text_config, "compress_ratios")
+            and not hasattr(hf_config, "compress_ratios"))
+
+# platform.py:794-795 —— backend selector
+(index_topk 存在, compress_ratios 不存在) → use_sparse=True  → AscendSFABackend  (SFA)
+(compress_ratios 存在)                      → use_compress=True → AscendDSABackend  (DSA)</code></pre>
+<p><b>两条路径互斥</b>：SFA 给"有原生稀疏 index_topk 但无压缩的 MLA 模型"，DSA 给"有压缩 compress_ratios 的 MLA 模型"。</p>
+
+<h3>18.7 SFA forward 关键流程</h3>
+<pre><code># sfa_v1.py:1515-1880 —— AscendSFAImpl.forward 简化
+def forward(self, layer_name, hidden_states, kv_cache, attn_metadata, ...):
+    composed_kv_cache = self._compose_sfa_kv_cache(kv_cache)  # 组合主 cache + indexer cache
+
+    # ① MLA prolog（3 选 1：native / MLAPO fused / prolog_v3）
+    if self.enable_sfa_prolog_v3 and decode:
+        k_li, k_li_scale = self.indexer_select_pre_process(...)
+        hidden_states, ql_nope, q_pe, q_c, _, _ = self._sfa_preprocess_with_prolog_v3(...)
+    elif self.enable_mlapo:
+        hidden_states, ql_nope, q_pe, q_c = self._sfa_preprocess_with_mlapo(...)
+        k_li, k_li_scale = self.indexer_select_pre_process(...)
+    else:  # native
+        qkv_lora = self.fused_qkv_a_proj(hidden_states)
+        q_c, kv_no_split = qkv_lora.split(...)
+        k_li, k_li_scale = self.indexer_select_pre_process(...)
+
+    # ② Indexer 评分（lightning indexer → topk_indices）
+    if self.skip_topk:
+        topk_indices = self._get_indexcache_topk_indices(...)   # 复用缓存的 index
+    else:
+        topk_indices = self.indexer_select_post_process(...)    # 实时评分
+
+    # ③ Sparse flash attention gather
+    attn_output = self._execute_sparse_flash_attention_process(
+        ql_nope, q_pe, kv_cache, topk_indices, attn_metadata, ...)
+
+    # ④ o_proj + KV connector 保存
+    attn_output = self._v_up_proj(attn_output)
+    output[...] = self.o_proj(attn_output)[0]
+    maybe_save_kv_layer_to_connector(layer_name, list(kv_cache))
+    return output_padded</code></pre>
+
+<h3>18.8 关键差异总结</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>SFA</th><th>DSA</th><th>设计含义</th></tr>
+<tr><td><b>索引拓扑</b></td><td>单表 + sparse_indices</td><td>双表 (ori+cmp) + cmp_sparse_indices</td><td>SFA 更简洁；DSA 同时覆盖 sliding window + 压缩</td></tr>
+<tr><td><b>Indexer cache</b></td><td>与主 cache 物理分离</td><td>与主 cache 元组内部分槽</td><td>SFA 灵活分配；DSA 统一元组</td></tr>
+<tr><td><b>Gather kernel</b></td><td><code>npu_sparse_flash_attention</code></td><td><code>npu_sparse_attn_sharedkv</code></td><td>SFA = standard sparse flash；DSA = dual-table shared-kv</td></tr>
+<tr><td><b>SWA</b></td><td>❌</td><td>✅（ori_kv 专存）</td><td>DSA 额外支持 sliding window attention</td></tr>
+<tr><td><b>Compressor</b></td><td>❌</td><td>✅（compress_ratio 4/128）</td><td>DSA 有完整压缩流水线</td></tr>
+<tr><td><b>C8 support</b></td><td>✅（hadamard + packed KV）</td><td>✅（hadamard + C8 compress_kv_cache）</td><td>两者共用 hadamard 保内积方案</td></tr>
+<tr><td><b>indexer C++ op</b></td><td><code>npu_lightning_indexer</code> / <code>_quant</code></td><td><code>npu_vllm_quant_lightning_indexer</code></td><td>数学同构，wrapper 不同</td></tr>
+<tr><td><b>sparse_count</b></td><td>2048（固定）</td><td>index_topk（模型配置）</td><td>SFA 固定 top-k；DSA 由模型定义</td></tr>
+<tr><td><b>生效模型</b></td><td>index_topk 存在 + 无 compress_ratios</td><td>compress_ratios 存在</td><td>按模型属性互斥选择</td></tr>
+<tr><td><b>应用场景</b></td><td><b>原生稀疏 attention（无压缩）MLA</b></td><td><b>压缩 + SWA MLA（DeepSeek V3/V4）</b></td><td>覆盖不同模型族</td></tr>
+</table>
+</div>
+
+<p class="src">溯源：<code>attention/sfa_v1.py:119</code>（backend）· <code>sfa_v1.py:188</code>（metadata）· <code>sfa_v1.py:492-1880</code>（impl + forward）· <code>sfa_v1.py:1460-1513</code>（indexer cache 组合）· <code>sfa_v1.py:1323-1327,1397-1401</code>（C8 hadamard）· <code>device/device_op.py:576,606,656,687</code>（3 个 indexer variant + 2 个 gather variant）· <code>attention/indexer.py:14</code>（占位后端）· <code>models/deepseek_v4.py:525-589</code>（模型层 Indexer 占位）· <code>utils.py:111</code> + <code>platform.py:794-795</code>（判别器）</p>
+
+<!-- 19. kvcomp_attn Hamming Sparse 算法起源 -->
+<h2 id="t19">19. kvcomp_attn Hamming Sparse 算法起源（SimHash → HashEvict → 现代发展）</h2>
+<p>kvcomp_attn 的 Hamming sparse 选择机制不是孤立设计，而是<b>SimHash（ locality-sensitive hashing）家族</b>在 LLM KV cache 压缩/选择上的直接应用。</p>
+
+<h3>19.1 理论基石：SimHash 与 Hamming ≈ Cosine</h3>
+<p>kvcomp_attn 的 HashEncoder 实现的是<b>经典 SimHash（Charikar 2002）</b>：</p>
+<pre><code># worker/kvcomp_utils.py:399-404 —— 投影权重的构造：高斯随机 + QR 正交化
+random_weights = torch.normal(mean=0, std=2, size=(input_dim, hash_bits), ...)
+Q, R = torch.linalg.qr(random_weights)
+self.hash_weights = Q * torch.sign(torch.diag(R))
+
+# worker/kvcomp_utils.py:456-460 —— compute_hash: sign(x @ W) → 二值化 → bit-pack
+xW = torch.matmul(x_flat, self.hash_weights)        # [N, hash_bits]
+packed = torch.ops._C_ascend.npu_sign_bits_pack(xW_flat, size=1)  # 8 bit → 1 uint8</code></pre>
+<p><b>数学理论基础</b>（Charikar, "Similarity Estimation Techniques from Rounding Algorithms", STOC 2002）：</p>
+<div class="highlight">
+对随机投影向量 w，sign(x·w) 是一个随机超平面哈希。两个向量 x, y 的哈希位相等（即超平面同侧）的概率为：<b>P[sign(x·w) = sign(y·w)] = 1 - θ/π</b>，其中 θ 是 x 与 y 的夹角。由此：<b>Hamming 距离 ≈ 角距离（angular distance）≈ 余弦距离</b>。hash_bits 位中相同位的比例与余弦相似度单调相关。
+</div>
+<p>这意味着：对 KV cache 中每个 block 预计算其 key 的 SimHash 签名；查询时只需计算 query 的 SimHash，与所有 block 签名做 Hamming 距离（XOR + popcount），最小的那些就是最相关的 block。<b>一次 XOR + popcount 替代了一次完整的 q·k 点积</b>。</p>
+
+<h3>19.2 算法祖先：HashEvict（与 kvcomp_attn 算法同构）</h3>
+<p>kvcomp_attn 的直接算法祖先是 <b>HashEvict</b>（arXiv 2412.16187, Liu et al. 2024）：</p>
+<div class="card">
+<b>HashEvict: A Pre-Attention KV Cache Eviction Strategy using Locality-Sensitive Hashing</b><br>
+Minghui Liu, Tahseen Rabbani et al. · arXiv 2412.16187 · 2024-12<br><br>
+<b>摘要核心：</b>"HashEvict uses locality-sensitive hashing (LSH) to compress the KV cache... computing the Hamming distance between <b>binarized Gaussian projections</b> of the current token query and cached token keys, with a projection length much smaller than the embedding dimension... makes these decisions <b>pre-attention</b>, thereby reducing computational costs. HashEvict is dynamic - at every decoding step, the key and value of the current token replace the embeddings of a token expected to produce the lowest attention score."
+</div>
+<p><b>HashEvict 与 kvcomp_attn 的逐项对应</b>：</p>
+<div class="card">
+<table>
+<tr><th>HashEvict（论文）</th><th>kvcomp_attn（vllm_ascend 实现）</th><th>代码证据</th></tr>
+<tr><td>Gaussian random projection → binarize</td><td><code>torch.normal → QR → sign(diag(R))</code> 作为 hash_weights，<code>sign(x @ hash_weights)</code> 二值化</td><td><code>worker/kvcomp_utils.py:399-458</code></td></tr>
+<tr><td>Hamming distance for block selection</td><td><code>npu_hamming_dist_top_k</code> 按汉明距离选 block</td><td><code>attention/kvcomp_attn/attention_utils.py:123</code></td></tr>
+<tr><td>Pre-attention eviction</td><td>判断在 attention 之前（decode 路径），prefill 只写 hash cache 不做选择</td><td><code>attention_utils.py:115,145</code></td></tr>
+<tr><td>Dynamic per-step replacement</td><td>每 decode step 调用 hamming top-k 重新选择；<code>reshape_and_cache_kvcomp</code> 写入新 token 的 hash</td><td><code>attention_utils.py:81-94</code></td></tr>
+<tr><td>Block-level selection</td><td>KV 按 block 粒度管理，hamming 选出的 block 重写 block_table 供 paged attention 用</td><td><code>attention_utils.py:123-142</code></td></tr>
+</table>
+</div>
+
+<h3>19.3 算法谱系：从 SimHash 到现代 hashing-based sparse attention</h3>
+<p>HashEvict 本身继承了一个更长的学术谱系：</p>
+<div class="card">
+<table>
+<tr><th>代际</th><th>论文（arXiv ID</th><th>核心贡献</th><th>与 kvcomp_attn 的关系</th></tr>
+<tr><td><b>奠基</b></td><td>SimHash — Charikar 2002, "Similarity Estimation Techniques from Rounding Algorithms"</td><td>随机超平面哈希理论：P[hash(x)=hash(y)] = 1 - θ/π → Hamming ≈ 余弦</td><td><b>数学基石</b>：HashEncoder 的理论合法性来源</td></tr>
+<tr><td><b>第 1 代（NN 检索）b></td><td>LSH — Broder et al. 1997 (MinHash); Charikar 2002 (SimHash)</td><td>将 SimHash 用于近似最近邻检索</td><td>HashEncoder 的本质：把 key 嵌入二值码本做快速检索</td></tr>
+<tr><td><b>第 2 代（Attention 机制）</b></td><td><b>Reformer</b> (2001.04451, Kitaev et al. 2020, ICLR 2020)</td><td>首次将 LSH 引入 attention：LSH Attention 将 O(L²) 降到 O(L log L)，按哈希桶分摊 softmax</td><td>"hashing for attention" 的开山之作（但用于分桶计算注意力，非预筛选）</td></tr>
+<tr><td><b>第 3 代（KV Cache 驱逐）</b></td><td><b>H2O</b> (2306.14048, Zhang et al. 2023)</td><td>Heavy-Hitter Oracle：基于累积注意力分数的 KV cache 驱逐策略（非哈希，但开创了"按重要性选 token"范式）</td><td>启发了"预筛选 token"的设计哲学（但 H2O 用真实分数，非哈希代理）</td></tr>
+<tr><td><b>第 4 代（预注意哈希筛选）</b></td><td><b>HashEvict</b> (2412.16187, Liu et al. 2024)</td><td><b>首次将 SimHash + Hamming 距离用于 pre-attention KV cache 选择</b></td><td><b>kvn 的直接算法祖先（算法同构）</code></td></tr>
+<tr><td><b>扩展</b></td><td><b>DASH-KV</b> (2604.19351, Guo et al. 2026)</td><td>非对称深度哈希（asymmetric deep hashing），query/key 差异化编码</td><td>HashEncoder 的升级版思路（可学习投影 vs 随机投影）</td></tr>
+<tr><td><b>扩展</b></td><td><b>RaBitQCache</b> (2606.31519, Li et al. 2026, ICML'26)</td><td>随机旋转二值量化 + binary-INT4 算术 + adaptive Top-p</td><td>用更激进的二值化进一步提升 Hamming 计算密度</td></tr>
+<tr><td><b>扩展</b></td><td><b>SOCKET</b> (2602.06283, Joshi et al. 2026)</td><td>软碰撞核估计器（Soft Collision Kernel Estimator）：把 LSH 从二值碰撞升级<b>为概率化、相似度感知的聚合</b>，LSH 从候选生成器变为评分核</td><td>"用 LSH 做注意力评分"的现代变体，top-k 排序质量更高</td></tr>
+<tr><td><b>扩展</b></td><td><b>COBS</b> (2607.09052, Tian et al. 2026)</td><td>块稀疏选择的累积量展开（cumulant expansion），二阶统计量</td><td>"选哪些 block"的更精确代理分数（超越一阶矩）</td></tr>
+<tr><td><b>对比分支</b></td><td><b>NSA / DeepSeek Native Sparse</b> (2502.11089, 2511.00819 等)</td><td>可学习 indexer（量化点积 + learned weights）</td><td>与 hashing 路径平行——"学习型稀疏" vs "哈希代理型稀疏"</td></tr>
+</table>
+</div>
+
+<h3>19.4 哈希代理 vs 学习型稀疏：两条路线的本质差异</h3>
+<div class="card">
+<table>
+<tr><th>维度</th><th>Hashing 路径（kvcomp_attn / HashEvict）</th><th>Learned 路径（DSA / SFA / NSA）</th></tr>
+<tr><td><b>选 block 的代理分数</b></td><td>二进制签名的 Hamming 距离（<code>sign(qW)</code> vs <code>sign(kW)</code>）</td><td>量化点积 <code>q·k</code> + learned <code>weights_proj(x)</code></td></tr>
+<tr><td><b>投影矩阵 W</b></td><td><b>固定随机</b>（初始化时生成，训练中不变）</td><td><b>可学习</code>wq_b/weights_proj 在端到端训练中学到</td></tr>
+<tr><td><b>选择时机</b></td><td><b>pre-attention</b>（不需要计算注意力就能筛）</td><td><b>in-attention</b>（需要 Q/K 投影后才能评分）</td></tr>
+<tr><td><b>计算开销</b></td><td>极低（XOR + popcount）</td><td>中等（int8 matmul + top-k）</td></tr>
+<tr><td><b>精度</b></td><td>较低（固定随机投影保留的信息有限）</td><td>较高（可学习投影对任务最优）</td></tr>
+<tr><td><b>训练依赖</b></td><td>对齐"中</td></tr>
+<tr><td><b>适用阶段</b></td><td>当前仅 decode</td><td>Prefill + Decode</td></tr>
+<tr><td><b>论文</b></td><td>HashEvict, DASH-KV, RaBitQCache</td><td>NSA (Native Sparse Attention), DeepSeek V4</td></tr>
+</table>
+</div>
+<p><b>关键洞察</b>：hashing 路径的优势是<b>零训练成本 + 极低推理开销</b>（固定随机投影不需要模型改动），代价是<b>代理分数的信息损失</b>（随机投影无法针对任务优化）。这与 vllm_ascend 中 kvcomp_attn 仅在 decode 启用、而 learnable 路径（DSA/SFA）覆盖 full attention 的设计取舍一致。</p>
+
+<h3>19.5 为什么随机投影 + Hamming 能 work？——信息论直觉</h3>
+<p>HashEncoder 的 <code>hash_weights</code>（<code>worker/kvcomp_utils.py:399-404</code>）的高斯随机投影 + QR 正交化有一个重要性质：</p>
+<ul>
+<li><b>高斯随机投影</b>是 Johnson-Lindenstrauss 引理的实例——高维空间中的点集可以被投影到 O( log N / ε² ) 维而保留 ε-近似的成对距离</li>
+<li>QR 正交化使投影<b>各向同性</b>（各方向方差均等），进一步提升 Hamming 距离与余弦相似度的相关性</li>
+<li><code>npu_sign_bits_pack</code>（<code>kvcomp_utils.py:458</code>）把每 8 bit 压成 1 uint8，使 Hamming 计算 = 1 次 XOR + popcount 覆盖 8 个超平面</li>
+</ul>
+<p><b>直觉</b>：想象每个 KV block 的 key 是 128 维空间的一个点。128 个随机超平面把空间切成 2^128 个"锥体"。Hamming 距离小的 block = 在同一锥体或邻近锥体 = 与 query 的方向接近。不需要真的计算 q·k，<b>看它们被哪些超平面切成同侧就能近似排序</b>。</p>
+
+<h3>19.6 HashEvict 论文的核心实验发现</h3>
+<p>根据 HashEvict (2412.16187) 的实验结果：</p>
+<ul>
+<li>在 reasoning、multiple-choice、long-context retrieval、summarization 任务上，<b>压缩 KV cache 30%-70% 仍保持高精度</b></li>
+<li>HashEvict 的压缩决策是 <b>pre-attention</b>（在计算注意力之前）完成——这正是 kvcomp_attn 在 decode-only 路径做的事</li>
+<li>动态驱逐：每步替换"预期产生最低注意力分数的 token"——对应 kvcomp_attn 维护 hash cache 并在每步更新</li>
+</ul>
+
+<h3>19.7 完整算法流程图</h3>
+<div class="flow">
+┌─ HashEncoder.__init__ ──────────────────────────────────────────────────┐
+│  hash_weights = QR_orthogonalize(randn(input_dim, hash_bits))           │
+│  (kvcomp_utils.py:399-404: 一次性初始化，推理中固定不变)                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┴──────────────────────┐
+        ▼                                            ▼
+┌─ Prefill：只写 hash cache ──────────────────┐     ┌─ Decode：写 + 选择 ──────────────────────────┐
+│ hashk = sign(key @ hash_weights)            │     │ hashk = sign(key @ hash_weights)             │
+│ reshape_and_cache_kvcomp(                   │     │ reshape_and_cache_kvcomp(...)  # 写入        │
+│   hashk_op, hashk_cache, slot_mapping)      │     │                                              │
+│ → 存储二值签名，供 decode 使用               │     │ hashq = sign(query @ hash_weights)           │
+│   (attention_utils.py:81-94)                │     │                                              │
+│                                             │     │ new_block_table = npu_hamming_dist_top_k(    │
+│                                             │     │   hashq, hashk_cache, topk, seq_lens,        │
+│                                             │     │   block_table, valid_mask, hamming_output)   │
+│                                             │     │ → Hamming 选 block → 重写 block_table       │
+│                                             │     │ (attention_utils.py:120-142)                 │
+└─────────────────────────────────────────────┘     └──────────────────────────────────────────────┘
+                                                           │
+                                                           ▼
+                                              ┌─ 标准 paged attention ────────────┐
+                                              │ npu_fused_infer_attention_score(   │
+                                              │   q, k_cache, v_cache,             │
+                                              │   block_table=new_block_table,     │  ← 用 hamming 选出的表
+                                              │   ...)                             │
+                                              │ (attention_v1.py:1168)            │
+                                              └────────────────────────────────────┘
+</div>
+
+<h3>19.8 为什么是"pre-attention"选择？——计算节省的来源</h3>
+<p>kvcomp_attn 的关键设计：hashing 选择发生在<b>真正计算注意力之前</b>。</p>
+<div class="card">
+<b>dense attention 的计算</b>：对所有 N 个 KV token 做完整的 Q·K^T → softmax → V 加权，O(N) 次点积<br>
+<b>HashEvict / kvcomp_attn</b>：
+<ol>
+<li>投影 + 二值化 query：O(d × hash_bits) ≈ O(d)（d=嵌入维, hash_bits 通常 128，固定）</li>
+<li>与 M 个 block 签名做 Hamming：O(M × hash_bits / word_size) = O(M × 16) if hash_bits=128（XOR+popcount 一条指令）</li>
+<li>Top-k 选 block：O(M log k)</li>
+<li>仅对选出的 k 个 block 做完整 paged attention
+</ol>
+<b>节省来源</b>：当 hash_bits ≪ d（如 128 ≪ 512）且 k ≪ M 时，Hamming 代理分数的计算成本远低于为所有 KV token 计算 full-precision attention score。代价是需要额外维护 hash cache（每 token/hash 存储 hash_bits 位二值签名，约 hash_bits/8 字节）。
+</div>
+
+<p class="src">溯源：<code>worker/kvcomp_utils.py:366-460</code>（HashEncoder：投影权重构造 + compute_hash）· <code>attention/kvcomp_attn/attention_utils.py:81-142</code>（写 hash cache + hamming 选 block 数据流）· <code>attention/attention_v1.py:769-771,1148,1168</code>（hamming-selected block_table 送入 FIA）· <code>attention/kvcomp_attn/attention_utils.py:145-150</code>（enable_hamming_sparse 启用条件）· 论文：HashEvict arXiv 2412.16187 · Reformer arXiv 2001.04451 · H2O arXiv 2306.14048 · SOCKET arXiv 2602.06283 · DASH-KV arXiv 2604.19351 · RaBitQCache arXiv 2606.31519 · COBS arXiv 2607.09052 · NSA arXiv 2502.11089</p>
+
+<div class="footer">
+<p><b>token 克制策略：</b>代码定位全部委托给 Explore agent（不自己全文扫描）；源码只读关键段（~1500 行而非全库）；web research 因阻塞失败后不反复重试，改为依赖代码证据；报告中的代码引用精确到 file:line 而非大段复制。</p>
+<p class="muted">报告生成：2026-07-17 · 分析器：Claude · 代码副本与片段：<code>/Users/backyes/work/vllm_research/vllm_analysis/</code></p>
+</div>
+
+</body>
+</html>

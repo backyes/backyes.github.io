@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vllm-ascend Architecture Deep Analysis</title>
+<style>
+:root{
+  --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#c9d1d9;
+  --accent:#58a6ff; --accent2:#7ee787; --accent3:#d2a8ff; --accent4:#ff7b72;
+  --accent5:#ffa657; --muted:#8b949e; --code:#0d1117;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:0;}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:24px 20px;border-bottom:1px solid var(--border);}
+header h1{font-size:1.5rem;color:var(--accent2);margin-bottom:6px}
+header .sub{color:var(--muted);font-size:0.85rem}
+.wrap{max-width:980px;margin:0 auto;padding:16px}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;overflow-x:auto;white-space:nowrap;padding:0 16px}
+nav a{display:inline-block;padding:10px 12px;color:var(--muted);text-decoration:none;font-size:0.8rem;border-bottom:2px solid transparent;transition:.15s}
+nav a:hover,nav a.active{color:var(--accent);border-bottom-color:var(--accent)}
+h2{font-size:1.15rem;color:var(--accent3);margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+h3{font-size:1rem;color:var(--accent5);margin:20px 0 8px}
+h4{font-size:0.92rem;color:var(--accent);margin:14px 0 6px}
+p{margin:8px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+.card h3{margin-top:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:700px){.grid2,.grid3{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.tag{display:inline-block;background:rgba(88,166,255,0.15);color:var(--accent);padding:2px 7px;border-radius:10px;font-size:0.7rem;margin:2px}
+.tag-g{color:var(--accent2);background:rgba(126,231,135,0.12)}
+.tag-p{color:var(--accent3);background:rgba(210,168,255,0.12)}
+.tag-r{color:var(--accent4);background:rgba(255,123,114,0.12)}
+.tag-o{color:var(--accent5);background:rgba(255,166,87,0.12)}
+ul,ol{margin:6px 0 6px 22px}
+li{margin:3px 0}
+.layer{display:flex;flex-direction:column;gap:4px;margin:14px 0}
+.layer-row{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap}
+.layer-block{border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:0.76rem;text-align:center;min-width:90px;flex:1}
+.layer-label{background:var(--code);color:var(--muted);border-radius:6px;padding:6px 8px;font-size:0.7rem;min-width:110px;text-align:right;align-self:center}
+footer{border-top:1px solid var(--border);padding:20px;color:var(--muted);font-size:0.75rem;text-align:center;margin-top:40px}
+details{background:var(--card);border:1px solid var(--border);border-radius:8px;margin:10px 0;overflow:hidden}
+summary{cursor:pointer;padding:12px 16px;font-weight:600;color:var(--accent);font-size:0.88rem;user-select:none}
+summary:hover{background:#1c2128}
+details[open] summary{border-bottom:1px solid var(--border)}
+details .body{padding:0 16px 14px}
+.ref{color:var(--accent);font-size:0.78rem}
+@media(max-width:600px){header h1{font-size:1.2rem}nav a{padding:8px 8px;font-size:0.72rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>vllm-ascend Architecture Deep Analysis</h1>
+    <div class="sub">
+      Huawei Ascend NPU plugin for vLLM &middot; 442 Python files / ~128k LOC &middot; repo <code>vllm-project/vllm-ascend</code><br>
+      Analysis date 2026-07-18 &middot; synthesized from 6 subsystem deep-dives
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#layers">Layers</a>
+  <a href="#sched">Schedulers</a>
+  <a href="#attn">Attention</a>
+  <a href="#moe">MoE/Comm</a>
+  <a href="#kv">KV Transfer</a>
+  <a href="#patch">Patches</a>
+  <a href="#models">Models</a>
+  <a href="#files">Files</a>
+  <a href="#community">Community</a>
+</nav>
+
+<div class="wrap">
+
+<!-- ==================== OVERVIEW ==================== -->
+<section id="overview">
+<h2>1. Executive Summary</h2>
+<p><strong>vllm-ascend</strong> is a community-maintained, out-of-tree <em>hardware plugin</em> that lets vLLM run on Huawei Ascend NPUs (Atlas A2/A3/A5 training, 800I A3/A5 inference, 310P edge). It implements vLLM's "Hardware Pluggable" RFC, but because that RFC is <em>incomplete</em>, the plugin goes far beyond a clean platform layer — it ships <strong>~60 monkey-patches</strong> against vanilla vLLM, <strong>4 novel schedulers</strong>, an <strong>RDMA-based PD disaggregation connector</strong>, a <strong>4-strategy EPLB</strong>, and two <strong>innovative weight loaders</strong>.</p>
+
+<div class="insight">
+<strong>Headline architectural facts:</strong>
+<ul>
+<li><strong>3-tier model support</strong> — only 3 models have custom <code>ForCausalLM</code> classes; most support lives in the <strong>Xlite graph runtime</strong> + attention backends + per-model patches.</li>
+<li><strong>Device fragmentation</strong> — 4 silicon generations (A2/A3/A5/310P) drive materially different operator trees; 310P is a <em>full fork</em> with no MLA/FIA support.</li>
+<li><strong>MLA absorption trick</strong> — instead of vanilla vLLM's two-stage MLA, Ascend absorbs <code>W_UK</code> into Q (<code>bmm(q_nope, W_UK_T)</code>) and scores in latent space via a single fused FIA-v2 call.</li>
+<li><strong>Pull-model KV transfer</strong> — Decode-side actively RDMA-<em>reads</em> Prefill KV via Mooncake, the opposite of vanilla vLLM's Nixl push model.</li>
+<li><strong>ProfilingChunkScheduler</strong> — the most novel contribution: offline profile → quadratic fit → closed-form per-request, per-position chunk sizing.</li>
+</ul>
+</div>
+
+<h3>Codebase at a glance</h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Python files</td><td>442</td></tr>
+<tr><td>Python LOC</td><td>~128,000</td></tr>
+<tr><td>Top-level modules</td><td>20 (<code>vllm_ascend/</code>)</td></tr>
+<tr><td>Attention backends</td><td>7 + CP variants</td></tr>
+<tr><td>Scheduler innovations</td><td>4</td></tr>
+<tr><td>Compilation passes</td><td>8</td></tr>
+<tr><td>EPLB strategies</td><td>4 (Random / Default / Swift / FlashLB)</td></tr>
+<tr><td>Speculative proposers</td><td>11</td></tr>
+<tr><td>Custom patches</td><td>~60 (27 platform + 33 worker)</td></tr>
+<tr><td>MoE comm types</td><td>4 (AllGather / MC2 / AllToAll / FusedMC2)</td></tr>
+<tr><td>Supported models</td><td>~30 families</td></tr>
+<tr><td>Device targets</td><td>A2 / A3 / A5 / 310P</td></tr>
+</table>
+</section>
+
+<!-- ==================== LAYERS ==================== -->
+<section id="layers">
+<h2>2. Architecture — Layered View</h2>
+<p>The codebase decomposes into 7 logical layers. The diagram below maps <em>vllm-ascend</em> modules (top) onto the services they replace/augment in vanilla vLLM (bottom).</p>
+
+<div class="layer">
+  <div class="layer-row">
+    <div class="layer-label">User / Config</div>
+    <div class="layer-block"><b>ascend_config.py</b><br><span class="tag">AscendConfig</span></div>
+    <div class="layer-block"><b>envs.py</b><br><span class="tag">env knobs</span></div>
+    <div class="layer-block"><b>cpu_binding.py</b><br><span class="tag">CPU affinity</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Plugin Entry</div>
+    <div class="layer-block" style="flex:3"><b>__init__.py</b> <span class="tag-g">register()</span> <span class="tag-g">register_connector()</span> <span class="tag-g">register_model_loader()</span> + <code>_ensure_global_patch()</code></div>
+    <div class="layer-block" style="flex:2"><b>platform.py</b> <span class="tag">NPUPlatform</span> <span class="tag">check_and_update_config</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Scheduling</div>
+    <div class="layer-block"><b>core/</b><br><span class="tag-p">ProfilingChunk</span></div>
+    <div class="layer-block"><b>core/</b><br><span class="tag-p">Recompute</span></div>
+    <div class="layer-block"><b>core/</b><br><span class="tag-p">ShortRequestFirst</span></div>
+    <div class="layer-block"><b>core/</b><br><span class="tag-p">CompressKV Manager</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Execution</div>
+    <div class="layer-block"><b>worker/</b> <span class="tag">NPUWorker</span></div>
+    <div class="layer-block"><b>model_runner_v1.py</b></div>
+    <div class="layer-block"><b>worker/v2/</b> <span class="tag">MR-v2</span></div>
+    <div class="layer-block"><b>xlite/</b> <span class="tag-o">C++ graph runtime</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Attn / Ops</div>
+    <div class="layer-block"><b>attention/</b> <span class="tag">7 backends</span></div>
+    <div class="layer-block"><b>ops/fused_moe/</b></div>
+    <div class="layer-block"><b>ops/triton/</b> <span class="tag">~40 kernels</span></div>
+    <div class="layer-block"><b>_310p/</b> <span class="tag-r">forked tree</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Comm / EPLB</div>
+    <div class="layer-block"><b>distributed/</b> <span class="tag">HCCL wrappers</span></div>
+    <div class="layer-block"><b>kv_transfer/</b></div>
+    <div class="layer-block"><b>weight_transfer/</b></div>
+    <div class="layer-block"><b>eplb/</b> <span class="tag-o">4 strategies</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Models / Load</div>
+    <div class="layer-block"><b>models/</b> <span class="tag">3 custom LM</span></div>
+    <div class="layer-block"><b>spec_decode/</b> <span class="tag">11 proposers</span></div>
+    <div class="layer-block"><b>model_loader/</b> <span class="tag-p">netloader + rfork</span></div>
+    <div class="layer-block"><b>quantization/</b> <span class="tag">20+ schemes</span></div>
+  </div>
+  <div class="layer-row">
+    <div class="layer-label">Adaptation</div>
+    <div class="layer-block" style="flex:2"><b>patch/</b> <span class="tag-r">~60 monkey-patches</span> (6 categories)</div>
+    <div class="layer-block"><b>device/</b> <span class="tag">BaseDeviceAdaptor</span></div>
+    <div class="layer-block"><b>compilation/</b> <span class="tag">8 passes</span></div>
+  </div>
+</div>
+
+<h3>Plugin registration sequence</h3>
+<pre><code>register()  ★ earliest, main process only
+  → "vllm_ascend.platform.NPUPlatform"
+register_connector()           ← _ensure_global_patch() guards each
+  → kv_transfer.register_connector()
+  → weight_transfer.register_engine()
+register_model_loader()
+  → netloader.register_netloader()
+  → rfork.register_rforkloader()
+register_service_profiling()   ← emits service_profiling_symbols.*.yaml
+register_model()               ← at import time, not a vLLM hook</code></pre>
+<div class="warn">
+<strong>Why <code>_ensure_global_patch()</code></strong> exists: vLLM loads general plugins inside engine-core <em>subprocesses</em>; e2e conftest patches do not run there. So <code>adapt_patch(is_global_patch=True)</code> must re-run at each hook. The module-level <code>_GLOBAL_PATCH_APPLIED</code> bool makes it idempotent.
+</div>
+<p><span class="ref">Source: <code>vllm_ascend/__init__.py</code> agent_report 01 §1</span></p>
+</section>
+
+<!-- ==================== SCHEDULERS ==================== -->
+<section id="sched">
+<h2>3. Core Scheduler Innovations <span class="tag-p">high novelty</span></h2>
+<p>vanilla vLLM's scheduler is FCFS + fixed <code>max_num_scheduled_tokens</code>. vllm-ascend ships <strong>4 scheduler-side innovations</strong> in <code>vllm_ascend/core/</code>, addressing hardware-specific bottlenecks.</p>
+
+<h3>3.1 Innovation taxonomy</h3>
+<table>
+<tr><th>Module</th><th>Problem</th><th>Core algorithm</th><th>vs upstream vLLM</th></tr>
+<tr><td><code>scheduler_profiling_chunk.py</code><br><span class="tag-p">ProfilingChunk</code></td><td><b>PP 流水线气泡</b>：O(n²) attention 使同 size chunk 越往后越慢（prefix 增长）→ PP stage 间 bubble（<b>非</b>仅内存问题）</td><td>Offline profile → fit quadratic <code>f(l)=al²+bl+c</code> → 闭式求解<b>等时间</b> chunk（不等 size、等时间）消除 bubble；online calibration <code>f(C,H)</code></td><td>upstream 固定 chunk；这里 PP+chunked prefill 场景下动态 equal-time chunk（<b>⚠ 2026-07 注意</b>：<b>#12119 正在删除 MatmulAllReduce 融合 pass</b>，优化技术有生命周期）</td></tr>
+<tr><td><code>recompute_scheduler.py</code><br><span class="tag-p">Recompute</span></td><td>P-D disaggregation D-node: avoid streaming KV back to P on preemption</td><td>Free KV and emit <code>stop_reason="recomputed"</code> (D reruns prefill), or offload KV to P via connector hook</td><td>upstream only pauses→resumes by reusing KV blocks; no "give up KV, recompute" concept</td></tr>
+<tr><td><code>short_request_first_scheduler.py</code><br><span class="tag-p">SRF</span></td><td>Long-prompt prefill starves short requests → tail-latency blowup</td><td>Three-lane waiting queue: immediate / short / long + aging + force-immediate on preempt</td><td>upstream waiting queue is a pure FCFS deque</td></tr>
+<tr><td><code>single_type_kv_cache_manager.py</code><br><span class="tag-p">CompressManager</span></td><td>Compressed-MLA block accounting wrongly counts full tokens → broken prefix cache & stuck long inputs</td><td>Divide token counts by <code>compress_ratio</code> in alloc/cache; logical-block prefix-cache hits with PCP/DCP alignment + Eagle last-block-drop</td><td>upstream <code>FullAttentionManager</code> only understands raw token counts</td></tr>
+</table>
+
+<details>
+<summary><strong>3.2 Deep-dive: ProfilingChunkScheduler (the most novel)</strong> — click to expand</summary>
+<div class="body">
+<p>Subclasses <code>Scheduler</code>, overrides only <code>schedule()</code>. The upstream <code>schedule()</code> is forked nearly verbatim, deltas marked <code># >>> PROFILING CHUNK >>> / # <<< PROFILING CHUNK <<<</code>.</p>
+<p><strong>Concept 1 — startup profile the hardware curve:</strong></p>
+<pre><code>for i in range(num_samples+1):
+    result = model_executor.collective_rpc("profile_prefill_latency", args=(chunk_size,))
+predictor.fit(seq_lens, latencies)    # least-squares quadratic</code></pre>
+<p><strong>Concept 2 — closed-form chunk from quadratic:</strong> for already-computed <code>L</code>, target <code>T</code>, solve <code>f(L+x)−f(L)=ax²+(2aL+b)x = T</code>:</p>
+<pre><code>A = a ;  B = 2*a*L + b ;  C = -T
+x = (-B + sqrt(B²-4AC)) / (2A)
+smoothed = base + smooth_factor*(x-base)
+chunk = align(max(smoothed, min_chunk), max(page_size,64))</code></pre>
+<p><em>Why quadratic, not linear?</em> because prefill attention cost grows super-linearly with <code>L</code> (just like GPU), so marginal cost grows — solving yields a <em>smaller</em> chunk as <code>L</code> grows: early prefill steps are large, later steps shrink. O(1) per request at schedule time.</p>
+<p><strong>Concept 3 — dual constraint loop:</strong> RUNNING/WAITING loops gain a <code>time_budget</code> counter initialized from <code>predictor.target_latency</code>; loop exits when time-budget hits 0 even if token-budget remains. Decode requests skip time accounting so they never starve.</p>
+<p><strong>Concept 4 — online refinement:</strong> <code>record_batch_execution_time</code> accumulates <code>(Σ(C+H)·C, Σ(C+H), N, elapsed)</code> points, refits a history-aware <code>f(C,H)=a·C·(C+H)+b·C+c·H</code> once ≥5 points, adapting to batch-interference the offline profile can't see.</p>
+<p><span class="ref">Source: <code>core/scheduler_profiling_chunk.py</code>, <code>core/profiling_chunk_predictor.py</code> — report 01 §4.2</span></p>
+</div>
+</details>
+
+<div class="highlight">
+<strong>Composition:</strong> <code>recompute_scheduler_enable</code> and <code>profiling_chunk_config.enabled</code> are mutually exclusive top-level schedulers; <code>ShortRequestFirst</code> is a waiting-queue mixin recompute can carry as a passenger; over all of them, <code>CompressAttentionManager</code> patches KV accounting for compressed-MLA groups.
+</div>
+</section>
+
+<!-- ==================== ATTENTION ==================== -->
+<section id="attn">
+<h2>4. Attention Backends &amp; MLA on Ascend <span class="tag-g">core path</span></h2>
+
+<h3>4.1 Backend taxonomy</h3>
+<p>Backend selected by <code>(use_mla, use_sparse, use_compress)</code> 3D key in <code>platform.py:784-810</code>. CP variants swap builder/impl at runtime.</p>
+<table>
+<tr><th>Backend</th><th>Device</th><th>Type</th><th>Core kernel</th></tr>
+<tr><td><code>AscendAttentionBackend</code></td><td>A2/A3/A5</td><td>MHA / GQA / chunked-prefill</td><td><code>npu_fused_infer_attention_score</code> (FIA, TND)</td></tr>
+<tr><td><code>AscendMLABackend</code></td><td>A2/A3/A5</td><td><b>MLA</b> (DeepSeek V3/R1 latent attn)</td><td><code>npu_fused_infer_attention_score_v2</code> (latent + <code>query_rope/key_rope</code>)</td></tr>
+<tr><td><code>AscendSFABackend</code></td><td>A2/A3/A5</td><td>Sparse indexer + C8 KV quant (V3.2 SFA)</td><td>FIA-v2 + <code>_C_ascend.store_kv_block</code></td></tr>
+<tr><td><code>AscendDSABackend</code></td><td>A2/A3/A5 (V4)</td><td>Delta-Sparse Attn + Hadamard compress-ratio KV</td><td><code>compressor</code>, <code>npu_kv_quant_sparse_attn_sharedkv</code></td></tr>
+<tr><td><code>AscendFABackend</code></td><td>A2/A3/A5</td><td>FA-V3 train-inference consistency only</td><td><code>flash_attn_npu_v3</code></td></tr>
+<tr><td><code>AscendAttentionBackend310</code></td><td><b>310P only</b></td><td>MHA/GQA — <b>no MLA/SFA on 310P</b></td><td><code>_npu_flash_attention</code> + <code>_npu_paged_attention</code></td></tr>
+</table>
+
+<details>
+<summary><strong>4.2 MLA on Ascend — weight absorption + fused FIA-v2</strong> — expand</summary>
+<div class="body">
+<p><strong>Key divergence from vanilla vLLM:</strong> instead of the explicit two-stage <code>mla_decode</code> (full K/V materialized in-kernel), Ascend (a) absorbs <code>W_UK</code> into the query, (b) caches only the joint latent <code>(c_kv, k_pe)</code>, (c) scores in latent space.</p>
+<pre><code># decode preproc  (mla_v1.py:_q_proj_and_k_up_proj)
+q_nope, q_pe = self.q_proj(q_c).view(...).split([qk_nope_head_dim, qk_rope_head_dim])
+ql_nope = torch.bmm(q_nope, self.W_UK_T)          # ← weight absorption
+k_pe, k_nope = exec_kv_decode(kv_no_split, cos, sin, kv_cache, slots)
+    # → torch_npu.npu_kv_rmsnorm_rope_cache(..., cache_mode="PA_NZ"|"PA")
+# decode attention call
+attn_output,_ = torch_npu.npu_fused_infer_attention_score_v2(
+    q_nope, k_nope, k_nope,
+    query_rope=q_pe, key_rope=k_pe,               # RoPE fused in-kernel
+    input_layout="BSND_NBSD"|"BNSD_NBSD"|"TND_NTD",
+    block_table=..., actual_seq_qlen=..., actual_seq_kvlen=...)
+# v-up
+x = torch_npu.npu_transpose_batchmatmul(x, self.W_UV, perm_y=(1,0,2))</code></pre>
+<p><strong>MLAPO deep fusion</strong> (A2/A3): <code>_C_ascend.mla_preprocess</code> fuses Q/KV projections + LayerNorm + RoPE + cache-write <em>into one CANN custom op</em>; on KV-consumer (PD-decode) instances the original weights are freed after absorption. <strong>A5</strong>: <code>npu_mla_prolog_{v2,v3}</code> + <code>npu_dynamic_{mx_}quant</code> for FP8/MXFP decode.</p>
+<p><span class="ref">Source: <code>attention/mla_v1.py</code> — report 03 §2.2-2.5</span></p>
+</div>
+</details>
+
+<h3>4.3 KV-compression = Hamming-hash sparse (NOT GLA/Mamba)</h3>
+<div class="insight">
+<code>attention/kvcomp_attn/attention_utils.py</code> implements <strong>Hamming-distance hash-top-k sparse attention</strong>, mutually exclusive with C8 quant. <code>_C_ascend.npu_hamming_dist_top_k(hashq, hashk_cache, topk, ...)</code> picks top-K blocks → context collapses from <code>L</code> to <code>top_k * chunk_size</code>, retaining sink+recent. This is H2O/StreamingLLM-style, implemented purely in custom ops.
+</div>
+
+<h3>4.4 Compilation passes (8 total)</h3>
+<table>
+<tr><th>Pass</th><th>Transform</th></tr>
+<tr><td><code>AddRMSNormQuantFusionPass</code></td><td>AddRMSNorm + quant (static/dynamic/MXFP)</td></tr>
+<tr><td><code>QKNormRopeFusionPass</code></td><td>QKV-split + per-head RMSNorm + RoPE</td></tr>
+<tr><td><code>MatmulAllReduceAddRMSNormPass</code></td><td>Matmul + AllReduce + AddRMSNorm <span class="tag-g">(! uses ReduceScatter+AllGather internally, halves traffic)</span></td></tr>
+<tr><td><code>MulsAddFusionPass</code></td><td><code>x*scale+y</code> → Triton <code>muls_add</code></td></tr>
+<tr><td><code>SequenceParallelismPass</code></td><td>dense SP reduce-scatter/all-gather rewrites</td></tr>
+<tr><td><code>SequenceParallelismMoePass</code></td><td>MoE SP AllGather epilogue + fold</td></tr>
+<tr><td><code>NoOpEliminationPass</code></td><td>identity view/reshape elimination</td></tr>
+<tr><td><code>AllGatherChunkNoOpCleanupPass</code></td><td>all_gather+chunk → identity</td></tr>
+</table>
+<p>Selected via <code>GraphFusionPassManager.configure</code>; <code>BasePattern</code> registers into <em>both</em> Inductor <code>PatternMatcherPass</code> and NPU graph <code>nge.register_replacement</code>. <span class="ref">report 02 §5</span></p>
+
+<h3>4.5 310P — a forked operator tree</h3>
+<div class="warn">
+310P (Atlas 300I Duo, soc 200-205)predates and sits below the FIA-v2+MLAPO stack: it lacks <code>npu_fused_infer_attention_score</code> entirely, uses older <code>_npu_flash_attention</code>/<code>_npu_paged_attention</code>, requires 16-aligned NZ KV shapes, supports only W8A8 quant, and has no MLA/SFA. Hence a separate <code>_310p/</code> tree for attention/ops/quant/sample/spec_decode/MoE. Only MHA/GQA + Flash-attn + linear-recurrent SSMs run on 310P.
+</div>
+</section>
+
+<!-- ==================== MOE ==================== -->
+<section id="moe">
+<h2>5. MoE Communication Stack <span class="tag-o">MC2 / FusedMC2</span></h2>
+
+<h3>5.1 MoECommType taxonomy</h3>
+<table>
+<tr><th>Type</th><th>When selected</th><th>Mechanism</th></tr>
+<tr><td><code>ALLGATHER</code></td><td>non-MoE / EP=1 / 310P (always)</td><td>Local gather path</td></tr>
+<tr><td><code>MC2</code></td><td>EP>1, small token, fits <code>mc2_capacity</code></td><td><code>npu_moe_distribute_dispatch</code>+combine (comm/compute overlap)</td></tr>
+<tr><td><code>ALLTOALL</code></td><td>EP>1, large token, fallback</td><td>All-to-all + <code>npu_grouped_matmul</code></td></tr>
+<tr><td><code>FUSED_MC2</code></td><td>EP≤32, w8a8_dynamic, decode, non-spec</td><td><b>dispatch+Silu+GMM1+GMM2+combine in ONE op</b></td></tr>
+</table>
+<p>Selection is device-gen × token-count × EP-world-size × quant conditioned via <code>select_moe_comm_method</code> (A2→<code>_select_a2</code>, A3→<code>_select_a3</code>, A5→<code>_select_a5</code>, 310P→AllGather).</p>
+
+<details>
+<summary><strong>5.2 FusedMC2 single-op MoE decode</strong> — expand</summary>
+<div class="body">
+<pre><code># enable_fused_mc2 == 1: dispatch + silu + gmm1/gmm2 + combine in ONE op
+out = torch.ops._C_ascend.dispatch_ffn_combine(
+    x, weight1=w1, weight2=w2, expert_idx=topk_ids,
+    scale1, scale2, bias1, bias2, probs=topk_weights,
+    group=moe_all_to_all_group_name, max_output_size=..., swiglu_limit=...,
+    x_active_mask=mc2_mask)
+
+# enable_fused_mc2 == 2: decode-specific
+out, expert_tokens = torch.ops._C_ascend.dispatch_gmm_combine_decode(
+    x, gmm1_permuted_weight=w1, gmm2_weight=w2, expert_smooth_scales, group_ep, ...)</code></pre>
+<p>Weights pre-transposed to <code>(E,K,N)</code> and cast to FRACTAL_NZ because <code>dispatch_ffn_combine</code> requires it. With <code>dynamic_eplb</code>, weights are unbinded into per-expert lists so load-balancing can move them.</p>
+<p><span class="ref">Source: <code>ops/fused_moe/moe_comm_method.py</code> — report 03 §4.4</span></p>
+</div>
+</details>
+</section>
+
+<!-- ==================== KV TRANSFER ==================== -->
+<section id="kv">
+<h2>6. KV-cache PD Disaggregation + EPLB <span class="tag-r">Mooncake</span></h2>
+
+<div class="warn">
+<strong>Pull model ≠ Nixl push model.</strong> vllm-ascend's Mooncake path has the <em>Decode</em> node actively RDMA-<b>read</b> Prefill's KV via <code>batch_transfer_sync_read</code>, the <em>opposite</em> direction from vanilla vLLM's <code>NixlConnector</code>. Addresses computed in user-space from <code>data_ptr + block_stride*block_id</code> (2MB-aligned), so transfers are zero-copy and HCCL-bypassing.
+</div>
+
+<h3>6.1 Connector zoo</h3>
+<table>
+<tr><th>Connector</th><th>Type</th><th>Transport</th></tr>
+<tr><td><code>MooncakeConnectorV1</code></td><td><b>P2P (primary path)</b></td><td>Mooncake RDMA, pull <code>batch_transfer_sync_read</code></td></tr>
+<tr><td><code>MooncakeHybridConnector</code></td><td>P2P (mixed KV layout)</td><td>RDMA</td></tr>
+<tr><td><code>MooncakeLayerwiseConnector</code></td><td>P2P, layer-pipelined</td><td>RDMA, overlap w/ attention</td></tr>
+<tr><td><code>AscendStoreConnector</code></td><td>Pool (shared-memory KV pool)</td><td>mooncake / memcache / Yuanrong backends</td></tr>
+<tr><td><code>UCMConnector</code> / <code>LMCacheAscendConnector</code></td><td>Pool</td><td>cache mgmt</td></tr>
+<tr><td><code>AscendSimpleCPUOffloadConnector</code></td><td>CPU offload</td><td><code>aclrtMemcpyBatchAsync</code></td></tr>
+</table>
+
+<h3>6.2 MooncakeConnector lifecycle</h3>
+<ol>
+<li><strong>Handshake</strong>: read PD <code>tp/dp/pp_size</code> (P.tp ≥ D.tp), get <code>global_te.get_transfer_engine(host, dev)</code> in <code>"P2PHANDSHAKE"</code>/<code>"ascend"</code> mode; per-NPU unique port.</li>
+<li><strong>register_kv_caches</strong>: emit <code>{layer_names, spec_type, num_kv_heads}</code> per group; per layer compute <code>base_addr + block_stride + block_len</code>; require 2MB-aligned base; <code>register_buffer(ptrs, lengths)</code>; build <code>MooncakeAgentMetadata</code> (msgspec struct); start recv/send threads.</li>
+<li><strong>Scheduler</strong>: mark <code>do_remote_prefill</code> requests, build <code>MooncakeConnectorMetadata</code>, delay-free finished blocks.</li>
+<li><strong>Transfer</strong>: <code>_transfer_kv_cache_all_groups</code> loops group × layer × cache-tensor → <code>engine.batch_transfer_sync_read(session_id, src_list, dst_list, length_list)</code>. Supports CP block mapping, Mamba state, GQA multi-pull reformat, KV NZ format.</li>
+<li><strong>Completion</strong>: <code>KVCacheTaskTracker</code> → release + <code>DONE_RECVING_MSG</code> (zmq).</li>
+</ol>
+
+<h3>6.3 EPLB — 4 strategies, 3-phase loop</h3>
+<p>Runs in an <strong>independent subprocess</strong> via shared <code>Manager().dict()</code>, monitored moe_load heat → decide → migrate.</p>
+<table>
+<tr><th>type</th><th>Policy</th><th>Core idea</th></tr>
+<tr><td>0</td><td><code>RandomLoadBalance</code></td><td>Baseline only (seed 42 swap)</td></tr>
+<tr><td>1</td><td><code>DefaultEplb</code></td><td>Greedy best-fit-decreasing bin-packing + redundant split + local exchange</td></tr>
+<tr><td>2</td><td><code>SwiftBalanceEplb</code></td><td>Redundancy reassign + while-loop expert exchange (≤ max_swap_times)</td></tr>
+<tr><td>3</td><td><code>FlashLB</code></td><td>FlashTree sliding-window search + LPT deployment + <b>Hungarian alignment</b> (minimize redeploy) + numba @njit replica allocation</td></tr>
+</table>
+<pre><code># EplbUpdator 3-phase cycle
+[heat_collection_interval] → [algorithm_execution_interval] → [num_moe_layers (D2D migrate)]
+    ↑ all_gather moe_load       ↑ wake subprocess                   ↑ dist.batch_isend_irecv
+      to shared_dict              → policy.rebalance_experts            per-layer, async stream
+      ↓ check_need_update         ↓ compose_expert_update_info_greedy    ↓ update expert_map + log2phy + weight</code></pre>
+<p><span class="ref">Sources: <code>distributed/kv_transfer/</code>, <code>eplb/</code> — report 04 §2, §4</span></p>
+</section>
+
+<!-- ==================== PATCHES ==================== -->
+<section id="patch">
+<h2>7. Patch System — ~60 Patches, 6 Categories <span class="tag-r">adaptation layer</span></h2>
+<div class="warn">
+<strong>Why so many patches?</strong> vLLM's "Hardware Pluggable" RFC exposes clean hooks for only a subset of the stack. Everything else — scheduler loop, config validators, <code>torch.distributed</code>, <code>torch.accelerator</code>, the <code>FusedMoE</code> factory, rejection sampler, tool-call parsers — is still reached by direct imports of concrete symbols. vllm-ascend chose monkey-patch over fork; each patch carries a "Future Plan: Remove when upstream merges #XXXX".
+</div>
+
+<h3>7.1 Patch mechanics</h3>
+<pre><code># utils.py:537  — a deliberately import-for-side-effects dispatcher
+def adapt_patch(is_global_patch: bool = False):
+    if is_global_patch:
+        from vllm_ascend.patch import platform   # ordered import list → each module rebinds
+    else:
+        from vllm_ascend.patch import worker     # ordered import list</code></pre>
+<p>Two phases: <strong>global</strong> (process-wide, at <code>pre_register_and_update</code> or via <code>_ensure_global_patch()</code>) and <strong>worker</strong> (per-NPU, top of <code>NPUWorker.__init__</code>). <strong>Spawn-mode re-patch problem</strong>: fresh interpreter in child → patches lost → fixed by wrapping <code>EngineCoreProc.run_engine_core</code> to re-run <code>_apply_profiling_patches()</code>.</p>
+
+<h3>7.2 Taxonomy</h3>
+<table>
+<tr><th>Category</th><th>Count</th><th>Representative patches</th></tr>
+<tr><td>A. Replace CUDA/NCCL/CANN/HCCL</td><td> HIGH </td><td><code>patch_torch_accelerator</code>, <code>patch_distributed</code>, <code>_hccl_pg_registry</code>, <code>patch_cudagraph</code></td></tr>
+<tr><td>B. Enable Ascend-only (MLA/MCA/DSA/FIA)</td><td> HIGH </td><td><code>patch_mla_prefill_backend</code>, <code>patch_fused_moe</code>, <code>patch_deepseek_v2</code>, <code>patch_process_weights_after_loading</code></td></tr>
+<tr><td>C. Hot-fix vLLM not yet pluggable</td><td> MED </td><td><code>patch_kv_cache_utils</code>, <code>patch_speculative_config</code>, <code>patch_camem_allocator</code></td></tr>
+<tr><td>D. Performance / fusion / scheduling</td><td> MED </td><td><code>patch_profiling_chunk</code>, <code>patch_balance_schedule</code>, <code>patch_rejection_sampler</code>, <code>patch_qwen3_next</code></td></tr>
+<tr><td>E. Model / tool-call version skew</td><td> LOW </td><td><code>patch_deepseek_v4_tool_call_parser</code>, <code>patch_glm47_tool_call_parser</code>, <code>patch_structured_output</code></td></tr>
+<tr><td>F. Device-family forks</td><td> LOW </td><td><code>patch_mamba_config_310</code>, <code>patch_idex_310</code>, <code>patch_npugraph_ex_triton</code></td></tr>
+</table>
+
+<details>
+<summary><strong>7.3 Top-3 most impactful patches</strong> — expand</summary>
+<div class="body">
+<p><strong><code>patch_mla_prefill_backend</code> (cleanest):</strong> registers a <em>no-op</em> <code>AscendMLAPrefillBackend</code> stub so upstream <code>get_mla_prefill_backend()</code> (which crashes on Ascend via a FlashAttn assert) completes — Ascend MLA impl owns the whole forward anyway.</p>
+<p><strong><code>patch_profiling_chunk</code> (structurally hardest):</strong> patches <code>EngineCore.__init__</code> + <code>Scheduler.update_from_output</code> + <code>Scheduler.schedule</code> + subprocess entry point; cross-process feedback loop for dynamic chunk sizing.</p>
+<p><strong><code>patch_fused_moe</code> (highest leverage):</strong> rebinds <code>FusedMoE</code> in <em>both</em> <code>fused_moe.layer</code> and the package, injecting <code>AscendMoERunner</code> (<code>AscendMoERunner310</code> on 310P), translating Ascend-only kwargs (<code>tid2eid</code>) and dropping CUDA-only ones (<code>hash</code>).</p>
+<p><span class="ref">Source: <code>patch/</code> tree — report 06 §3</span></p>
+</div>
+</details>
+</section>
+
+<!-- ==================== MODELS ==================== -->
+<section id="models">
+<h2>8. Model Support — 3-Tier Design <span class="tag-p">key fact</span></h2>
+<div class="insight">
+<strong>Only 3 models register custom <code>ForCausalLM</code> classes in <code>models/</code>:</strong> <code>DeepseekV4</code>, <code>DeepSeekV4MTP</code>, <code>LlamaEagle3VWN</code>. The bulk of model support lives in <strong>(1) the <code>xlite/xlite.py</code> graph runtime</strong> (Qwen3, GLM4-MoE, MiniMax M2), <strong>(2) attention/backends + CP variants</strong>, and <strong>(3) per-model patches in <code>patch/platform/</code></strong>.
+</div>
+
+<table>
+<tr><th>Model family</th><th>Reg site</th><th>Adaptation depth</th></tr>
+<tr><td><b>DeepSeek V4 / R1</b></td><td><code>models/deepseek_v4.py</code> (1516-line full custom model)</td><td>DSA sparse attn, Compressor/Indexer (c4/c128), HC kernels, FP8 index cache (A5), MTP draft</td></tr>
+<tr><td>DeepSeek MTP</td><td><code>models/deepseek_v4_mtp.py</code> (523 lines)</td><td>e_proj+h_proj fusion, shares topk/lm_head with target</td></tr>
+<tr><td>Qwen3 / Qwen3-MoE / VL</td><td><code>xlite/xlite.py</code> → <code>Llama/QwenMoeXliteModel</code></td><td>Xlite full-graph + attention backends</td></tr>
+<tr><td>MiniMax M2</td><td><code>xlite/xlite.py</code> → <code>MiniMaxM2XliteModel</code></td><td>Xlite graph + config patch</td></tr>
+<tr><td>GLM / GLM4-MoE</td><td><code>xlite/xlite.py</code> → <code>Glm4MoeXliteModel</code> + SFA backend</td><td>Spec decode forced eager (GLM drafts)</td></tr>
+<tr><td>Mamba / SSM</td><td><code>_310p/</code> + attention backends + <code>patch_mamba_*</code></td><td>GDN delta-net Triton kernels (A2/A3) / <code>_C_ascend.npu_recurrent_gated_delta_rule_310</code> (310P)</td></tr>
+<tr><td>Kimi K2.5, Step 3/3.5, Hunyuan VL</td><td>spec_decode + patch (thin)</td><td>MM placeholders, MTP fusion, processor compat</td></tr>
+</table>
+
+<h3>8.1 Speculative decoding — 11 proposers</h3>
+<p><code>AscendSpecDecodeBaseProposer</code> (~2150 lines) central orchestrator: TP patch for draft, ACLGraph FULL mode, PCP/DP block-table cloning, GLM eager fallback, top-k/hidden sharing, merged drafting. Supported: <strong>MTP, Eagle3, DFlash, DSpark, Medusa, Ngram, suffix, draft, extract_hidden_states, Step3.5</strong>.</p>
+
+<h3>8.2 Model loader innovations</h3>
+<table>
+<tr><th>Loader</th><th>Mechanism</th><th>Why faster</th></tr>
+<tr><td><b>netloader</b> (elastic)</td><td><code>P2PLoad</code> — stateless HCCL process group + recv every param on a <code>torch_npu.npu.Stream</code>; ElasticServer cascades to downstream consumers</td><td>source broadcasts once, many workers load in parallel, bypassing per-rank NFS reads</td></tr>
+<tr><td><b><code>rfork</code></b> (seeded RDMA)</td><td><code>RForkWorker</code> pulls a per-instance <em>seed key</em> from a central scheduler → gets seed addr:port → <code>yr.datasystem.TransferEngine.batch_transfer_sync_read(seed_session, client_ptrs, seed_ptrs, lengths)</code> in ≤1 GiB chunks; fallback on any error</td><td>one RDMA read from a live, already-warmed seed (same model/quant/layout) — bypasses shard deserialize + GIL; matters for elastic serving / disaggregation / preempt recovery</td></tr>
+</table>
+<p><span class="ref">Source: <code>model_loader/{netloader,rfork}/</code> — report 05 §6</span></p>
+
+<h3>8.3 Xlite — C++ whole-model fusion runtime</h3>
+<div class="insight">
+<strong>xlite ≠ edge runtime.</strong> It is a <strong>graph-based, whole-model fusion execution mode</strong> backed by a C++ library <code>xlite._C</code> exposing <code>Model / Runtime / AttnMeta / ScoringFunc{Softmax,Sigmoid}</code>. Architecture-strategy adapter registry: <code>LlamaXliteModel</code> (Qwen2/3), <code>QwenMoeXliteModel</code>, <code>Glm4MoeXliteModel</code>, <code>MiniMaxM2XliteModel</code>. Opt-in via <code>ascend_config.xlite_graph_config.enabled</code>.
+</div>
+</section>
+
+<!-- ==================== DEVICE / SCALEOUT / SUMMARY ==================== -->
+<section>
+<h2>9. Device Layer, Allocator &amp; CPU Binding</h2>
+<div class="grid2">
+<div class="card">
+<h3>BaseDeviceAdaptor (device_op.py)</h3>
+<p>1000+ line static-method op-dispatch shim — Ascend's analog of a CUDA kernel library. Covers KV scatter/gather, FIA, MLA prolog (MLAPO), sparse DSA attention, GDN linear-recurrent, MXFP quant. CUDA routes cuDNN/FlashInfer/Triton directly; Ascend routes through <code>torch_npu.*</code> + <code>_C_ascend.*</code> with extra <code>cache_mode/quant_mode/layout_*</code> enums (FRACTAL_NZ, PA_BSND, TND) — a format+kernel translation shim.</p>
+</div>
+<div class="card">
+<h3>Sleep allocators</h3>
+<p><strong><code>CaMemAllocator</code></strong> — singleton <code>NPUPluggableAllocator</code>, C++ extension <code>vllm_ascend_C</code>, ACL-memcpy-based mmap, tagged pools → pinned CPU backup. <strong><code>SleepWakeupManager</code></strong> — tears down HCCL groups + ACL graphs on sleep, recaptures on wake. Differs from CUDA caching allocator: <b>offload-not-reuse</b>, HCCL-aware, graph-aware.</p>
+</div>
+</div>
+<p><span class="ref">Source: <code>device/device_op.py</code>, <code>device_allocator/{camem,sleep_mem_optimized}.py</code> — report 06 §4</span></p>
+</section>
+
+<!-- ==================== FILES ==================== -->
+<section id="files">
+<h2>10. Key File Reference Index</h2>
+<table>
+<tr><th>Path</th><th>Role</th></tr>
+<tr><td><code>vllm_ascend/__init__.py</code></td><td>Plugin 4 hooks + <code>_ensure_global_patch</code> + model reg</td></tr>
+<tr><td><code>vllm_ascend/platform.py</code></td><td><code>NPUPlatform</code> full PlatformBase impl; central config surgery; attn/scheduler/worker routing</td></tr>
+<tr><td><code>vllm_ascend/ascend_config.py</code></td><td><code>AscendConfig</code> from <code>additional_config</code>; sub-configs (xlite/profiling/EPLB/sleep)</td></tr>
+<tr><td><code>vllm_ascend/ascend_forward_context.py</code></td><td><code>MoECommType</code>, <code>select_moe_comm_method</code>, <code>set_ascend_forward_context</code></td></tr>
+<tr><td><code>vllm_ascend/core/{scheduler_profiling_chunk,recompute_scheduler,short_request_first_scheduler,single_type_kv_cache_manager,kv_cache_interface,profiling_chunk_predictor}.py</code></td><td>4 scheduler innovations + compressed-KV manager</td></tr>
+<tr><td><code>vllm_ascend/worker/{worker,model_runner_v1}.py</code></td><td><code>NPUWorker</code> + 5188-line runner hot path</td></tr>
+<tr><td><code>vllm_ascend/worker/v2/</code></td><td>v2 runner (reuses upstream <code>execute_model</code>, overrides <code>prepare_inputs</code>)</td></tr>
+<tr><td><code>vllm_ascend/attention/{attention_v1,mla_v1,dsa_v1,sfa_v1,fa3_v1}.py</code></td><td>7 attention backends</td></tr>
+<tr><td><code>vllm_ascend/attention/context_parallel/</code></td><td>PCP/DCP metadata + per-backend CP builders</td></tr>
+<tr><td><code>vllm_ascend/ops/fused_moe/</code></td><td>MC2 / AlltoAll / AllGather / FusedMC2; <code>dispatch_ffn_combine</code></td></tr>
+<tr><td><code>vllm_ascend/ops/triton/</code></td><td>~40 Triton kernels (KDA/GLA/GDN/Mamba/split-QKV-RMSNorm-RoPE)</td></tr>
+<tr><td><code>vllm_ascend/_310p/</code></td><td>310P-forked attention/ops/quant/sample/spec_decode tree</td></tr>
+<tr><td><code>vllm_ascend/distributed/{kv_transfer,weight_transfer}/</code></td><td>Mooncake PD disaggregation + HCCL/NPU-IPC weight transfer</td></tr>
+<tr><td><code>vllm_ascend/distributed/device_communicators/</code></td><td>HCCL ctypes + <code>PyHcclCommunicator</code> + <code>NPUCommunicator</code></td></tr>
+<tr><td><code>vllm_ascend/eplb/{core,adaptor}/</code></td><td>4-strategy EPLB + <code>VllmEplbAdaptor</code> + D2D loader</td></tr>
+<tr><td><code>vllm_ascend/models/deepseek_v4{,_mtp}.py</code></td><td>Full custom DeepSeek V4 + MTP draft (1516 + 523 lines)</td></tr>
+<tr><td><code>vllm_ascend/xlite/xlite.py</code></td><td>C++ graph runtime + architecture adapters</td></tr>
+<tr><td><code>vllm_ascend/spec_decode/llm_base_proposer.py</code></td><td><code>AscendSpecDecodeBaseProposer</code> (~2150-line orchestrator)</td></tr>
+<tr><td><code>vllm_ascend/model_loader/{netloader,rfork}/</code></td><td>Elastic HCCL-P2P loader + Yuanrong RDMA seed loader</td></tr>
+<tr><td><code>vllm_ascend/quantization/methods/</code></td><td>20+ (quant_type, layer_type) schemes</td></tr>
+<tr><td><code>vllm_ascend/{kv_offload,simple_kv_offload}/</code></td><td>Two-tier CPU-offload (event-driven vs graph-capturable)</td></tr>
+<tr><td><code>vllm_ascend/patch/</code></td><td>~60 patches — index at <code>patch/__init__.py</code></td></tr>
+<tr><td><code>vllm_ascend/device/device_op.py</code></td><td><code>BaseDeviceAdaptor</code> 1000+ line op-dispatch shim</td></tr>
+<tr><td><code>vllm_ascend/compilation/</code></td><td>8 passes + <code>GraphFusionPassManager</code> + <code>AscendCompiler</code></td></tr>
+<tr><td><code>vllm_ascend/cpu_binding.py</code></td><td>topo_affinity (A2/310P/A5) + global_slice (A3)</td></tr>
+</table>
+</section>
+
+<section>
+<h2>11. Cross-cutting Architectural Assessment</h2>
+<p>For an AI-systems / engine researcher, the signal vllm-ascend sends about hardware-plugin design:</p>
+<div class="insight">
+<ol>
+<li><strong>"Plugin" is a misnomer for now.</strong> A clean platform layer would be ~5 files; vllm-ascend is ~60 patches + custom schedulers + custom loaders + custom KV transport. The "Hardware Pluggable" RFC is <em>necessary but not sufficient</em> — until vLLM exposes hooks for KV transfer, scheduler policy, config validation, fused-MoE factory, and <code>torch.accelerator</em> semantics, any serious NPU plugin must patch.</li>
+<li><strong>Scheduler is the real competitive advantage.</strong> ProfilingChunkScheduler (quadratic-fit closed-form chunk) and RecomputeScheduler (stateless-D via free-and-recompute) are contributions that would read well as vRLM-community PRs — they generalize beyond Ascend.</li>
+<li><strong>Transport matters as much as compute.</strong> The Mooncake pull-model PD disaggregation and the RFork seeded-RDMA loader are Ascend-specific answers to real deployment problems (elastic preemption recovery, disaggregated serving) that vanilla vLLM's Nixl + default loader don't solve cleanly.</li>
+<li><strong>Device fragmentation is the main complexity tax.</strong> 4 silicon gens (A2/A3/A5/310P) with materially different operator sets — 310P alone is a near-full fork — dominate the LOC and the patch surface.</li>
+<li><strong>MLA absorption + FIA-v2 is the right kernel bet.</strong> Absorbing <code>W_UK</code> into Q + a single fused FIA-v2 call avoids the head-materialization overhead that plagues two-stage Triton/CUDA MLA; the MLAPO extension (Q/KV proj + LN + RoPE + cache-write in one CANN op) is Ascend-specific but points at a general "fuse the prolog" direction.</li>
+</ol>
+</div>
+</section>
+
+<footer>
+vllm-ascend architecture analysis — synthesized 2026-07-18 from 6 subsystem deep-dives (reports 01-06 in <code>agent_reports/</code>).<code>vllm-project/vllm-ascend</code>, main branch, commit <code>b266da5d</code>. 442 Python files / ~128k LOC.<br>
+Report single-file: <code>final_report/vllm_ascend_architecture.html</code>.
+</footer>
+
+<section id="community">
+<h2>12. 社区演进时间线（2026-07 社区调研快照）</h2>
+<p>本节基于 <b>2026-07-18</b> 对 vllm-ascend 社区（GitHub PR / issue、官方文档 docs.vllm.ai/projects/ascend、RFC #11162）的一手调研，捕捉架构演进信号，作为对未来读者的「-v0.22.x 基线之后」导航。原始调研数据见 <code>community_research/</code>。</p>
+
+<h3>12.1 并行度在扩张（P6 活体证据）</h3>
+<table>
+<tr><th>PR</th><th>方向</th><th>状态</th><th>对架构的意义</th></tr>
+<tr><td><b>#11976 VPP</b></td><td>Virtual Pipeline Parallelism: V 形折回拓扑，纯 patch 零 upstream 修改，DSv3.1 超 CPP</td><td>open</td><td><b>靠 P5 patch 机制创造全新并行范</b>；证明 plugin 不只会「配置已有维度」还会「创造维度」</td></tr>
+<tr><td><b>#12292 NonBSP</b></td><td>跨 DP rank load-aware 调度打破 BSP，优化通信气泡</td><td>open</td><td>DP 从静态对等 → 动态负载感知</td></tr>
+<tr><td><b>#8497 Elastic EP</b></td><td>EPLB 静态重平衡 → 动态专家并行扩缩容（StatelessGroupCoordinator + standby_state）</td><td>open</td><td><b>EP world size 变运行时可变量</b></td></tr>
+<tr><td><b>#8961 load-balance proxy</b></td><td>PD 分离自动扩缩容（e-p-d/p-d 自动检测、monitor_and_scale 0.5s、/instances API）</td><td>open</td><td>PD 比例成为运行时调度维度</td></tr>
+<tr><td><b>#12254 oproj_tp</b></td><td>FP8 o_proj + output-projection TP on A5</td><td>open</td><td>新并行变体涌现</td></tr>
+</table>
+
+<h3>12.2 调度器家族壮大（P2 活体演化）</h3>
+<table>
+<tr><th>PR</th><th>调度器</th><th>状态</th></tr>
+<tr><td><b>#12240</b></td><td>Batch-Job-Aware Scheduler — 离线批 LPT + decode 长度采样预测</td><td><b>merged</b></td></tr>
+<tr><td><b>#11800</b></td><td>Recompute scheduler observability 加固</td><td>open</td></tr>
+<tr><td><b>#12177</b></td><td>Nest scheduler config 收敛到 <code>scheduler_config</code></td><td><b>merged</b></td></tr>
+<tr><td><b>Balance scheduling</b> (design doc)</td><td>语义明确为「全局准入门」<b>非</b>主动重平衡</td><td>refactor 进行中</td></tr>
+</table>
+
+<h3>12.3 Patch 在被偿还（P5 债务偿还活证据）</h3>
+<table>
+<tr><th>PR</th><th>动作</th><th>意义</th></tr>
+<tr><td><b>#11453</b></td><td>删除 <code>patch_glm47/ glm_streaming/ tool_choice_none</code>（upstream 已合并 #45915 + #44105）</td><td><b>patch 真在被删除</b>：P5 技术债被 upstream hook 化偿还</td></tr>
+<tr><td><b>#12294/#12293</b></td><td>Cherry-pick Remove obsolete parser patches</td><td>多分支清理中</td></tr>
+<tr><td><b>vLLM #11162</b></td><td>Hardware Pluggable RFC <b>closed</b>（2025-06），插件系统已落地但 RFC 自承「pluggable 对象未完全定义」</td><td>~60 patch 仍存在的根因</td></tr>
+</table>
+
+<h3>12.4 优化技术有生命周期（P4 lifecycle）</h3>
+<table>
+<tr><th>PR</th><th>动作</th><th>意义</th></tr>
+<tr><td><b>#12119</b></td><td>删除 <code>MatmulAllReduceAddRMSNormPass</code> + <code>fuse_allreduce_rms</code>（<b>本文 P4 范例</b>）</td><td><b>融合 pass 会过时</b>：upstream 语义变 / 更优 kernel / 维护成本 > 收益时移除</td></tr>
+<tr><td><b>#12120</b></td><td>删除 async_exponential 采样优化</td><td>实验路径会清理</td></tr>
+<tr><td><b>#11529</b></td><td>MLAPO refactor：布尔 flag → <code>PreprocessType</code> enum（NATIVE/PROLOG_V3/MLAPO），合并 A3/A5 路径</td><td>本文所述 MLAPO 门控正在被 enum 化</td></tr>
+</table>
+
+<h3>12.5 第一性原理修订指引</h3>
+<p>社区调研对第一性原理文档 <code>first_principles/vllm_first_principles.html</code> 产生以下修正（详见该文档对应章节）：</p>
+<ul>
+<li><b>P2 修正</b>：ProfilingChunkScheduler 主要目的是 <b>PP 流水线气泡消除</b>（O(n²) attention 导致同 size chunk 越往后越慢），借 P2 调度回路实现 -- 本质是 P6 工具而非 P1 工具。（来源：官方 design_dcpp.md）</li>
+<li><b>P5 强化</b>：patch.md 官方三原则（Less is more / 写移除计划 / 随时清理）把 P5 从分析洞察升级为项目政策。（来源：docs/Design_Documents/patch.md）</li>
+<li><b>P4 补 lifecycle</b>：#12119 删除 MatmulAllReduce pass 证明融合技术有生命周期，不是永恒设计。</li>
+<li><b>P2 新增</b>：Balance scheduling = 全局准入门，非主动重平衡（design_balance_schedule_refactor）。</li>
+</ul>
+
+<div class="warn">
+<b>使用&quot;社区演进&quot;章的注意</b>：本节是 <b>2026-07-18 静态快照</b>。PR 状态（open/merged）、分支名、patch 数量会随时间失效。阅读时以「架构信号」而非「精确 PR 号」为重点。社区一手数据（PR body / 官方文档 / issue 摘要）持久化在 <code>community_research/</code> 目录下，可按需复核原始信息。
+</div>
+</section>
+
+</div>
+</body>
+</html>

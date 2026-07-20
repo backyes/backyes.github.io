@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM 社区动态 · 性能优化 · 第一性原理进阶</title>
+<link rel="stylesheet" href="report.css">
+<style>
+:root{--bg:#0e1116;--fg:#e6e9ef;--muted:#9aa4b2;--accent:#6ea8fe;--callout-bg:#1b2330}
+@media(prefers-color-scheme:light){--bg:#fafafa;--fg:#1a1a1a}}
+.inv{background:linear-gradient(90deg,#1b2330,#0e1116);border-left:4px solid #6ea8fe;padding:10px 14px;margin:14px 0;font-style:italic}
+.tag{display:inline-block;background:#2563eb;color:#fff;font-size:70%;padding:2px 7px;border-radius:10px;margin-right:6px}
+code{background:#161b22;padding:1px 5px;border-radius:4px}
+pre{background:#161b22;padding:14px;border-radius:8px;overflow-x:auto}
+.callout{background:#1b2330;border-left:4px solid #6ea8fe;padding:10px 16px;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.9em}th,td{border:1px solid #2a3038;padding:6px 9px;text-align:left}
+th{background:#161b22}tr:nth-child(even)td{background:#161b22}
+@media(max-width:640px){table{font-size:.78em}th,td{padding:4px 5px}}
+ul,ol{line-height:1.85
+</style>
+</head>
+<body>
+<div class="topbar">📘 vLLM 架构分析 · <a href="index.html">返回索引</a> · 社区动态 + 性能优化 + 先进特性深度</div>
+
+<h1>社区动态 · 性能优化手册 · 第一性原理进阶</h1>
+<div class="callout"><b>这份报告的位置</b>。它在 <em>spine 报告 + 6 份 agent 分报告</em> 之后：<br>
+• §1-3 从 vLLM-Ascend 性能优化手册 + ACL Graph 官方设计 + 量化社区中提取 <b>可操作的工程洞见</b>；<br>
+• §4-6 把 2026-04..07 的社区热点(PD 分离 / Context Parallel / 动态 PP / SRF / KV Pool)映射回 §1 同一组物理不变量；<br>
+• §7 给出<b>第一性原理的延伸洞见</b>：从近期社区活动反推哪些设计正在从"工程选择"固化成"物理必然"。<br>
+👉 搭配的源码锚点在 <a href="agent4_ascend_adaptation_methodology.html">agent4 昇腾适配</a>·<a href="first_principles_ascend.html">第一性原理 Ascend</a>·<a href="agent2_scheduler_kvcache.html">agent2 调度器</a>。</div>
+
+<div class="toc"><b>目录</b>
+<ol>
+<li><a href="#perf">性能优化手册：OS / allocator / HCCL / kernel / 内核融合</a></li>
+<li><a href="#aclgraph">ACL Graph 设计：为什么 Ascend 不能"照搬" CUDA Graph</a></li>
+<li><a href="#quant">量化生态：W4A4/W8A8/MXFP/FlatQuant 背后的工程权衡</a></li>
+<li><a href="#adv">先进特性：KV Pool / PD 分离 / CP / 动态 PP</a></li>
+<li><a href="#schedopt">调度优化：recompute / SRF / profiling-chunk / CPU binding 的 roofline 解释</a></li>
+<li><a href="#pulse">社区热点 90 天 pulse → 信号与噪音</a></li>
+<li><a href="#insight2">第一性原理延伸：从社区活动读出正在固化的设计</a></li>
+<li><a href="#refs_c">引用与链接</a></li>
+</ol></div>
+
+<!-- ============ 1. 性能优化手册 ============ -->
+<h2 id="perf">1. 性能优化手册——从 OS 到 kernel 的五层</h2>
+<p>来源：<code>vllm-ascend/docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md</code> 完整手册 + <code>performance_benchmark.md</code> + <code>service_profiling_guide.md</code> + <code>msprobe_guide.md</code>。</p>
+
+<table>
+<tr><th>层</th><th>旋钮</th><th>对推理的物理影响</th></tr>
+<tr><td>1. OS 层</td><td>CPU governor→performance; swap→0; 自动 NUMA 平衡关闭; kernel.sched_migration_cost_ns=50000-100000（防线程跳核）</td><td>把 host-side jitter 从 ms 压到 μs；H2D 拷贝不被 swap 打断</td></tr>
+<tr><td>2. allocator</td><td>jemalloc / TCMalloc（默认），多线程无锁分配</td><td>峰值吞吐下碎片率降低，避免 multi-thread alloc 全局锁竞争</td></tr>
+<tr><td>3. torch_npu 环境变量</td><td>torch_npu 内存 / 调度优化（由 env 控制）</td><td>华为 CANN 自身 toggle，厂商默认开启最佳</td></tr>
+<tr><td>4. HCCL 通信</td><td><b>AIV 模式</b>（AI vector core 直接调度 RoCE，<b>绕过 AI CPU</b>）；HCCL_INTRA_ROCE_ENABLE（RDMA 替代 SDMA 8P mesh）; HCCL_RDMA_TC/SL（流量分级）; HCCL_BUFFSIZE（NPU 间共享缓存）</td><td><b>这是 NPU 特有的一层</b>：AI CPU 调度延迟高，绕过它可让集合通信延迟从 ms→sub-ms</td></tr>
+<tr><td>5. kernel 融合</td><td>70+ fusion pass 在 AscendCompiler / GraphFusionPassManager</td><td>减少 kernel launch 数与中间张量 HBM 读写：AllReduce+RMSNorm、QK-Norm+Rope、AllGather chunk noop、norm-quant 等参见图编译</td></tr>
+</table>
+
+<div class="inv"><b>"性能瓶颈不在 model forward 里, 50% 在 host 与 NCCL/HCCL 的交界"</b> —— 这是 NPU 推理社区被反复验证的经验。上面 §4 AIV 模式这条：把 comm 调度从 AI CPU（慢）移到 AI vector core（快），是 vLLM-Ascend 独立做出、尚未回馈 vLLM upstream 的重要优化。与此对应：CPU binding（§5）也是把 host-side 干扰减到最低。这两条说明 Ascend 适配的重心不只是"kernel 替换"，而是<b>host ↔ device 边界重新平衡</b>。</div>
+
+<h3>benchmark & profiling 工程实践</h3>
+<ul>
+<li><b>micro-benchmark</b>：<code>vllm_ascend/tests/ut</code>（单测，可在 CPU 跑，mock device）+ <code>tests/e2e</code>（E2E 精度+吞吐回归）+ nightly CI（<code>schedule_nightly_test_a2/a3.yaml</code>）</li>
+<li><b>profiling chain</b>：<strong>msprobe</strong>（Ascend NPU 侧 trace 工具，NPU kernel timeline）→ <code>service_profiling_guide.md</code> 给出从 API 到 kernel 的全链路与 D2H 同步热点定位 → `service benchmark.md` 给出稳态吞吐/首 token 延迟的标准测法（建议至少 2-3× 设备数的 8K input / 1 output warm-up 热身——这是 HCCL one-sided comm mesh 建立的一次性开销）</li>
+</ul>
+
+<!-- ============ 2. ACL Graph -->
+<h2 id="aclgraph">2. ACL Graph 设计——为什么 Ascend 不能"照搬" CUDA Graph</h2>
+<p>来源：<code>developer_guide/Design_Documents/ACL_Graph.md</code>（官方设计文档，直接引用设计者语气）。</p>
+
+<h3>两条根本差异</h3>
+<p><b>差异 A：ACL图不能静态回放——attention 的运行时元数据必须靠 backend 主动 "update"。</b> 官方原文："Full graph replay on Ascend has an extra problem that upstream generic documentation does not cover in detail: some attention operators need runtime metadata updates even when the overall graph is static."</p>
+
+<p>机制：</p>
+<ol>
+<li>capture 阶段 attention backend 捕获 per-graph task handle / event / workspace + 待刷新的 tensor 弱引用</li>
+<li>replay 前 <code>update_full_graph_params()</code> 调 backend 的 <code>update_graph_params()</code></li>
+<li>后端在 update stream 上用 <code>torch.npu.graph_task_update_begin()/end()</code> 把底层 attn 算子参数刷新一遍</li>
+<li><code>torch.npu.ExternalEvent</code> 保证 host-side update stream 与 replay stream 的顺序</li>
+</ol>
+<p class="xref">📐 在 <code>vllm_ascend/attention/*_v1.py</code>、<code>mla_v1.py</code>、<code>context_parallel/attention_py.py</code>、<code>mla_cp.py</code> 里实现。<b>关键设计事实：没有 update_graph_params hook 的 attn backend 无法做 full-graph replay</b>——这是 Ascend 比 CUDA 更严的静态图条件，也 przykład 说明"硬件抽象不只 Platform 层, 还渗透到 attn kernel 内部"。</p>
+
+<h3>差异 B：ACL Capture 仍可能被运行时资源拒绝</h3>
+<p>官方原文："Unlike CUDA Graph on CUDA devices, ACL graph capture on Ascend can still fail when the selected graph sizes consume more runtime resources than the current backend can supply. Piecewise mode is the most sensitive case because it captures many subgraphs and the total capture cost scales with model depth and configured size coverage."</p>
+<p>→ 新版(old <code>update_aclgraph_sizes()</code> 裁剪法已删除)改为<b>运行时捕获失败 + 用户可读指引</b>回落 eager，主调杆仍是 <code>cudagraph_capture_sizes / max_cudagraph_capture_size</code>。<b>关键推论：ACL graph 的实际"大小上界"是实测出来的，不能按 CUDA 经验估</b>。</p>
+
+<h3>模式与 strict normalization</h3>
+<ul>
+<li>encoder-decoder 必走 <b>PIECEWISE</b></li>
+<li><code>use_inductor</code> 在 ACL graph 路径 <b>强制禁用</b></li>
+<li><code>ASCEND_LAUNCH_BLOCKING=1</code> 与 ACL graph 不兼容</li>
+<li>Xlite graph mode 可关闭 full / 回落 <code>FULL_DECODE_ONLY</code></li>
+</ul>
+
+<div class="callout"><b>对适配工程师：ACL Graph 三原则</b><br>
+① <code>NPUPlatform.get_static_graph_wrapper_cls()</code> 返回 <code>ACLGraphWrapper</code>(这是唯一挂点,不改 dispatch policy)<br>
+② full-graph 需要 attn backend 提供 <code>update_graph_params()</code> hook<br>
+③ 捕获容量是<b>runtime 决定</b>,配置 <code>cudagraph_capture_sizes</code> 是主调杆,失败回落 eager</div>
+
+<!-- ============ 3. 量化 -->
+<h2 id="quant">3. 量化生态——工程权衡</h2>
+<p>来源：<code>quantization/</code> 在 90 天内 ~61 commits；官方 <code>feature_guide/quantization.md</code> + <code>developer_guide/Design_Documents/quantization.md</code>。</p>
+
+<table>
+<tr><th>方案</th><th>dtype 通路</th><th>feature matrix 互斥</th><th>定位</th></tr>
+<tr><td>W4A4</td><td>int4 weight, int4 activation</td><td>⟷ EPLB/TP: ❌</td><td>极限吞吐 EP off 场景</td></tr>
+<tr><td>W4A8</td><td>int4 weight, fp8 activation</td><td>兼容 EPLB/TP</td><td>MoE 吞吐主力</td></tr>
+<tr><td>W8A8</td><td>fp8 / int8</td><td>全兼容</td><td>LLM 通用</td></tr>
+<tr><td>PDMix / KV-C8</td><td>per-channel / kv int8</td><td>-</td><td>长上下文 KV 压缩</td></tr>
+<tr><td>MXFP4 / MXFP8</td><td>OCP MX 格式</td><td>-</td><td>Blackwell/Ascend 统一</td></tr>
+<tr><td>FlatQuant</td><td>flatten + low-rank 补偿</td><td>-</td><td>训练后无损压缩</td></tr>
+</table>
+
+<p class="xref">📐 这套多样性源自 CANN / torch_npu 链路"硬件原生 kernel 存在差异"：Ascend A2 的 cube core 偏好 fp16/bf16，A3 强化了 int8 路径，310P 是更低功耗 line (int4 wider)。<b>一条简明规则：MoE 走 W4A8，dense 走 W8A8，极限吞吐(EP off)走 W4A4</b>——这不是偏好,是硬件 kernel 覆盖度的现实。Ascend目前共 10+ 量化方案,见 `quantization/methods/`。<b>W4A4 ⟷ EPLB 不兼容</b>这条对应 feature matrix,原因：EPLB 在 expert 迁移时要做 int8/int4 格式转换,CANN kernel 在当前版本未支持。</p>
+
+<!-- ============ 4. 先进特性 -->
+<h2 id="adv">4. 先进特性——KV Pool / PD 分离 / Context Parallel / 动态 PP</h2>
+<p>来源：<code>feature_guide/epd_disaggregation.md</code>·<code>kv_pool.md</code>·<code>layerwise_kv_pool.md</code>·<code>Design_Documents/disaggregated_prefill.md</code>·<code>context_parallel.md</code>·<code>dynamic_chunk_pipeline_parallel.md</code>。</p>
+
+<h3>PD 分离(P/D Disaggregation)——把"两段相反计算"拆到两类硬件</h3>
+<table>
+<tr><th>Connector 拓扑</th><th>方向</th><th>适用</th></tr>
+<tr><td><b>MooncakeConnector</b> (pull)</td><td>D 节点主动从 P 拉 KV</td><td>pull 控制在高带宽、大 KV</td></tr>
+<tr><td><b>MooncakeLayerwiseConnector</b> (push)</td><td>P 逐层推 KV 到 D</td><td>与 PP 组合; 低 push 开销; 配合 PCP</td></tr>
+</table>
+<p>两类都走 Mooncake（Moonshot AI 的 RDMA 引擎，升腾上叫 HIXL ascend_direct），<b>DC 之间走 RDMA 而不是 NCCL/HCCL</b>——这是 vLLM-Ascend 独立演化出的路径,vLLM upstream 的 NIXL KV lease 是类似但实现独立。</p>
+
+<h3>KV Cache Pool (Ascend Store)——跨 instance 前缀共享</h3>
+<p>这是 vLLM-Ascend 对 vLLM upstream 的<b>重大扩展</b>（开源上游几乎没有等价物）：把多个 instance 计算出的 KV 投进一个分布式 key-value store，让后来的请求直接 <code>GET</code> 共享前缀。</p>
+<table>
+<tr><th>后端</th><th>机制</th></tr>
+<tr><td><b>Mooncake</b></td><td>Mooncake Distributed Store + SSD offload（NVMe eviction → 1GB 对齐 fabric mem，bucket eviction policy=lru/fifo/none）</td></tr>
+<tr><td><b>Memcache</b></td><td>MemFabric-backed；支持 device_rdma（A2 推荐）和 device_sdma（A3 HCCS 推荐）</td></tr>
+<tr><td><b>Yuanrong</b></td><td>openEuler 官方 etcd+HugeTLB huge page 共享内存；支持 Remote H2D（跨机 host→device）</td></tr>
+</table>
+
+<div class="callout"><b>KV Pool 调优 checklist（官方 FAQ 的精华）</b><br>
+① <code>kv_load_failure_policy = recompute</code>（recom 兜底,比 fail 稳,但 hybrid attn 模型如 DSV4 暂不支持）<br>
+② lease TTL：<code>--default_kv_lease_ttl</code> 必须 &gt; ASCEND_CONNECT_TIMEOUT + ASCEND_TRANSFER_TIMEOUT<br>
+③ fabric mem 对齐 A3: <code>global_segment_size</code> 与 <code>MOONCAKE_OFFLOAD_LOCAL_BUFFER_SIZE_BYTES</code> 必须 1GB 整数倍<br>
+④ A3 + <code>ASCEND_ENABLE_USE_FABRIC_MEM=1</code>：开启统一直传(比 ASCEND_BUFFER_POOL 4:8 更稳)<br>
+⑤ <code>PYTHONHASHSEED</code> 所有节点一致（保证跨 worker 哈希命中）<br>
+⑥ warm-up：2-3× 设备数的 8K input + 1 output（等 HCCL mesh 建链）</div>
+
+<h3>Context Parallel(PCP / DCP)——沿 sequence 切分 KV</h3>
+<p>• <b>PCP (Prefill-CP)</b>：prefill 阶段沿 sequence 切分到多卡，KV 按 <code>cp_kv_cache_interleave_size</code>（默认 =1，token interleave）分布；需要<b>独立通信域</b><br>
+• <b>DCP (Decode-CP)</b>：<b>复用 TP 的通信域</b>，在 decode/chunked prefill 阶段沿 sequence 切分 KV，<b>消除 TP 域内的 KV 冗余副本</b>（从而释放 HBM 给更多并发请求）<br>
+• 总 <code>cp_size = pcp_size × dcp_size</code>, <code>cp_rank = pcp_rank × dcp_size + dcp_rank</code>；block_size 必须整除 <code>cp_kv_cache_interleave_size</code></p>
+<div class="inv">DCP 这条的精妙之处：<b>decode 阶段是 bandwidth-bound</b>(I2),减少 KV 冗余 = 直接减少 HBM 需求 = 同样的 HBM 能并发更多请求 = 吞吐线性提升。PCP 这条更偏降低 TTFT(TFT)——这是 vLLM 把"decode vs prefill 是两种计算范式"这条 roofline 洞察投射到 parallel 策略上的直接体现。</div>
+
+<h3>Dynamic Chunked Pipeline Parallel (CPP)——profiling-driven</h3>
+<p>官方定义："profiling-based dynamic chunking strategy that optimizes prefill performance for long sequences in Pipeline Parallelism scenarios"。只在分离部署的 <b>P 节点</b>开，D 节点不用。关键：</p>
+<ul>
+<li>PP 在多节点长序列下 pipeline bubble 严重；CPP 按 profiling latency 动态算 chunk——短序列 PP 不退化，长序列 PP 砍 bubble</li>
+<li>支持 eager + graph + prefix cache + chunked prefill 全兼容</li>
+<li><b>官方建议不在 PP 的 P 节点开 async-scheduling</b>（实测 prefill 阶段 async 反而退化,好处小）</li>
+<li>推荐 <code>MooncakeConnectorV1</code> 作为 kv_connector（对 PP 支持最全）</li>
+</ul>
+<p>→ backend 源码 <code>core/scheduler_profiling_chunk.py</code>·<code>core/recompute_scheduler.py</code>·<code>patch_profiling_chunk.py</code>。</p>
+
+<!-- ============ 5. 调度优化 -->
+<h2 id="schedopt">5. 调度优化——roofline 视角</h2>
+
+<h3>recompute vs swap：NPU 选"扔掉再算"</h3>
+<table>
+<tr><th>策略</th><th>N 状态 HBM 不足时</th><th>适用硬件</th></tr>
+<tr><td>swap (CPU offload)</td><td>把 KV 腾到 CPU，PCIe 搬进搬出</td><td>GPU(bandwidth 高 / 搬得动)</td></tr>
+<tr><td>recompute</td><td>丢弃 KV，下次 token 算到时<b>从 prompt 重算</b></td><td><b>NPU(compute/bandwidth 高, 算得动搬不动)</b></td></tr>
+</table>
+<p>这正是 I2 roofline 的 NPU 特有解。在 vLLM upstream（GPU后端）swap 是默认,Ascend 默认是 recompute。这个区别被写进 <code>kv_load_failure_policy</code>：upstream 是 fail,Ascend 推荐改为 recompute。</p>
+
+<h3>ShortRequestFirst(SRF)——反 head-of-line blocking</h3>
+<p>只在 PD 分离的 P 节点 + recompute 调度器 下启用。核心参数：</p>
+<ul>
+<li><code>threshold</code> (默认 256)：prompt ≤ threshold 算 short</li>
+<li><code>long_max_wait_ms</code> (默认 0)：长请求最长等 short 多久后被提升</li>
+</ul>
+<p>官方 tuning 建议： <code>threshold</code> 取 P70-P85（prompt 分布两峰之间的 valley）；<code>long_max_wait_ms</code> 取 strict-short-first 下 long 请求 P90-P95 等待时间，但 shouldn't 从 short TTFT 推。这不是"吞吐优化",是<b>公平性+短请求 SLO 的权衡</b>。</p>
+
+<h3>profiling-chunk——roofline 的自动信号</h3>
+<p>用实际 profiling latency 动态决定 chunk size；配合 PP+async-scheduling 在 P 节点实测有效,见 <code>scheduler_profiling_chunk.py</code>。这条能看出：<b>Ascend 在测"调度参数是否应该自动 profiling",而不是人工调</b>。</p>
+
+<h3>CPU binding——host-side 的 roofline</h3>
+<p><code>vllm-ascend v0.18.0rc1</code> 之后 ARM 服务器默认开启 CPU binding。收益：</p>
+<ul>
+<li>跨 NUMA 流量下降——worker 绑到本地 NUMA</li>
+<li>线程抢占减少——关键 runtime thread 固定核范围</li>
+<li>尾延迟稳定性——多 worker 隔离</li>
+<li>Ascend 950 特殊：用 <code>npu-smi info -t topo</code> 选亲和 NUMA,每 worker 绑一 CPU cluster（lscpu Thread(s) per core: 8 CPU·core=1 / 16 CPU·core=2）</li>
+</ul>
+<p><b>CPU binding 的存在证明 vLLM inference 的性能瓶颈已经从"GPU kernel"迁到"host-side 调度 + HCCL + D2H 拷贝"</b>——GPU 侧 fusion 到极致后,host jitter 成了最后 10% P99 的决定因素。</p>
+
+<h3>Netloader 插件化——weight load 阶段的 optimization</h3>
+<p><code>load-format=netloader</code> 走 HCCL send/recv 在已加载实例与新实例间<b>直接传权重</b>，避免从 storage 重新加载。这让 weight load 时间从分钟→秒级,且：</p>
+<ul>
+<li>减轻中心存储/网络负载</li>
+<li>故障恢复时新实例快速接新流量</li>
+<li>需要在每 worker 进程绑一个 listening port；HCCL buffer 需预留约 200 MB HBM（<code>--gpu-memory-utilization</code> 调低一格）</li>
+<li>推荐 <code>VLLM_SLEEP_WHEN_IDLE=1</code> 避免空闲时连接不稳</li>
+</ul>
+
+<!-- ============ 6. 90 天 pulse -->
+<h2 id="pulse">6. 社区热点 90 天 pulse——信号与噪音</h2>
+<p>窗口: <code>vllm-ascend</code> git log 2026-04-01..07-18，<b>约 1060 commits</b>。按主题关键词统计：</p>
+
+<table>
+<tr><th>topic</th><th>commits</th><th>定性</th></tr>
+<tr><td>kv</td><td>97</td><td>KV-cache 全栈（PD disagg / KV Pool Memcache+Yuanrong+Layerwise / KV CPU offload）<b>绝对重心</b></td></tr>
+<tr><td>A3</td><td>64</td><td>A3 硬件 bring-up、fabric memory、full graph——<b>一代新硬件的起飞期</b></td></tr>
+<tr><td>quant</td><td>61</td><td>量化方案多种族迸发（W4A4/W4A8/W8A8/PDmix/MXFP/FlatQuant）</td></tr>
+<tr><td>spec</td><td>53</td><td>推测解码大类(P-Eagle3/DFlash DSPark/PCP-proposer/MLA-MTP/H2D sync eliminate)</td></tr>
+<tr><td>310</td><td>53</td><td>310P <b>独立硬件线</b>（不是 A3 的子集,是低功耗 line）</td></tr>
+<tr><td>PCP</td><td>35</td><td>prefill context parallel</td></tr>
+<tr><td>eplb</td><td>24</td><td><b>Ascend 开源原创</b></td></tr>
+<tr><td>MLA</td><td>15</td><td>DeepSeek 类压缩 attention</td></tr>
+<tr><td>recompute</td><td>14</td><td>roofline NPU 侧</td></tr>
+<tr><td>Flashcomm</td><td>11</td><td>CANN 融合通信</td></tr>
+<tr><td>910</td><td>9</td><td>910/950</td></tr>
+<tr><td>disagg</td><td>8</td><td>PD 分离部署工程化 <i>(比显示数低,因为大部分 disagg 被归入 kv 主题)</i></td></tr>
+</table>
+
+<div class="inv"><b>三大 community 信号（记者视角）</b><br>
+① <b>"全栈 KV"</b>：A2/A3/310P + 多后端 KV Pool + PD 分离 + context parallel——Ascend 正在把 KV-cache 这条轴从"被动缓存"<b>演进为"分布式内存服务"</b>，这是 vLLM upstream 还没系统做的事。<br>
+② <b>"recompute+quant+SRF 三件套在 PD 节点合流"</b>——PD 分离后, P 节点是带宽瓶颈, recompute(避免搬) + quant(减位宽) + SRF(短请求削峰值) 三件事从不同方向解同一个"I2 bandwidth wall"<br>
+③ <b>"host-side 最后 10%"</b>：CPU binding / msprobe / Netloader 说明 kernel 端已极致,性能前沿已经移到 host jitter + weight load + connector mesh</div>
+
+<p class="xref">📐 模型支持矩阵显示 20+ 主流模型在 A2/A3 已完成<b>TP+EP+PD Disagg+Full Graph</b>（DeepSeek V3→V4、Qwen3、GLM5、Kimi-K2、MiniMax-M2），Gemma4/950 miniMax 进入 experimental。这是<b>从"跑通"到"全特性生产级"</b>的跃迁。feature matrix 里的 🟠/❌ 约束反过来标注<b>仍然未解的物理限制</b>——W4A4 ⟷ EPLB/TP 这条是典型 kernel 覆盖度限制。</p>
+
+<!-- ============ 7. 第一性原理延伸 -->
+<h2 id="insight2">7. 第一性原理延伸——从社区活动读出正在固化的设计</h2>
+
+<h3>判断框架：三层"物理强制"等级</h3>
+<table>
+<tr><th>等级</th><th>含义</th><th>vLLM 实例</th><th>Ascend 实例</th></tr>
+<tr><td>L1 implement-to-exist</td><td>不做则系统不能工作</td><td>paged KV / single-step scheduler / Platform iface</td><td>HCCL 换 NCCL / Platform shim / ACL Graph</td></tr>
+<tr><td>L2 implement-to-compete</td><td>不做则竞争劣势</td><td>prefix cache / chunked prefill / CPython 95/5</td><td>recompute / KV Pool 后端 / SRF / quant 多样性</td></tr>
+<tr><td>L3 implement-to-win</td><td>不做则同级,做了则拉开</td><td>PD disagg / spec decode / speculator</td><td>CPU binding / profiling-chunk / netloader / Flashcomm / AscendStore 后端三线</td></tr>
+</table>
+
+<p class="xref">📐 按照这个框架：</p>
+<ul>
+<li><b>PD 分离 正在从 L3 下沉到 L2</b>（hyperscaler 标配）；<b>KV Pool(Ascend Store) 正在从 L3 下沉到 L2</b>（前缀共享成本从 "nice" 变 "must"）</li>
+<li><b>Context Parallel 正在从 L2 下沉到 L1-L2 之间</b>——长上下文(&gt;1M token)没有 CP 就根本跑不起来</li>
+<li><b>CPU binding 从 L3 → L2</b>——host-side jitter 在极致 kernel 优化后已是主瓶颈</li>
+<li><b>recompute-from-swap 这条会<b>永远</b>留在 L2</b>，因为它在 NPU 和 GPU 上有完全相反的最优选择——不可能固化成 L1 通用</li>
+</ul>
+
+<h3>最关键的进阶物理（只在社区活动中显现,不在源码里直接看到）</h3>
+
+<p><b>定律 1："comp/bandwidth ratio 决定 swap vs recompute"</b>—— NPU 计算力强,带宽紧张 → recompute;GPU 相反 → swap。这条在 spine 报告里有过表述,但 Ascend 把 <code>kv_load_failure_policy=recompute</code> 当默认值,以及 <code>KV Pool Memcache</code> 在 external backend 里也接受 recompute 兜底,让这条物理变成<b>工程默认值,不再需要人工配置</b>。</p>
+
+<p><b>定律 2: "PD 分离是把 I2 roofline 的 'decode vs prefill 是两种计算' 从节点内推到节点间"</b>。节点内用 chunked prefill 分时,节点间用 PD 分离空间分。两者都是<b>同一个物理洞见的两种实现方式</b>。当 TTFT SLO 与 TPOT SLO 冲突不可调和时,PD 分离从"优化选项"变成"必选项"。这就是为什么社区在 PD 分离上出现 Mooncake/Layerwise/ascend_store 三套并行后端——都在解同一个问题,只是网络层(拉/推/共享内存)不同。</p>
+
+<p><b>定律 3: "KV-cache 从 cache(缓存)进化成 memory tier(内存层级)"</b>。KV Pool 把 KV 从"单一 HBM 内的分页"扩展为"HBM → extended pool(Mooncake/Memcache/Yuanrong) → NVMe SSD offload"三级——这跟经典 OS memory hierarchy (cache → DRAM → swapfile) 同构。<b>定律 (I1 transformer memory law) 再次发威</b>：只要 KV 永不变且按位读,它就是内容寻址的、可 tiering 的——这是 vLLM-Ascend <b>对推理系统 memory model 的最大单项贡献</b>。</p>
+
+<p><b>定律 4: "host-side jitter 是极致 kernel 优化后的最后 10% P99"</b>。这条只有在 CPU binding、msprobe、Netloader、scheduler_profiling_chunk 同时流行时才看得清楚。它是"kernel 侧已尽善尽美"的反面——真正的战场已经转移到"host 如何稳定地给 GPU/NPU 喂指令"。这条在 GPU 社区也被验证（NVIDIA 的 MIG / DPDK 都是同一主题）。</p>
+
+<p><b>定律 5: "Python 95/5 的两端同时被压缩"。</b> kernel 侧 5% 已被各种 fusion + ACL graph 吞掉了大部分 launch overhead——但还不能 100%（attention 每步必须动 metadata）；调度侧 95% 已被 SRF + profiling-chunk + CPU binding 压低了 host jitter。<b>还剩的关键余地：当 Ascend 把 host jitter 再压一级时,最终会逼迫 vLLM 把调度器从 Python 迁到 C++/Rust——回到 spine §5 "Python 前端是工程选择,不是物理必然"</b>。这不会马上发生,但方向已明。</p>
+
+<h3>给推理架构师的一组 actionable 建议</h3>
+<table>
+<tr><th>角色</th><th>读报告顺序</th><th>落地动作</th></tr>
+<tr><td>新适配 DSA</td><td>spine §0-10 → agent4 通用方法论</td><td>按 §10 8 步工作流 + 第 7 节 L1/L2/L3 决定 patch 还是 upstream</td></tr>
+<tr><td>Ascend 性能工程师</td><td>community_deep_dive §1(perf handbook) → §4(CP/CPP/PD) → §5(CPU binding + recompute)</td><td>先用 §4 checklist 把 KV Pool lease / fabric mem / warm-up 正确配置,再用 §5 roofline 决定 recompute vs offload</td></tr>
+<tr><td>推理系统 research</td><td>§7 五条进阶物理</td><td>把"KV 是分布式 memory tier" "host-side jitter 是最后战场" 这两条当作下一代推理架构的研究动机</td></tr>
+</table>
+
+<!-- ============ refs -->
+<h2 id="refs_c">8. 关键链接与本地资料</h2>
+
+<h3>本地原始文档(已 strip 保存在 <code>vllm_arch_analysis/community/asci_docs/</code>)</h3>
+<ul>
+<li><code>developer_guide_performance_and_debug_optimization_and_tuning.md</code>（性能优化手册）</li>
+<li><code>developer_guide_Design_Documents_ACL_Graph.md</code>（ACL Graph 设计——完型差异）</li>
+<li><code>developer_guide_Design_Documents_context_parallel.md</code>（PCP/DCP）</li>
+<li><code>developer_guide_Design_Documents_disaggregated_prefill.md</code>（PD 分离 + Mooncake/Layerwise 连接）</li>
+<li><code>developer_guide_Design_Documents_quantization.md</code>（量化设计）</li>
+<li><code>developer_guide_performance_and_debug_service_profiling_guide.md</code>（profiling 链路）</li>
+<li><code>developer_guide_performance_and_debug_performance_benchmark.md</code>（benchmark 标准测法）</li>
+<li><code>user_guide_feature_guide_*.md</code>（SRF · Fine-grained TP · batch_invariance · CPU binding · netloader · KV CPU offload · KV Pool · layerwise_kv_pool · CPP · · EP · attention flash · sleep · speculative decoding · lmcache · MindIE/Volcano 部署 等 30+ 功能指南）</li>
+<li><code>user_guide_support_matrix_feature_matrix.md</code> / <code>supported_models.md</code>（完整特性互斥表 + 模型支持表）</li>
+</ul>
+
+<h3>在线关键链接</h3>
+<ul>
+<li>vLLM upstream: <a href="https://docs.vllm.ai/en/latest/usage/v1_guide.html">v1_guide</a> · <a href="https://blog.vllm.ai/2025/01/27/v1-alpha-release.html">v1-alpha-release 博文</a> · <a href="https://docs.vllm.ai/en/latest/serving/performance.html">performance</a> · <a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">disagg_prefill</a> · <a href="https://docs.vllm.ai/en/latest/design/cuda_graphs.html">CUDA graphs</a> · <a href="https://docs.vllm.ai/en/latest/design/attention_backends.html">attention backends</a> · <a href="https://docs.vllm.ai/en/latest/design/paged_attention.html">paged attention</a></li>
+<li>vLLM-Ascend 文档站: <a href="https://docs.vllm.ai/projects/ascend/">docs.vllm.ai/projects/ascend/</a></li>
+<li>vLLM-Ascend GitHub: <a href="https://github.com/vllm-project/vllm-ascend">github.com/vllm-project/vllm-ascend</a></li>
+<li>Mooncake: <a href="https://github.com/kvcache-ai/Mooncake">github.com/kvcache-ai/Mooncake</a></li>
+</ul>
+
+<div class="meta" style="margin-top:22px">vLLM 2db39c704 · Ascend b266da5d (git log 覆盖 2026-04~07) · 2026-07-18 · 这份 report</div>
+</body>
+</html>
