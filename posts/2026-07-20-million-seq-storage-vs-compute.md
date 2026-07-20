@@ -47,7 +47,7 @@ I calculated the bill using official pricing from four major providers. The diff
 
 | Provider | Cache Hit /M | Cache Miss /M | Output /M | Source |
 |---|---|---|---|---|
-| **[DeepSeek Pro](https://platform.deepseek.com/api-docs/pricing/)** | **$0.07 (¥0.50)** | $0.27 (¥1.94) | $1.10 (¥7.92) | [Official Pricing](https://platform.deepseek.com/api-docs/pricing/) |
+| **[DeepSeek Pro](https://api-docs.deepseek.com/quick_start/pricing)** | **$0.07 (¥0.50)** | $0.27 (¥1.94) | $1.10 (¥7.92) | [Official Pricing](https://api-docs.deepseek.com/quick_start/pricing) |
 | **[Kimi K3](https://platform.moonshot.cn/docs/pricing/chat)** | $0.28 (¥2.00) | $2.78 (¥20.00) | $13.90 (¥100.00) | [Moonshot Pricing](https://platform.moonshot.cn/docs/pricing/chat) |
 | **[Claude Sonnet 4.5](https://www.anthropic.com/api/pricing)** | $3.00 (¥21.6) | $3.00 (¥21.6) | $15.00 (¥108) | [Anthropic Pricing](https://www.anthropic.com/api/pricing) |
 | **[GPT-5](https://openai.com/pricing)** | $1.25 (¥9.0) | $1.25 (¥9.0) | $10.00 (¥72) | [OpenAI Pricing](https://openai.com/pricing) |
@@ -72,7 +72,7 @@ Read that again: **DeepSeek charges 80× less per cache hit than Kimi.** This is
 
 **For the exact same token consumption, Kimi costs 4.2× more than DeepSeek.**
 
-[^deepseek-pricing]: DeepSeek API Pricing — https://platform.deepseek.com/api-docs/pricing/
+[^deepseek-pricing]: DeepSeek API Pricing — https://api-docs.deepseek.com/quick_start/pricing
 [^kimi-pricing]: Moonshot AI Pricing — https://platform.moonshot.cn/docs/pricing/chat
 
 > Kimi K3's storage bill alone ($44.91) is **4× DeepSeek's storage bill** ($11.23). This is the price of architectural choices.
@@ -173,7 +173,7 @@ The future belongs to systems that treat memory as the primary compute resource.
 
 ## References
 
-1. [DeepSeek API Pricing](https://platform.deepseek.com/api-docs/pricing/) — Official DeepSeek V3/R1 pricing
+1. [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing) — Official DeepSeek V3/R1 pricing
 2. [DeepSeek Context Caching](https://platform.deepseek.com/api-docs/context-caching/) — Automatic prefix caching mechanism
 3. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 4. [Anthropic Claude Pricing](https://www.anthropic.com/api/pricing) — Claude Sonnet 4.5 / Opus 4
