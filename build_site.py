@@ -99,12 +99,12 @@ REPORTS = [
     {"dst":"inference-community","entry":"web/sources/coreweave_inference.html","visual":"InferCom",
      "title":"推理社区 2026 前沿动态",
      "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
-     "cat":"community","priority":"p1",
+     "cat":"inference","priority":"p1",
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
 ]
 
 CATS = {
-    "inference":  {"label":"推理引擎","color":"tag-inference"},
+    "inference":  {"label":"推理架构","color":"tag-inference"},
     "model":      {"label":"模型架构","color":"tag-model"},
     "network":    {"label":"网络拓扑","color":"tag-network"},
     "chip":       {"label":"芯片架构","color":"tag-chip"},
@@ -113,7 +113,6 @@ CATS = {
     "recsys":     {"label":"推荐系统","color":"tag-recsys"},
     "conference": {"label":"学术会议","color":"tag-conference"},
     "space":      {"label":"太空经济","color":"tag-space"},
-    "community":  {"label":"推理社区","color":"tag-community"},
 }
 
 # ──── 解析手写文章 ────
@@ -210,7 +209,7 @@ def gen_cards():
             if r["priority"] != prefix: continue
             dst, entry = r["dst"], r["entry"]
             if not os.path.isfile(os.path.join(REPO, dst, entry)): continue
-            cat = CATS.get(r["cat"], CATS["community"])
+            cat = CATS.get(r["cat"], CATS["inference"])
             visual = visual_placeholder(r.get("visual",""), r["cat"])
             cards += f'''<a class="card" href="{dst}/{entry}" data-cat="{r['cat']}">
   <div class="card-img">{visual}<span class="tag {cat['color']}">{cat['label']}</span></div>
