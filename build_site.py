@@ -155,28 +155,20 @@ def md_to_html(text):
     if in_ul: out.append('</ul>')
     return '\n'.join(out)
 
-# ──── 卡片视觉: 大字标题 (SVG 渲染, 不依赖外部图片) ────
-def svg_placeholder(visual, cat):
-    # 灰阶配色 + 微差, 大字用稍亮的灰
+# ──── 卡片视觉: 大字标题 (HTML 文字, 响应式字号匹配首页 hero) ────
+def visual_placeholder(visual, cat):
+    # 灰阶配色
     shades = {
-        "inference":("#2a2f38","#1a1e24"),
-        "system":    ("#2d323c","#1c2026"),
-        "network":   ("#2b303a","#1b1f25"),
-        "chip":      ("#2e333e","#1d2128"),
-        "mixed":     ("#2c313b","#1c2027"),
+        "inference":"#2a2f38",
+        "system":   "#2d323c",
+        "network":  "#2b303a",
+        "chip":     "#2e333e",
+        "mixed":    "#2c313b",
     }
-    c1, c2 = shades.get(cat,("#2a2f38","#1a1e24"))
-    # 大字填满卡片 — 用 textLength 撑满宽度,自适应任何卡片尺寸
+    c = shades.get(cat, "#2a2f38")
     txt = visual or ""
-    # viewBox 单位,宽度 100 = 卡片宽度百分比
-    # textLength=90 表示文字占 90% 卡片宽度,自动缩放字号
-    return (f'<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">'
-            f'<rect width="100" height="60" fill="{c1}"/>'
-            f'<rect x="0" y="42" width="100" height="18" fill="{c2}"/>'
-            f'<text x="50" y="32" text-anchor="middle" dominant-baseline="middle" '
-            f'fill="rgba(255,255,255,.6)" '
-            f'font-family="Inter,sans-serif" font-weight="600" '
-            f'font-size="14" textLength="88" lengthAdjust="spacingAndGlyphs">{txt}</text></svg>')
+    # HTML div + clamp() 字号,匹配首页 "Thoughts on AI infrastructure" 风格
+    return f'<div class="visual" style="background:{c}">{txt}</div>'
 
 # ──── 生成报告卡片 ────
 def gen_cards():
@@ -187,9 +179,9 @@ def gen_cards():
             dst, entry = r["dst"], r["entry"]
             if not os.path.isfile(os.path.join(REPO, dst, entry)): continue
             cat = CATS.get(r["cat"], CATS["mixed"])
-            svg = svg_placeholder(r.get("visual",""), r["cat"])
+            visual = visual_placeholder(r.get("visual",""), r["cat"])
             cards += f'''<a class="card" href="{dst}/{entry}" data-cat="{r['cat']}">
-  <div class="card-img"><div class="ph">{svg}</div><span class="tag {cat['color']}">{cat['label']}</span></div>
+  <div class="card-img">{visual}<span class="tag {cat['color']}">{cat['label']}</span></div>
   <div class="card-body">
     <h3>{r['title']}</h3>
     <p>{r['desc']}</p>
