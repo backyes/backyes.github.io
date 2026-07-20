@@ -153,17 +153,20 @@ def svg_placeholder(visual, cat):
         "mixed":     ("#2c313b","#1c2027"),
     }
     c1, c2 = shades.get(cat,("#2a2f38","#1a1e24"))
-    # 根据文字长度调整字号
+    # 根据文字长度调整字号 — 大字填满卡片 (卡片宽约 340-380px, 高 240px)
     txt = visual or ""
     n = len(txt)
-    if n <= 3: size = 44
-    elif n <= 5: size = 34
-    elif n <= 8: size = 26
-    else: size = 20
-    return (f'<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">'
-            f'<rect width="200" height="120" fill="{c1}"/>'
-            f'<rect x="0" y="84" width="200" height="36" fill="{c2}"/>'
-            f'<text x="100" y="62" text-anchor="middle" fill="rgba(255,255,255,.62)" '
+    if n <= 2: size = 100
+    elif n <= 3: size = 80
+    elif n <= 4: size = 64
+    elif n <= 5: size = 52
+    elif n <= 7: size = 40
+    else: size = 32
+    # viewBox 与卡片等比 (宽高比≈ 360:240)
+    return (f'<svg viewBox="0 0 360 240" xmlns="http://www.w3.org/2000/svg">'
+            f'<rect width="360" height="240" fill="{c1}"/>'
+            f'<rect x="0" y="170" width="360" height="70" fill="{c2}"/>'
+            f'<text x="180" y="135" text-anchor="middle" fill="rgba(255,255,255,.62)" '
             f'font-family="Inter,sans-serif" font-weight="600" '
             f'font-size="{size}">{txt}</text></svg>')
 
