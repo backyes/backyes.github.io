@@ -328,11 +328,27 @@ def main():
          for p in posts], ensure_ascii=False)
     tags_full = gen_tags_full(posts)
 
-    # 写 index.html
+    # 读模板 (template 文件保留 placeholder,每次 build 从上一次的输出读取)
+    def build_page(src_name, dest_name, replacements):
+        """读取 src 文件,执行多组 regex 替换,写入 dest。
+        replacements: list of (pattern, replacement, flags_or_0)
+        """
+        src = open(os.path.join(REPO, src_name), encoding='utf-8').read()
+        out = src
+        for pat, repl, flg in replacements:
+            out = re.sub(pat, repl, out, flags=flg) if flg else re.sub(pat, repl, out)
+        open(os.path.join(REPO, dest_name), 'w', encoding='utf-8').write(out)
+
+    # index.html (从 index.html 自身读取 — template 与输出合并,placeholder 在 source 里)
     idx = open(os.path.join(REPO, 'index.html'), encoding='utf-8').read()
+    # 为了幂等,保留 SEARCH_DB 的占位: 先找到并替换,写回时仍然保留 placeholder
+    # 策略: 替换 SEARCH_DB 那一行,但写回 template 时保留 <!--SEARCH_DB-->
+    # 简化: 直接输出,但保留 <!--SEARCH_DB--> placeholder (替换时仅替换 JSON 部分)
     idx = re.sub(r'<!--PROJECT_CARDS-->.*?<!--/PROJECT_CARDS-->',
                  f'<!--PROJECT_CARDS-->\n{cards}<!--/PROJECT_CARDS-->', idx, flags=re.S)
-    idx = re.sub(r'<!--SEARCH_DB-->', search_db, idx)
+    # SEARCH_DB: 匹配 const SEARCH_DB=[...]; 或 const SEARCH_DB=<!--SEARCH_DB-->; 整体替换
+    idx = re.sub(r'const SEARCH_DB=(?:\[.*?\]|<!--SEARCH_DB-->);',
+                 f'const SEARCH_DB={search_db};', idx, flags=re.S)
     idx = re.sub(r'<!--TAG_CLOUD-->.*?<!--/TAG_CLOUD-->',
                  f'<!--TAG_CLOUD-->\n{tag_cloud}\n<!--/TAG_CLOUD-->', idx, flags=re.S)
     idx = re.sub(r'<!--PREVIEW_POSTS-->.*?<!--/PREVIEW_POSTS-->',
@@ -340,15 +356,16 @@ def main():
     open(os.path.join(REPO,'index.html'),'w',encoding='utf-8').write(idx)
     print("  ✓ index.html 已生成")
 
-    # 写 posts.html
+    # posts.html
     ph = open(os.path.join(REPO, 'posts.html'), encoding='utf-8').read()
     ph = re.sub(r'<!--POSTS_FULL-->.*?<!--/POSTS_FULL-->',
                 f'<!--POSTS_FULL-->\n{posts_full}\n<!--/POSTS_FULL-->', ph, flags=re.S)
-    ph = re.sub(r'<!--POSTS_SEARCH_DB-->', posts_search_db, ph)
+    ph = re.sub(r'const POSTS_DB=(?:\[.*?\]|<!--POSTS_SEARCH_DB-->);',
+                f'const POSTS_DB={posts_search_db};', ph, flags=re.S)
     open(os.path.join(REPO,'posts.html'),'w',encoding='utf-8').write(ph)
     print("  ✓ posts.html 已生成")
 
-    # 写 tags.html
+    # tags.html
     th = open(os.path.join(REPO, 'tags.html'), encoding='utf-8').read()
     th = re.sub(r'<!--TAGS_FULL-->.*?<!--/TAGS_FULL-->',
                 f'<!--TAGS_FULL-->\n{tags_full}\n<!--/TAGS_FULL-->', th, flags=re.S)
