@@ -2,7 +2,7 @@
 title: "The Million-Token Bill: Why Your AI Agent Is Actually Paying for Storage, Not Compute"
 date: 2026-07-20
 tags: ["compute-cost", "long-context", "DeepSeek", "Kimi", "KV-Cache", "inference"]
-excerpt: "I ran an Agent session that accumulated 160 million tokens of context history. The bill revealed a truth that changes how we should think about AI infrastructure: at scale, storage costs dominate compute costs by orders of magnitude."
+excerpt: "I ran an Agent session that accumulated 480 million tokens of context history. The bill revealed a truth that changes how we should think about AI infrastructure: at scale, storage costs dominate compute costs by orders of magnitude."
 ---
 
 # The Million-Token Bill
@@ -18,6 +18,8 @@ This July, my team was running a multi-turn Agent session on [LongCat-2.0](https
 Look at July 20 alone: **229.6 million cache hit tokens** consumed in a single day. Over the entire tracking period (July 14–20), the total reached **480.4 million cache hit tokens** — with only **11.3 million actual compute tokens** (cache miss + output). The ratio: **42.7 storage tokens for every 1 compute token.**
 
 This is not an anomaly. This is the new reality of long-context AI. And it fundamentally changes which resource dominates your bill.
+
+> **99.1% of tokens in a long-context Agent session are "remembered," not "computed."**
 
 ---
 
@@ -66,41 +68,39 @@ I calculated the bill using official pricing from four major providers. The diff
 
 > **DeepSeek charges 80× less per cache hit than Kimi.** This isn't a temporary promotion — it reflects a structural cost advantage in KV-Cache storage (via [MLA compression](https://arxiv.org/abs/2405.04434)).
 
-Read that again: **DeepSeek charges 80× less per cache hit than Kimi.** This isn't a temporary promotion — it reflects a structural cost advantage in KV-Cache storage (via [MLA compression](https://arxiv.org/abs/2405.04434)).
-
 ### So, what did each vendor charge for the identical workload?
 
 **DeepSeek Pro** [^deepseek-pricing]:
-- Storage cost: 160.4M × $0.07 = **$11.23**
-- Compute cost: 1.467M × ~$0.50 = **$0.73**
-- **Total: $11.96** (storage is 94% of bill)
+- Storage cost: 480.4M × $0.07 = **$33.63**
+- Compute cost: 11.3M × ~$0.50 = **$5.65**
+- **Total: $39.28** (storage is 86% of bill)
 
 **Kimi K3** [^kimi-pricing]:
-- Storage cost: 160.4M × $0.28 = **$44.91**
-- Compute cost: 1.467M × ~$4.00 = **$5.87**
-- **Total: $50.78** (storage is 88% of bill)
+- Storage cost: 480.4M × $0.28 = **$134.51**
+- Compute cost: 11.3M × ~$4.00 = **$45.20**
+- **Total: $179.71** (storage is 75% of bill)
 
-**For the exact same token consumption, Kimi costs 4.2× more than DeepSeek.**
+**For the exact same token consumption, Kimi costs 4.6× more than DeepSeek.**
 
 [^deepseek-pricing]: DeepSeek API Pricing — https://api-docs.deepseek.com/quick_start/pricing
 [^kimi-pricing]: Moonshot AI Pricing — https://platform.moonshot.cn/docs/pricing/chat
 
-> Kimi K3's storage bill alone ($44.91) is **4× DeepSeek's storage bill** ($11.23). This is the price of architectural choices.
+> Kimi K3's storage bill alone ($134.51) is **4× DeepSeek's storage bill** ($33.63). This is the price of architectural choices.
 
 ---
 
 ## The Visualization: Two Different Cost Philosophies
 
 ```
-DEEEPSEEK PRO                         KIMI K3
+DEEPSEEK PRO                              KIMI K3
 
-Storage ██████████████████ $11.23      Storage ██████████████████ $44.91
-Compute █ $0.73                       Compute ███ $5.87
+Storage ████████████████████████ $33.63     Storage ████████████████████████████ $134.51
+Compute ██ $5.65                          Compute ███████ $45.20
 
-Total: $11.96                         Total: $50.78
+Total: $39.28                             Total: $179.71
 ```
 
-DeepSeek has achieved **cost inversion at scale** — compute now costs less than storage (per token). This is the hallmark of an architecture optimized for the long-context era.
+DeepSeek has achieved **cost inversion at scale** — storage cost per token is near zero, while compute still costs meaningful dollars. This is the hallmark of an architecture optimized for the long-context era.
 
 Kimi (and most traditional models) operate under the old paradigm: storage is expensive, so your bill is dominated by memory costs at scale.
 
@@ -134,10 +134,10 @@ Consider the scaling:
 
 | Context Length | DeepSeek Bill | Kimi Bill | Ratio |
 |---|---|---|---|
-| 1M tokens | $0.22 | $3.06 | 14× |
 | 10M tokens | $2.24 | $30.62 | 14× |
 | 100M tokens | $22.43 | $306.20 | 14× |
-| **160M tokens** | **$11.96** | **$50.78** | **4.2×** |
+| **480M tokens** | **$39.28** | **$179.71** | **4.6×** |
+| 1B tokens | $78.51 | $373.32 | 4.8× |
 
 > The gap *widens* with context length. For any serious Agent deployment — million-token contexts are becoming standard [^context-standard] — the economics are decisive.
 
@@ -169,15 +169,15 @@ This pricing reality cascades up the stack [^infra-implication]:
 
 ## The Bottom Line
 
-I started this investigation curious about one number: 160 million cache hit tokens. It revealed a fundamental shift in how AI inference economics work.
+I started this investigation curious about one number: 480 million cache hit tokens. It revealed a fundamental shift in how AI inference economics work.
 
 Three conclusions:
 
-1. **At million-token scale, you're buying storage, not compute** — 88% of a traditional bill goes to memory
+1. **At million-token scale, you're buying storage, not compute** — 75–86% of a traditional bill goes to memory
 2. **Architecture determines economics** — [MLA's 32× compression](https://arxiv.org/abs/2405.04434) translates to 80× pricing advantage
 3. **The gap widens with scale** — the longer your context, the more you pay for inefficient storage
 
-The future belongs to systems that treat memory as the primary compute resource. [DeepSeek](https://platform.deepseek.com/) has shown it's possible. The rest of the industry will follow — or pay 4× more.
+The future belongs to systems that treat memory as the primary compute resource. [DeepSeek](https://api-docs.deepseek.com/) has shown it's possible. The rest of the industry will follow — or pay 4.6× more.
 
 ---
 
@@ -200,6 +200,4 @@ The future belongs to systems that treat memory as the primary compute resource.
 
 ---
 
-*Based on real-world Agent consumption data (160M+ cache hit tokens, context window 200K–450K tokens). Rate cards current as of 2026-07-20. All calculations reproducible — see data tables and references above.*
-
-*— backyes | 2026-07*
+*Based on real-world Agent consumption data (480M+ cache hit tokens, context window 200K–450K tokens). Rate cards current as of 2026-07-20. All calculations reproducible — see data tables and references above.*
