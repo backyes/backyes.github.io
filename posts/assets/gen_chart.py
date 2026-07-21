@@ -74,6 +74,8 @@ for i, v in enumerate(requests_list):
     ax2.annotate(str(v), xy=(i, v), xytext=(0, 5), textcoords='offset points', ha='center', fontsize=10, color='#3fb950')
 
 plt.tight_layout()
+fig.text(0.99, 0.01, 'backyes.github.io', fontsize=8, color='#8b949e',
+         ha='right', va='bottom', alpha=0.6, style='italic')
 plt.savefig('token_usage_july_2026.png', dpi=150, bbox_inches='tight')
 print("Chart saved to token_usage_july_2026.png")
 print(f"\nSummary:")

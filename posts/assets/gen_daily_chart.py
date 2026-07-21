@@ -67,5 +67,7 @@ for b in b3:
     if h>0.5: ax.annotate(f'${h:.0f}', xy=(b.get_x()+b.get_width()/2,h), xytext=(0,3), textcoords='offset points', ha='center', fontsize=8, color='#d29922')
 
 plt.tight_layout()
+fig.text(0.99, 0.01, 'backyes.github.io', fontsize=8, color='#8b949e',
+         ha='right', va='bottom', alpha=0.6, style='italic')
 plt.savefig('daily_cost_comparison.png', dpi=150, bbox_inches='tight')
 print("Chart saved: daily_cost_comparison.png")
