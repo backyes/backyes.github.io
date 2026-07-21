@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HBM 索引架构设计 · vLLM v1</title>
+<style>
+:root{
+  --bg:#111317;--fg:#d7dbe0;--muted:#7d848d;--muted2:#5a6068;
+  --accent:#4a8fe0;--surface:#181b20;--border:#2a2f37;--border2:#23272e;
+  --green:#7ee787;--purple:#d2a8ff;--red:#ff7b72;--orange:#ffa657;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;
+  line-height:1.75;max-width:820px;margin:0 auto;padding:48px 24px 80px;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+h1{font-size:1.5rem;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:1.25rem;font-weight:600;margin:48px 0 16px;padding-left:12px;border-left:3px solid var(--accent)}
+h3{font-size:1.05rem;font-weight:600;margin:28px 0 10px;color:var(--fg)}
+.lead{color:var(--muted);font-size:.92rem;margin:0 0 36px}
+.sep{border:none;border-top:1px solid var(--border);margin:36px 0}
+.sub{color:var(--muted2);font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin:0 0 8px}
+/* 高亮 */
+.mark{background:linear-gradient(180deg,transparent 60%,rgba(74,143,224,.25) 60%);padding:0 2px}
+.key-num{color:var(--accent);font-weight:700;font-size:1.1em}
+/* 信息框 */
+.pbox{border-left:3px solid var(--green);background:rgba(126,231,135,.06);padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+.warn{border-left:3px solid var(--red);background:rgba(255,123,114,.06);padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+.insight{border-left:3px solid var(--purple);background:rgba(210,168,255,.06);padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+.pbox b{color:var(--green)}
+.warn b{color:var(--red)}
+.insight b{color:var(--purple)}
+/* 代码 */
+pre{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:.82rem;line-height:1.6;font-family:'JetBrains Mono','Fira Code',monospace}
+code{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.82em;font-family:'JetBrains Mono',monospace;color:var(--orange)}
+pre code{border:none;padding:0;background:none;color:var(--fg)}
+.src{color:var(--muted);font-size:.78rem;font-style:italic;display:block;margin-top:6px}
+/* 表格 */
+table{border-collapse:collapse;width:100%;font-size:.88rem;margin:16px 0}
+th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top}
+th{background:var(--surface);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+td:first-child{color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:.82rem}
+td b{color:var(--fg);font-weight:600}
+tr:nth-child(even) td{background:rgba(24,27,32,.3)}
+tr:hover td{background:rgba(74,143,224,.05)}
+/* 目录 */
+.toc{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin:24px 0}
+.toc h3{margin:0 0 12px;font-size:.85rem;color:var(--muted)}
+.toc ol{margin:0;padding-left:20px;font-size:.88rem;line-height:2}
+.toc a{color:var(--fg)}
+.toc a:hover{color:var(--accent)}
+/* 导航 */
+.topbar{display:flex;gap:16px;align-items:center;margin-bottom:32px;padding-bottom:16px;border-bottom:1px solid var(--border);font-size:.82rem}
+.topbar a{color:var(--muted)}
+.topbar .sep{display:inline;color:var(--border)}
+/* 定义块 */
+.def{border:1px solid var(--border);border-radius:6px;padding:14px 18px;margin:14px 0;background:var(--surface)}
+.def dt{font-weight:600;color:var(--accent);font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.def dd{margin-left:0;color:var(--fg);font-size:.9rem}
+.meta-foot{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted2);font-size:.78rem}
+</style>
+
+<style>
+@media(max-width:768px){
+  body{padding:16px!important;max-width:100%!important}
+  h1{font-size:1.3rem!important}
+  h2{font-size:1.1rem!important}
+  table{font-size:.82em!important;display:block;overflow-x:auto}
+  th,td{padding:5px 7px!important}
+  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
+  .topbar{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="index.html">← 入口</a>
+  <span class="sep">·</span>
+  <a href="vllm_architecture_unified.html">主报告</a>
+</div>
+
+<h1>HBM 索引架构设计</h1>
+<p class="lead">vLLM v1 中 Scheduler(CPU) ↔ Worker(GPU) 的索引契约：为什么 HBM 索引发到 worker、为什么有两种 SlotMappingMode、DeepSeek V4 的三通道索引设计。</p>
+
+<div class="toc">
+<h3>目录</h3>
+<ol>
+<li><a href="#t1">术语澄清：HBM 索引 / KV cache host / block_ids</a></li>
+<li><a href="#t2">为什么要把 HBM 索引发到 worker 模块</a></li>
+<li><a href="#t3">两种 SlotMappingMode 的语义与分发</a></li>
+<li><a href="#t4">HBM 索引 vs KV cache host：两层抽象的分裂</a></li>
+<li><a href="#t5">DeepSeek V4 的三通道索引设计</a></li>
+<li><a href="#t6">第一性原理总结</a></li>
+<li><a href="#t7">关键源文件索引</a></li>
+</ol>
+</div>
+
+<!-- ============================ -->
+<h2 id="t1">1 · 术语澄清</h2>
+
+<table>
+<tr><th>术语</th><th>实际含义</th><th>位置</th></tr>
+<tr><td><b>KV cache host</b></td><td>Scheduler 侧 <code>KVCacheManager</code>：逻辑块分配、引用计数、free-list、prefix caching</td><td>CPU</td></tr>
+<tr><td><b>HBM 索引</b></td><td>Worker 侧 <code>BlockTable</code> 产出的两个 GPU tensor：<code>block_table</code>（<code>[max_reqs, max_blocks_per_req]</code>）和 <code>slot_mapping</code>（<code>[max_num_tokens]</code>）</td><td>GPU HBM</td></tr>
+<tr><td><b>block_ids</b></td><td>Scheduler → Worker 之间传递的<b>逻辑块 ID 列表</b>（<code>tuple[list[int],...]</code>）</td><td>CPU → GPU 的消息</td></tr>
+</table>
+
+<span class="src">源: <code>vllm/v1/worker/block_table.py:19-21, 24-112</code> · <code>vllm/v1/core/kv_cache_manager.py:283</code> · <code>vllm/v1/core/sched/output.py:39,126</code></span>
+
+<!-- ============================ -->
+<h2 id="t2">2 · 为什么要把 HBM 索引发到 worker 模块</h2>
+
+<p><b>一句话：Scheduler 只识逻辑块号，Attention kernel 只识物理 HBM 地址；两者之间的翻译必须在 worker 里完成。</b></p>
+
+<h3>2.1 Scheduler 做什么</h3>
+<p>Scheduler 通过 <code>KVCacheManager.allocate_slots()</code> 从 free-list 拿出逻辑块号，装进 <code>SchedulerOutput.new_block_ids</code>：</p>
+
+<pre><code># vllm/v1/core/kv_cache_manager.py:283
+def allocate_slots(self, request, num_new_tokens, ...) -&gt; KVCacheBlocks | None:
+    # 从 free-list 拿出若干逻辑块号 [block_3, block_7, ...]
+    # 返回给 Scheduler → 装进 SchedulerOutput.new_block_ids</code></pre>
+
+<div class="warn">
+<b>Scheduler 不知道也不应该知道：</b><br>
+· GPU HBM 里 KV pool 的基地址<br>
+· block 在 HBM 里的实际布局（<code>[num_blocks, block_size, head_dim]</code> 还是别的）<br>
+· kernel 需要的是 <code>block_table</code> 还是 <code>slot_mapping</code>
+</div>
+
+<p>这是职责分离的核心：<span class="mark"><b>调度策略</b> 和 <b>设备内存布局</b> 是两个独立变化维度</span>。</p>
+
+<h3>2.2 Worker 做什么</h3>
+<p>Worker 收到 <code>block_ids</code> 后，在 GPU HBM 上构建 kernel 直接消费的索引：</p>
+
+<pre><code># vllm/v1/worker/gpu_model_runner.py:1444-1445
+# 1. 收到逻辑 block_ids，append 到 block_table 的 CPU 镜像
+self.input_batch.block_table.append_row(new_block_ids, req_index)
+
+# gpu_model_runner.py:1950
+# 2. commit：CPU → GPU 异步拷贝（HBM 索引就位）
+self.input_batch.block_table.commit_block_table(num_reqs)
+
+# gpu_model_runner.py:2168
+# 3. compute_slot_mapping：用 Triton kernel 把 block_table 翻译成
+#    每个 token 的物理 slot 索引（HBM 地址的"偏移编号"）
+self.input_batch.block_table.compute_slot_mapping(
+    num_reqs, query_start_loc, positions)</code></pre>
+
+<span class="src">源: <code>vllm/v1/worker/gpu_model_runner.py:1444,1950,2168</code></span>
+
+<h3>2.3 物理公式：虚实地址转换</h3>
+<p><code>_compute_slot_mapping_kernel</code>（Triton）执行 OS 页表同构的翻译：</p>
+
+<pre><code># vllm/v1/worker/block_table.py:348-411
+@triton.jit
+def _compute_slot_mapping_kernel(...):
+    # 对每个 token：
+    virtual_block_indices = pos // virtual_block_size
+    block_indices = virtual_block_indices * BLOCKS_PER_KV_BLOCK
+                       + local_block_offsets // block_size
+    block_numbers = block_table[req_idx, block_indices]   # 查页表
+    slot_offsets = local_block_offsets % block_size
+    slot_ids = block_numbers * block_size + slot_offsets  # 物理 slot</code></pre>
+
+<div class="insight">
+<b>这就是 OS 页表同构：</b><br>
+· <code>block_table</code> = 页表（逻辑 block → 物理 block 号）<br>
+· <code>slot_mapping</code> = 虚实地址转换结果（逻辑位置 → 物理 HBM slot）<br>
+· <code>slot_id = block_number × block_size + offset</code> 完全等价 <code>phys = page_frame × PAGE_SIZE + page_offset</code>
+</div>
+
+<h3>2.4 为什么不能在 Scheduler 算好再传</h3>
+<table>
+<tr><th>原因</th><th>解释</th></tr>
+<tr><td><b>本地性</b></td><td>slot_mapping 要直接喂给 attention kernel（FA/FlashMLa），kernel 在 GPU 上执行</td></tr>
+<tr><td><b>解耦</b></td><td>让 Scheduler 算 = 让 CPU 替 GPU 做内存访问规划，耦合设备布局</td></tr>
+<tr><td><b>依赖</b></td><td>slot_mapping 依赖 <code>positions</code>、<code>query_start_loc</code> 等 GPU tensor</td></tr>
+<tr><td><b>变化速率</b></td><td>调度策略（prefix cache/recompute/swap）经常变；GPU 内存布局（block_size/CP/DP）也经常变；两者独立</td></tr>
+</table>
+
+<h3>2.5 Scheduler ↔ Worker 契约图</h3>
+<pre><code>Scheduler (CPU)                              Worker (GPU)
+─────────────────                            ─────────────
+block_ids: [3, 7, 12]  ──────append────→  block_table.cpu[row] = [3,7,12]
+                                         │
+                                         ↓ commit_block_table (H2D)
+                                         block_table.gpu  ← 这就是"HBM 索引"
+                                         │
+                                         ↓ compute_slot_mapping (Triton)
+                                         slot_mapping.gpu ← kernel 直接消费
+</code></pre>
+
+<!-- ============================ -->
+<h2 id="t3">3 · 两种 SlotMappingMode 的语义与分发</h2>
+
+<h3>3.1 定义</h3>
+<pre><code># vllm/v1/worker/block_table.py:19-21
+class SlotMappingMode(Enum):
+    TOKEN_TO_KV_SLOT = "token_to_kv_slot"   # 标准：每 token → 1 slot
+    NONE = "none"                            # Mamba/GDN：不用 slot_mapping</code></pre>
+
+<h3>3.2 分发逻辑</h3>
+<pre><code># vllm/v1/worker/gpu_model_runner.py:7122-7125
+if kv_cache_spec_kind == KVCacheSpecKind.MAMBA:
+    slot_mapping_modes.append(SlotMappingMode.NONE)   # 循环状态，不写 paged KV
+else:
+    slot_mapping_modes.append(SlotMappingMode.TOKEN_TO_KV_SLOT)</code></pre>
+
+<span class="src">源: <code>vllm/v1/worker/gpu_model_runner.py:7113-7125</code></span>
+
+<h3>3.3 为什么要有 NONE</h3>
+<div class="pbox">
+<b>Mamba 类 SSM 的"KV cache"实际是递归状态（state），不是 per-token 的 KV 对：</b><br>
+· 它的 block_table 行存的是<b>状态索引</b>，不是 token→slot 映射<br>
+· <code>compute_slot_mapping</code> 里直接 <code>return</code>（<code>block_table.py:160-163</code>），不浪费 kernel 计算<br>
+· 状态更新通过 <code>update_block_table</code> 路径而非 <code>reshape_and_cache</code>
+</div>
+
+<pre><code># vllm/v1/worker/block_table.py:153-163
+def compute_slot_mapping(self, num_reqs, query_start_loc, positions):
+    if self.slot_mapping_mode == SlotMappingMode.NONE:
+        # Mamba/GDN groups consume the block table as recurrent state
+        # indices and do not use per-token slot mappings.
+        return</code></pre>
+
+<!-- ============================ -->
+<h2 id="t4">4 · HBM 索引 vs KV cache host：两层抽象的分裂</h2>
+
+<p>这是两个层级的抽象，<span class="mark">变化速率不同</span>：</p>
+
+<table>
+<tr><th>维度</th><th>KV cache host (<code>KVCacheManager</code>)</th><th>HBM 索引 (<code>BlockTable</code>)</th></tr>
+<tr><td><b>粒度</b></td><td><b>Block 级</b>（管理 free-list、引用计数）</td><td><b>Token 级</b>（每个 token 的物理 slot）</td></tr>
+<tr><td><b>内容</b></td><td>逻辑块 ID、ref_cnt、hash 用于 prefix caching</td><td><code>block_table.gpu</code> + <code>slot_mapping.gpu</code></td></tr>
+<tr><td><b>变化原因</b></td><td>调度策略（prefix cache、recompute、swap）</td><td>设备内存布局（block_size、compress_ratio、CP/DP）</td></tr>
+<tr><td><b>使用者</b></td><td>Scheduler</td><td>Attention kernel</td></tr>
+</table>
+
+<h3>4.1 具体差异</h3>
+
+<div class="def">
+<dl>
+<dt>① host 的 block_ids 是"分配结果"，worker 的 block_table 是"页表"</dt>
+<dd>host 只记录"req A 拥有 block 3, 7, 12"；worker 要把它排成连续数组 <code>[3, 7, 12, 0, 0, ...]</code> 供 kernel 按 row 索引</dd>
+</dl>
+
+<dl>
+<dt>② worker 多了 slot_mapping 这一层</dt>
+<dd>host 完全不产出 <code>slot_mapping</code>；这是 worker 内部从 <code>block_table</code> + <code>positions</code> 实时算出来的（<code>compute_slot_mapping</code>）</dd>
+</dl>
+
+<dl>
+<dt>③ kernel_block_size ≠ kv_cache_block_size 时还有拆分</dt>
+<dd>例：host 按 32-token block 分配，但 kernel 要求 16-token 粒度。worker 内部 <code>blocks_per_kv_block = 2</code>，把每个 host block 拆成 2 个 kernel block。host 完全不知道这回事。</dd>
+</dl>
+</div>
+
+<pre><code># vllm/v1/worker/block_table.py:58-78
+if kernel_block_size == block_size:
+    # Standard case: direct mapping
+    self.block_size = block_size
+    self.blocks_per_kv_block = 1
+else:
+    # Hybrid case: memory blocks subdivided to match kernel
+    self.block_size = kernel_block_size
+    self.blocks_per_kv_block = block_size // kernel_block_size</code></pre>
+
+<span class="src">源: <code>vllm/v1/worker/block_table.py:58-78</code></span>
+
+<h3>4.2 为什么不让 host 直接产出 slot_mapping</h3>
+<p>因为 <code>slot_mapping</code> 依赖：</p>
+<ul>
+<li><code>positions</code>（每个 token 在序列中的绝对位置）—— Scheduler 传下来的</li>
+<li><code>query_start_loc</code>（batch 内每个 req 的起止）—— worker 在 GPU 上算的</li>
+<li><code>block_size</code>、<code>compress_ratio</code>、<code>cp_kv_cache_interleave_size</code> 等设备相关参数</li>
+</ul>
+
+<div class="warn">
+<b>让 host 算 = 让 Scheduler 耦合 GPU 内存布局。</b><br>现在的分工是：Scheduler 做"给多少块"的决策，Worker 做"怎么用这些块"的执行。
+</div>
+
+<!-- ============================ -->
+<h2 id="t5">5 · DeepSeek V4 的三通道索引设计</h2>
+
+<p>DeepSeek V4 是 vLLM 里索引路径最复杂的模型，因为它有<span class="mark"><b>三条独立的 KV 索引通道</b></span>，各自有 block_table / slot_mapping：</p>
+
+<pre><code>DeepSeek V4 的 3 条 KV 索引通道
+─────────────────────────────────
+① Main MLA cache      — 压缩 KV（compress_ratio=4 或 128），block_size=256
+② Indexer cache       — Lightning Indexer 的稀疏 top-k 选择器，独立 block_table
+③ SWA cache           — Sliding Window Attention，block_size=64
+</code></pre>
+
+<h3>5.1 Main MLA Cache 的索引</h3>
+<pre><code># vllm/models/deepseek_v4/attention.py:605-624
+def get_kv_cache_spec(self, vllm_config) -&gt; KVCacheSpec | None:
+    if self.compress_ratio &lt;= 1:  # SWA-only 层
+        return None               # SWA 走③，不走这里
+    return MLAAttentionSpec(
+        block_size=...,           # 256
+        num_kv_heads=1,
+        head_size=self.head_dim,  # 512
+        compress_ratio=self.compress_ratio,  # 4 或 128
+        alignment=576,            # fp8_ds_mla 专用对齐
+    )</code></pre>
+
+<p><b>关键：<code>storage_block_size = block_size // compress_ratio</code></b>（<code>kv_cache_interface.py:402-403</code>）：</p>
+<ul>
+<li><code>compress_ratio=4</code> 时：256-token 的 host block 只存 64 个 KV（每 4 token 压 1 个）</li>
+<li><code>compress_ratio=128</code> 时：256-token 的 host block 只存 2 个 KV</li>
+</ul>
+
+<h3>5.2 压缩 slot_mapping 怎么算</h3>
+<p>只有满足 <code>(pos+1) % compress_ratio == 0</code> 的 token 才有合法 slot：</p>
+
+<pre><code># vllm/v1/attention/backends/mla/compressor_utils.py:9-50
+@triton.jit
+def _compressed_slot_mapping_kernel(...):
+    for i in range(0, query_len, TRITON_BLOCK_SIZE):
+        pos = start_pos + i + arange(0, TRITON_BLOCK_SIZE)
+        is_valid = (pos + 1) % COMPRESS_RATIO == 0
+        pos_after_compress = pos // COMPRESS_RATIO
+
+        block_ids = pos_after_compress // block_size
+        block_numbers = block_table[req_idx, block_ids]       # 标准 block_table 查表
+        slot_ids = block_numbers * block_size + pos_after_compress % block_size
+        slot_ids = tl.where(is_valid, slot_ids, PAD_ID)       # 非压缩位填 -1</code></pre>
+
+<span class="src">源: <code>vllm/v1/attention/backends/mla/compressor_utils.py:9-50</code></span>
+
+<div class="insight">
+<b>含义：</b>对 MLA 主 cache，一个 token 要么有 slot（落在压缩位），要么是 <code>-1</code>（不写 cache）。这和标准 FA 的"每 token 必有一个 slot"完全不同。
+</div>
+
+<h3>5.3 Indexer Cache 的索引</h3>
+<p>Indexer 是 DeepSeek V4 的<b>稀疏注意力选择器</b>：每个 query token 通过它挑出 top-k 个 KV token。</p>
+
+<pre><code># vllm/models/deepseek_v4/attention.py:668-764
+class DeepseekV4Indexer:
+    def __init__(self, ...):
+        # 独立的 KV cache（128 fp8 + 4 fp32 scale = 132B per token head）
+        self.k_cache = DeepseekV4IndexerCache(
+            head_dim=head_dim + head_dim//quant_block_size*4,
+            compress_ratio=compress_ratio,
+        )
+        # 独立的 compressor（把 hidden_states 投成 KV score）
+        self.compressor = DeepseekCompressor(...)
+        # indexer op 内部有自己的 block_table 查表逻辑
+        self.indexer_op = SparseAttnIndexer(
+            self.k_cache, ..., skip_k_cache_insert=True)</code></pre>
+
+<p>Indexer 的 slot_mapping 也是<b>独立计算</b>的：</p>
+
+<pre><code># vllm/v1/attention/backends/mla/indexer.py:579-591
+compressed_slot_mapping = slot_mapping
+if self.compress_ratio &gt; 1:
+    compressed_slot_mapping = get_compressed_slot_mapping(
+        num_tokens, query_start_loc, seq_lens, block_table,
+        self.kv_cache_spec.storage_block_size,
+        self.compress_ratio, out=self.compressed_slot_mapping_buffer)</code></pre>
+
+<span class="src">源: <code>vllm/v1/attention/backends/mla/indexer.py:579-591</code></span>
+
+<div class="pbox">
+<b>所以 indexer 和 main MLA 用同一份 <code>block_table</code>，但产出各自的 <code>compressed_slot_mapping</code>。</b>
+</div>
+
+<h3>5.4 SWA Cache 的索引</h3>
+<p>SWA 存最近 <code>window_size</code>（如 2048）个 token 的全量 KV，用于滑动窗口内精确注意力。</p>
+
+<pre><code># vllm/v1/attention/backends/mla/sparse_swa.py:51-102
+class DeepseekV4SWACache:
+    def __init__(self, ...):
+        # 强制 block_size = 64（因为 C4A 和 SWA 共享物理 tensor）
+        self.block_size = 64
+
+    def get_kv_cache_spec(self, vllm_config):
+        return SlidingWindowMLASpec(
+            block_size=64,  # 与 main MLA 的 256 不同！
+            sliding_window=self.window_size,
+        )</code></pre>
+
+<p>SWA 的索引特殊之处：<b>不只在 build 时算 slot_mapping，还要算 <code>decode_swa_indices</code> 和 <code>prefill_swa_indices</code></b>——每个 token 在窗口内的所有历史 slot 列表：</p>
+
+<pre><code># vllm/v1/attention/backends/mla/sparse_swa.py:660-716
+@triton.jit
+def _compute_swa_indices_and_lens_kernel(...):
+    # 标准 block_table 查表，但"一对多"：一个 query token → window_size 个 KV slot
+    for i in range(0, window_size, TRITON_BLOCK_SIZE):
+        pos_offset = start_pos + offset
+        block_indices = pos_offset // block_size
+        block_numbers = block_table[req_idx, block_indices]
+        block_offsets = pos_offset % block_size
+        slot_ids = block_numbers * block_size + block_offsets</code></pre>
+
+<span class="src">源: <code>vllm/v1/attention/backends/mla/sparse_swa.py:660-716</code></span>
+
+<h3>5.5 三条通道如何在 worker 里协同</h3>
+<pre><code># vllm/v1/worker/gpu_model_runner.py:2294-2538
+# 1. 通过 kv_cache_gid 索引到不同的 BlockTable 实例
+blk_table = self.input_batch.block_table[kv_cache_gid]
+
+# 2. 每个 gid 产出独立的 block_table_tensor + slot_mapping
+for kv_cache_gid, kv_cache_group in enumerate(kv_cache_groups):
+    if kv_cache_gid &gt; 0:
+        cm.block_table_tensor = _get_block_table(kv_cache_gid)
+        cm.slot_mapping = slot_mappings[kv_cache_gid]
+
+# 3. 每个 attention backend 的 builder.build() 消费各自的 cm</code></pre>
+
+<p>最终一个 DeepSeek V4 forward 里：</p>
+<ul>
+<li><b>Main MLA builder</b>（<code>DeepseekV4FlashMLAMetadataBuilder</code>）：用 <code>compressed_slot_mapping</code></li>
+<li><b>Indexer builder</b>（<code>DeepseekV32IndexerMetadataBuilder</code>）：用 indexer 自己的 <code>compressed_slot_mapping</code></li>
+<li><b>SWA builder</b>（<code>DeepseekSparseSWAMetadataBuilder</code>）：用标准 <code>slot_mapping</code> + SWA indices</li>
+</ul>
+
+<h3>5.6 设计过程的"第一性原理"</h3>
+<pre><code>需求：在 16K-128K 上下文下做全量注意力太贵
+  │
+  ↓
+观察：大部分 KV 对当前 query 无用（稀疏性）
+  │
+  ├─→ 方案① 压缩（compress_ratio=4/128）—— 只存 1/4 或 1/128 的 KV
+  │         → 需要 compressed_slot_mapping（非压缩位不写）
+  │
+  ├─→ 方案② Lightning Indexer —— 每个 query 先快速打分挑 top-k
+  │         → 需要独立 indexer cache + 独立 block_table
+  │
+  └─→ 方案③ Sliding Window —— 近端 token 全部保留（生成质量关键）
+            → 需要独立 SWA cache + 独立 block_size=64
+
+三条通道的 block_table 共享逻辑 block_ids（同一个 SchedulerOutput），
+但各自产出独立的 slot_mapping（因为 block_size / compress_ratio 不同）</code></pre>
+
+<!-- ============================ -->
+<h2 id="t6">6 · 第一性原理总结</h2>
+
+<table>
+<tr><th>问题</th><th>答案一句话</th></tr>
+<tr><td><b>为什么把 HBM 索引发到 worker</b></td><td>Scheduler 只产出逻辑 block_ids，worker 把它翻译成 GPU 物理地址（<code>block_table.gpu</code> + <code>slot_mapping.gpu</code>）供 kernel 直接消费；这是"策略(CPU) ↔ 执行(GPU)"的边界。</td></tr>
+<tr><td><b>为什么 HBM 索引有两种模式且与 host 不同</b></td><td><code>SlotMappingMode</code> 区分标准 KV（TOKEN_TO_KV_SLOT）和递归状态（NONE）；host 管 block 级分配，worker 管 token 级虚实映射，变化速率不同必须分层。</td></tr>
+<tr><td><b>DeepSeek V4 索引设计过程</b></td><td>三条独立通道（Main MLA / Indexer / SWA），共享逻辑 block_ids 但各自产出独立的 block_table 和 slot_mapping，分别处理压缩(sparse)、top-k选择(indexer)、滑动窗口(SWA)三种不同访问模式。</td></tr>
+</table>
+
+<div class="insight">
+<b>核心设计不变量：模块边界切在"变化速率不同"的地方。</b><br>
+Scheduler 的 block 分配逻辑经常因调度策略变化而变；worker 的 HBM 索引逻辑经常因硬件/模型（block_size、compress_ratio、CP/DP）变化而变。两者通过 <code>SchedulerOutput.block_ids</code> 这条最小契约解耦。
+</div>
+
+<!-- ============================ -->
+<h2 id="t7">7 · 关键源文件索引</h2>
+
+<table>
+<tr><th>文件</th><th>核心内容</th></tr>
+<tr><td><code>vllm/v1/worker/block_table.py</code></td><td><code>BlockTable</code> / <code>MultiGroupBlockTable</code> / <code>SlotMappingMode</code> / <code>_compute_slot_mapping_kernel</code></td></tr>
+<tr><td><code>vllm/v1/worker/gpu_model_runner.py:1444,1950,2168</code></td><td>Worker 侧 append_row / commit_block_table / compute_slot_mapping 调用点</td></tr>
+<tr><td><code>vllm/v1/worker/gpu_model_runner.py:7113-7125</code></td><td>SlotMappingMode 分发逻辑（Mamba→NONE, else→TOKEN_TO_KV_SLOT）</td></tr>
+<tr><td><code>vllm/v1/core/kv_cache_manager.py:283</code></td><td>Scheduler 侧 <code>allocate_slots</code> 产出逻辑 block_ids</td></tr>
+<tr><td><code>vllm/v1/core/sched/output.py:39,126</code></td><td><code>NewRequestData.block_ids</code> / <code>CachedRequestData.new_block_ids</code> 契约</td></tr>
+<tr><td><code>vllm/v1/attention/backend.py:402-428</code></td><td><code>CommonAttentionMetadata</code>（block_table_tensor + slot_mapping 跨层共享）</td></tr>
+<tr><td><code>vllm/v1/attention/backends/flash_attn.py:1071-1105</code></td><td>FA 用 slot_mapping 做 <code>reshape_and_cache_flash</code> scatter write</td></tr>
+<tr><td><code>vllm/v1/attention/backends/mla/compressor_utils.py</code></td><td>DeepSeek V4 压缩 slot_mapping 计算（compress_ratio 过滤）</td></tr>
+<tr><td><code>vllm/v1/attention/backends/mla/indexer.py:579-591</code></td><td>Indexer 独立 compressed_slot_mapping</td></tr>
+<tr><td><code>vllm/v1/attention/backends/mla/sparse_swa.py:660-716</code></td><td>SWA 一对多 slot 映射（window_size 个历史 slot）</td></tr>
+<tr><td><code>vllm/models/deepseek_v4/attention.py:605-624</code></td><td>DeepSeek V4 <code>get_kv_cache_spec</code> 产出 MLAAttentionSpec</td></tr>
+<tr><td><code>vllm/v1/kv_cache_interface.py:389-403</code></td><td><code>MLAAttentionSpec</code> / <code>storage_block_size = block_size // compress_ratio</code></td></tr>
+</table>
+
+<hr class="sep">
+
+<p class="meta-foot">分析基于 vLLM 2db39c704 · 2026-07-21 · 代码路径: <code>vllm_research/vllm/</code></p>
+</body>
+</html>
