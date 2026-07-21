@@ -61,6 +61,8 @@ Kimi's cache miss ($2.78/M) and output ($13.90/M) are also 6× and 16× higher t
 
 ## Daily Breakdown: Storage vs Compute Cost
 
+![Daily Cost Comparison](assets/daily_cost_comparison.png)
+
 Using the daily consumption data, here's what each vendor would charge per day. **Storage cost = cache hits × hit price. Compute cost = (cache misses + output) × respective price.**
 
 **Pricing:** DeepSeek storage $0.003625/M, miss $0.435/M, output $0.87/M · Kimi storage $0.28/M, miss $2.78/M, output $13.90/M
