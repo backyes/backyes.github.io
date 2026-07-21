@@ -15,11 +15,11 @@ This July, my team was running a multi-turn Agent session on [LongCat-2.0](https
 
 ![Daily Token Consumption](assets/token_usage_july_2026.png)
 
-Look at July 20 alone: **229.6 million cache hit tokens** consumed in a single day. Over the entire tracking period (July 14–20), the total reached **480.4 million cache hit tokens** — with only **11.3 million actual compute tokens** (cache miss + output). The ratio: **42.7 storage tokens for every 1 compute token.**
+Look at July 20 alone: ==$229.6$M== cache hit tokens consumed in a single day. Over the entire tracking period (July 14–20), the total reached ==$480.4$M== cache hit tokens — with only ==$11.3$M== actual compute tokens (cache miss + output). The ratio: ==$42.7$== storage tokens for every $1$ compute token.
 
 This is not an anomaly. This is the new reality of long-context AI. And it fundamentally changes which resource dominates your bill.
 
-> **99.1% of tokens in a long-context Agent session are "remembered," not "computed."**
+> ==$99.1\%$== of tokens in a long-context Agent session are "remembered," not "computed."
 
 ---
 
@@ -93,20 +93,18 @@ For the identical 480M+ token workload:
 **Calculation details:**
 
 **DeepSeek:**
-- Storage: 480.4M × $0.003625 = $1.74
-- Compute (miss): 7.8M × $0.435 = $3.40
-- Compute (output): 3.5M × $0.87 = $3.05
-- Compute subtotal: $6.45
-- **Total: $8.19**
+- Storage: $$480.4\text{M} \times \$0.003625 =$$ ==\$1.74==
+- Compute (miss): $$7.8\text{M} \times \$0.435 =$$ ==\$3.40==
+- Compute (output): $$3.5\text{M} \times \$0.87 =$$ ==\$3.05==
+- **Total: ==\$8.19==**
 
 **Kimi:**
-- Storage: 480.4M × $0.28 = $134.51
-- Compute (miss): 7.8M × $2.78 = $21.68
-- Compute (output): 3.5M × $13.90 = $48.65
-- Compute subtotal: $70.33
-- **Total: $204.84**
+- Storage: $$480.4\text{M} \times \$0.28 =$$ ==\$134.51==
+- Compute (miss): $$7.8\text{M} \times \$2.78 =$$ ==\$21.68==
+- Compute (output): $$3.5\text{M} \times \$13.90 =$$ ==\$48.65==
+- **Total: ==\$204.84==**
 
-> For the exact same token consumption, Kimi costs **25.0× more than DeepSeek.** The gap comes from both storage pricing (77×) and compute pricing (6–16×).
+> For the exact same token consumption, Kimi costs ==\$25.0\$==× more than DeepSeek. The gap comes from storage pricing (==\$77\$==×) and compute pricing (6–16×).
 
 ---
 
@@ -156,7 +154,7 @@ Projecting storage cost as context length scales (cache hit price × tokens):
 | 1B | $3.63 | $280.00 | 77× |
 | 10B | $36.25 | $2,800.00 | 77× |
 
-**Key observation:** The ratio stays constant at 77× because both scale linearly with token count. The absolute dollar gap widens from $2.76 (10M) to $2,763.75 (10B).
+**Key observation:** The ratio stays constant at ==$77\times$== because both scale linearly with token count. The absolute dollar gap widens from ==\$2.76== (10M) to ==\$2,763.75== (10B).
 
 ### Two Scenarios for the Storage Market
 
@@ -194,7 +192,7 @@ At 1M+ tokens, the question is not "which is cheaper" but "which delivers accept
 | Relative quality | Compressed (potential loss) | Full attention (preserved) |
 | Best for | Long context, cost-sensitive | Quality-critical, shorter context |
 
-> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs $0.28 vs DeepSeek's $0.003625. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
+> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs ==\$0.28== vs DeepSeek's ==\$0.003625==. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
 
 [^kimi3]: Kimi K3 technical report notes that linear attention + full attention hybrid incurs higher system cost, and future work may explore convergence with compression techniques.
 
@@ -206,8 +204,8 @@ One week, one Agent session, 480M cache hit tokens:
 
 | Vendor | Storage | Compute | Total | Storage % |
 |---|---|---|---|---|
-| MLA+DSA+CSA/HCA (DeepSeek Pro) | $1.74 | $6.45 | **$8.19** | 21.2% |
-| Kimi K3 | $134.51 | $70.33 | **$204.84** | 65.7% |
+| MLA+DSA+CSA/HCA (DeepSeek Pro) | $1.74 | $6.45 | $8.19 | 21.2% |
+| Kimi K3 | $134.51 | $70.33 | $204.84 | 65.7% |
 
 **At scale (projection):**
 
@@ -216,7 +214,8 @@ One week, one Agent session, 480M cache hit tokens:
 | 100M | $2.11 | $42.70 | 20.2× |
 | 480M (ours) | $8.19 | $204.84 | 25.0× |
 | 1B | $17.11 | $426.80 | 24.9× |
-- The longer the context, the wider the gap
+
+- The longer the context, the wider the gap: from ==\$2.76== at 10M to ==\$2,763.75== at 10B
 
 ---
 

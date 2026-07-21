@@ -173,8 +173,10 @@ def md_to_html(text):
     def inline(s):
         # 图片 ![alt](url) — 必须在链接之前处理
         s = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img src="\2" alt="\1" style="max-width:100%;display:block;margin:1.5em auto">', s)
-        # 高亮 ==text==(背景色)
-        s = re.sub(r'==([^=]+)==', r'<mark style="background:var(--accent-soft);padding:1px 5px;border-radius:3px;color:var(--fg)">\1</mark>', s)
+        # 关键数字 $number$ → 蓝色高亮
+        s = re.sub(r'\$([\d,.]+)\$', r'<span class="key-num">\1</span>', s)
+        # 高亮 ==text== → 下划线标记
+        s = re.sub(r'==([^=]+)==', r'<mark>\1</mark>', s)
         # 代码 `code`
         s = re.sub(r'`([^`]+)`', r'<code>\1></code>', s)
         # 加粗 **text**
@@ -415,10 +417,16 @@ def gen_post_page(post):
 .article-body h3{{font-size:1.25rem;font-weight:600;margin:1.5em 0 .5em;padding-left:10px;border-left:3px solid var(--accent);color:var(--fg2)}}
 .article-body p{{margin:0 0 1.2em}}
 .article-body strong{{color:var(--fg);font-weight:600}}
+.article-body mark{{background:linear-gradient(180deg,transparent 60%,var(--accent-soft) 60%);padding:0 3px;color:var(--fg);font-weight:600}}
+.article-body .key-callout{{border-left:4px solid var(--accent);background:var(--callout);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}}
+.article-body .key-callout p{{margin:0 0 .5em}}
+.article-body .key-callout p:last-child{{margin:0}}
+.article-body .key-num{{color:var(--accent);font-weight:700;font-size:1.1em}}
 .article-body table{{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto}}
 .article-body th{{background:var(--surface);font-weight:600;padding:8px 10px;border:1px solid var(--border);text-align:left}}
 .article-body td{{padding:7px 10px;border:1px solid var(--border);vertical-align:top}}
 .article-body tr:nth-child(even) td{{background:rgba(24,27,32,.25)}}
+.article-body tr:hover td{{background:rgba(74,143,224,.08)}}
 .article-body blockquote{{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
 .article-body blockquote p{{margin:0}}
 .article-body code{{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:'JetBrains Mono',monospace}}
