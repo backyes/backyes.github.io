@@ -106,11 +106,6 @@ REPORTS = [
      "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
      "cat":"inference","priority":"p1",
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
-    {"dst":"umdk","entry":"analysis/cam/CAM深度分析报告.html","visual":"UMDK",
-     "title":"UMDK/CAM 深度分析",
-     "desc":"Communication Acceleration for Matrix 架构深度分析 · 通信加速 · 矩阵计算优化",
-     "cat":"chip","priority":"p1",
-     "tags":["UMDK","CAM","通信加速","矩阵计算","芯片架构"]},
 ]
 
 CATS = {
