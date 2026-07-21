@@ -48,7 +48,7 @@ I calculated the bill using official pricing from major providers. The differenc
 
 | Provider | Cache Hit /M | Cache Miss /M | Output /M | Source |
 |---|---|---|---|---|
-| **[DeepSeek Pro (V4)](https://api-docs.deepseek.com/quick_start/pricing/)** | **$0.003625** | $0.435 | $0.87 | [Official Pricing](https://api-docs.deepseek.com/quick_start/pricing/) |
+| **[MLA+DSA+CSA/HCA (DeepSeek Pro)](https://api-docs.deepseek.com/quick_start/pricing/)** | **$0.003625** | $0.435 | $0.87 | [Official Pricing](https://api-docs.deepseek.com/quick_start/pricing/) |
 | **[Kimi K3](https://platform.moonshot.cn/docs/pricing/chat)** | ¥2.00 (~$0.28) | ¥20.00 (~$2.78) | ¥100.00 (~$13.90) | [Moonshot Pricing](https://platform.moonshot.cn/docs/pricing/chat) |
 
 *Exchange rate: $1 ≈ ¥7.2. Cache hit rates valid as of 2026-07.*
@@ -87,7 +87,7 @@ For the identical 480M+ token workload:
 
 | Provider | Storage Cost | Compute Cost | Total | Storage % |
 |---|---|---|---|---|
-| **DeepSeek Pro (V4)** | $1.74 | $6.45 | **$8.19** | 21.2% |
+| **MLA+DSA+CSA/HCA (DeepSeek Pro)** | $1.74 | $6.45 | **$8.19** | 21.2% |
 | **Kimi K3** | $134.51 | $70.33 | **$204.84** | 65.7% |
 
 **Calculation details:**
@@ -141,14 +141,14 @@ Our cost comparison reveals a deeper architectural divergence:
 
 | Architecture | Representative | KV-Cache Strategy | Cache Hit Price | Compression |
 |---|---|---|---|---|
-| **Sparse Compression** | DeepSeek V4 (MLA) | Compress KV to low-rank latent | $0.003625/M | ~32× vs MHA |
-| **Linear Hybrid** | Kimi K3 | Linear attention + full attention blocks | $0.28/M | ~1× (full KV retained) |
+| **Sparse Compression** | MLA+DSA+CSA/HCA | Compress KV to low-rank latent | $0.003625/M | ~32× vs MHA |
+| **Linear Hybrid** | Kimi K3 | Linear attention + full attention blocks | $0.28/M | 3:1 linear compression |
 
 ### Storage Cost Scaling at Million-Token Scale
 
 Projecting storage cost as context length scales (cache hit price × tokens):
 
-| Context Length | DeepSeek (MLA) | Kimi3 (Linear Hybrid) | Ratio |
+| Context Length | MLA+DSA+CSA/HCA | Kimi3 (Linear Hybrid) | Ratio |
 |---|---|---|---|
 | 10M | $0.036 | $2.80 | 77× |
 | 100M | $0.36 | $28.00 | 77× |
@@ -164,10 +164,13 @@ Projecting storage cost as context length scales (cache hit price × tokens):
 - Full KV-Cache retained → storage scales linearly with context
 - At 1B tokens: $280/session storage cost
 - Storage becomes the dominant cost center (78% of bill in our data)
-- **Implication:** Massive demand for high-bandwidth, large-capacity memory (HBM, CXL, DRAM)
-- Storage market grows proportionally with context length
+- **Implication:** Massive demand for KV-Cache storage across the full memory hierarchy:
+  - **HBM:** Hot cache (active context, highest bandwidth)
+  - **CXL/DRAM:** Warm cache (recent context, high capacity)
+  - **SSD/NVMe:** Cold cache (historical context, cross-request persistence)
+- Storage market grows proportionally with context length; SSD becomes a critical tier for cost-effective long-context serving
 
-**Scenario B: DeepSeek-like sparse compression becomes dominant**
+**Scenario B: DeepSeek V4-like sparse compression becomes dominant**
 - KV compressed 32× → storage cost near zero
 - At 1B tokens: $3.63/session storage cost
 - Compute becomes the dominant cost (75%+ of bill)
@@ -177,7 +180,7 @@ Projecting storage cost as context length scales (cache hit price × tokens):
 
 The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher system cost [^kimi3]. Their proposed future direction — convergence of both paths — suggests neither architecture has won decisively:
 
-1. **Sparse compression (DeepSeek):** Lower storage cost, but compression loses information. May hit quality walls at extreme contexts.
+1. **Sparse compression (DeepSeek V4):** Lower storage cost, but compression loses information. May hit quality walls at extreme contexts.
 2. **Linear hybrid (Kimi3):** Higher storage cost, but preserves full attention quality. May hit cost walls at extreme contexts.
 3. **Convergence:** Future architectures may combine both — sparse compression for older context + full attention for recent context.
 
@@ -185,7 +188,7 @@ The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher s
 
 At 1M+ tokens, the question is not "which is cheaper" but "which delivers acceptable quality per dollar":
 
-| Metric | DeepSeek (MLA) | Kimi3 (Linear Hybrid) |
+| Metric | MLA+DSA+CSA/HCA | Kimi3 (Linear Hybrid) |
 |---|---|---|
 | Storage cost / 1M tokens | $0.003625 | $0.28 |
 | Relative quality | Compressed (potential loss) | Full attention (preserved) |
@@ -203,7 +206,7 @@ One week, one Agent session, 480M cache hit tokens:
 
 | Vendor | Storage | Compute | Total | Storage % |
 |---|---|---|---|---|
-| DeepSeek Pro (V4) | $1.74 | $6.45 | **$8.19** | 21.2% |
+| MLA+DSA+CSA/HCA (DeepSeek Pro) | $1.74 | $6.45 | **$8.19** | 21.2% |
 | Kimi K3 | $134.51 | $70.33 | **$204.84** | 65.7% |
 
 **At scale (projection):**
@@ -219,7 +222,7 @@ One week, one Agent session, 480M cache hit tokens:
 
 ## References
 
-1. [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing/) — Official DeepSeek Pro (V4) pricing: $0.003625/M cache hit
+1. [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing/) — Official MLA+DSA+CSA/HCA (DeepSeek Pro) pricing: $0.003625/M cache hit
 2. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 3. [DeepSeek-V4 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture
 4. Kimi K3 Technical Report — Linear attention + full attention hybrid architecture
