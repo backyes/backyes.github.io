@@ -192,7 +192,7 @@ At 1M+ tokens, the question is not "which is cheaper" but "which delivers accept
 | Relative quality | Compressed (potential loss) | Full attention (preserved) |
 | Best for | Long context, cost-sensitive | Quality-critical, shorter context |
 
-> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs ==\0.28== vs DeepSeek's ==\0.003625==. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
+> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs $0.28 vs DeepSeek's $0.003625. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
 
 
 ---
