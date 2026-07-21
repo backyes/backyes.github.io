@@ -102,8 +102,8 @@ This ultra-low sparsity means only 1.8% of parameters are active per token — a
 | Architecture | Type | Compute Scaling | Memory Scaling | Cross-Media | Practical Ceiling |
 |---|---|---|---|---|---|
 | Full Attention | Pure | O(n²) | O(n) | Poor | ~128K |
-| Kimi3 | ==Hybrid== (75% linear + 25% MLA) | O(1) per token (linear) + O(n) (MLA) | O(n) | Poor | ~500K (estimated) |
-| DSA (DeepSeek V4) | Sparse index | Selective attention | O(n) | ==Good (offloadable)== | ~1M+ |
+| Kimi3 | ==Hybrid== (75% linear + 25% MLA) | O(1) per token (linear) + MLA (compressed attn) | O(n) | Poor | ~500K (estimated) |
+| DSA (DeepSeek V4) | Sparse index | Sparse index + selective attention | O(n) | ==Good (offloadable)== | ~1M+ |
 
 > **Key insight:** Kimi3 is a ==hybrid== architecture — its 25% MLA (full attention) layers become the scaling ceiling. At 1M tokens, the MLA layers are computationally expensive. ==Memory scaling is the same for both Kimi3 and DSA (O(n)==), but DSA can ==offload during decode== via sparse indexing, while Kimi3 cannot. DSA's sparse index has a higher ceiling because it avoids the full-attention wall entirely.
 
