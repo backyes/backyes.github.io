@@ -118,7 +118,7 @@ Compute cost is more complex — it depends on the hybrid architecture:
 ```
 For each token generated:
   - 75% KDA layers: O(1) per token → constant cost regardless of context
-  - 25% MLA layers: O(n) with 32× low-rank compression → 0.25 × n/32 × cost_per_full_op
+  - 25% MLA layers: O(n) per token with 32× memory compression → 0.25 × n × cost_per_full_op
 ```
 
 At 1M tokens:
@@ -325,15 +325,12 @@ Hmm, this naive calculation suggests DSA is worse. But DSA's advantage is in ==m
 
 ---
 
-## 7. What's Next
+## 7. The Kimi3 Paper's Own Words
 
-In Part 3, we'll model the ==ultimate hybrid architecture==:
-- DSA for long-range retrieval (cross-media)
-- MLA for mid-range attention (compressed)
-- Linear for local processing (recurrent)
+From the [Kimi Linear paper's Discussion](https://arxiv.org/abs/2510.26692):
 
-And quantify: what's the theoretical minimum cost per million tokens?
+> "Linear attention and sparse attention represent two distinct pathways toward efficient long-context modeling. Sparse attention tends to retrieve fine-grained historical information more effectively, but this advantage comes at the cost of storing the entire KV cache for token selection, making it less efficient than linear attention models that maintain a constant state. Moreover, sparse attention performs only information selection, and its theoretical expressive upper bound remains that of full attention. In contrast, linear attention, grounded in the principle of 'compression as intelligence', enables generalization with a fixed-size state and, when combined with the Delta learning rule, can achieve theoretically stronger expressive capacity. Although linear attentions have traditionally been criticized for weak retrieval ability, this limitation can be mitigated through state expansion or related techniques. Nevertheless, despite these advantages, linear attention remains limited by current hardware implementations and the absence of optimized inference infrastructure. Our work overcomes these limitations with Kimi Linear, a powerful model integrated with vLLM for efficient inference. Our proposed KDA delivers competitive performance compared to the full-attention baseline (Table 3) and achieves over a 2× decoding speedup at the one-million-token context (Figure 7b). Despite their distinct approaches to efficient long-context modeling, linear attention and sparse attention are not mutually exclusive. Future work could explore hybrid models that integrate the strengths of both, leveraging the compression and generalization capabilities of linear attention with the fine-grained retrieval advantages of sparse attention to further enhance model performance and efficiency."
 
 ---
 
-*Based on Kimi Linear paper, DeepSeek V4 technical report, and first-principles analysis. All calculations shown for verification.*
+*Based on [Kimi Linear paper](https://arxiv.org/abs/2510.26692), DeepSeek V4 technical report, and first-principles analysis. All calculations shown for verification.*

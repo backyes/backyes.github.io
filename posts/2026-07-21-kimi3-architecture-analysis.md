@@ -31,7 +31,7 @@ Kimi3 employs a ==layerwise hybrid architecture== combining three components:
 | Component | Role | Sequence Scaling |
 |---|---|---|
 | **KDA (Kimi Delta Attention)** | Linear attention module | O(1) per token — constant via recurrent state |
-| **MLA (Multi-head Latent Attention)** | Compressed full attention | O(n) with 32× low-rank compression (MLA projects K/V into low-rank latent space) |
+| **MLA (Multi-head Latent Attention)** | Compressed full attention | O(n) per token with 32× memory compression (MLA compresses KV storage but compute remains O(n)) |
 | **ResNet** | Gradient path stabilization | Independent of sequence |
 
 The key innovation is the ==3:1 ratio of KDA to MLA== — three linear attention layers for every one full attention layer. This hybrid design claims to reduce computation by ==75%== compared to pure full attention, while maintaining quality through strategic full-attention checkpoints.
@@ -226,6 +226,7 @@ The memory hierarchy for million-token KV-Cache:
 - No natural tiering — every token must be accessible
 - Cross-media coordination requires massive bandwidth
 - Latency-sensitive scenarios (real-time chat) are especially challenging
+- ==Without DSA's sparse indexing==, offloading attention computation to DDR/SSD is nearly impossible (MLA alone has minimal offloading capability)
 
 ### 5.3 The Full-Attention Bottleneck
 
@@ -278,13 +279,13 @@ DeepSeek remains the only vendor that has demonstrated:
 
 ---
 
-## 7. What to Watch Next
+## 7. What's Next
 
-In the next post, we'll quantify Kimi3's actual cost-efficiency:
-- Compute-optimal training cost analysis
-- Inference cost projection at 1M tokens
-- Comparison with DeepSeek V4's published efficiency data
-- The "memory wall" — when does storage cost exceed compute cost?
+In [Part 2](posts/kimi3-cost-efficiency.html), we quantify Kimi3's actual cost-efficiency:
+- Deconstructing the 2×/6×/1.16× efficiency claims
+- Building a cost model for million-token scaling
+- The scaling ceiling: when does linear attention hit the wall?
+- Kimi3 paper's own Discussion quote on hybrid future
 
 ---
 
