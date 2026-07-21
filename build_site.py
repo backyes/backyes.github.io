@@ -293,8 +293,7 @@ def gen_cards():
   <div class="card-img">{visual}<span class="tag {cat['color']}">{cat['label']}</span></div>
   <div class="card-body">
     <h3>{r['title']}</h3>
-    <p>{r['desc']}</p>
-    <div class="card-foot"><a href="{dst}/{entry}" target="_blank" rel="noopener" class="report-link">📎 独立详细报告（新窗口阅读）</a><span class="more">阅读 →</span></div>
+    <div class="card-foot"><span class="more">阅读 →</span></div>
   </div>
 </a>
 '''
