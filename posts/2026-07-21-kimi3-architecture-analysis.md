@@ -31,7 +31,7 @@ Kimi3 employs a ==layerwise hybrid architecture== combining three components:
 | Component | Role | Sequence Scaling |
 |---|---|---|
 | **KDA (Kimi Delta Attention)** | Linear attention module | O(1) per token — constant via recurrent state |
-| **MLA (Multi-head Latent Attention)** | Compressed full attention | O(n) per token with 32× memory compression (MLA compresses KV storage but compute remains O(n)) |
+| **MLA (Multi-head Latent Attention)** | Compressed full attention | Compressed attention (32× memory reduction; compute depends on latent dimension) |
 | **ResNet** | Gradient path stabilization | Independent of sequence |
 
 The key innovation is the ==3:1 ratio of KDA to MLA== — three linear attention layers for every one full attention layer. This hybrid design claims to reduce computation by ==75%== compared to pure full attention, while maintaining quality through strategic full-attention checkpoints.
@@ -88,24 +88,24 @@ This ultra-low sparsity means only 1.8% of parameters are active per token — a
 **Core idea:** Use sparse indexing to select only the most relevant tokens, achieving near-linear scaling while preserving full-attention quality.
 
 **Strengths:**
-- ==Near-linear scaling== with sparse index (S² complexity, still a bottleneck but better than O(n²))
+- ==Near-linear scaling== with sparse index (index computation is the optimization focus for GLM52, LongCat, DeepSeek V4)
 - Naturally suited for ==cross-media coordination== (HBM/DRAM/SSD)
 - DeepSeek V4 demonstrates real-world viability
 
 **Weaknesses:**
 - Sparse indexing introduces ==random memory access== patterns
-- Index computation adds overhead (S² complexity)
+- Index computation adds overhead (optimization focus for GLM52, LongCat, DeepSeek V4)
 - Hardware support for gather/scatter still maturing
 
 ### 2.3 The Scaling Ceiling: A Quantitative View
 
-| Architecture | Compute Scaling | Memory Scaling | Cross-Media | Practical Ceiling |
-|---|---|---|---|---|
-| Full Attention | O(n²) | O(n) | Poor | ~128K |
-| Linear (Kimi3) | O(1) per token for 75% of layers | O(n) total | Poor | ~500K (estimated) |
-| DSA (DeepSeek V4) | O(S²) + O(n×S) | O(n) | Good | ~1M+ |
+| Architecture | Type | Compute Scaling | Memory Scaling | Cross-Media | Practical Ceiling |
+|---|---|---|---|---|---|
+| Full Attention | Pure | O(n²) | O(n) | Poor | ~128K |
+| Kimi3 | ==Hybrid== (75% linear + 25% MLA) | O(1) per token (linear) + O(n) (MLA) | O(n) | Poor | ~500K (estimated) |
+| DSA (DeepSeek V4) | Sparse index | Selective attention | O(n) | ==Good (offloadable)== | ~1M+ |
 
-> **Key insight:** Linear attention's full-attention layers (the 25% MLA portion) become the scaling ceiling. At 1M tokens, even 25% full attention is computationally expensive. DSA's sparse index, while not perfect, has a higher ceiling because it avoids the O(n²) wall entirely.
+> **Key insight:** Kimi3 is a ==hybrid== architecture — its 25% MLA (full attention) layers become the scaling ceiling. At 1M tokens, the MLA layers are computationally expensive. ==Memory scaling is the same for both Kimi3 and DSA (O(n)==), but DSA can ==offload during decode== via sparse indexing, while Kimi3 cannot. DSA's sparse index has a higher ceiling because it avoids the full-attention wall entirely.
 
 ---
 
@@ -165,27 +165,27 @@ From the Kimi Linear paper:
 
 ---
 
-## 4. Deployment Reality: The 200K Wall
+## 4. Deployment Reality: Actual Sequence Lengths
 
-### 4.1 Advertised vs Actual Sequence Lengths
+### 4.1 Advertised vs Actual
 
-| Model | Advertised | Actual (Claude Code) | Constraint |
+| Model | Advertised | Actual Deployment | Notes |
 |---|---|---|---|
-| DeepSeek V4 | 1M | ~200K | Client-side |
-| GLM52 | 1M | ~200K | Client-side |
-| LongCat | 1M | ~200K | Client-side |
+| DeepSeek V4 | 1M | Unknown | System-level data published |
+| GLM52 | 1M | Unknown | — |
+| LongCat 2.0 | 1M | ==600K+== (实测可推高) | Can push higher |
 | Kimi3 | 1M | Unknown | Not yet widely deployed |
 
-**Observation:** All models hit the ==200K wall== in real-world deployment via Claude Code. This may be a client-side constraint (Claude Code's context window) rather than a model limitation.
+> **Note:** The "200K wall" previously observed may be a client-side constraint (Claude Code's context window) rather than a model limitation. ==Actual reasons need further verification.== LongCat 2.0 has been tested to push beyond 600K and can go higher.
 
-### 4.2 Why 200K? The System-Level Bottleneck
+### 4.2 System-Level Constraints (Speculative)
 
-Even if the model supports 1M, the system stack imposes constraints:
+Even if the model supports 1M, the system stack may impose constraints ==that need verification==:
 
-1. **Client-side context window:** Claude Code may limit input to ~200K
-2. **Memory bandwidth:** At 1M tokens, even O(1) per-token state access requires reading 57.6GB of recurrent state, saturating HBM bandwidth
+1. **Client-side context window:** Claude Code may limit input
+2. **Memory bandwidth:** At 1M tokens, reading recurrent state may saturate HBM bandwidth
 3. **Latency:** Linear attention's recurrent state processing adds sequential latency
-4. **Cost:** Our analysis showed $200+/session for Kimi at 480M tokens — 1M would be prohibitive
+4. **Cost:** Storage cost scales linearly — at 1M tokens, $0.28/session for Kimi3
 
 > **Reality check:** The gap between "supports 1M" and "usefully deploys at 1M" is vast. DeepSeek is the only vendor that has publicly demonstrated system-level scalability data.
 
@@ -258,8 +258,8 @@ The industry is converging on a hybrid approach:
 
 | Layer Type | Function | Scaling |
 |---|---|---|
-| **DSA (Sparse)** | Long-range retrieval | O(S²) — index-based |
-| **MLA (Compressed)** | Mid-range attention | O(n) — compressed |
+| **DSA (Sparse)** | Long-range retrieval | Sparse index (optimization focus) |
+| **MLA (Compressed)** | Mid-range attention | Compressed (latent attention) |
 | **Linear (KDA)** | Local processing | O(1) per token — recurrent state |
 
 This hybrid combines:
