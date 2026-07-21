@@ -109,14 +109,14 @@ For each token generated:
 
 ### 2.4 Total Cost at Scale
 
-| Context | Storage | Compute (est.) | Total | DeepSeek Equivalent |
-|---|---|---|---|---|
-| 100K | $0.028 | $0.01 | $0.038 | $0.0005 |
-| 500K | $0.14 | $0.05 | $0.19 | $0.0023 |
-| 1M | $0.28 | $0.10 | $0.38 | $0.0046 |
-| 10M | $2.80 | $1.00 | $3.80 | $0.046 |
+| Context | Storage Cost | DeepSeek Storage | Ratio |
+|---|---|---|---|
+| 100K | $0.028 | $0.0004 | 77× |
+| 500K | $0.14 | $0.0018 | 77× |
+| 1M | $0.28 | $0.0036 | 77× |
+| 10M | $2.80 | $0.036 | 77× |
 
-> At 1M tokens, Kimi3 costs ==$0.38/session== just for KV-Cache storage. DeepSeek: ==$0.0046==.
+> At 1M tokens, Kimi3's ==storage cost alone== is $0.28/session. DeepSeek: $0.0036. Compute cost depends on architecture details not publicly disclosed.
 
 ---
 
