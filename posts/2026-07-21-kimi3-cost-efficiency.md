@@ -101,13 +101,11 @@ Kimi3's hybrid architecture (75% KDA + 25% MLA):
 
 ```
 For each token generated:
-  - 75% KDA layers: O(1) per token → constant cost regardless of context
-  - 25% MLA layers: O(n) per token → cost scales linearly with context
+  - 75% KDA layers: O(1) per token → constant cost (recurrent state)
+  - 25% MLA layers: compressed attention (32× memory reduction)
 ```
 
-At 1M tokens:
-- KDA compute: 0.75 × 1M × c_linear (constant)
-- MLA compute: 0.25 × 1M × c_full (linear)
+> **Note:** MLA's compute cost is complex and depends on implementation details not publicly disclosed. We do not estimate MLA compute cost here.
 
 ### 2.4 Total Cost at Scale
 
