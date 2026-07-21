@@ -70,8 +70,8 @@
 <h3>1.1 Hybrid Architecture: KDA + ResNet + MLA</h3>
 <p>Kimi3 employs a <mark>layerwise hybrid architecture</mark> combining three components:</p>
 <table><thead><tr><th>Component</th><th>Role</th><th>Sequence Scaling</th></tr></thead><tbody>
-<tr><td><strong>KDA (Kimi Delta Attention)</strong></td><td>Linear attention module</td><td>O(n) — linear with context</td></tr>
-<tr><td><strong>MLA (Multi-head Latent Attention)</strong></td><td>Compressed full attention</td><td>O(n) with 32× compression</td></tr>
+<tr><td><strong>KDA (Kimi Delta Attention)</strong></td><td>Linear attention module</td><td>O(1) per token — constant via recurrent state</td></tr>
+<tr><td><strong>MLA (Multi-head Latent Attention)</strong></td><td>Compressed full attention</td><td>O(n) with 32× low-rank compression (MLA projects K/V into low-rank latent space)</td></tr>
 <tr><td><strong>ResNet</strong></td><td>Gradient path stabilization</td><td>Independent of sequence</td></tr>
 </tbody></table>
 <p>The key innovation is the <mark>3:1 ratio of KDA to MLA</mark> — three linear attention layers for every one full attention layer. This hybrid design claims to reduce computation by <mark>75%</mark> compared to pure full attention, while maintaining quality through strategic full-attention checkpoints.</p>
@@ -92,10 +92,10 @@
 <h2>2. The Two Architecture Paths</h2>
 <h3>2.1 Linear Attention Path</h3>
 <p><strong>Adopters:</strong> Kimi3, Qwen3 series, Xiaomi SWA</p>
-<p><strong>Core idea:</strong> Replace O(n²) full attention with O(n) linear attention, using recurrent state compression.</p>
+<p><strong>Core idea:</strong> Replace O(n²) full attention with O(1) per-token linear attention, using fixed-size recurrent state.</p>
 <p><strong>Strengths:</strong></p>
 <ul>
-<li>True O(n) scaling for the linear portion</li>
+<li><mark>O(1) per-token</mark> via recurrent state (fixed size, independent of sequence)</li>
 <li>No index structure needed</li>
 <li>Simpler hardware utilization</li>
 </ul>
@@ -123,7 +123,7 @@
 <h3>2.3 The Scaling Ceiling: A Quantitative View</h3>
 <table><thead><tr><th>Architecture</th><th>Compute Scaling</th><th>Memory Scaling</th><th>Cross-Media</th><th>Practical Ceiling</th></tr></thead><tbody>
 <tr><td>Full Attention</td><td>O(n²)</td><td>O(n)</td><td>Poor</td><td>~128K</td></tr>
-<tr><td>Linear (Kimi3)</td><td>O(n) for 75% of layers</td><td>O(n)</td><td>Poor</td><td>~500K (estimated)</td></tr>
+<tr><td>Linear (Kimi3)</td><td>O(1) per token for 75% of layers</td><td>O(n) total</td><td>Poor</td><td>~500K (estimated)</td></tr>
 <tr><td>DSA (DeepSeek V4)</td><td>O(S²) + O(n×S)</td><td>O(n)</td><td>Good</td><td>~1M+</td></tr>
 </tbody></table>
 <blockquote><p><strong>Key insight:</strong> Linear attention's full-attention layers (the 25% MLA portion) become the scaling ceiling. At 1M tokens, even 25% full attention is computationally expensive. DSA's sparse index, while not perfect, has a higher ceiling because it avoids the O(n²) wall entirely.</p></blockquote>
@@ -188,7 +188,7 @@
 <h3>4.2 Why 200K? The System-Level Bottleneck</h3>
 <p>Even if the model supports 1M, the system stack imposes constraints:</p>
 <p>1. <strong>Client-side context window:</strong> Claude Code may limit input to ~200K</p>
-<p>2. <strong>Memory bandwidth:</strong> At 1M tokens, even O(n) memory access saturates HBM bandwidth</p>
+<p>2. <strong>Memory bandwidth:</strong> At 1M tokens, even O(1) per-token state access requires reading 57.6GB of recurrent state, saturating HBM bandwidth</p>
 <p>3. <strong>Latency:</strong> Linear attention's recurrent state processing adds sequential latency</p>
 <p>4. <strong>Cost:</strong> Our analysis showed $200+/session for Kimi at 480M tokens — 1M would be prohibitive</p>
 <blockquote><p><strong>Reality check:</strong> The gap between "supports 1M" and "usefully deploys at 1M" is vast. DeepSeek is the only vendor that has publicly demonstrated system-level scalability data.</p></blockquote>
@@ -225,7 +225,7 @@
 </ul>
 <h3>5.3 The Full-Attention Bottleneck</h3>
 <p>Kimi3's 3:1 KDA:MLA ratio means 25% of layers are full attention. At 1M tokens:</p>
-<pre><code>Full attention compute per layer: O(n²) = O(10¹²)<br>Linear attention compute per layer: O(n) = O(10⁶)<br>Ratio: 10⁶× difference per layer</code></pre>
+<pre><code>Full attention compute per layer: O(n²) = O(10¹²)<br>Linear attention compute per layer: O(1) = constant (recurrent state is fixed-size)<br>Ratio: 10⁶× difference per layer</code></pre>
 <p>Even with MLA's 32× compression, the full-attention layers dominate at extreme scales. This is the <mark>fundamental ceiling</mark> of hybrid linear architectures.</p>
 <hr>
 <h2>6. The Road Ahead: Convergence or Divergence?</h2>
@@ -238,7 +238,7 @@
 <table><thead><tr><th>Layer Type</th><th>Function</th><th>Scaling</th></tr></thead><tbody>
 <tr><td><strong>DSA (Sparse)</strong></td><td>Long-range retrieval</td><td>O(S²) — index-based</td></tr>
 <tr><td><strong>MLA (Compressed)</strong></td><td>Mid-range attention</td><td>O(n) — compressed</td></tr>
-<tr><td><strong>Linear (KDA)</strong></td><td>Local processing</td><td>O(n) — recurrent</td></tr>
+<tr><td><strong>Linear (KDA)</strong></td><td>Local processing</td><td>O(1) per token — recurrent state</td></tr>
 </tbody></table>
 <p>This hybrid combines:</p>
 <ul>

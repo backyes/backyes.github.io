@@ -11,7 +11,7 @@ excerpt: "We crunch Kimi3's actual efficiency numbers from the Linear paper — 
 
 In [Part 1](posts/kimi3-architecture-analysis.html), we established:
 - Kimi3 uses a ==3:1 hybrid== of KDA (linear attention) to MLA (compressed full attention)
-- Linear attention promises O(n) scaling, but the ==25% full-attention layers== are the bottleneck
+- Linear attention promises ==O(1) per-token== via recurrent state, but the ==25% full-attention layers== are the bottleneck
 - DSA architectures (DeepSeek V4, GLM52) have a higher scaling ceiling
 
 Now we quantify: what do Kimi's efficiency numbers actually mean for inference cost at scale?
@@ -20,7 +20,7 @@ Now we quantify: what do Kimi's efficiency numbers actually mean for inference c
 
 ## 1. The Raw Efficiency Numbers
 
-From the Kimi Linear paper, three key claims:
+From the [Kimi Linear paper](https://arxiv.org/abs/2510.26692), three key claims:
 
 | Claim | Value | Baseline | Test Condition |
 |---|---|---|---|
@@ -45,7 +45,7 @@ Test:   1M token context length
 
 **The math:**
 - Full attention at 1M: O(n²) = O(10¹²) per layer per token
-- KDA linear attention: O(n) = O(10⁶) per layer per token
+- KDA linear attention: ==O(1)== per layer per token (fixed-size recurrent state)
 - Theoretical speedup for linear portion: 10⁶×
 
 But the actual speedup is only ==2×==. Why?
@@ -61,16 +61,16 @@ But the actual speedup is only ==2×==. Why?
 
 ### 1.3 Deconstructing the 6× Decoding Throughput
 
-> "For decoding at 1M context length, Kimi Linear is ==6× faster== than full attention."
+> "For decoding at 1M context length, Kimi Linear is ==6× faster== than full attention." ([Figure 1b](https://arxiv.org/abs/2510.26692))
 
 **Batch size matters:**
 
 | Batch Size | Speedup | Reason |
 |---|---|---|
-| 1 | 2.2× | Sequential processing, memory-bound |
-| 4-8 | 6× | Better parallelism utilization |
+| 1 | ~2× | Sequential processing, memory-bound |
+| 4-8 | 6× | Better parallelism utilization (inferred from Figure 1b) |
 
-The ==6×== claim uses optimal batch size. At batch=1 (typical for interactive use), it's only ==2.2×==.
+> **Note:** The 6× claim is from [Figure 1b](https://arxiv.org/abs/2510.26692) at optimal batch size. At batch=1 (typical for interactive use), the speedup is ~2× (from [Figure 7b](https://arxiv.org/abs/2510.26692)).
 
 ### 1.4 Deconstructing the 1.16× Compute Efficiency
 
@@ -117,8 +117,8 @@ Compute cost is more complex — it depends on the hybrid architecture:
 
 ```
 For each token generated:
-  - 75% KDA layers: O(n) each → 0.75 × n × cost_per_linear_op
-  - 25% MLA layers: O(n) with 32× compression → 0.25 × n/32 × cost_per_full_op
+  - 75% KDA layers: O(1) per token → constant cost regardless of context
+  - 25% MLA layers: O(n) with 32× low-rank compression → 0.25 × n/32 × cost_per_full_op
 ```
 
 At 1M tokens:
@@ -213,15 +213,15 @@ A 2× decoding speedup does not translate to 2× cost reduction:
 
 ### 4.2 The Batch Size Trap
 
-Kimi3's 6× throughput claim requires batch=4-8. But:
+Kimi3's 6× throughput claim requires batch=4-8 ([Figure 1b](https://arxiv.org/abs/2510.26692)). But:
 
 | Batch Size | Throughput | Latency | Use Case |
 |---|---|---|---|
-| 1 | 2.2× | Low | Interactive (chat) |
+| 1 | 2.2× | Lowest | Extreme low-latency |
 | 4-8 | 6× | Medium | Batch processing |
 | 32+ | 8-10× | High | Offline generation |
 
-Most Agent workloads are interactive (batch=1), where the speedup is only ==2.2×==.
+Batch=1 represents an ==extreme low-latency scenario==. In production, inference typically uses batch=4-8 to maximize throughput, where the 6× speedup applies.
 
 ### 4.3 The Quality-Cost Tradeoff
 

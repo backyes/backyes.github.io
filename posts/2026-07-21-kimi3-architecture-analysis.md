@@ -30,8 +30,8 @@ Kimi3 employs a ==layerwise hybrid architecture== combining three components:
 
 | Component | Role | Sequence Scaling |
 |---|---|---|
-| **KDA (Kimi Delta Attention)** | Linear attention module | O(n) — linear with context |
-| **MLA (Multi-head Latent Attention)** | Compressed full attention | O(n) with 32× compression |
+| **KDA (Kimi Delta Attention)** | Linear attention module | O(1) per token — constant via recurrent state |
+| **MLA (Multi-head Latent Attention)** | Compressed full attention | O(n) with 32× low-rank compression (MLA projects K/V into low-rank latent space) |
 | **ResNet** | Gradient path stabilization | Independent of sequence |
 
 The key innovation is the ==3:1 ratio of KDA to MLA== — three linear attention layers for every one full attention layer. This hybrid design claims to reduce computation by ==75%== compared to pure full attention, while maintaining quality through strategic full-attention checkpoints.
@@ -69,10 +69,10 @@ This ultra-low sparsity means only 1.8% of parameters are active per token — a
 
 **Adopters:** Kimi3, Qwen3 series, Xiaomi SWA
 
-**Core idea:** Replace O(n²) full attention with O(n) linear attention, using recurrent state compression.
+**Core idea:** Replace O(n²) full attention with O(1) per-token linear attention, using fixed-size recurrent state.
 
 **Strengths:**
-- True O(n) scaling for the linear portion
+- ==O(1) per-token== via recurrent state (fixed size, independent of sequence)
 - No index structure needed
 - Simpler hardware utilization
 
@@ -102,7 +102,7 @@ This ultra-low sparsity means only 1.8% of parameters are active per token — a
 | Architecture | Compute Scaling | Memory Scaling | Cross-Media | Practical Ceiling |
 |---|---|---|---|---|
 | Full Attention | O(n²) | O(n) | Poor | ~128K |
-| Linear (Kimi3) | O(n) for 75% of layers | O(n) | Poor | ~500K (estimated) |
+| Linear (Kimi3) | O(1) per token for 75% of layers | O(n) total | Poor | ~500K (estimated) |
 | DSA (DeepSeek V4) | O(S²) + O(n×S) | O(n) | Good | ~1M+ |
 
 > **Key insight:** Linear attention's full-attention layers (the 25% MLA portion) become the scaling ceiling. At 1M tokens, even 25% full attention is computationally expensive. DSA's sparse index, while not perfect, has a higher ceiling because it avoids the O(n²) wall entirely.
@@ -183,7 +183,7 @@ From the Kimi Linear paper:
 Even if the model supports 1M, the system stack imposes constraints:
 
 1. **Client-side context window:** Claude Code may limit input to ~200K
-2. **Memory bandwidth:** At 1M tokens, even O(n) memory access saturates HBM bandwidth
+2. **Memory bandwidth:** At 1M tokens, even O(1) per-token state access requires reading 57.6GB of recurrent state, saturating HBM bandwidth
 3. **Latency:** Linear attention's recurrent state processing adds sequential latency
 4. **Cost:** Our analysis showed $200+/session for Kimi at 480M tokens — 1M would be prohibitive
 
@@ -233,7 +233,7 @@ Kimi3's 3:1 KDA:MLA ratio means 25% of layers are full attention. At 1M tokens:
 
 ```
 Full attention compute per layer: O(n²) = O(10¹²)
-Linear attention compute per layer: O(n) = O(10⁶)
+Linear attention compute per layer: O(1) = constant (recurrent state is fixed-size)
 Ratio: 10⁶× difference per layer
 ```
 
@@ -259,7 +259,7 @@ The industry is converging on a hybrid approach:
 |---|---|---|
 | **DSA (Sparse)** | Long-range retrieval | O(S²) — index-based |
 | **MLA (Compressed)** | Mid-range attention | O(n) — compressed |
-| **Linear (KDA)** | Local processing | O(n) — recurrent |
+| **Linear (KDA)** | Local processing | O(1) per token — recurrent state |
 
 This hybrid combines:
 - DSA's cross-media coordination capability

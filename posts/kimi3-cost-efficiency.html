@@ -61,13 +61,13 @@
 <p>In <a href="posts/kimi3-architecture-analysis.html" target="_blank" rel="noopener">Part 1</a>, we established:</p>
 <ul>
 <li>Kimi3 uses a <mark>3:1 hybrid</mark> of KDA (linear attention) to MLA (compressed full attention)</li>
-<li>Linear attention promises O(n) scaling, but the <mark>25% full-attention layers</mark> are the bottleneck</li>
+<li>Linear attention promises <mark>O(1) per-token</mark> via recurrent state, but the <mark>25% full-attention layers</mark> are the bottleneck</li>
 <li>DSA architectures (DeepSeek V4, GLM52) have a higher scaling ceiling</li>
 </ul>
 <p>Now we quantify: what do Kimi's efficiency numbers actually mean for inference cost at scale?</p>
 <hr>
 <h2>1. The Raw Efficiency Numbers</h2>
-<p>From the Kimi Linear paper, three key claims:</p>
+<p>From the <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper</a>, three key claims:</p>
 <table><thead><tr><th>Claim</th><th>Value</th><th>Baseline</th><th>Test Condition</th></tr></thead><tbody>
 <tr><td>Decoding speedup</td><td><mark>2×</mark></td><td>Full attention</td><td>1M tokens, 3B/48B model</td></tr>
 <tr><td>Decoding throughput</td><td><mark>6×</mark></td><td>Full attention</td><td>1M tokens, batch=1</td></tr>
@@ -81,7 +81,7 @@
 <p><strong>The math:</strong></p>
 <ul>
 <li>Full attention at 1M: O(n²) = O(10¹²) per layer per token</li>
-<li>KDA linear attention: O(n) = O(10⁶) per layer per token</li>
+<li>KDA linear attention: <mark>O(1)</mark> per layer per token (fixed-size recurrent state)</li>
 <li>Theoretical speedup for linear portion: 10⁶×</li>
 </ul>
 <p>But the actual speedup is only <mark>2×</mark>. Why?</p>
@@ -93,13 +93,13 @@
 </tbody></table>
 <blockquote><p><strong>Reality check:</strong> The 2× speedup reflects system-level constraints, not algorithmic complexity. The theoretical 10⁶× becomes 2× in practice.</p></blockquote>
 <h3>1.3 Deconstructing the 6× Decoding Throughput</h3>
-<blockquote><p>"For decoding at 1M context length, Kimi Linear is <mark>6× faster</mark> than full attention."</p></blockquote>
+<blockquote><p>"For decoding at 1M context length, Kimi Linear is <mark>6× faster</mark> than full attention." (<a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a>)</p></blockquote>
 <p><strong>Batch size matters:</strong></p>
 <table><thead><tr><th>Batch Size</th><th>Speedup</th><th>Reason</th></tr></thead><tbody>
-<tr><td>1</td><td>2.2×</td><td>Sequential processing, memory-bound</td></tr>
-<tr><td>4-8</td><td>6×</td><td>Better parallelism utilization</td></tr>
+<tr><td>1</td><td>~2×</td><td>Sequential processing, memory-bound</td></tr>
+<tr><td>4-8</td><td>6×</td><td>Better parallelism utilization (inferred from Figure 1b)</td></tr>
 </tbody></table>
-<p>The <mark>6×</mark> claim uses optimal batch size. At batch=1 (typical for interactive use), it's only <mark>2.2×</mark>.</p>
+<blockquote><p><strong>Note:</strong> The 6× claim is from <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a> at optimal batch size. At batch=1 (typical for interactive use), the speedup is ~2× (from <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 7b</a>).</p></blockquote>
 <h3>1.4 Deconstructing the 1.16× Compute Efficiency</h3>
 <blockquote><p>"Kimi Linear achieves ∼<mark>1.16× computational efficiency</mark> compared to the MLA baselines with compute-optimal training."</p></blockquote>
 <p><strong>What this means:</strong> To reach the same model quality, Kimi Linear needs 1.16× less training compute.</p>
@@ -125,7 +125,7 @@
 <blockquote><p>Storage scales linearly and the 77× gap vs DeepSeek is constant.</p></blockquote>
 <h3>2.3 Compute Cost Projection</h3>
 <p>Compute cost is more complex — it depends on the hybrid architecture:</p>
-<pre><code>For each token generated:<br>  - 75% KDA layers: O(n) each → 0.75 × n × cost_per_linear_op<br>  - 25% MLA layers: O(n) with 32× compression → 0.25 × n/32 × cost_per_full_op</code></pre>
+<pre><code>For each token generated:<br>  - 75% KDA layers: O(1) per token → constant cost regardless of context<br>  - 25% MLA layers: O(n) with 32× low-rank compression → 0.25 × n/32 × cost_per_full_op</code></pre>
 <p>At 1M tokens:</p>
 <ul>
 <li>KDA compute: 0.75 × 1M × c_linear</li>
@@ -179,13 +179,13 @@
 </tbody></table>
 <blockquote><p><strong>Key insight:</strong> At 1M tokens, <mark>78% of Kimi3's cost is storage</mark>. A 2× compute speedup reduces total cost by only 11%. The bottleneck is not compute — it's memory capacity and bandwidth.</p></blockquote>
 <h3>4.2 The Batch Size Trap</h3>
-<p>Kimi3's 6× throughput claim requires batch=4-8. But:</p>
+<p>Kimi3's 6× throughput claim requires batch=4-8 (<a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a>). But:</p>
 <table><thead><tr><th>Batch Size</th><th>Throughput</th><th>Latency</th><th>Use Case</th></tr></thead><tbody>
-<tr><td>1</td><td>2.2×</td><td>Low</td><td>Interactive (chat)</td></tr>
+<tr><td>1</td><td>2.2×</td><td>Lowest</td><td>Extreme low-latency</td></tr>
 <tr><td>4-8</td><td>6×</td><td>Medium</td><td>Batch processing</td></tr>
 <tr><td>32+</td><td>8-10×</td><td>High</td><td>Offline generation</td></tr>
 </tbody></table>
-<p>Most Agent workloads are interactive (batch=1), where the speedup is only <mark>2.2×</mark>.</p>
+<p>Batch=1 represents an <mark>extreme low-latency scenario</mark>. In production, inference typically uses batch=4-8 to maximize throughput, where the 6× speedup applies.</p>
 <h3>4.3 The Quality-Cost Tradeoff</h3>
 <p>The Kimi Linear paper's Figure 7b shows:</p>
 <pre><code>@1M tokens:<br>  Full attention: quality = 100% (baseline), speed = 1×<br>  Kimi Linear:    quality = ~95%, speed = 2×</code></pre>
