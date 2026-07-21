@@ -9,7 +9,7 @@ excerpt: "I ran an Agent session that accumulated 480 million tokens of context 
 
 ## A number that changed how I think about AI inference
 
-This July, my team was running a multi-turn Agent session on [LongCat-2.0](https://longcat.chat) — a long-running research assistant that maintained context across hundreds of turns and accumulated millions of tokens of dialogue history. After a few weeks of continuous operation, I downloaded the usage data from [LongCat Platform](https://longcat.chat/platform/usage), and one chart stopped me cold.
+This July, I was running a multi-turn Agent session on [LongCat-2.0](https://longcat.chat) — a long-running research assistant that maintained context across hundreds of turns and accumulated millions of tokens of dialogue history. After a few weeks of continuous operation, I downloaded the usage data from [LongCat Platform](https://longcat.chat/platform/usage), and one chart stopped me cold.
 
 **LongCat-2.0 Daily Token Consumption — July 2026**
 
