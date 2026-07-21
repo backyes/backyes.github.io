@@ -105,7 +105,7 @@ For each token generated:
   - 25% MLA layers: compressed attention (32× memory reduction)
 ```
 
-> **Note:** MLA's compute cost is complex and depends on implementation details not publicly disclosed. We do not estimate MLA compute cost here.
+> **Note:** MLA's compute complexity is ==close to full attention== (still attends to all tokens). The 32× compression reduces memory/storage, not compute. Exact compute cost depends on implementation details not publicly disclosed.
 
 ### 2.4 Total Cost at Scale
 
