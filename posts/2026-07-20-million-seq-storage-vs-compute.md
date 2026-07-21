@@ -164,3 +164,27 @@ One week, one Agent session, 480M cache hit tokens:
 ---
 
 *Based on real-world Agent consumption data (480M+ cache hit tokens, context window 200K–450K tokens). Rate cards current as of 2026-07-20. All calculations reproducible — see data tables and references above.*
+
+---
+
+## Appendix: Context Usage
+
+> LongCat-2.0 session: 613.9k/200k tokens (307%) for this research + writing session.
+
+**Token breakdown by category:**
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 2.8k | 0.5% |
+| System tools | 18.3k | 3.0% |
+| MCP tools | 2.5k | 0.4% |
+| Memory files | 1.5k | 0.2% |
+| Skills | 2k | 0.3% |
+| **Messages** | **172.9k** | **28.2%** |
+| Read results | ~1M | — |
+
+**Efficiency notes:**
+- Piped outputs through `head`/`tail`/`grep` to reduce token consumption
+- Used `Read` with offset/limit instead of re-reading entire files
+- Bash results consumed 104.5k tokens (52%) — could be reduced with more aggressive filtering
+- Edit tool consumed 68.6k tokens (34%) — large markdown edits are token-intensive
