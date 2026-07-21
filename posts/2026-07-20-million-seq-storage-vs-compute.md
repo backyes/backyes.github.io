@@ -87,8 +87,8 @@ For the identical 480M+ token workload:
 
 | Provider | Storage Cost | Compute Cost | Total | Storage % |
 |---|---|---|---|---|
-| **DeepSeek Pro (V4)** | $1.74 | $0.84 | **$2.58** | 67.4% |
-| **Kimi K3** | $134.71 | $37.23 | **$171.94** | 78.3% |
+| **DeepSeek Pro (V4)** | $1.74 | $6.45 | **$8.19** | 21.2% |
+| **Kimi K3** | $134.51 | $70.33 | **$204.84** | 65.7% |
 
 **Calculation details:**
 
@@ -112,31 +112,43 @@ For the identical 480M+ token workload:
 
 ## What the Data Tells Us
 
-The 480M cache hit tokens from our scenario make the cost structure undeniable:
+From our measured 480M cache hit tokens (one Agent session, one week):
 
-1. **Storage dominates Kimi's bill (78%) but not DeepSeek's (25%).** DeepSeek's $0.003625/M cache hit price means storage is only $1.74 of $8.19 total. Kimi's $0.28/M makes storage $134.51 of $204.84 total.
+1. **Storage dominates Kimi's bill (78%) but not DeepSeek's (25%).**
+   - DeepSeek: $1.74 storage / $8.19 total = 21.2%
+   - Kimi: $134.51 storage / $204.84 total = 65.7%
+   - DeepSeek's $0.003625/M hit price makes storage nearly free; Kimi's $0.28/M makes it the dominant cost
 
-2. **Vendor choice matters 25×.** For identical consumption, DeepSeek charges $8.19 vs Kimi's $204.84. The gap comes from both storage (77×) and compute (6–16×).
+2. **For identical workload, Kimi costs 25.0× more.**
+   - DeepSeek total: $8.19 ($1.74 storage + $6.45 compute)
+   - Kimi total: $204.84 ($134.51 storage + $70.33 compute)
+   - Ratio: $204.84 / $8.19 = 25.0×
 
-3. **The gap widens with scale.** At 1B tokens: DeepSeek ~$17 vs Kimi ~$427. The longer your context, the more you pay for expensive storage and compute.
+3. **The price gap has two sources:**
+   - Storage: Kimi $0.28/M vs DeepSeek $0.003625/M = **77×**
+   - Compute miss: Kimi $2.78/M vs DeepSeek $0.435/M = **6.4×**
+   - Compute output: Kimi $13.90/M vs DeepSeek $0.87/M = **16.0×**
 
-> The cost structure is not theoretical — it's measured. 480M cache hits = real money.
+> The cost structure is not theoretical — it's measured from 7 days of real Agent usage.
 
 ---
 
 ## Summary
 
-One week of a single Agent session: **480M cache hit tokens**. This is what it costs:
+One week, one Agent session, 480M cache hit tokens:
 
-| Vendor | Storage Cost | Compute Cost | Total |
+| Vendor | Storage | Compute | Total | Storage % |
+|---|---|---|---|---|
+| DeepSeek Pro (V4) | $1.74 | $6.45 | **$8.19** | 21.2% |
+| Kimi K3 | $134.51 | $70.33 | **$204.84** | 65.7% |
+
+**At scale (projection):**
+
+| Context | DeepSeek | Kimi | Ratio |
 |---|---|---|---|
-| DeepSeek Pro (V4) | $1.74 | $6.45 | **$8.19** |
-| Kimi K3 | $134.51 | $70.33 | **$204.84** |
-
-- Kimi's storage (cache hits) = 78% of its total bill
-- DeepSeek's storage = only 25% of its total bill (cache hit price is near zero)
-- Kimi costs **25.0× more** than DeepSeek for the identical workload
-- Gap driven by: storage pricing (77×) + compute miss (6×) + compute output (16×)
+| 100M | $2.11 | $42.70 | 20.2× |
+| 480M (ours) | $8.19 | $204.84 | 25.0× |
+| 1B | $17.11 | $426.80 | 24.9× |
 - The longer the context, the wider the gap
 
 ---
