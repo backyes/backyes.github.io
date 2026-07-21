@@ -294,7 +294,7 @@ def gen_cards():
   <div class="card-body">
     <h3>{r['title']}</h3>
     <p>{r['desc']}</p>
-    <div class="card-foot"><span>📄 {dst}/{entry}</span><span class="more">阅读 →</span></div>
+    <div class="card-foot"><a href="{dst}/{entry}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">📎 独立详细报告（新窗口阅读）</a><span class="more">阅读 →</span></div>
   </div>
 </a>
 '''
