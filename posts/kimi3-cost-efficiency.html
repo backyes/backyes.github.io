@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Understanding Kimi3 (2): Crunching the Numbers — Cost, Efficiency, and the Scaling Ceiling · backyes</title>
+<title>Understanding Kimi3 (2): Efficiency Numbers, Cost Analysis, and Architecture Tradeoffs · backyes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -54,64 +54,62 @@
 </div></nav>
 <article class="article">
   <a href="../posts.html" class="back">← 返回 Posts</a>
-  <h1>Understanding Kimi3 (2): Crunching the Numbers — Cost, Efficiency, and the Scaling Ceiling</h1>
-  <div class="meta"><span>📅 2026-07-21</span><div><span class="ptag">Kimi3</span><span class="ptag">cost-analysis</span><span class="ptag">efficiency</span><span class="ptag">linear-attention</span><span class="ptag">inference</span><span class="ptag">scaling</span></div></div>
+  <h1>Understanding Kimi3 (2): Efficiency Numbers, Cost Analysis, and Architecture Tradeoffs</h1>
+  <div class="meta"><span>📅 2026-07-21</span><div><span class="ptag">Kimi3</span><span class="ptag">efficiency</span><span class="ptag">cost-analysis</span><span class="ptag">linear-attention</span><span class="ptag">sparse-attention</span><span class="ptag">DSA</span></div></div>
   <div class="article-body">
-<h2>Recap: What We Know</h2>
-<p>In <a href="posts/kimi3-architecture-analysis.html" target="_blank" rel="noopener">Part 1</a>, we established:</p>
+<h2>1. Efficiency Numbers from the Kimi Linear paper</h2>
+<p>All data in this section comes from the <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper</a>. We preserve the original claims and add critical analysis.</p>
+<h3>1.1 2× Decoding Speedup @1M Context</h3>
+<p><strong>Original claim:</strong></p>
+<blockquote><p>"Our proposed KDA delivers competitive performance compared to the full-attention baseline (Table 3) and achieves <mark>over a 2× decoding speedup</mark> at the one-million-token context (Figure 7b)."</p></blockquote>
+<p><strong>Experimental setup:</strong></p>
 <ul>
-<li>Kimi3 uses a <mark>3:1 hybrid</mark> of KDA (linear attention) to MLA (compressed full attention)</li>
-<li>Linear attention promises <mark>O(1) per-token</mark> via recurrent state, but the <mark>25% full-attention layers</mark> are the bottleneck</li>
-<li>DSA architectures (DeepSeek V4, GLM52) have a higher scaling ceiling</li>
+<li>Model: 3B activated / 48B total parameters</li>
+<li>Architecture: Layerwise hybrid of KDA (linear attention) and MLA (Multi-head Latent Attention)</li>
+<li>All models based on Kimi Linear 48B setting</li>
 </ul>
-<p>Now we quantify: what do Kimi's efficiency numbers actually mean for inference cost at scale?</p>
-<hr>
-<h2>1. The Raw Efficiency Numbers</h2>
-<p>From the <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper</a>, three key claims:</p>
-<table><thead><tr><th>Claim</th><th>Value</th><th>Baseline</th><th>Test Condition</th></tr></thead><tbody>
-<tr><td>Decoding speedup</td><td><mark>2×</mark></td><td>Full attention</td><td>1M tokens, 3B/48B model</td></tr>
-<tr><td>Decoding throughput</td><td><mark>6×</mark></td><td>Full attention</td><td>1M tokens, batch=1</td></tr>
-<tr><td>Compute efficiency</td><td><mark>1.16×</mark></td><td>MLA</td><td>Compute-optimal training</td></tr>
-</tbody></table>
-<h3>1.1 Experimental Setup</h3>
-<pre><code>Model:  3B activated / 48B total parameters<br>Corpus: 1.4T tokens pretraining<br>Hybrid: 3:1 KDA (linear) : MLA (full attention)<br>Test:   1M token context length</code></pre>
-<h3>1.2 Deconstructing the 2× Decoding Speedup</h3>
-<blockquote><p>"Our proposed KDA delivers competitive performance compared to the full-attention baseline and achieves <mark>over a 2× decoding speedup</mark> at the one-million-token context."</p></blockquote>
-<p><strong>What this measures:</strong> Tokens generated per second at 1M context.</p>
-<p><strong>The math:</strong></p>
+<p><strong>Critical analysis:</strong></p>
 <ul>
-<li>Full attention at 1M: O(n²) = O(10¹²) per layer per token</li>
-<li>KDA linear attention: <mark>O(1)</mark> per layer per token (fixed-size recurrent state)</li>
-<li>Theoretical speedup for linear portion: 10⁶×</li>
+<li>Kimi K3 official materials do <strong>not</strong> mention system throughput</li>
+<li>The 2× figure is from the research paper, not product specs</li>
+<li>The paper also mentions "<mark>6× higher decoding</mark> at 1M context" elsewhere — this number is not fully elaborated</li>
+<li>The final comparison shows KDA achieves <mark>2× speedup vs MLA baseline</mark> at 1M context (Figure 7b)</li>
 </ul>
-<p>But the actual speedup is only <mark>2×</mark>. Why?</p>
-<table><thead><tr><th>Factor</th><th>Impact</th></tr></thead><tbody>
-<tr><td>MLA layers (25%)</td><td>Still O(n²), dominate at 1M</td></tr>
-<tr><td>Memory bandwidth</td><td>Linear attention is memory-bound</td></tr>
-<tr><td>Hardware utilization</td><td>Recurrent state limits parallelism</td></tr>
-<tr><td>Overhead</td><td>Gating computation, state management</td></tr>
-</tbody></table>
-<blockquote><p><strong>Reality check:</strong> The 2× speedup reflects system-level constraints, not algorithmic complexity. The theoretical 10⁶× becomes 2× in practice.</p></blockquote>
-<h3>1.3 Deconstructing the 6× Decoding Throughput</h3>
-<blockquote><p>"For decoding at 1M context length, Kimi Linear is <mark>6× faster</mark> than full attention." (<a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a>)</p></blockquote>
-<p><strong>Batch size matters:</strong></p>
-<table><thead><tr><th>Batch Size</th><th>Speedup</th><th>Reason</th></tr></thead><tbody>
-<tr><td>1</td><td>~2×</td><td>Sequential processing, memory-bound</td></tr>
-<tr><td>4-8</td><td>6×</td><td>Better parallelism utilization (inferred from Figure 1b)</td></tr>
-</tbody></table>
-<blockquote><p><strong>Note:</strong> The 6× claim is from <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a> at optimal batch size. At batch=1 (typical for interactive use), the speedup is ~2× (from <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 7b</a>).</p></blockquote>
-<h3>1.4 Deconstructing the 1.16× Compute Efficiency</h3>
+<h3>1.2 1.16× Computational Efficiency (Compute-Optimal Training)</h3>
+<p><strong>Original claim:</strong></p>
 <blockquote><p>"Kimi Linear achieves ∼<mark>1.16× computational efficiency</mark> compared to the MLA baselines with compute-optimal training."</p></blockquote>
-<p><strong>What this means:</strong> To reach the same model quality, Kimi Linear needs 1.16× less training compute.</p>
-<p><strong>Why inference engineers should not care:</strong></p>
+<p><strong>What this means:</strong> To achieve the same model quality, Kimi Linear requires ~1.16× less training compute than MLA baselines.</p>
+<p><strong>Critical analysis:</strong></p>
 <ul>
-<li>This is a <mark>training</mark> metric, not inference</li>
-<li>Compute-optimal training involves many confounding hyperparameters</li>
-<li>The 1.16× improvement is within noise for most practical purposes</li>
-<li>Real inference cost depends on deployment hardware, batching, memory — not training FLOPs</li>
+<li>This is a <mark>training</mark> efficiency metric, not inference</li>
+<li>"Compute-optimal training" involves many confounding hyperparameters</li>
+<li><mark>This 1.16× is likely not a metric inference engineers should care about</mark> — real-world inference cost depends on deployment hardware, batching, memory bandwidth, and KV-Cache management</li>
 </ul>
+<h3>1.3 6× Decoding Throughput @1M Context</h3>
+<p><strong>Original claim:</strong></p>
+<blockquote><p>"As shown in Figure 1b, Kimi Linear fully demonstrates its advantages during the decoding phase. For decoding at 1M context length, Kimi Linear is <mark>6× faster</mark> than full attention."</p></blockquote>
+<p><strong>Experimental setup:</strong></p>
+<ul>
+<li>Model: 3B activated / 48B total parameters</li>
+<li>Pretraining corpus: 1.4T tokens</li>
+<li>Batch size: 6× at optimal batch, ==2.2× at batch=1==</li>
+</ul>
+<p><strong>Critical analysis:</strong></p>
+<ul>
+<li>The 6× claim uses optimal batch size (not specified, likely 4-8)</li>
+<li>At batch=1 (interactive use), speedup drops to <mark>2.2×</mark></li>
+<li>The comparison baseline is full attention at 1M — already an impractical baseline</li>
+<li>No comparison against DSA architectures (DeepSeek, GLM, LongCat)</li>
+</ul>
+<h3>1.4 Summary of Efficiency Numbers</h3>
+<table><thead><tr><th>Claim</th><th>Value</th><th>Baseline</th><th>Condition</th><th>Relevance</th></tr></thead><tbody>
+<tr><td>Decoding speedup</td><td>2×</td><td>Full attention</td><td>1M tokens, vs MLA</td><td>Modest</td></tr>
+<tr><td>Decoding throughput</td><td>6×</td><td>Full attention</td><td>1M tokens, optimal batch</td><td>Not production-realistic</td></tr>
+<tr><td>Training efficiency</td><td>1.16×</td><td>MLA</td><td>Compute-optimal training</td><td>Low — training metric</td></tr>
+</tbody></table>
+<blockquote><p><strong>Bottom line:</strong> Kimi3's efficiency claims are real but measured against weak baselines. The absence of DSA comparisons makes relative assessment impossible.</p></blockquote>
 <hr>
-<h2>2. Building a Cost Model</h2>
+<h2>2. Cost Model at Million-Token Scale</h2>
 <h3>2.1 Assumptions</h3>
 <pre><code>Model: Kimi3 (3B activated / 48B total)<br>Context: Variable (100K to 10M tokens)<br>Pricing: $0.28/M cache hit (from Moonshot official)<br>        $2.78/M cache miss<br>        $13.90/M output</code></pre>
 <h3>2.2 Storage Cost Projection</h3>
@@ -124,16 +122,14 @@
 </tbody></table>
 <blockquote><p>Storage scales linearly and the 77× gap vs DeepSeek is constant.</p></blockquote>
 <h3>2.3 Compute Cost Projection</h3>
-<p>Compute cost is more complex — it depends on the hybrid architecture:</p>
-<pre><code>For each token generated:<br>  - 75% KDA layers: O(1) per token → constant cost regardless of context<br>  - 25% MLA layers: O(n) per token with 32× memory compression → 0.25 × n × cost_per_full_op</code></pre>
+<p>Kimi3's hybrid architecture (75% KDA + 25% MLA):</p>
+<pre><code>For each token generated:<br>  - 75% KDA layers: O(1) per token → constant cost regardless of context<br>  - 25% MLA layers: O(n) per token → cost scales linearly with context</code></pre>
 <p>At 1M tokens:</p>
 <ul>
-<li>KDA compute: 0.75 × 1M × c_linear</li>
-<li>MLA compute: 0.25 × 31K × c_full ≈ 7.8K × c_full</li>
+<li>KDA compute: 0.75 × 1M × c_linear (constant)</li>
+<li>MLA compute: 0.25 × 1M × c_full (linear)</li>
 </ul>
-<p>The MLA layers contribute surprisingly little due to MLA's 32× compression. But this assumes the compression is lossless — in practice, MLA at 1M tokens may need more heads to maintain quality.</p>
 <h3>2.4 Total Cost at Scale</h3>
-<p>Combining storage and compute:</p>
 <table><thead><tr><th>Context</th><th>Storage</th><th>Compute (est.)</th><th>Total</th><th>DeepSeek Equivalent</th></tr></thead><tbody>
 <tr><td>100K</td><td>$0.028</td><td>$0.01</td><td>$0.038</td><td>$0.0005</td></tr>
 <tr><td>500K</td><td>$0.14</td><td>$0.05</td><td>$0.19</td><td>$0.0023</td></tr>
@@ -142,94 +138,66 @@
 </tbody></table>
 <blockquote><p>At 1M tokens, Kimi3 costs <mark>$0.38/session</mark> just for KV-Cache storage. DeepSeek: <mark>$0.0046</mark>.</p></blockquote>
 <hr>
-<h2>3. The Scaling Ceiling: When Does Linear Break?</h2>
-<h3>3.1 The Full-Attention Wall</h3>
-<p>Kimi3's MLA layers (25% of total) are the scaling bottleneck. At extreme contexts:</p>
-<pre><code>MLA compute per token = O(n / compression_ratio)<br>                       = O(n / 32)<br><br>At 10M tokens: MLA compute = 10M / 32 = 312K ops per layer<br>At 100M tokens: MLA compute = 100M / 32 = 3.125M ops per layer</code></pre>
-<p>Beyond ~10M tokens, even the compressed full-attention layers become prohibitive.</p>
-<h3>3.2 The Memory Bandwidth Wall</h3>
-<p>Linear attention is memory-bound — each token generation requires reading the full recurrent state:</p>
-<pre><code>State size per layer: ~576 bytes (KDA compressed)<br>For 100 layers: 57.6 KB per token<br>At 1M context: 57.6 KB × 1M = 57.6 GB of state to manage</code></pre>
-<p>HBM bandwidth: 3-5 TB/s → theoretical max ~87K tokens/sec just for state reads.</p>
-<blockquote><p><strong>Practical ceiling:</strong> At 1M+ tokens, memory bandwidth becomes the bottleneck, not compute.</p></blockquote>
-<h3>3.3 The Cross-Media Problem</h3>
-<p>For contexts exceeding HBM capacity (~80-120GB):</p>
-<table><thead><tr><th>Tier</th><th>Capacity</th><th>Can KDA Use It?</th><th>Can DSA Use It?</th></tr></thead><tbody>
-<tr><td>HBM</td><td>80-120GB</td><td>✅ Yes (required)</td><td>✅ Yes</td></tr>
-<tr><td>CXL/DRAM</td><td>1-4TB</td><td>❌ No (bandwidth)</td><td>✅ Yes (selective fetch)</td></tr>
-<tr><td>SSD</td><td>10+ TB</td><td>❌ No (latency)</td><td>✅ Yes (cold cache)</td></tr>
-</tbody></table>
-<blockquote><p><strong>Linear attention's fatal flaw:</strong> The recurrent state must be in HBM for every token generation. It cannot tier across media. DSA can selectively fetch from any tier.</p></blockquote>
-<h3>3.4 Quantitative Scaling Ceiling</h3>
-<table><thead><tr><th>Architecture</th><th>Practical Ceiling</th><th>Limiting Factor</th></tr></thead><tbody>
-<tr><td>Full Attention</td><td>~128K</td><td>Compute O(n²)</td></tr>
-<tr><td>Kimi3 (3:1 hybrid)</td><td><mark>~500K</mark></td><td>MLA layers + memory bandwidth</td></tr>
-<tr><td>Pure Linear (theoretical)</td><td>~10M</td><td>Memory bandwidth</td></tr>
-<tr><td>DSA (DeepSeek V4)</td><td><mark>~10M+</mark></td><td>Index computation (S²)</td></tr>
-</tbody></table>
-<blockquote><p>Kimi3's practical ceiling is approximately <mark>500K tokens</mark> — beyond that, the 25% MLA layers dominate and memory bandwidth saturates.</p></blockquote>
-<hr>
-<h2>4. The Efficiency Paradox</h2>
-<h3>4.1 Why 2× Speedup ≠ 2× Cost Reduction</h3>
-<p>A 2× decoding speedup does not translate to 2× cost reduction:</p>
-<table><thead><tr><th>Factor</th><th>Impact on Cost</th></tr></thead><tbody>
-<tr><td>2× speedup</td><td>Halves compute time</td></tr>
-<tr><td>But memory is the cost</td><td>Storage cost unchanged</td></tr>
-<tr><td>And memory is 78% of bill</td><td>Total cost reduced by only ~11%</td></tr>
-</tbody></table>
-<blockquote><p><strong>Key insight:</strong> At 1M tokens, <mark>78% of Kimi3's cost is storage</mark>. A 2× compute speedup reduces total cost by only 11%. The bottleneck is not compute — it's memory capacity and bandwidth.</p></blockquote>
-<h3>4.2 The Batch Size Trap</h3>
-<p>Kimi3's 6× throughput claim requires batch=4-8 (<a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Figure 1b</a>). But:</p>
-<table><thead><tr><th>Batch Size</th><th>Throughput</th><th>Latency</th><th>Use Case</th></tr></thead><tbody>
-<tr><td>1</td><td>2.2×</td><td>Lowest</td><td>Extreme low-latency</td></tr>
-<tr><td>4-8</td><td>6×</td><td>Medium</td><td>Batch processing</td></tr>
-<tr><td>32+</td><td>8-10×</td><td>High</td><td>Offline generation</td></tr>
-</tbody></table>
-<p>Batch=1 represents an <mark>extreme low-latency scenario</mark>. In production, inference typically uses batch=4-8 to maximize throughput, where the 6× speedup applies.</p>
-<h3>4.3 The Quality-Cost Tradeoff</h3>
-<p>The Kimi Linear paper's Figure 7b shows:</p>
-<pre><code>@1M tokens:<br>  Full attention: quality = 100% (baseline), speed = 1×<br>  Kimi Linear:    quality = ~95%, speed = 2×</code></pre>
-<p>A <mark>5% quality degradation</mark> for 2× speedup. Whether this tradeoff is acceptable depends on the task:</p>
-<table><thead><tr><th>Task</th><th>Acceptable?</th><th>Reason</th></tr></thead><tbody>
-<tr><td>Long document summary</td><td>✅ Yes</td><td>Quality loss tolerable</td></tr>
-<tr><td>Multi-turn agent</td><td>❌ No</td><td>Error accumulation</td></tr>
-<tr><td>Code generation</td><td>❌ No</td><td>Precision critical</td></tr>
-</tbody></table>
-<hr>
-<h2>5. Comparison with DSA: The Missing Benchmark</h2>
-<h3>5.1 What's Missing</h3>
-<p>The Kimi Linear paper does not compare against DSA architectures. We need:</p>
-<table><thead><tr><th>Metric</th><th>Kimi3 (Linear)</th><th>DeepSeek V4 (DSA)</th></tr></thead><tbody>
-<tr><td>Decoding speed @1M</td><td>2× vs full attn</td><td>Not published</td></tr>
-<tr><td>Quality @1M</td><td>~95% of full attn</td><td>Not published</td></tr>
-<tr><td>Storage cost @1M</td><td>$0.28</td><td>$0.0046</td></tr>
-<tr><td>Practical ceiling</td><td>~500K</td><td>~10M+</td></tr>
-</tbody></table>
-<h3>5.2 Estimating DSA's Numbers</h3>
-<p>From DeepSeek V4's published data:</p>
-<table><thead><tr><th>Metric</th><th>Value</th><th>Source</th></tr></thead><tbody>
-<tr><td>KV compression</td><td>32× via MLA</td><td>DeepSeek-V4 paper</td></tr>
-<tr><td>Compute scaling</td><td>O(S²) + O(n×S)</td><td>S = sparse index size</td></tr>
-<tr><td>Practical deployment</td><td>>1M tokens</td><td>Verified by users</td></tr>
-</tbody></table>
-<p>DSA's sparse index adds overhead, but the scaling is fundamentally better than hybrid linear:</p>
-<pre><code>Kimi3:  Cost ∝ 0.75n + 0.25(n²/32)    → dominated by n² at scale<br>DSA:    Cost ∝ S² + n×S               → dominated by n (when S << n)</code></pre>
-<p>At 1M tokens with S=10K:</p>
+<h2>3. Sparse Attention Limitations and DSA Advantages</h2>
+<h3>3.1 The Random Access Problem</h3>
+<p>Sparse attention's fundamental limitation is <mark>random memory access</mark>:</p>
 <ul>
-<li>Kimi3: 0.75×1M + 0.25×(1M)²/32 = 750K + 7.8M = <strong>8.55M ops</strong></li>
-<li>DSA: (10K)² + 1M×10K = 100M + 10B = <strong>10.1B ops</strong> (wait, this seems worse)</li>
+<li>Must read entire KV cache to select which tokens to attend</li>
+<li>Random access patterns are inefficient on hierarchical memory</li>
 </ul>
-<p>Actually, the comparison is more nuanced. DSA's S is typically much smaller (1K-5K), and the MLA compression applies to both:</p>
-<pre><code>Kimi3 @1M: 0.75×1M (KDA) + 0.25×1M/32 (MLA) = 750K + 7.8K = 757.8K ops/token<br>DSA @1M:   S² + n×S/32 = 10K² + 1M×10K/32 = 100M + 312.5K ≈ 100M ops/token</code></pre>
-<p>Hmm, this naive calculation suggests DSA is worse. But DSA's advantage is in <mark>memory management</mark>, not raw compute:</p>
+<p><strong>But this problem is diminishing:</strong></p>
+<p>Three developments are changing the equation:</p>
+<p>1. <strong>Memory semantic pooling systems are maturing</strong> — large-scale pooling of memory semantics makes random access more efficient</p>
+<p>2. <strong>DeepSeek V4's actual performance proves it</strong> — random access on HBM and DRAM performs <mark>much better than expected</mark>; in engineering practice, this efficiency challenge is becoming hard to see</p>
+<p>3. <strong>Hardware improvements:</strong></p>
 <ul>
-<li>DSA keeps only S tokens in HBM, rest in DRAM/SSD</li>
-<li>Kimi3 keeps all n tokens in HBM (recurrent state must be accessible)</li>
+<li><mark>Chip-level gather/scatter</mark> instructions are being hardened and performance-improved</li>
+<li><mark>Memory-semantics direct-drive</mark> of DDR memory is advancing</li>
 </ul>
-<blockquote><p><strong>The real advantage:</strong> DSA enables <mark>cross-media KV-Cache</mark>. At 10M tokens, DSA can tier across HBM/DRAM/SSD. Kimi3 cannot — its recurrent state must stay in HBM.</p></blockquote>
+<blockquote><p><strong>Engineering reality:</strong> The random access challenge that once seemed fundamental is becoming manageable. <mark>DSA architectures naturally have advantages for cross-media coordination.</mark></p></blockquote>
+<h3>3.2 DSA's Cross-Media Advantage</h3>
+<p>From a computer architecture perspective:</p>
+<table><thead><tr><th>Aspect</th><th>Linear Attention</th><th>DSA</th></tr></thead><tbody>
+<tr><td>KV storage</td><td>Must keep all in HBM</td><td>Can tier across HBM/DRAM/SSD</td></tr>
+<tr><td>Cross-media</td><td><mark>Nearly impossible</mark> (bandwidth too high)</td><td><mark>Natural fit</mark> (selective fetch)</td></tr>
+<tr><td>Latency sensitivity</td><td>Poor (recurrent state must be in HBM)</td><td>Good (index in HBM, data anywhere)</td></tr>
+</tbody></table>
+<blockquote><p><strong>Key insight:</strong> DSA architectures are <mark>naturally suited for cross-media coordination</mark>. Linear attention must depend on full attention layers, which cannot effectively tier across media — coordination bandwidth is too high, especially as latency requirements decrease.</p></blockquote>
 <hr>
-<h2>6. The Verdict: Numbers Don't Lie</h2>
-<h3>6.1 Kimi3's Actual Position</h3>
+<h2>4. The Cost of Memory: Why Architecture Choice Matters</h2>
+<h3>4.1 Agent Workloads Are Memory Workloads</h3>
+<p>From real-world deployment data and vendor pricing:</p>
+<table><thead><tr><th>Observation</th><th>Implication</th></tr></thead><tbody>
+<tr><td>Cost is shifting to <mark>memory</mark> (not compute)</td><td>Storage dominates the bill</td></tr>
+<tr><td>Each request's sequence length >> compute input</td><td>10× to 1000× longer</td></tr>
+<tr><td>Million-token contexts are becoming standard</td><td>Memory cost scales linearly</td></tr>
+</tbody></table>
+<blockquote><p><strong>The core problem:</strong> How to reduce memory cost is the key to system efficiency.</p></blockquote>
+<h3>4.2 Storage Cost Is Media Cost</h3>
+<p>From a computer architecture perspective:</p>
+<ul>
+<li><mark>Storage media cost >> interconnect cost</mark></li>
+<li>The physical medium (HBM, DRAM, SSD) dominates cost, not the connection</li>
+</ul>
+<p><strong>DSA's advantage:</strong></p>
+<ul>
+<li>Naturally fits cross-media tiering</li>
+<li>Can place hot data in HBM, warm in DRAM, cold in SSD</li>
+<li>Index-based retrieval minimizes data movement</li>
+</ul>
+<p><strong>Linear attention's limitation:</strong></p>
+<ul>
+<li>Must depend on full attention layers</li>
+<li>Full attention <mark>cannot effectively coordinate across media</mark></li>
+<li>Bandwidth requirements are too high, especially in low-latency scenarios</li>
+</ul>
+<blockquote><p><strong>Personal view:</strong> DSA is more likely to become the <mark>unified model micro-architecture</mark> for the future. Linear attention alone cannot solve the cross-media problem.</p></blockquote>
+<hr>
+<h2>5. The Kimi3 Paper's Own Conclusion</h2>
+<p>From the <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper's Discussion section</a>:</p>
+<blockquote><p>"Linear attention and sparse attention represent two distinct pathways toward efficient long-context modeling. Sparse attention tends to retrieve fine-grained historical information more effectively, but this advantage comes at the cost of storing the entire KV cache for token selection, making it less efficient than linear attention models that maintain a constant state. Moreover, sparse attention performs only information selection, and its theoretical expressive upper bound remains that of full attention. In contrast, linear attention, grounded in the principle of 'compression as intelligence', enables generalization with a fixed-size state and, when combined with the Delta learning rule, can achieve theoretically stronger expressive capacity. Although linear attentions have traditionally been criticized for weak retrieval ability, this limitation can be mitigated through state expansion or related techniques. Nevertheless, despite these advantages, linear attention remains limited by current hardware implementations and the absence of optimized inference infrastructure. Our work overcomes these limitations with Kimi Linear, a powerful model integrated with vLLM for efficient inference. Our proposed KDA delivers competitive performance compared to the full-attention baseline (Table 3) and achieves over a 2× decoding speedup at the one-million-token context (Figure 7b). <mark>Despite their distinct approaches to efficient long-context modeling, linear attention and sparse attention are not mutually exclusive. Future work could explore hybrid models that integrate the strengths of both, leveraging the compression and generalization capabilities of linear attention with the fine-grained retrieval advantages of sparse attention to further enhance model performance and efficiency.</mark>"</p></blockquote>
+<hr>
+<h2>6. Summary</h2>
 <table><thead><tr><th>Dimension</th><th>Rating</th><th>Notes</th></tr></thead><tbody>
 <tr><td>Innovation</td><td>⭐⭐⭐⭐</td><td>KDA is genuinely novel</td></tr>
 <tr><td>Efficiency claims</td><td>⭐⭐⭐</td><td>2× speedup is real but modest</td></tr>
@@ -237,20 +205,9 @@
 <tr><td>System readiness</td><td>⭐⭐</td><td>No published system-level data</td></tr>
 <tr><td>Cost competitiveness</td><td>⭐</td><td>77× storage cost vs DeepSeek</td></tr>
 </tbody></table>
-<h3>6.2 What Needs to Happen for Kimi3 to Win</h3>
-<p>1. <strong>Reduce MLA ratio below 10%</strong> → push ceiling to 2M+</p>
-<p>2. <strong>Achieve cross-media state management</strong> → enable DRAM/SSD tiering</p>
-<p>3. <strong>Publish DSA comparison</strong> → prove relative advantage</p>
-<p>4. <strong>Reduce cache hit price</strong> → $0.28/M is 77× DeepSeek's $0.003625/M</p>
-<h3>6.3 The Industry Trajectory</h3>
-<pre><code>2024:  Full attention (128K ceiling)<br>2025:  Linear attention (Kimi3, 500K ceiling)<br>2026:  DSA (DeepSeek V4, 1M+ ceiling)<br>2027?: Hybrid DSA+Linear (convergence)</code></pre>
-<blockquote><p><strong>Prediction:</strong> Pure linear attention will not reach industrial-scale million-token deployment. The winning architecture will be <mark>DSA-dominant with linear assist</mark> — and DeepSeek is best positioned to deliver it.</p></blockquote>
+<blockquote><p><strong>Bottom line:</strong> The future is <mark>hybrid</mark> — compression (MLA) + Sparse (DSA) + Linear (KDA) fusion. No industrial model uses pure linear attention; all are hybrid. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.</p></blockquote>
 <hr>
-<h2>7. The Kimi3 Paper's Own Words</h2>
-<p>From the <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper's Discussion</a>:</p>
-<blockquote><p>"Linear attention and sparse attention represent two distinct pathways toward efficient long-context modeling. Sparse attention tends to retrieve fine-grained historical information more effectively, but this advantage comes at the cost of storing the entire KV cache for token selection, making it less efficient than linear attention models that maintain a constant state. Moreover, sparse attention performs only information selection, and its theoretical expressive upper bound remains that of full attention. In contrast, linear attention, grounded in the principle of 'compression as intelligence', enables generalization with a fixed-size state and, when combined with the Delta learning rule, can achieve theoretically stronger expressive capacity. Although linear attentions have traditionally been criticized for weak retrieval ability, this limitation can be mitigated through state expansion or related techniques. Nevertheless, despite these advantages, linear attention remains limited by current hardware implementations and the absence of optimized inference infrastructure. Our work overcomes these limitations with Kimi Linear, a powerful model integrated with vLLM for efficient inference. Our proposed KDA delivers competitive performance compared to the full-attention baseline (Table 3) and achieves over a 2× decoding speedup at the one-million-token context (Figure 7b). Despite their distinct approaches to efficient long-context modeling, linear attention and sparse attention are not mutually exclusive. Future work could explore hybrid models that integrate the strengths of both, leveraging the compression and generalization capabilities of linear attention with the fine-grained retrieval advantages of sparse attention to further enhance model performance and efficiency."</p></blockquote>
-<hr>
-<p><em>Based on <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper</a>, DeepSeek V4 technical report, and first-principles analysis. All calculations shown for verification.</em></p>
+<p><em>Based on <a href="https://arxiv.org/abs/2510.26692" target="_blank" rel="noopener">Kimi Linear paper</a>, DeepSeek V4 technical report, and first-principles analysis. All original claims preserved with source attribution.</em></p>
   </div>
 </article>
 <footer class="footer"><div class="wrap"><p>© 2026 backyes · Handwritten</p></div></footer>
