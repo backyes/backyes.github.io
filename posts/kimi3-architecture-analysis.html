@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Understanding Kimi3 (1): Linear Attention, Sparse Attention, and the Architecture War at Million-Token Scale · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>
+.article{max-width:720px;margin:0 auto;padding:40px 24px 80px}
+.article h1{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px}
+.article .meta{color:var(--muted-2);font-size:.85rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.article-body{font-family:var(--font-serif);font-size:1.1rem;line-height:1.8;color:var(--fg-2)}
+.article-body h2{font-size:1.5rem;font-weight:700;margin:2em 0 .6em;padding-bottom:.4em;border-bottom:2px solid var(--accent);color:var(--fg)}
+.article-body h3{font-size:1.25rem;font-weight:600;margin:1.5em 0 .5em;padding-left:10px;border-left:3px solid var(--accent);color:var(--fg2)}
+.article-body p{margin:0 0 1.2em}
+.article-body strong{color:var(--fg);font-weight:600}
+.article-body mark{background:linear-gradient(180deg,transparent 60%,var(--accent-soft) 60%);padding:0 3px;color:var(--fg);font-weight:600}
+.article-body .key-callout{border-left:4px solid var(--accent);background:var(--callout);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.article-body .key-callout p{margin:0 0 .5em}
+.article-body .key-callout p:last-child{margin:0}
+.article-body .key-num{color:var(--accent);font-weight:700;font-size:1.1em}
+.article-body table{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto}
+.article-body th{background:var(--surface);font-weight:600;padding:8px 10px;border:1px solid var(--border);text-align:left}
+.article-body td{padding:7px 10px;border:1px solid var(--border);vertical-align:top}
+.article-body tr:nth-child(even) td{background:rgba(24,27,32,.25)}
+.article-body tr:hover td{background:rgba(74,143,224,.08)}
+.article-body blockquote{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
+.article-body blockquote p{margin:0}
+.article-body code{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:'JetBrains Mono',monospace}
+.article-body pre code{background:none;border:none;padding:0}
+.article-body a{color:var(--accent);text-decoration:none}
+.article-body a:hover{text-decoration:underline}
+.article-body hr{border:none;border-top:1px solid var(--border-soft);margin:2em 0}
+.back{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}
+@media(max-width:768px){
+  .article{padding:24px 16px 60px}
+  .article-body h2{font-size:1.3rem}
+  .article-body h3{font-size:1.1rem}
+  .article-body table{font-size:.8rem}
+  .article-body th,.article-body td{padding:6px 8px}
+}
+</style>
+</head>
+<body>
+<nav class="nav"><div class="nav-inner">
+  <a href="../" class="nav-brand"><span class="dot"></span>backyes</a>
+  <ul class="nav-links">
+    <li><a href="../#survey">Survey by AI</a></li>
+    <li><a href="../posts.html" class="active">Posts</a></li>
+    <li><a href="../tags.html">Tags</a></li>
+  </ul>
+</div></nav>
+<article class="article">
+  <a href="../posts.html" class="back">← 返回 Posts</a>
+  <h1>Understanding Kimi3 (1): Linear Attention, Sparse Attention, and the Architecture War at Million-Token Scale</h1>
+  <div class="meta"><span>📅 2026-07-21</span><div><span class="ptag">Kimi3</span><span class="ptag">linear-attention</span><span class="ptag">sparse-attention</span><span class="ptag">DSA</span><span class="ptag">MLA</span><span class="ptag">architecture</span><span class="ptag">long-context</span></div></div>
+  <div class="article-body">
+<h2>The Question That Matters</h2>
+<p>At million-token context lengths, the cost structure of AI inference fundamentally shifts. Our previous analysis showed that <mark>storage (KV-Cache) dominates the bill</mark> — 67-78% of total cost across vendors. This reality makes one question critical: <strong>which model micro-architecture can deliver the best quality-cost tradeoff at extreme sequence lengths?</strong></p>
+<p>Two paths have emerged:</p>
+<table><thead><tr><th>Path</th><th>Representative</th><th>KV Strategy</th><th>Scaling Claim</th></tr></thead><tbody>
+<tr><td><strong>Linear Attention</strong></td><td>Kimi3, Qwen3, Xiaomi SWA</td><td>Compress via linear attention</td><td>~linear with context</td></tr>
+<tr><td><strong>Sparse Attention (DSA)</strong></td><td>DeepSeek V4, GLM52, LongCat</td><td>Sparse index + compression</td><td>~near-linear with index</td></tr>
+</tbody></table>
+<p>This post dives deep into Kimi3's architecture, compares it with the DSA path, and offers a perspective on which approach has the higher scaling ceiling.</p>
+<hr>
+<h2>1. Kimi3 Architecture: The Linear Attention Frontier</h2>
+<h3>1.1 Hybrid Architecture: KDA + ResNet + MLA</h3>
+<p>Kimi3 employs a <mark>layerwise hybrid architecture</mark> combining three components:</p>
+<table><thead><tr><th>Component</th><th>Role</th><th>Sequence Scaling</th></tr></thead><tbody>
+<tr><td><strong>KDA (Kimi Delta Attention)</strong></td><td>Linear attention module</td><td>O(n) — linear with context</td></tr>
+<tr><td><strong>MLA (Multi-head Latent Attention)</strong></td><td>Compressed full attention</td><td>O(n) with 32× compression</td></tr>
+<tr><td><strong>ResNet</strong></td><td>Gradient path stabilization</td><td>Independent of sequence</td></tr>
+</tbody></table>
+<p>The key innovation is the <mark>3:1 ratio of KDA to MLA</mark> — three linear attention layers for every one full attention layer. This hybrid design claims to reduce computation by <mark>75%</mark> compared to pure full attention, while maintaining quality through strategic full-attention checkpoints.</p>
+<h3>1.2 KDA: The Core Linear Attention Module</h3>
+<p>At the heart of Kimi3 lies <strong>Kimi Delta Attention (KDA)</strong>, a hardware-efficient linear attention module that extends Gated DeltaNet with a <mark>channel-wise forget gate</mark>.</p>
+<p>Traditional linear attention uses a single scalar forget gate per head. KDA introduces finer-grained control:</p>
+<pre><code>Standard:  gate ∈ ℝ          (1 value per head)<br>KDA:       gate ∈ ℝ^C        (per-channel, C = channel dim)</code></pre>
+<p>This channel-wise gating allows the model to selectively retain or forget information at a granular level — critical for long-context tasks where different channels may carry information at different timescales.</p>
+<h3>1.3 MoE Sparsity: 1.8% Activation</h3>
+<p>Kimi3 pushes MoE sparsity to extreme levels:</p>
+<table><thead><tr><th>Model</th><th>Activated Params</th><th>Total Params</th><th>Sparsity</th></tr></thead><tbody>
+<tr><td><strong>Kimi3</strong></td><td>3B</td><td>48B</td><td><mark>1.8%</mark></td></tr>
+<tr><td>DeepSeek V4 Flash</td><td>—</td><td>—</td><td>~1.8%</td></tr>
+<tr><td>Typical MoE</td><td>10-30%</td><td>—</td><td>10-30%</td></tr>
+</tbody></table>
+<p>This ultra-low sparsity means only 1.8% of parameters are active per token — a design choice that trades training efficiency for inference cost savings.</p>
+<hr>
+<h2>2. The Two Architecture Paths</h2>
+<h3>2.1 Linear Attention Path</h3>
+<p><strong>Adopters:</strong> Kimi3, Qwen3 series, Xiaomi SWA</p>
+<p><strong>Core idea:</strong> Replace O(n²) full attention with O(n) linear attention, using recurrent state compression.</p>
+<p><strong>Strengths:</strong></p>
+<ul>
+<li>True O(n) scaling for the linear portion</li>
+<li>No index structure needed</li>
+<li>Simpler hardware utilization</li>
+</ul>
+<p><strong>Weaknesses:</strong></p>
+<ul>
+<li><mark>Must retain full attention layers</mark> to maintain quality (the 3:1 KDA:MLA ratio)</li>
+<li>Full attention layers are the <mark>scaling bottleneck</mark> — they remain O(n²)</li>
+<li>Cross-media coordination (HBM → DRAM → SSD) is extremely difficult due to bandwidth requirements</li>
+</ul>
+<h3>2.2 DSA (Dense-Sparse Attention) Path</h3>
+<p><strong>Adopters:</strong> DeepSeek V4, GLM52, LongCat</p>
+<p><strong>Core idea:</strong> Use sparse indexing to select only the most relevant tokens, achieving near-linear scaling while preserving full-attention quality.</p>
+<p><strong>Strengths:</strong></p>
+<ul>
+<li><mark>Near-linear scaling</mark> with sparse index (S² complexity, still a bottleneck but better than O(n²))</li>
+<li>Naturally suited for <mark>cross-media coordination</mark> (HBM/DRAM/SSD)</li>
+<li>DeepSeek V4 demonstrates real-world viability</li>
+</ul>
+<p><strong>Weaknesses:</strong></p>
+<ul>
+<li>Sparse indexing introduces <mark>random memory access</mark> patterns</li>
+<li>Index computation adds overhead (S² complexity)</li>
+<li>Hardware support for gather/scatter still maturing</li>
+</ul>
+<h3>2.3 The Scaling Ceiling: A Quantitative View</h3>
+<table><thead><tr><th>Architecture</th><th>Compute Scaling</th><th>Memory Scaling</th><th>Cross-Media</th><th>Practical Ceiling</th></tr></thead><tbody>
+<tr><td>Full Attention</td><td>O(n²)</td><td>O(n)</td><td>Poor</td><td>~128K</td></tr>
+<tr><td>Linear (Kimi3)</td><td>O(n) for 75% of layers</td><td>O(n)</td><td>Poor</td><td>~500K (estimated)</td></tr>
+<tr><td>DSA (DeepSeek V4)</td><td>O(S²) + O(n×S)</td><td>O(n)</td><td>Good</td><td>~1M+</td></tr>
+</tbody></table>
+<blockquote><p><strong>Key insight:</strong> Linear attention's full-attention layers (the 25% MLA portion) become the scaling ceiling. At 1M tokens, even 25% full attention is computationally expensive. DSA's sparse index, while not perfect, has a higher ceiling because it avoids the O(n²) wall entirely.</p></blockquote>
+<hr>
+<h2>3. Efficiency Numbers: What Kimi's Linear Paper Actually Shows</h2>
+<h3>3.1 The 2× Decoding Speedup Claim</h3>
+<p>From the Kimi Linear paper:</p>
+<blockquote><p>"Our proposed KDA delivers competitive performance compared to the full-attention baseline (Table 3) and achieves <mark>over a 2× decoding speedup</mark> at the one-million-token context (Figure 7b)."</p></blockquote>
+<p><strong>Experimental setup:</strong></p>
+<ul>
+<li>Model: 3B activated / 48B total parameters</li>
+<li>Baseline: Full attention</li>
+<li>Context: 1M tokens</li>
+</ul>
+<p><strong>Critical analysis:</strong></p>
+<ul>
+<li>2× speedup at 1M is modest — full attention at 1M is nearly infeasible, so the baseline is already degraded</li>
+<li>The comparison is against full attention, not against DSA architectures</li>
+<li>Real-world deployment constraints (batch size, memory bandwidth) are not captured</li>
+</ul>
+<h3>3.2 The 6× Decoding Throughput Claim</h3>
+<blockquote><p>"For decoding at 1M context length, Kimi Linear is <mark>6× faster</mark> than full attention."</p></blockquote>
+<p><strong>Experimental setup:</strong></p>
+<ul>
+<li>Same 3B/48B model</li>
+<li>Pretrained on 1.4T tokens</li>
+<li>Batch size: 1 (2.2× speedup), larger batches show 6×</li>
+</ul>
+<p><strong>Critical analysis:</strong></p>
+<ul>
+<li>6× at batch=1 is impressive, but batch=1 is not production-realistic</li>
+<li>The comparison baseline (full attention at 1M) is already impractical</li>
+<li>No comparison against DSA architectures (DeepSeek, GLM, LongCat)</li>
+</ul>
+<h3>3.3 The 1.16× Computational Efficiency Claim</h3>
+<blockquote><p>"Kimi Linear achieves ∼<mark>1.16× computational efficiency</mark> compared to the MLA baselines with compute-optimal training."</p></blockquote>
+<p><strong>What this means:</strong> To achieve the same model quality, Kimi Linear requires 1.16× less compute than MLA baselines.</p>
+<p><strong>Critical analysis:</strong></p>
+<ul>
+<li>This is a training efficiency metric, not inference efficiency</li>
+<li>The 1.16× improvement is modest — within noise for most practical purposes</li>
+<li>Compute-optimal training involves many hyperparameters; the fair comparison is unclear</li>
+<li><mark>This metric is not what inference engineers should care about</mark></li>
+</ul>
+<h3>3.4 Summary of Efficiency Claims</h3>
+<table><thead><tr><th>Claim</th><th>Value</th><th>Baseline</th><th>Relevance</th></tr></thead><tbody>
+<tr><td>Decoding speedup @1M</td><td>2×</td><td>Full attention</td><td>Modest — baseline already degraded</td></tr>
+<tr><td>Decoding throughput @1M</td><td>6×</td><td>Full attention (BS=1)</td><td>Good but not production-realistic</td></tr>
+<tr><td>Compute efficiency</td><td>1.16×</td><td>MLA (training)</td><td>Low — training metric, not inference</td></tr>
+</tbody></table>
+<blockquote><p><strong>Bottom line:</strong> Kimi3's efficiency claims are real but measured against weak baselines. The absence of DSA comparisons makes it impossible to assess relative merit.</p></blockquote>
+<hr>
+<h2>4. Deployment Reality: The 200K Wall</h2>
+<h3>4.1 Advertised vs Actual Sequence Lengths</h3>
+<table><thead><tr><th>Model</th><th>Advertised</th><th>Actual (Claude Code)</th><th>Constraint</th></tr></thead><tbody>
+<tr><td>DeepSeek V4</td><td>1M</td><td>~200K</td><td>Client-side</td></tr>
+<tr><td>GLM52</td><td>1M</td><td>~200K</td><td>Client-side</td></tr>
+<tr><td>LongCat</td><td>1M</td><td>~200K</td><td>Client-side</td></tr>
+<tr><td>Kimi3</td><td>1M</td><td>Unknown</td><td>Not yet widely deployed</td></tr>
+</tbody></table>
+<p><strong>Observation:</strong> All models hit the <mark>200K wall</mark> in real-world deployment via Claude Code. This may be a client-side constraint (Claude Code's context window) rather than a model limitation.</p>
+<h3>4.2 Why 200K? The System-Level Bottleneck</h3>
+<p>Even if the model supports 1M, the system stack imposes constraints:</p>
+<p>1. <strong>Client-side context window:</strong> Claude Code may limit input to ~200K</p>
+<p>2. <strong>Memory bandwidth:</strong> At 1M tokens, even O(n) memory access saturates HBM bandwidth</p>
+<p>3. <strong>Latency:</strong> Linear attention's recurrent state processing adds sequential latency</p>
+<p>4. <strong>Cost:</strong> Our analysis showed $200+/session for Kimi at 480M tokens — 1M would be prohibitive</p>
+<blockquote><p><strong>Reality check:</strong> The gap between "supports 1M" and "usefully deploys at 1M" is vast. DeepSeek is the only vendor that has publicly demonstrated system-level scalability data.</p></blockquote>
+<hr>
+<h2>5. The Cost of Memory: Why Architecture Choice Matters</h2>
+<h3>5.1 The Agent Economy Is a Memory Economy</h3>
+<p>In multi-turn Agent scenarios:</p>
+<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>
+<tr><td>Cache hit tokens</td><td>480.4M (our measurement)</td></tr>
+<tr><td>Compute tokens</td><td>11.3M</td></tr>
+<tr><td>Storage:Compute ratio</td><td>42.7:1</td></tr>
+<tr><td>Cost share (Kimi)</td><td>78% storage</td></tr>
+<tr><td>Cost share (DeepSeek)</td><td>21% storage</td></tr>
+</tbody></table>
+<blockquote><p>At million-token scale, <mark>you're buying memory, not compute</mark>. The architecture that stores KV-Cache most efficiently wins.</p></blockquote>
+<h3>5.2 DSA's Cross-Media Advantage</h3>
+<p>The memory hierarchy for million-token KV-Cache:</p>
+<table><thead><tr><th>Tier</th><th>Capacity</th><th>Bandwidth</th><th>Cost/GB</th><th>Architecture Fit</th></tr></thead><tbody>
+<tr><td><strong>HBM</strong></td><td>80-128GB</td><td>3-5 TB/s</td><td>$$$</td><td>Hot cache (recent tokens)</td></tr>
+<tr><td><strong>CXL/DRAM</strong></td><td>1-4 TB</td><td>100-200 GB/s</td><td>$$</td><td>Warm cache (recent context)</td></tr>
+<tr><td><strong>SSD/NVMe</strong></td><td>10+ TB</td><td>5-15 GB/s</td><td>$</td><td>Cold cache (historical context)</td></tr>
+</tbody></table>
+<p><strong>DSA's advantage:</strong> Sparse indexing naturally maps to this hierarchy:</p>
+<ul>
+<li>Index resides in HBM (small, fast)</li>
+<li>Selected tokens fetched from DRAM/SSD on demand</li>
+<li><mark>Random access patterns are tolerable</mark> with modern memory semantics</li>
+</ul>
+<p><strong>Linear attention's problem:</strong> Full-attention layers require <mark>all tokens in HBM simultaneously</mark>:</p>
+<ul>
+<li>No natural tiering — every token must be accessible</li>
+<li>Cross-media coordination requires massive bandwidth</li>
+<li>Latency-sensitive scenarios (real-time chat) are especially challenging</li>
+</ul>
+<h3>5.3 The Full-Attention Bottleneck</h3>
+<p>Kimi3's 3:1 KDA:MLA ratio means 25% of layers are full attention. At 1M tokens:</p>
+<pre><code>Full attention compute per layer: O(n²) = O(10¹²)<br>Linear attention compute per layer: O(n) = O(10⁶)<br>Ratio: 10⁶× difference per layer</code></pre>
+<p>Even with MLA's 32× compression, the full-attention layers dominate at extreme scales. This is the <mark>fundamental ceiling</mark> of hybrid linear architectures.</p>
+<hr>
+<h2>6. The Road Ahead: Convergence or Divergence?</h2>
+<h3>6.1 Kimi3's Own Prediction</h3>
+<p>From the Kimi3 paper's future work section:</p>
+<blockquote><p>"Future work could explore <mark>hybrid models</mark> that integrate the strengths of both, leveraging the compression and generalization capabilities of linear attention with the fine-grained retrieval advantages of sparse attention."</p></blockquote>
+<p>This is a remarkable admission — the linear attention camp acknowledges that pure linear is not enough.</p>
+<h3>6.2 The Convergence Thesis</h3>
+<p>The industry is converging on a hybrid approach:</p>
+<table><thead><tr><th>Layer Type</th><th>Function</th><th>Scaling</th></tr></thead><tbody>
+<tr><td><strong>DSA (Sparse)</strong></td><td>Long-range retrieval</td><td>O(S²) — index-based</td></tr>
+<tr><td><strong>MLA (Compressed)</strong></td><td>Mid-range attention</td><td>O(n) — compressed</td></tr>
+<tr><td><strong>Linear (KDA)</strong></td><td>Local processing</td><td>O(n) — recurrent</td></tr>
+</tbody></table>
+<p>This hybrid combines:</p>
+<ul>
+<li>DSA's cross-media coordination capability</li>
+<li>MLA's compression efficiency</li>
+<li>Linear attention's local processing speed</li>
+</ul>
+<h3>6.3 Why DeepSeek Is Still Ahead</h3>
+<p>DeepSeek remains the only vendor that has demonstrated:</p>
+<p>1. <strong>System-level scalability data</strong> — not just model claims</p>
+<p>2. <strong>Real-world deployment</strong> at scale</p>
+<p>3. <strong>DSA + MLA + MTP integration</strong> — all three innovations working together</p>
+<p>4. <strong>Industry adoption</strong> — competitors are adopting DSA principles</p>
+<blockquote><p><strong>Bottom line:</strong> The architecture war is not over, but DSA has a higher ceiling. Linear attention (Kimi3) is impressive but faces fundamental limits at extreme scales. The future likely belongs to hybrid architectures that combine DSA's sparse indexing with linear attention's efficiency — and DeepSeek is best positioned to deliver this.</p></blockquote>
+<hr>
+<h2>7. What to Watch Next</h2>
+<p>In the next post, we'll quantify Kimi3's actual cost-efficiency:</p>
+<ul>
+<li>Compute-optimal training cost analysis</li>
+<li>Inference cost projection at 1M tokens</li>
+<li>Comparison with DeepSeek V4's published efficiency data</li>
+<li>The "memory wall" — when does storage cost exceed compute cost?</li>
+</ul>
+<hr>
+<p><em>Based on Kimi Linear paper, DeepSeek V4 technical report, and real-world deployment data. All calculations reproducible — see data tables above.</em></p>
+  </div>
+</article>
+<footer class="footer"><div class="wrap"><p>© 2026 backyes · Handwritten</p></div></footer>
+</body>
+</html>
