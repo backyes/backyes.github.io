@@ -133,6 +133,70 @@ From our measured 480M cache hit tokens (one Agent session, one week):
 
 ---
 
+## Architecture Scaling: Sparse Compression vs Linear Hybrid
+
+### Two Paths to Long-Context
+
+Our cost comparison reveals a deeper architectural divergence:
+
+| Architecture | Representative | KV-Cache Strategy | Cache Hit Price | Compression |
+|---|---|---|---|---|
+| **Sparse Compression** | DeepSeek V4 (MLA) | Compress KV to low-rank latent | $0.003625/M | ~32× vs MHA |
+| **Linear Hybrid** | Kimi K3 | Linear attention + full attention blocks | $0.28/M | ~1× (full KV retained) |
+
+### Storage Cost Scaling at Million-Token Scale
+
+Projecting storage cost as context length scales (cache hit price × tokens):
+
+| Context Length | DeepSeek (MLA) | Kimi3 (Linear Hybrid) | Ratio |
+|---|---|---|---|
+| 10M | $0.036 | $2.80 | 77× |
+| 100M | $0.36 | $28.00 | 77× |
+| 480M (ours) | $1.74 | $134.51 | 77× |
+| 1B | $3.63 | $280.00 | 77× |
+| 10B | $36.25 | $2,800.00 | 77× |
+
+**Key observation:** The ratio stays constant at 77× because both scale linearly with token count. The absolute dollar gap widens from $2.76 (10M) to $2,763.75 (10B).
+
+### Two Scenarios for the Storage Market
+
+**Scenario A: Kimi3-like linear hybrid becomes dominant**
+- Full KV-Cache retained → storage scales linearly with context
+- At 1B tokens: $280/session storage cost
+- Storage becomes the dominant cost center (78% of bill in our data)
+- **Implication:** Massive demand for high-bandwidth, large-capacity memory (HBM, CXL, DRAM)
+- Storage market grows proportionally with context length
+
+**Scenario B: DeepSeek-like sparse compression becomes dominant**
+- KV compressed 32× → storage cost near zero
+- At 1B tokens: $3.63/session storage cost
+- Compute becomes the dominant cost (75%+ of bill)
+- **Implication:** Storage market growth decoupled from context length; compute becomes the bottleneck
+
+### Which Path Wins? Too Early to Call
+
+The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher system cost [^kimi3]. Their proposed future direction — convergence of both paths — suggests neither architecture has won decisively:
+
+1. **Sparse compression (DeepSeek):** Lower storage cost, but compression loses information. May hit quality walls at extreme contexts.
+2. **Linear hybrid (Kimi3):** Higher storage cost, but preserves full attention quality. May hit cost walls at extreme contexts.
+3. **Convergence:** Future architectures may combine both — sparse compression for older context + full attention for recent context.
+
+### The Deciding Factor: Quality-Cost Tradeoff
+
+At 1M+ tokens, the question is not "which is cheaper" but "which delivers acceptable quality per dollar":
+
+| Metric | DeepSeek (MLA) | Kimi3 (Linear Hybrid) |
+|---|---|---|
+| Storage cost / 1M tokens | $0.003625 | $0.28 |
+| Relative quality | Compressed (potential loss) | Full attention (preserved) |
+| Best for | Long context, cost-sensitive | Quality-critical, shorter context |
+
+> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs $0.28 vs DeepSeek's $0.003625. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
+
+[^kimi3]: Kimi K3 technical report notes that linear attention + full attention hybrid incurs higher system cost, and future work may explore convergence with compression techniques.
+
+---
+
 ## Summary
 
 One week, one Agent session, 480M cache hit tokens:
@@ -158,8 +222,9 @@ One week, one Agent session, 480M cache hit tokens:
 1. [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing/) — Official DeepSeek Pro (V4) pricing: $0.003625/M cache hit
 2. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
 3. [DeepSeek-V4 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture
-4. [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition
-5. [Anthropic - Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) — Multi-turn Agent patterns
+4. Kimi K3 Technical Report — Linear attention + full attention hybrid architecture
+5. [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition
+6. [Anthropic - Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) — Multi-turn Agent patterns
 
 ---
 
