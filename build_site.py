@@ -14,6 +14,11 @@ POSTS_DIR = os.path.join(REPO, 'posts')
 # visual = 卡片上的大字 (提取标题关键词)
 # tags = 具体技术关键词 (用于 Tags 页聚合)
 REPORTS = [
+    {"dst":"umdk","entry":"analysis/cam/CAM深度分析报告.html","visual":"UMDK",
+     "title":"UMDK/CAM 深度分析",
+     "desc":"Communication Acceleration for Matrix 架构深度分析 · 通信加速 · 矩阵计算优化",
+     "cat":"chip","priority":"p0",
+     "tags":["UMDK","CAM","通信加速","矩阵计算优化","芯片架构"]},
     {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
      "desc":"12 章统一分析 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 合并 spine+L4 agent+源码+社区 90d pulse · 每节 source 溯源锚点",
@@ -101,6 +106,11 @@ REPORTS = [
      "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
      "cat":"inference","priority":"p1",
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
+    {"dst":"umdk","entry":"analysis/cam/CAM深度分析报告.html","visual":"UMDK",
+     "title":"UMDK/CAM 深度分析",
+     "desc":"Communication Acceleration for Matrix 架构深度分析 · 通信加速 · 矩阵计算优化",
+     "cat":"chip","priority":"p1",
+     "tags":["UMDK","CAM","通信加速","矩阵计算","芯片架构"]},
 ]
 
 CATS = {
@@ -422,6 +432,10 @@ def gen_post_page(post):
 .article-body .key-callout p{{margin:0 0 .5em}}
 .article-body .key-callout p:last-child{{margin:0}}
 .article-body .key-num{{color:var(--accent);font-weight:700;font-size:1.1em}}
+.article-body .hl-blue{{background:rgba(74,143,224,.12);border-left:3px solid var(--accent);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
+.article-body .hl-amber{{background:rgba(210,153,34,.12);border-left:3px solid #d29922;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
+.article-body .hl-green{{background:rgba(63,185,80,.12);border-left:3px solid #3fb950;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
+.article-body .hl-blue p,.article-body .hl-amber p,.article-body .hl-green p{{margin:0}}
 .article-body table{{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto}}
 .article-body th{{background:var(--surface);font-weight:600;padding:8px 10px;border:1px solid var(--border);text-align:left}}
 .article-body td{{padding:7px 10px;border:1px solid var(--border);vertical-align:top}}
