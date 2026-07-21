@@ -171,6 +171,8 @@ def md_to_html(text):
             out.append('</ul>')
             in_ul = False
     def inline(s):
+        # 图片 ![alt](url) — 必须在链接之前处理
+        s = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img src="\2" alt="\1" style="max-width:100%;display:block;margin:1.5em auto">', s)
         # 代码 `code`
         s = re.sub(r'`([^`]+)`', r'<code>\1></code>', s)
         # 加粗 **text**
@@ -229,6 +231,12 @@ def md_to_html(text):
         if s == '---':
             close_ul()
             out.append('<hr>')
+            i += 1; continue
+        # 独立的图片行 ![alt](url)
+        img_only = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', s)
+        if img_only:
+            close_ul()
+            out.append(f'<img src="{img_only.group(2)}" alt="{img_only.group(1)}" style="max-width:100%;display:block;margin:1.5em auto">')
             i += 1; continue
         # 无序列表
         if s.startswith('- ') or s.startswith('* '):
