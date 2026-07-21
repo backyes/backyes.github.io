@@ -154,7 +154,7 @@ Projecting storage cost as context length scales (cache hit price × tokens):
 | 1B | $3.63 | $280.00 | 77× |
 | 10B | $36.25 | $2,800.00 | 77× |
 
-**Key observation:** The ratio stays constant at ==77\times== because both scale linearly with token count. The absolute dollar gap widens from ==\2.76== (10M) to ==\2,763.75== (10B).
+**Key observation:** The ratio stays constant at ==77\times== because both scale linearly with token count. The absolute dollar gap widens from $2.76 (10M) to $2,763.75 (10B).
 
 ### Two Scenarios for the Storage Market
 
@@ -176,7 +176,7 @@ Projecting storage cost as context length scales (cache hit price × tokens):
 
 ### Which Path Wins? Too Early to Call
 
-The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher system cost [^kimi3]. Their proposed future direction — convergence of both paths — suggests neither architecture has won decisively:
+The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher system cost (see [Kimi K3 Technical Report](https://platform.moonshot.cn/docs/pricing/chat)). Their proposed future direction — convergence of both paths — suggests neither architecture has won decisively:
 
 1. **Sparse compression (DeepSeek V4):** Lower storage cost, but compression loses information. May hit quality walls at extreme contexts.
 2. **Linear hybrid (Kimi3):** Higher storage cost, but preserves full attention quality. May hit cost walls at extreme contexts.
@@ -194,7 +194,6 @@ At 1M+ tokens, the question is not "which is cheaper" but "which delivers accept
 
 > **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs ==\0.28== vs DeepSeek's ==\0.003625==. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
 
-[^kimi3]: Kimi K3 technical report notes that linear attention + full attention hybrid incurs higher system cost, and future work may explore convergence with compression techniques.
 
 ---
 
@@ -215,7 +214,7 @@ One week, one Agent session, 480M cache hit tokens:
 | 480M (ours) | $8.19 | $204.84 | 25.0× |
 | 1B | $17.11 | $426.80 | 24.9× |
 
-- The longer the context, the wider the gap: from ==\2.76== at 10M to ==\2,763.75== at 10B
+- The longer the context, the wider the gap: from $2.76 at 10M to $2,763.75 at 10B
 
 ---
 
