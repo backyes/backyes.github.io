@@ -16,9 +16,9 @@ POSTS_DIR = os.path.join(REPO, 'posts')
 REPORTS = [
     {"dst":"umdk","entry":"analysis/cam/CAM深度分析报告.html","visual":"UMDK",
      "title":"UMDK/CAM 深度分析",
-     "desc":"Communication Acceleration for Matrix 架构深度分析 · 通信加速 · 矩阵计算优化",
+     "desc":"Communication Acceleration for Matrix 架构深度分析 · 整体架构设计哲学 / 模块分解 / framework-nda 传输抽象层 / Operator Registry 与 SOC 世代 / op_host-op_kernel-op_api 三层编程模型 / 编译系统与部署",
      "cat":"chip","priority":"p0",
-     "tags":["UMDK","CAM","通信加速","矩阵计算优化","芯片架构"]},
+     "tags":["UMDK","CAM","通信加速","传输抽象","Operator Registry","SOC","编程模型","编译系统"]},
     {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
      "desc":"12 章统一分析 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 合并 spine+L4 agent+源码+社区 90d pulse · 每节 source 溯源锚点",

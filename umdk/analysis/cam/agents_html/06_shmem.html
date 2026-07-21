@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHMEM 模式 — 用户态 RDMA 深度剖析 — UMDK/CAM 深度分析</title>
+<style>
+:root {
+  --bg: #1a1d23;
+  --bg-card: #22262e;
+  --bg-code: #15181e;
+  --fg: #d7dbe0;
+  --fg-bold: #e8eaed;
+  --muted: #7d848d;
+  --accent: #4a8fe0;
+  --accent-soft: rgba(74,143,224,.12);
+  --green: #56b6c2;
+  --orange: #d19a66;
+  --purple: #c678dd;
+  --red: #e06c75;
+  --border: #2d3340;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.75;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+.container { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+.nav-top {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.nav-top a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+.nav-top a:hover { text-decoration: underline; }
+.nav-top .sep { color: var(--muted); }
+h1 {
+  font-size: 1.6rem;
+  color: var(--fg-bold);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 10px;
+  margin: 28px 0 20px;
+}
+h2 {
+  font-size: 1.25rem;
+  color: var(--fg-bold);
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 28px 0 14px;
+}
+h3 { font-size: 1.1rem; color: var(--accent); margin: 22px 0 12px; }
+h4 { font-size: 1rem; color: var(--green); margin: 18px 0 10px; }
+p { margin-bottom: 14px; }
+mark {
+  background: linear-gradient(180deg, transparent 60%, var(--accent-soft) 60%);
+  color: var(--fg-bold);
+  padding: 0 2px;
+}
+strong { color: var(--fg-bold); }
+.key-num { color: var(--accent); font-size: 1.3em; font-weight: 700; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.table-wrap { overflow-x: auto; margin: 16px 0; display: block; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 500px;
+}
+th {
+  background: #252a33;
+  color: var(--fg-bold);
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--accent);
+  white-space: nowrap;
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+tr:hover td { background: var(--accent-soft); }
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin: 14px 0;
+}
+code {
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+  background: var(--bg-code);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+pre code { background: none; padding: 0; }
+.callout {
+  background: var(--bg-card);
+  border-left: 4px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 16px 20px;
+  margin: 20px 0;
+}
+.callout-warn { border-left-color: var(--orange); }
+.callout-danger { border-left-color: var(--red); }
+.callout strong { display: block; margin-bottom: 6px; }
+ul, ol { padding-left: 24px; margin: 12px 0; }
+li { margin-bottom: 6px; }
+hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  margin: 16px 0;
+  background: var(--accent-soft);
+  border-radius: 0 6px 6px 0;
+}
+.footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 32px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 48px;
+}
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+  .container { padding: 16px 12px; }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1.1rem; }
+  pre { font-size: 0.75rem; padding: 12px; }
+  table { font-size: 0.78rem; }
+  th, td { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="nav-top">
+<a href="01_arch.html">整体架构与设计哲学</a><span class="sep">|</span><a href="02_build.html">编译系统与部署</a><span class="sep">|</span><a href="03_ep.html">EP 通信算子深度分析</a><span class="sep">|</span><a href="04_fused.html">FusedDeepMoE 融合算子深度分析</a><span class="sep">|</span><a href="05_test.html">测试体系与回归测试</a><span class="sep">|</span><strong style="color:var(--fg-bold)">SHMEM 模式 — 用户态 RDMA 深度剖析</strong><span class="sep">|</span><a href="07_hccl.html">非 SHMEM 模式 — HCCL Window 深度剖析</a><span class="sep">|</span><a href="08_notify.html">notify_dispatch + dispatch_layout 深度剖析</a><span class="sep">|</span><a href="09_fused_shmem.html">FusedDeepMoE SHMEM 路径与编译系统</a><span class="sep">|</span><a href="../CAM深度分析报告.html">← 主报告</a>
+</div>
+<h1 id="cam-shmem">CAM SHMEM 模式代码深度剖析</h1>
+<h2 id="1-shmem">1. SHMEM 模式整体架构</h2>
+<h3 id="11">1.1 定位与使命</h3>
+<p>SHMEM 模式是 CAM 的 <strong>用户态 RDMA 直通路径</strong>。它完全绕过 HCCL 集合通信库，在 AIV（Ascend Intelligent Vector）核心上直接操作 RoCE RDMA 硬件的 WQE/CQE/SQ/CQ 寄存器，实现 kernel 内部的细粒度 P2P 数据传输。</p>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
+│                          Host Side (CPU)                              │
+│                                                                       │
+│  RdmaTransportManagerV2                                               │
+│  ├── OpenDevice()           → phyId 获取 + RDMA IP 解析               │
+│  ├── CreateEndpoint()       → HcommEndpointCreate(COMM_PROTOCOL_ROCE) │
+│  ├── RegisterMemoryRegion() → HcommMemReg (HBM 注册为 MR)             │
+│  ├── Connect()              → HcommChannelCreate(COMM_ENGINE_AIV)     │
+│  └── FillRdmaInfo()         → AiQpRMAQueueInfo 拷贝到 HBM             │
+│                                                                       │
+│  关键常量: MAX_RANKS_PER_NIC=16, ATOMIC_MAX_NUM=128                   │
+│  底层协议: dl_hccp_def.h (HCCP) + dl_hcomm_def.h (Hcomm)              │
+└──────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ qpInfo_ → AclrtMemcpy(Host→Device)
+                              ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                   Device Side (AIV Core, Ascend C)                    │
+│                                                                       │
+│  粗粒度 API 层 (shmem_device_rdma.hpp)                                │
+│  ├── aclshmemx_roce_get_nbi&lt;T&gt;()    ← RDMA READ (远端→本地)          │
+│  ├── aclshmemx_roce_put_nbi&lt;T&gt;()    ← RDMA WRITE (本地→远端)         │
+│  ├── aclshmemx_roce_quiet&lt;T&gt;()      ← 同步等待所有 WQE 完成           │
+│  └── aclshmemx_roce_atomic_*()      ← 16 种原子操作变体              │
+│                                                                       │
+│  细粒度原语层 (rdma_device_backend_base.h)                            │
+│  ├── aclshmemi_roce_fill_wqe&lt;B, OP&gt;()     ← 构造 WQE                  │
+│  ├── aclshmemi_roce_ring_sq_doorbell&lt;B&gt;() ← 振铃 SQ Doorbell          │
+│  ├── aclshmemi_roce_post_send&lt;B, OP&gt;()    ← post 发送 (fill+bell)     │
+│  ├── aclshmemi_roce_ring_cq_doorbell&lt;B&gt;() ← 振铃 CQ Doorbell          │
+│  └── aclshmemi_roce_poll_cq&lt;B&gt;()          ← 轮询 CQE 完成             │
+│                                                                       │
+│  后端特化层 (compile-time 选择)                                        │
+│  ├── IN_DIE  — 片内互联 (HCCS, 当前未完整实现)                        │
+│  └── XSCALE  — 跨机 RoCE (DDRM Diamond 引擎, 完整实现)               │
+│                                                                       │
+│  硬件寄存器: SQ Doorbell / CQ Doorbell / WQE(128B) / CQE(64B)        │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="12">1.2 数据流全景</h3>
+<p>一次 <code>aclshmemx_roce_put_nbi</code> (RDMA WRITE) 的完整路径：</p>
+<div class="highlight"><pre><span></span><code><span class="n">用户调用</span><span class="w"> </span><span class="n">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">elem_size</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span>
+<span class="w">    </span><span class="err">├─</span><span class="w"> </span><span class="mf">1.</span><span class="w"> </span><span class="n">aclshmem_ptr</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">)</span><span class="w">        </span><span class="err">←</span><span class="w"> </span><span class="n">本地对称地址</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">远端对称地址</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="nl">计算</span><span class="p">:</span><span class="w"> </span><span class="n">remote</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p2p_device_heap_base</span><span class="o">[</span><span class="n">pe</span><span class="o">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">dst</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">heap_base</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span>
+<span class="w">    </span><span class="err">├─</span><span class="w"> </span><span class="mf">2.</span><span class="w"> </span><span class="n">aclshmemi_roce_write</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span><span class="p">()</span><span class="w">    </span><span class="err">←</span><span class="w"> </span><span class="n">填充</span><span class="w"> </span><span class="n">send_wr</span><span class="w"> </span><span class="n">结构体</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="n">wr</span><span class="p">.</span><span class="n">remote_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptr</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="n">wr</span><span class="p">.</span><span class="n">local_addr</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">src</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="n">wr</span><span class="p">.</span><span class="n">message_len</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">elem_size</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span>
+<span class="w">    </span><span class="err">├─</span><span class="w"> </span><span class="mf">3.</span><span class="w"> </span><span class="n">aclshmemi_roce_post_send</span><span class="o">&lt;</span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="n">OP_RDMA_WRITE</span><span class="o">&gt;</span><span class="p">()</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">├─</span><span class="w"> </span><span class="mi">3</span><span class="n">a</span><span class="p">.</span><span class="w"> </span><span class="n">读取</span><span class="w"> </span><span class="n">SQ</span><span class="w"> </span><span class="n">head</span><span class="o">/</span><span class="n">tail</span><span class="w"> </span><span class="p">(</span><span class="n">dcci_cachelines</span><span class="w"> </span><span class="n">刷新缓存行</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span><span class="w">     </span><span class="n">若</span><span class="w"> </span><span class="n">SQ</span><span class="w"> </span><span class="n">即将满</span><span class="w"> </span><span class="p">(</span><span class="n">head</span><span class="o">+</span><span class="mi">16</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">tail</span><span class="p">)</span><span class="err">，</span><span class="n">先</span><span class="w"> </span><span class="n">poll_cq</span><span class="w"> </span><span class="n">等待空闲</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">├─</span><span class="w"> </span><span class="mi">3</span><span class="n">b</span><span class="p">.</span><span class="w"> </span><span class="n">aclshmemi_roce_fill_wqe</span><span class="o">&lt;</span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="n">OP_RDMA_WRITE</span><span class="o">&gt;</span><span class="p">()</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="n">在</span><span class="w"> </span><span class="n">HBM</span><span class="w"> </span><span class="n">上构造</span><span class="w"> </span><span class="mi">128</span><span class="n">B</span><span class="w"> </span><span class="n">WQE</span><span class="w"> </span><span class="p">(</span><span class="n">ctrl_seg</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">remote_seg</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">local_seg</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">├─</span><span class="w"> </span><span class="mi">3</span><span class="n">c</span><span class="p">.</span><span class="w"> </span><span class="n">dcci_cachelines</span><span class="p">(</span><span class="n">wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">)</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="n">刷回</span><span class="w"> </span><span class="n">HBM</span><span class="w"> </span><span class="n">确保硬件可见</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">│</span>
+<span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="err">└─</span><span class="w"> </span><span class="mi">3</span><span class="n">d</span><span class="p">.</span><span class="w"> </span><span class="n">aclshmemi_roce_ring_sq_doorbell</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span><span class="p">()</span>
+<span class="w">    </span><span class="err">│</span><span class="w">            </span><span class="err">→</span><span class="w"> </span><span class="n">更新</span><span class="w"> </span><span class="n">head_addr</span><span class="w"> </span><span class="p">(</span><span class="n">producer</span><span class="w"> </span><span class="k">index</span><span class="p">)</span>
+<span class="w">    </span><span class="err">│</span><span class="w">            </span><span class="err">→</span><span class="w"> </span><span class="n">写</span><span class="w"> </span><span class="n">doorbell</span><span class="w"> </span><span class="nl">register</span><span class="p">:</span><span class="w"> </span><span class="err">{</span><span class="n">next_pid</span><span class="p">,</span><span class="w"> </span><span class="n">qp_id</span><span class="err">}</span>
+<span class="w">    </span><span class="err">│</span>
+<span class="w">    </span><span class="err">└─</span><span class="w"> </span><span class="mf">4.</span><span class="w"> </span><span class="n">硬件自动执行</span><span class="w"> </span><span class="n">RDMA</span><span class="w"> </span><span class="k">WRITE</span><span class="err">，</span><span class="n">数据通过</span><span class="w"> </span><span class="n">RoCE</span><span class="w"> </span><span class="n">网络直达远端</span><span class="w"> </span><span class="n">HBM</span>
+</code></pre></div>
+
+<hr />
+<h2 id="2">2. 核心数据结构深度分析</h2>
+<h3 id="21-aclshmemi_rdma_info-rdma">2.1 aclshmemi_rdma_info — 全局 RDMA 信息表</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:38-45</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_info</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_num</span><span class="p">;</span><span class="w">   </span><span class="c1">// 每个连接的 QP 数量 (支持多 QP 并行)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">sq_ptr</span><span class="p">;</span><span class="w">   </span><span class="c1">// SQ 上下文数组地址 [PE_NUM][qp_num]</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">rq_ptr</span><span class="p">;</span><span class="w">   </span><span class="c1">// RQ 上下文数组地址 [PE_NUM][qp_num]</span>
+<span class="w">    </span><span class="n">uint62_t</span><span class="w"> </span><span class="n">scq_ptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// Send CQ 上下文数组地址 [PE_NUM][qp_num]</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">rcq_ptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// Recv CQ 上下文数组地址 [PE_NUM][qp_num]</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">mem_ptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// Memory Region 信息数组地址 [MAX_PE_NUM]</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>设计要点</strong>:
+- 这是 device 端唯一的全局入口，通过 <code>aclshmemi_qp_info_fetch()</code> 从 HBM 固定地址读取
+- 数组维度 <code>[PE_NUM][qp_num]</code> 支持多 rank 多 QP 场景
+- <code>mem_ptr</code> 存储每个 rank 的 MR (Memory Region) 信息，包含 lkey/rkey 用于 RDMA 访问权限控制</p>
+<h3 id="22-aclshmemi_rdma_sq_ctx-send-queue">2.2 aclshmemi_rdma_sq_ctx — Send Queue 上下文</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:54-66</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_sq_ctx</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqn</span><span class="p">;</span><span class="w">       </span><span class="c1">// Work Queue Number (硬件 QP 编号)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">buf_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// SQ ring buffer 起始地址 (HBM)</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_size</span><span class="p">;</span><span class="w">  </span><span class="c1">// 每个 WQE 的大小 (XSCALE=128B)</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">depth</span><span class="p">;</span><span class="w">     </span><span class="c1">// ring buffer 深度 (WQE 数量)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">head_addr</span><span class="p">;</span><span class="w"> </span><span class="c1">// Producer Index 地址 (HBM, 软件写)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">tail_addr</span><span class="p">;</span><span class="w"> </span><span class="c1">// Consumer Index 地址 (HBM, 硬件写)</span>
+<span class="w">    </span><span class="n">aclshmemi_rdma_db_mode_t</span><span class="w"> </span><span class="n">db_mode</span><span class="p">;</span><span class="w">  </span><span class="c1">// HW_DB(0) / SW_DB(1)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">db_addr</span><span class="p">;</span><span class="w">   </span><span class="c1">// Doorbell register 地址</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">sl</span><span class="p">;</span><span class="w">        </span><span class="c1">// Service Level (RDMA 优先级)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">amo_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 原子操作的本地结果缓冲区地址</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">amo_lkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// 原子操作缓冲区的 local key</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>关键字段解读</strong>:
+- <code>head_addr</code> / <code>tail_addr</code>: 分离的 producer/consumer index，支持硬件异步消费。<code>head_addr</code> 由软件通过 <code>aclshmemi_roce_ring_sq_doorbell</code> 更新，<code>tail_addr</code> 由硬件通过 CQE 完成事件推进。
+- <code>db_mode</code>: 区分硬件 doorbell (HW_DB) 和软件 doorbell (SW_DB)，适应不同硬件版本。
+- <code>amo_addr</code> / <code>amo_lkey</code>: 原子操作的专用缓冲区。RDMA atomic fetch 操作的结果会写回此地址，软件通过 <code>dcci_cachelines</code> 刷新后读取。</p>
+<h3 id="23-aclshmemi_rdma_cq_ctx-completion-queue">2.3 aclshmemi_rdma_cq_ctx — Completion Queue 上下文</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:68-77</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_cq_ctx</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cqn</span><span class="p">;</span><span class="w">       </span><span class="c1">// Completion Queue Number</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">buf_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// CQ ring buffer 起始地址</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cqe_size</span><span class="p">;</span><span class="w">  </span><span class="c1">// 每个 CQE 的大小 (XSCALE=64B, 含 32B padding)</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">depth</span><span class="p">;</span><span class="w">     </span><span class="c1">// ring buffer 深度</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">head_addr</span><span class="p">;</span><span class="w"> </span><span class="c1">// Producer Index (硬件写)</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">tail_addr</span><span class="p">;</span><span class="w"> </span><span class="c1">// Consumer Index (软件写)</span>
+<span class="w">    </span><span class="n">aclshmemi_rdma_db_mode_t</span><span class="w"> </span><span class="n">db_mode</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">db_addr</span><span class="p">;</span><span class="w">   </span><span class="c1">// CQ Doorbell register 地址</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>与 SQ 的对称性</strong>: CQ 的 <code>head_addr</code> 由硬件更新（新 CQE 写入时），<code>tail_addr</code> 由软件更新（<code>aclshmemi_roce_ring_cq_doorbell</code> 在 poll 完成后更新）。</p>
+<h3 id="24-aclshmemi_rdma_send_wr">2.4 aclshmemi_rdma_send_wr — 发送工作请求</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:121-141</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_send_wr</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ---- Operation ----</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">send_flags</span><span class="p">;</span><span class="w">    </span><span class="c1">// 发送标志位掩码</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">imm_data</span><span class="p">;</span><span class="w">      </span><span class="c1">// immediate data (带内通知数据)</span>
+
+<span class="w">    </span><span class="c1">// ---- Remote side ----</span>
+<span class="w">    </span><span class="n">__gm__</span><span class="w"> </span><span class="kt">uint8_t</span><span class="w"> </span><span class="o">*</span><span class="n">remote_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 远端 HBM 目标地址</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rkey</span><span class="p">;</span><span class="w">                </span><span class="c1">// 远端 Memory Region key</span>
+
+<span class="w">    </span><span class="c1">// ---- Local side ----</span>
+<span class="w">    </span><span class="n">__gm__</span><span class="w"> </span><span class="kt">uint8_t</span><span class="w"> </span><span class="o">*</span><span class="n">local_addr</span><span class="p">;</span><span class="w">   </span><span class="c1">// 本地 HBM 源地址</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">message_len</span><span class="p">;</span><span class="w">         </span><span class="c1">// 消息长度 (Bytes)</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">lkey</span><span class="p">;</span><span class="w">                </span><span class="c1">// 本地 Memory Region key</span>
+
+<span class="w">    </span><span class="c1">// ---- Multi-SGE ----</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">num_sge</span><span class="p">;</span><span class="w">             </span><span class="c1">// SGE 数量 (scatter-gather)</span>
+<span class="w">    </span><span class="n">aclshmemi_rdma_sge</span><span class="w"> </span><span class="o">*</span><span class="n">sg_list</span><span class="p">;</span><span class="w">  </span><span class="c1">// SGE 列表</span>
+
+<span class="w">    </span><span class="c1">// ---- Atomic ----</span>
+<span class="w">    </span><span class="n">aclshmemi_rdma_atomic_params</span><span class="w"> </span><span class="n">atomic</span><span class="p">;</span><span class="w">  </span><span class="c1">// 原子操作参数</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>设计要点</strong>:
+- <code>__gm__</code> 修饰符标记全局内存指针（HBM 地址空间）
+- <code>num_sge</code> / <code>sg_list</code> 支持 scatter-gather 传输（当前 XSCALE 后端主要使用单 SGE）
+- <code>atomic</code> 联合体支持多种原子操作参数格式</p>
+<h3 id="25-aclshmemi_rdma_atomic_params">2.5 aclshmemi_rdma_atomic_params — 原子操作参数联合体</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:85-119</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_atomic_params</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">union</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 标准 8B FA/CAS (unmasked)</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_add</span><span class="p">;</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap</span><span class="p">;</span><span class="w"> </span><span class="p">};</span>
+
+<span class="w">        </span><span class="c1">// 通用 masked 格式 (XSCALE 使用)</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap_add_data</span><span class="p">;</span>
+<span class="w">            </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_data</span><span class="p">;</span>
+<span class="w">            </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap_add_mask</span><span class="p">;</span>
+<span class="w">            </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_mask</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="n">masked_common</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 64-bit masked CAS (双 64-bit 段: swap+compare, mask_swap+mask_compare)</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap_data</span><span class="p">;</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_data</span><span class="p">;</span>
+<span class="w">                 </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap_mask</span><span class="p">;</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_mask</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">masked_cas64</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 64-bit masked FA (add_data + field_boundary)</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">add_data</span><span class="p">;</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">field_boundary</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">masked_fa64</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 32-bit masked CAS</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">swap_data</span><span class="p">;</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">compare_data</span><span class="p">;</span>
+<span class="w">                 </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">swap_mask</span><span class="p">;</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">compare_mask</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">masked_cas32</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 32-bit masked FA</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">add_data</span><span class="p">;</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">field_boundary</span><span class="p">;</span>
+<span class="w">                 </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">_reserved</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">masked_fa32</span><span class="p">;</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>设计哲学</strong>: 使用 union 实现参数格式的零开销复用。<code>masked_common</code> 是 XSCALE 后端实际使用的格式，其 4 个 64-bit 字段直接映射到 WQE 的 atomic segment。</p>
+<h3 id="26-aclshmemi_rdma_mem_info-memory-region">2.6 aclshmemi_rdma_mem_info — Memory Region 信息</h3>
+<p><strong>文件</strong>: <code>shmemi_device_rdma.h:47-52</code></p>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_mem_info</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">size</span><span class="p">;</span><span class="w">  </span><span class="c1">// MR 大小</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// MR 起始地址</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">lkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// Local Key (本地访问权限)</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// Remote Key (远端 RDMA 访问权限)</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hr />
+<h2 id="3-api">3. API 调用链</h2>
+<h3 id="31">3.1 粗粒度 → 细粒度调用层次</h3>
+<div class="highlight"><pre><span></span><code><span class="err">┌─────────────────────────────────────────────────────────────┐</span>
+<span class="err">│</span><span class="w"> </span><span class="nx">用户代码</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nx">算子</span><span class="w"> </span><span class="nx">kernel</span><span class="w">                                       </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">)</span><span class="w">            </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_get_nbi</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">)</span><span class="w">            </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_quiet</span><span class="p">(</span><span class="nx">pe</span><span class="p">,</span><span class="w"> </span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">sync_id</span><span class="p">)</span><span class="w">                    </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_atomic_fetch_add</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">val</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">)</span><span class="w">             </span><span class="err">│</span>
+<span class="err">└────────────────────────┬────────────────────────────────────┘</span>
+<span class="w">                         </span><span class="err">│</span>
+<span class="w">                         </span><span class="err">▼</span>
+<span class="err">┌─────────────────────────────────────────────────────────────┐</span>
+<span class="err">│</span><span class="w"> </span><span class="nx">后端无关转发层</span><span class="w"> </span><span class="p">(</span><span class="nx">shmem_device_rdma</span><span class="p">.</span><span class="nx">hpp</span><span class="p">)</span><span class="w">                       </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_roce_write</span><span class="p">&lt;</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">ACLSHMEMI_K_RDMA_BACKEND</span><span class="p">&gt;(</span><span class="o">...</span><span class="p">)</span><span class="w">    </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="err">→</span><span class="w"> </span><span class="nx">根据</span><span class="w"> </span><span class="nx">ACLSHMEMI_K_RDMA_BACKEND</span><span class="w"> </span><span class="nx">宏选择</span><span class="w"> </span><span class="nx">XSCALE</span><span class="w"> </span><span class="nx">或</span><span class="w"> </span><span class="nx">IN_DIE</span><span class="w">   </span><span class="err">│</span>
+<span class="err">└────────────────────────┬────────────────────────────────────┘</span>
+<span class="w">                         </span><span class="err">│</span>
+<span class="w">                         </span><span class="err">▼</span>
+<span class="err">┌─────────────────────────────────────────────────────────────┐</span>
+<span class="err">│</span><span class="w"> </span><span class="nx">细粒度原语层</span><span class="w"> </span><span class="p">(</span><span class="nx">rdma_device_backend_base</span><span class="p">.</span><span class="nx">h</span><span class="o">/</span><span class="p">.</span><span class="nx">hpp</span><span class="p">)</span><span class="w">               </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_roce_post_send</span><span class="p">&lt;</span><span class="nx">B</span><span class="p">,</span><span class="w"> </span><span class="nx">OP_RDMA_WRITE</span><span class="p">&gt;(</span><span class="nx">wr</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w">   </span><span class="err">│</span>
+<span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="nx">aclshmemi_roce_fill_wqe</span><span class="p">&lt;</span><span class="nx">B</span><span class="p">,</span><span class="w"> </span><span class="nx">OP_CODE</span><span class="p">&gt;(</span><span class="nx">wr</span><span class="p">,</span><span class="w"> </span><span class="nx">sq</span><span class="p">,</span><span class="w"> </span><span class="kd">addr</span><span class="p">,</span><span class="w"> </span><span class="nx">hd</span><span class="p">)</span><span class="w"> </span><span class="err">│</span>
+<span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="nx">aclshmemi_roce_ring_sq_doorbell</span><span class="p">&lt;</span><span class="nx">B</span><span class="p">&gt;(</span><span class="nx">sq</span><span class="p">,</span><span class="w"> </span><span class="nx">head</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w">     </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_roce_poll_cq</span><span class="p">&lt;</span><span class="nx">B</span><span class="p">&gt;(</span><span class="nx">pe</span><span class="p">,</span><span class="w"> </span><span class="nx">qp_idx</span><span class="p">,</span><span class="w"> </span><span class="nx">target</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w">        </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_roce_ring_cq_doorbell</span><span class="p">&lt;</span><span class="nx">B</span><span class="p">&gt;(</span><span class="nx">pe</span><span class="p">,</span><span class="w"> </span><span class="nx">qp</span><span class="p">,</span><span class="w"> </span><span class="nx">tail</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w">     </span><span class="err">│</span>
+<span class="err">└────────────────────────┬────────────────────────────────────┘</span>
+<span class="w">                         </span><span class="err">│</span>
+<span class="w">                         </span><span class="err">▼</span>
+<span class="err">┌─────────────────────────────────────────────────────────────┐</span>
+<span class="err">│</span><span class="w"> </span><span class="nx">后端特化层</span><span class="w"> </span><span class="p">(</span><span class="nx">rdma_device_backend_xscale</span><span class="p">.</span><span class="nx">hpp</span><span class="p">)</span><span class="w">                  </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_xscale_post_send_read_write</span><span class="p">&lt;</span><span class="nx">OP_CODE</span><span class="p">&gt;(</span><span class="o">...</span><span class="p">)</span><span class="w">       </span><span class="err">│</span>
+<span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="nx">aclshmemi_roce_xscale_fill_wqe_ctrl_seg</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="w">          </span><span class="err">│</span>
+<span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="nx">aclshmemi_roce_xscale_fill_wqe_data_seg</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="w">          </span><span class="err">│</span>
+<span class="err">│</span><span class="w">     </span><span class="err">→</span><span class="w"> </span><span class="nx">aclshmemi_roce_write_ub_to_gm_with_sync</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="w">          </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_rdma_xscdv_fill_wqe_fa</span><span class="p">&lt;</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">IS_MASKED</span><span class="p">&gt;(</span><span class="o">...</span><span class="p">)</span><span class="w">       </span><span class="err">│</span>
+<span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_rdma_xscdv_fill_wqe_cas</span><span class="p">&lt;</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">IS_MASKED</span><span class="p">&gt;(</span><span class="o">...</span><span class="p">)</span><span class="w">      </span><span class="err">│</span>
+<span class="err">└─────────────────────────────────────────────────────────────┘</span>
+</code></pre></div>
+
+<h3 id="32-rdma-write">3.2 RDMA WRITE 完整调用链</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// Step 1: 用户调用</span>
+<span class="n">aclshmemx_roce_put_nbi</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">);</span>
+
+<span class="c1">// Step 2: 地址转换 + 转发</span>
+<span class="c1">// shmem_device_rdma.hpp:183-197</span>
+<span class="n">aclshmem_ptr</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">);</span><span class="w">  </span><span class="c1">// 本地对称地址 → 远端对称地址</span>
+<span class="n">aclshmemi_roce_write</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="p">,</span><span class="w"> </span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="c1">// Step 3: 填充 wr + post_send</span>
+<span class="c1">// rdma_device_backend_base.h:137-149</span>
+<span class="n">wr</span><span class="p">.</span><span class="n">remote_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span>
+<span class="n">wr</span><span class="p">.</span><span class="n">local_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src</span><span class="p">;</span>
+<span class="n">wr</span><span class="p">.</span><span class="n">message_len</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span><span class="p">;</span>
+<span class="n">aclshmemi_roce_post_send</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="p">,</span><span class="w"> </span><span class="n">OP_RDMA_WRITE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">wr</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="c1">// Step 4: XSCALE 后端 post_send</span>
+<span class="c1">// rdma_device_backend_xscale.hpp:609-667</span>
+<span class="n">aclshmemi_xscale_post_send_read_write</span><span class="o">&lt;</span><span class="n">OP_CODE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">wr</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 4a. 读取 SQ head/tail</span>
+<span class="w">    </span><span class="n">dcci_cachelines</span><span class="p">(</span><span class="n">sq_pi_addr</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">);</span>
+<span class="w">    </span><span class="n">cur_head</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="kt">uint32_t</span><span class="o">*</span><span class="p">)</span><span class="n">sq_pi_addr</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 4b. SQ 满检查 (阈值=16)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">((</span><span class="n">cur_head</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">depth</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="p">(</span><span class="n">depth</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">cur_tail</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">depth</span><span class="p">)</span>
+<span class="w">        </span><span class="n">aclshmemi_roce_poll_cq</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(...);</span>
+
+<span class="w">    </span><span class="c1">// 4c. 获取 rkey/lkey</span>
+<span class="w">    </span><span class="n">wr</span><span class="p">.</span><span class="n">rkey</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">remote_mem_info</span><span class="o">-&gt;</span><span class="n">rkey</span><span class="p">;</span>
+<span class="w">    </span><span class="n">wr</span><span class="p">.</span><span class="n">lkey</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">local_mem_info</span><span class="o">-&gt;</span><span class="n">lkey</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 4d. 填充 WQE</span>
+<span class="w">    </span><span class="n">aclshmemi_roce_fill_wqe</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="p">,</span><span class="w"> </span><span class="n">OP_RDMA_WRITE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">wr</span><span class="p">,</span><span class="w"> </span><span class="n">sq</span><span class="p">,</span><span class="w"> </span><span class="n">wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="n">cur_head</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 4e. 刷回 + doorbell</span>
+<span class="w">    </span><span class="n">dcci_cachelines</span><span class="p">(</span><span class="n">wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span>
+<span class="w">    </span><span class="n">aclshmemi_roce_ring_sq_doorbell</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">sq</span><span class="p">,</span><span class="w"> </span><span class="n">cur_head</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="33-aclshmemx_roce_quiet">3.3 aclshmemx_roce_quiet 同步机制</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:253-276</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">aclshmemx_roce_quiet</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="n">__ubuf__</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="o">*</span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">sync_id</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">qp_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">qp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">qp_num</span><span class="p">;</span><span class="w"> </span><span class="n">qp_idx</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">sq_context</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span>
+<span class="w">        </span><span class="n">dcci_cachelines</span><span class="p">(</span><span class="n">sq_pi_addr</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">);</span><span class="w">       </span><span class="c1">// 刷新 head 缓存行</span>
+<span class="w">        </span><span class="n">cur_head</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="kt">uint32_t</span><span class="o">*</span><span class="p">)</span><span class="n">sq_pi_addr</span><span class="p">;</span><span class="w">     </span><span class="c1">// 读取当前 producer index</span>
+<span class="w">        </span><span class="n">aclshmemi_roce_poll_cq</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">,</span><span class="w"> </span><span class="n">cur_head</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">        </span><span class="c1">// poll_cq 会阻塞直到 cur_tail == cur_head (所有 WQE 完成)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键设计</strong>: quiet 遍历所有 QP，对每个 QP 读取当前 SQ head（即已 post 的 WQE 总数），然后 poll_cq 等待 CQ tail 追上该值。</p>
+<hr />
+<h2 id="4-traits">4. 编译时多态 traits 系统</h2>
+<h3 id="41">4.1 设计理念</h3>
+<p>CAM 使用 <strong>C++ 模板特化</strong> 实现零运行时开销的后端选择。核心思想：</p>
+<blockquote>
+<p>在编译期通过 <code>ACLSHMEMI_K_RDMA_BACKEND</code> 宏确定后端，所有 <code>aclshmemi_roce_*&lt;B&gt;()</code> 调用在编译期绑定到具体后端实现，运行时无 switch/if 分支。</p>
+</blockquote>
+<h3 id="42">4.2 后端选择宏</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:25-29</span>
+<span class="cp">#if defined(ACLSHMEMI_RDMA_K_BACKEND_XSCALE)</span>
+<span class="w">    </span><span class="cp">#define ACLSHMEMI_K_RDMA_BACKEND (aclshmemi_rdma_backend_t::XSCALE)</span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="cp">#define ACLSHMEMI_K_RDMA_BACKEND (aclshmemi_rdma_backend_t::IN_DIE)</span>
+<span class="cp">#endif</span>
+</code></pre></div>
+
+<h3 id="43-traits">4.3 traits 系统架构</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:263-315 — 主模板 (未定义, 强制特化)</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_backend_t</span><span class="w"> </span><span class="n">B</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_backend_traits</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="nc">atomic_op_traits</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span>
+<span class="w">        </span><span class="k">static</span><span class="w"> </span><span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fill_wqe</span><span class="p">(...);</span>
+
+<span class="w">        </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span>
+<span class="w">        </span><span class="k">static</span><span class="w"> </span><span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">post_send</span><span class="p">(...);</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="p">};</span>
+
+<span class="c1">// rdma_device_backend_xscale.hpp:883-905 — XSCALE 特化</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_backend_traits</span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">::</span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="nc">atomic_op_traits</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span>
+<span class="w">        </span><span class="k">static</span><span class="w"> </span><span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fill_wqe</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">aclshmemi_roce_xscale_fill_wqe_atomic</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">,</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span><span class="p">(...);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span>
+<span class="w">        </span><span class="k">static</span><span class="w"> </span><span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">post_send</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">aclshmemi_rdma_xscdv_post_send_atomic</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">,</span><span class="w"> </span><span class="n">ATOMIC_OP_CODE</span><span class="o">&gt;</span><span class="p">(...);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<h3 id="44">4.4 编译期错误防护</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:318-323</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_atomic_op_dependent_false</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">false_type</span><span class="w"> </span><span class="p">{};</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_backend_dependent_false</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">false_type</span><span class="w"> </span><span class="p">{};</span>
+</code></pre></div>
+
+<p>当调用未特化的后端或未实现的原子操作时，<code>static_assert</code> 触发编译错误而非运行时崩溃。</p>
+<h3 id="45">4.5 零运行时开销验证</h3>
+<p>所有关键路径函数标记为 <code>ACLSHMEM_DEVICE</code>（展开为 <code>__forceinline__ __device__</code>），配合 <code>if constexpr</code> 实现编译期分支消除：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:75-81</span>
+<span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">ACLSHMEMI_K_RDMA_BACKEND</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">::</span><span class="n">XSCALE</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">aclshmemi_roce_atomic_fetch_and_add</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">,</span><span class="w"> </span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(...);</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ACLSHMEM_DEBUG_FUNC</span><span class="p">(</span><span class="n">aclshmemi_kernel_abort</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ROCE atomic add is only supported on XSCALE backend.</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">T</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>编译后，XSCALE 后端下 <code>else</code> 分支被完全消除，无运行时判断。</p>
+<hr />
+<h2 id="5-xscale-wqecqe">5. XSCALE 后端 WQE/CQE 格式</h2>
+<h3 id="51-wqe-xscale-128-bytes">5.1 WQE 整体结构 (XSCALE, 128 Bytes)</h3>
+<p>XSCALE 后端的 WQE 为 <strong>128 Bytes</strong> (<code>ACLSHMEMI_XSCALE_SND_WQE_SIZE = 1 &lt;&lt; 7 = 128</code>)，由以下部分组成：</p>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────┐
+│  Control Segment (16 Bytes)                           │
+│  ├── msg_opcode    (8 bits)  — 操作码                 │
+│  ├── with_imm      (1 bit)   — 是否带 immediate      │
+│  ├── csum_en       (2 bits)  — 校验和使能             │
+│  ├── ds_data_num   (5 bits)  — Data Segment 数量      │
+│  ├── wqe_id        (16/20 bits) — WQE 标识           │
+│  ├── msg_len       (32 bits) — 消息长度               │
+│  ├── opcode_data   (32 bits) — 操作码扩展数据         │
+│  ├── se            (1 bit)   — Solicitation Event     │
+│  ├── ce            (1 bit)   — Completion Enable      │
+│  ├── in_line       (1 bit)   — Inline 模式            │
+│  ├── fence_mode    (2 bits)  — Fence 模式             │
+│  └── mask          (2 bits)  — 掩码                   │
+├──────────────────────────────────────────────────────┤
+│  Remote Data Segment (16 Bytes)                       │
+│  ├── seg_len  (31 bits) — 远端数据长度                │
+│  ├── rkey     (32 bits) — 远端 Memory Region Key      │
+│  └── va       (64 bits) — 远端虚拟地址                │
+├──────────────────────────────────────────────────────┤
+│  Local Data Segment (16 Bytes)                        │
+│  ├── seg_len  (31 bits) — 本地数据长度                │
+│  ├── lkey     (32 bits) — 本地 Memory Region Key      │
+│  └── va       (64 bits) — 本地虚拟地址                │
+├──────────────────────────────────────────────────────┤
+│  Atomic Segment (16 Bytes, 仅原子操作)                 │
+│  ├── swap_add  (64 bits) — 交换/加数据               │
+│  └── compare   (64 bits) — 比较数据                   │
+├──────────────────────────────────────────────────────┤
+│  Padding (64 Bytes, 补齐到 128B)                      │
+└──────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="52-control-segment">5.2 Control Segment 版本差异</h3>
+<p>XSCALE 支持两个 API 版本，通过 <code>ACLSHMEMI_XSCALE_API_VERSION_VAR</code> 宏选择：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// V1: wqe_id 占 16 bits (bits [0:15] of the last 32-bit field)</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">msg_opcode</span><span class="p">;</span><span class="w">     </span><span class="c1">// [0:7]</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">with_imm</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [8]</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">csum_en</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">   </span><span class="c1">// [9:10]</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">ds_data_num</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w"> </span><span class="c1">// [11:15]</span>
+<span class="w">    </span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">wqe_id</span><span class="p">;</span><span class="w">         </span><span class="c1">// [16:31] — 16 bits</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">msg_len</span><span class="p">;</span><span class="w">        </span><span class="c1">// [32:63]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">opcode_data</span><span class="p">;</span><span class="w">    </span><span class="c1">// [64:95]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">se</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">         </span><span class="c1">// [96]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">ce</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">         </span><span class="c1">// [97]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">in_line</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">    </span><span class="c1">// [98]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fence_mode</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w"> </span><span class="c1">// [99:100]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">mask</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">       </span><span class="c1">// [101:102]</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rsv</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">25</span><span class="p">;</span><span class="w">       </span><span class="c1">// [103:127]</span>
+<span class="p">};</span>
+
+<span class="c1">// V2: wqe_id 扩展到 20 bits, 重新排列字段</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_wqe_ctrl_seg_v2</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">msg_opcode</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">with_imm</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">csum_en</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">ds_data_num</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">rsv1</span><span class="p">;</span><span class="w">           </span><span class="c1">// 保留</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">msg_len</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">opcode_data</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">se</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">ce</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">in_line</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fence_mode</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">mask</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rsv</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_id</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">    </span><span class="c1">// [27:47] — 20 bits (支持更多 WQE)</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>版本选择机制</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">conditional_t</span><span class="o">&lt;</span><span class="n">ACLSHMEMI_XSCALE_API_VERSION_VAR</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="p">,</span>
+<span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v2</span><span class="o">&gt;</span><span class="p">;</span>
+</code></pre></div>
+
+<h3 id="53-cqe-xscale-diamond-64-bytes">5.3 CQE 格式 (XSCALE Diamond, 64 Bytes)</h3>
+<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_cqe64_t</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">aclshmemi_xscdv_diamond_cqe_t</span><span class="w"> </span><span class="n">cqe</span><span class="p">;</span><span class="w">  </span><span class="c1">// 32 Bytes</span>
+<span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">padding</span><span class="p">[</span><span class="mi">32</span><span class="p">];</span><span class="w">                 </span><span class="c1">// 32 Bytes padding</span>
+<span class="p">};</span>
+
+<span class="c1">// V2 CQE (32 Bytes):</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_cqe_v2</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">union</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">error_code</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">8</span><span class="p">;</span><span class="w">   </span><span class="c1">// [0:7]   错误码</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_id</span><span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="mi">15</span><span class="p">;</span><span class="w">  </span><span class="c1">// [8:22]  完成的 QP 编号</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rsv</span><span class="w">        </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [23]</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">se</span><span class="w">         </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [24]    Solicitation Event</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">has_pph</span><span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [25]    是否有 PPH</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">type</span><span class="w">       </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [26]</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">with_imm</span><span class="w">   </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [27]    是否有 immediate</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">csum_err</span><span class="w">   </span><span class="o">:</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">   </span><span class="c1">// [28:31] 校验和错误</span>
+<span class="w">        </span><span class="p">};</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">flags_qp_id_err_code</span><span class="p">;</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">imm_data</span><span class="p">;</span><span class="w">                 </span><span class="c1">// immediate value</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">msg_len</span><span class="p">;</span><span class="w">                  </span><span class="c1">// 消息长度</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">vni</span><span class="p">;</span><span class="w">                      </span><span class="c1">// Virtual Network Identifier</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">ts_l</span><span class="p">;</span><span class="w">                     </span><span class="c1">// 时间戳低 32 位</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">ts_h</span><span class="p">;</span><span class="w">                     </span><span class="c1">// 时间戳高 16 位 (共 48 位)</span>
+<span class="w">    </span><span class="k">union</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">msg_opcode</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">8</span><span class="p">;</span><span class="w">   </span><span class="c1">// 对应 WQE 的 opcode</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rsv1</span><span class="w">       </span><span class="o">:</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_id</span><span class="w">     </span><span class="o">:</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">  </span><span class="c1">// 对应 WQE 的 wqe_id</span>
+<span class="w">        </span><span class="p">};</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_id_rsv_opcode</span><span class="p">;</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="k">union</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rsv2</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="mi">31</span><span class="p">;</span>
+<span class="w">            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">owner</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">        </span><span class="c1">// Owner bit: 软件解析权限标志</span>
+<span class="w">        </span><span class="p">};</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">owner_rsv</span><span class="p">;</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<h3 id="54-owner-bit">5.4 Owner Bit 机制</h3>
+<p>XSCALE 使用 <strong>owner bit</strong> 实现硬件/软件同步，避免昂贵的 atomic 操作：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:389-397</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">aclshmemi_roce_xscale_check_cqe_owner</span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="n">aclshmemi_xscdv_cqe64_t</span><span class="w"> </span><span class="o">*</span><span class="n">cqe64</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                                            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cur_tail</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">depth</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">owner_bit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">cqe64</span><span class="o">-&gt;</span><span class="n">cqe</span><span class="p">.</span><span class="n">owner</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">ACLSHMEMI_XSC_CQE_OWNER_MASK</span><span class="p">);</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">expect_bit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">((</span><span class="n">cur_tail</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">depth</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// 每翻转一轮 depth，owner bit 翻转</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">owner_bit</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">expect_bit</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>原理</strong>: 硬件每写完一轮 CQ（depth 个 CQE），自动翻转 owner bit。软件通过比较 <code>owner_bit == (cur_tail / depth) &amp; 1</code> 判断 CQE 是否已写入。</p>
+<h3 id="55-doorbell">5.5 Doorbell 格式</h3>
+<p><strong>SQ Doorbell</strong> (8 Bytes):</p>
+<div class="highlight"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_send_doorbell_v2</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">next_pid</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">21</span><span class="p">;</span><span class="w">  </span><span class="c1">// 下一个 WQE 的 producer index (已左移)</span>
+<span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">qp_id</span><span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w">  </span><span class="c1">// QP 编号</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">raw</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>CQ Doorbell</strong> (8 Bytes):</p>
+<div class="highlight"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_cq_doorbell_t</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">cq_next_cid</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">23</span><span class="p">;</span><span class="w">  </span><span class="c1">// 下一个待处理的 CQE ID</span>
+<span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">cq_id</span><span class="w">       </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w">  </span><span class="c1">// CQ 编号</span>
+<span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">cq_sta</span><span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">   </span><span class="c1">// CQ 状态</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">raw</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<h3 id="56">5.6 操作码映射</h3>
+<div class="highlight"><pre><span></span><code><span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_msg_type_t</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_WRITE</span><span class="w">                    </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_READ</span><span class="w">                     </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_CMP_AND_SWAP</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mi">26</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_FETCH_AND_ADD</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mi">27</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_8B_MSK_CMP_AND_SWAP</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mi">31</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_8B_MSK_FETCH_AND_ADD</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_4B_MSK_CMP_AND_SWAP</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mi">33</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_4B_MSK_FETCH_AND_ADD</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">34</span><span class="p">,</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hr />
+<h2 id="6">6. 原子操作机制</h2>
+<h3 id="61-api">6.1 原子操作 API 全景</h3>
+<p>CAM 提供 <strong>16 种</strong> 原子操作 API，覆盖 fetch/set/compare-swap/inc/add/and/or/xor 及其组合：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>API</th>
+<th>同步性</th>
+<th>实现方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fetch</td>
+<td><code>atomic_fetch(src, pe)</code></td>
+<td>同步</td>
+<td>FA(add=0) + quiet + read</td>
+</tr>
+<tr>
+<td>Set</td>
+<td><code>atomic_set(dst, val, pe)</code></td>
+<td>异步</td>
+<td>CAS(swap=val, comp=0, mask_swap=MAX)</td>
+</tr>
+<tr>
+<td>CAS</td>
+<td><code>atomic_compare_swap(dst, cond, val, pe)</code></td>
+<td>同步</td>
+<td>CAS + quiet + read</td>
+</tr>
+<tr>
+<td>Swap</td>
+<td><code>atomic_swap(dst, val, pe)</code></td>
+<td>同步</td>
+<td>CAS(swap=val, comp=0) + quiet + read</td>
+</tr>
+<tr>
+<td>Inc</td>
+<td><code>atomic_inc(dst, pe)</code></td>
+<td>异步</td>
+<td>FA(add=1)</td>
+</tr>
+<tr>
+<td>Add</td>
+<td><code>atomic_add(dst, val, pe)</code></td>
+<td>异步</td>
+<td>FA(add=val)</td>
+</tr>
+<tr>
+<td>And</td>
+<td><code>atomic_and(dst, val, pe)</code></td>
+<td>异步</td>
+<td>CAS(swap=val, mask_swap=~val)</td>
+</tr>
+<tr>
+<td>Or</td>
+<td><code>atomic_or(dst, val, pe)</code></td>
+<td>异步</td>
+<td>CAS(swap=val, mask_swap=val)</td>
+</tr>
+<tr>
+<td>Xor</td>
+<td><code>atomic_xor(dst, val, pe)</code></td>
+<td>异步</td>
+<td>FA(add=val, boundary=MAX)</td>
+</tr>
+<tr>
+<td>FetchInc</td>
+<td><code>atomic_fetch_inc(dst, pe)</code></td>
+<td>同步</td>
+<td>FA(add=1) + quiet + read</td>
+</tr>
+<tr>
+<td>FetchAdd</td>
+<td><code>atomic_fetch_add(dst, val, pe)</code></td>
+<td>同步</td>
+<td>FA(add=val) + quiet + read</td>
+</tr>
+<tr>
+<td>FetchAnd</td>
+<td><code>atomic_fetch_and(dst, val, pe)</code></td>
+<td>同步</td>
+<td>CAS + quiet + read</td>
+</tr>
+<tr>
+<td>FetchOr</td>
+<td><code>atomic_fetch_or(dst, val, pe)</code></td>
+<td>同步</td>
+<td>CAS + quiet + read</td>
+</tr>
+<tr>
+<td>FetchXor</td>
+<td><code>atomic_fetch_xor(dst, val, pe)</code></td>
+<td>同步</td>
+<td>FA + quiet + read</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-masked-vs-unmasked">6.2 Masked vs Unmasked 变体</h3>
+<p>XSCALE 后端对原子操作区分 <strong>masked</strong> 和 <strong>unmasked</strong> 两种模式：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 4B 操作强制使用 masked 模式</span>
+<span class="k">static_assert</span><span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">BYTES_32</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="n">IS_MASKED</span><span class="p">),</span>
+<span class="w">    </span><span class="s">&quot;XSCALE backend doesn&#39;t support fetch and add operation with type size of 4B without mask</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Masked 模式</strong> 允许对 64-bit 字中的特定位字段进行原子操作，通过 <code>swap_add_mask</code> / <code>compare_mask</code> 控制哪些位参与操作。</p>
+<h3 id="63-wqe">6.3 原子操作 WQE 构造</h3>
+<p>以 <code>aclshmemi_rdma_xscdv_fill_wqe_fa</code> 为例：</p>
+<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
+<span class="kt">uint32_t</span><span class="w"> </span><span class="n">aclshmemi_rdma_xscdv_fill_wqe_fa</span><span class="p">(</span><span class="n">aclshmemi_rdma_send_wr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">wr</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">DS_DATA_NUM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">  </span><span class="c1">// ctrl + data_seg + atomic_seg</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">MSG_LEN</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">BYTES_32</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">DATA_LEN</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">BYTES_32</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">BYTES_32</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">BYTES_64</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 根据类型选择操作码</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="n">aclshmemi_xscdv_msg_type_t</span><span class="w"> </span><span class="n">OPCODE</span><span class="w"> </span><span class="o">=</span>
+<span class="w">        </span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">BYTES_64</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_8B_MSK_FETCH_AND_ADD</span>
+<span class="w">        </span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">BYTES_64</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="n">IS_MASKED</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_FETCH_AND_ADD</span>
+<span class="w">        </span><span class="o">:</span><span class="w"> </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_4B_MSK_FETCH_AND_ADD</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 填充 ctrl_seg (inline=1, 因为数据在 WQE 内)</span>
+<span class="w">    </span><span class="n">cur_wqe_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">aclshmemi_roce_xscale_fill_wqe_ctrl_seg</span><span class="p">(</span><span class="n">wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="n">DS_DATA_NUM</span><span class="p">,</span><span class="w"> </span><span class="n">cur_head</span><span class="p">,</span><span class="w"> </span><span class="n">OPCODE</span><span class="p">,</span><span class="w"> </span><span class="n">MSG_LEN</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">// 填充 data_seg (remote + local)</span>
+<span class="w">    </span><span class="n">cur_wqe_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">aclshmemi_roce_xscale_fill_wqe_data_seg</span><span class="p">(</span><span class="n">cur_wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">rkey</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">remote_addr</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">lkey</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">local_addr</span><span class="p">,</span><span class="w"> </span><span class="n">DATA_LEN</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">// 填充 atomic_seg</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">aclshmemi_rdma_xscdv_fill_fa_atomic_seg</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span><span class="p">(</span><span class="n">cur_wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="64">6.4 字节序转换</h3>
+<p>XSCALE 硬件要求 <strong>Big-Endian</strong> 格式的原子操作数据：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:333-343</span>
+<span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">aclshmemi_htobe64</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">host_val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">56</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">48</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">40</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">24</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">24</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">40</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">16</span><span class="w"> </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">48</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">8</span><span class="w">  </span><span class="o">|</span>
+<span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">56</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>读取 fetch 结果时需反向转换：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:293-297</span>
+<span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">ACLSHMEMI_K_RDMA_BACKEND</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">::</span><span class="n">XSCALE</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fetch_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">fetch_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="n">aclshmemi_htobe32</span><span class="p">(</span><span class="n">fetch_bytes</span><span class="p">);</span><span class="w">  </span><span class="c1">// 4B 结果需要字节序转换</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="65">6.5 原子操作结果读取</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:278-301</span>
+<span class="kt">uint64_t</span><span class="w"> </span><span class="nf">aclshmemi_roce_get_atomic_fetch_addr</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 从 sq_ctx-&gt;amo_addr 获取原子操作结果缓冲区地址</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">sq_context</span><span class="o">-&gt;</span><span class="n">amo_addr</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="n">T</span><span class="w"> </span><span class="n">aclshmemi_roce_get_atomic_fetch_data</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">amo_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">aclshmemi_roce_get_atomic_fetch_addr</span><span class="p">(</span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="n">dcci_cachelines</span><span class="p">((</span><span class="n">__gm__</span><span class="w"> </span><span class="kt">uint8_t</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">amo_addr</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">));</span><span class="w">  </span><span class="c1">// 刷新缓存行</span>
+<span class="w">    </span><span class="n">__gm__</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="o">*</span><span class="n">fetch_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">__gm__</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="o">*&gt;</span><span class="p">(</span><span class="n">amo_addr</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">fetch_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 读取 fetch 前的原始值</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="7-host">7. Host 端传输管理</h2>
+<h3 id="71-rdmatransportmanagerv2">7.1 RdmaTransportManagerV2 生命周期</h3>
+<div class="highlight"><pre><span></span><code><span class="nv">OpenDevice</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="nv">RegisterMemoryRegion</span><span class="ss">()</span><span class="w"> </span>×<span class="w"> </span><span class="nv">N</span><span class="w"> </span>→<span class="w"> </span><span class="nv">Prepare</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="k">Connect</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span>[运行期]<span class="w"> </span>→<span class="w"> </span><span class="nv">CloseDevice</span><span class="ss">()</span>
+</code></pre></div>
+
+<h3 id="72-opendevice">7.2 OpenDevice 流程</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:44-101</span>
+<span class="n">Result</span><span class="w"> </span><span class="nf">OpenDevice</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">TransportOptions</span><span class="o">&amp;</span><span class="w"> </span><span class="n">options</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 获取设备 ID</span>
+<span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtGetDevice</span><span class="p">(</span><span class="o">&amp;</span><span class="n">userId</span><span class="p">);</span>
+<span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtGetPhyDevIdByLogicDevId</span><span class="p">(</span><span class="n">userId</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">phyId_</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. 解析 RDMA 网络地址</span>
+<span class="w">    </span><span class="n">TopoReader</span><span class="o">::</span><span class="n">ParseRdmaNetAddr</span><span class="p">(</span><span class="n">phyId_</span><span class="p">,</span><span class="w"> </span><span class="n">deviceIp_</span><span class="p">);</span>
+<span class="w">    </span><span class="n">devicePort_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RDMA_PORT_PREFIX</span><span class="p">(</span><span class="mi">60032</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">rankId_</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">MAX_RANKS_PER_NIC</span><span class="p">(</span><span class="mi">16</span><span class="p">));</span>
+<span class="w">    </span><span class="n">nicInfo_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GenerateDeviceNic</span><span class="p">(</span><span class="n">deviceIp_</span><span class="p">,</span><span class="w"> </span><span class="n">devicePort_</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 3. 创建 RoCE 端点</span>
+<span class="w">    </span><span class="n">CreateEndpoint</span><span class="p">();</span><span class="w">  </span><span class="c1">// → HcommEndpointCreate(&amp;endpointDesc, &amp;endpointHandle_)</span>
+
+<span class="w">    </span><span class="c1">// 4. 预留 device 内存 (qpInfo + atomic buffer)</span>
+<span class="w">    </span><span class="n">ReserveRdmaInfoSpace</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="73-connect">7.3 Connect 流程</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:280-307</span>
+<span class="n">Result</span><span class="w"> </span><span class="nf">Connect</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 验证单 NIC rank 数不超过 16</span>
+<span class="w">    </span><span class="n">ValidateRanksPerNic</span><span class="p">();</span>
+
+<span class="w">    </span><span class="c1">// 2. 准备 channel 描述符</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">channelNum</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rankCount_</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="n">PrepareChannelDescs</span><span class="p">(</span><span class="n">channelDescs</span><span class="p">,</span><span class="w"> </span><span class="n">roceTc</span><span class="p">,</span><span class="w"> </span><span class="n">roceSl</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">//   对每个 remote rank:</span>
+<span class="w">    </span><span class="c1">//   - 设置 protocol = COMM_PROTOCOL_ROCE</span>
+<span class="w">    </span><span class="c1">//   - 设置 IP 地址 (IPv4/IPv6)</span>
+<span class="w">    </span><span class="c1">//   - 设置 tc/sl (Traffic Class / Service Level)</span>
+<span class="w">    </span><span class="c1">//   - 设置 port = 60032 + serverRank * 16 + clientRank</span>
+<span class="w">    </span><span class="c1">//   - 设置 role = SERVER (rankId &lt; remoteRank) / CLIENT</span>
+
+<span class="w">    </span><span class="c1">// 3. 创建 channel 并填充 QP 信息</span>
+<span class="w">    </span><span class="n">CreateChannelsAndFillInfo</span><span class="p">(</span><span class="n">channelDescs</span><span class="p">,</span><span class="w"> </span><span class="n">channelNum</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="74-fillrdmainfo">7.4 FillRdmaInfo — 核心数据提取</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:507-531</span>
+<span class="n">Result</span><span class="w"> </span><span class="nf">FillRdmaInfo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 分配临时 buffer</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">&gt;</span><span class="w"> </span><span class="n">qpInfoBuffer</span><span class="p">(</span><span class="n">qpInfoSize_</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">copyInfo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">AiQpRMAQueueInfo</span><span class="o">*</span><span class="p">)</span><span class="n">qpInfoBuffer</span><span class="p">.</span><span class="n">data</span><span class="p">();</span>
+
+<span class="w">    </span><span class="c1">// 2. 设置指针布局 (sq/rq/scq/rcq/mr 紧跟在 AiQpRMAQueueInfo 之后)</span>
+<span class="w">    </span><span class="n">FillQpPreSettingCopyInfo</span><span class="p">(</span><span class="n">copyInfo</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 3. 从 ChannelEntity 读取 SQ/CQ/MR 信息</span>
+<span class="w">    </span><span class="n">GetRdmaInfoFromChannelEntity</span><span class="p">(</span><span class="n">copyInfo</span><span class="p">,</span><span class="w"> </span><span class="n">channelPtrs_</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">//   ├── ReadLocalBufferInfo()  → 读取本地 MR 的 lkey/rkey</span>
+<span class="w">    </span><span class="c1">//   └── ReadRemoteBufferInfo() → 遍历每个 remote rank:</span>
+<span class="w">    </span><span class="c1">//       ├── ReadSingleRemoteRank() → D2H 拷贝 ChannelEntity</span>
+<span class="w">    </span><span class="c1">//       │   ├── 读取 remote MR 的 lkey/rkey</span>
+<span class="w">    </span><span class="c1">//       │   └── FillSqCqAtomicInfo() → 读取 SQ/CQ 上下文</span>
+<span class="w">    </span><span class="c1">//       │       ├── CopyAiWQInfo() → 提取 wqn/bufAddr/wqeSize/depth/head/tail/dbAddr</span>
+<span class="w">    </span><span class="c1">//       │       ├── CopyAiCQInfo() → 提取 cqn/bufAddr/cqeSize/depth/head/tail/dbAddr</span>
+<span class="w">    </span><span class="c1">//       │       └── 设置 atomicAddr/atomicLkey</span>
+<span class="w">    </span><span class="c1">//       └── 设置 remote MR 的 size/addr</span>
+
+<span class="w">    </span><span class="c1">// 4. 拷贝到 device HBM</span>
+<span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtMemcpy</span><span class="p">(</span><span class="n">qpInfo_</span><span class="p">,</span><span class="w"> </span><span class="n">qpInfoSize_</span><span class="p">,</span><span class="w"> </span><span class="n">copyInfo</span><span class="p">,</span><span class="w"> </span><span class="n">qpInfoSize_</span><span class="p">,</span><span class="w"> </span><span class="n">ACL_MEMCPY_HOST_TO_DEVICE</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="75">7.5 内存注册策略</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:191-224</span>
+<span class="n">Result</span><span class="w"> </span><span class="nf">RegisterMemoryRegion</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">TransportMemoryRegion</span><span class="o">&amp;</span><span class="w"> </span><span class="n">mr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">CommMem</span><span class="w"> </span><span class="n">commMem</span><span class="p">{};</span>
+<span class="w">    </span><span class="c1">// 区分 HBM 和 Host DDR</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">((</span><span class="n">mr</span><span class="p">.</span><span class="n">flags</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">REG_MR_FLAG_HBM</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">IsVirtualAddressNpu</span><span class="p">(</span><span class="n">mr</span><span class="p">.</span><span class="n">addr</span><span class="p">))</span>
+<span class="w">        </span><span class="n">commMem</span><span class="p">.</span><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">COMM_MEM_TYPE_DEVICE</span><span class="p">;</span><span class="w">  </span><span class="c1">// HBM</span>
+<span class="w">    </span><span class="k">else</span>
+<span class="w">        </span><span class="n">commMem</span><span class="p">.</span><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">COMM_MEM_TYPE_HOST</span><span class="p">;</span><span class="w">    </span><span class="c1">// DDR</span>
+
+<span class="w">    </span><span class="c1">// 注册到 HCCP 协议栈</span>
+<span class="w">    </span><span class="n">HcommMemReg</span><span class="p">(</span><span class="n">endpointHandle_</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;HcclBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">commMem</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">memHandle</span><span class="p">);</span>
+<span class="w">    </span><span class="n">registeredMRs_</span><span class="p">.</span><span class="n">emplace</span><span class="p">(</span><span class="n">mr</span><span class="p">.</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">entry</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="76">7.6 原子操作共享内存</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:703-735</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">ReserveRdmaInfoSpace</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// qpInfo 大小: sizeof(AiQpRMAQueueInfo) + rankCount * [2*(sizeof(AiQpRMAWQ) + sizeof(AiQpRMACQ)) + sizeof(RdmaMemRegionInfo)]</span>
+<span class="w">    </span><span class="n">qpInfoSize_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">AiQpRMAQueueInfo</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">oneQpSize</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">rankCount_</span><span class="p">;</span>
+<span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtMalloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">qpInfoSize_</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="n">qpInfo_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">AiQpRMAQueueInfo</span><span class="o">*</span><span class="p">)</span><span class="n">ptr</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 原子操作共享内存: 128 * 8B * rankCount, 512B 对齐</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">atomicSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ATOMIC_MAX_NUM</span><span class="p">(</span><span class="mi">128</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">uint64_t</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">rankCount</span><span class="p">;</span>
+<span class="w">    </span><span class="n">atomicSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ALIGN_UP</span><span class="p">(</span><span class="n">atomicSize</span><span class="p">,</span><span class="w"> </span><span class="n">MEMORY_ALIGNMENT</span><span class="p">(</span><span class="mi">512</span><span class="p">));</span>
+<span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtMalloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">atomicSharedMemory_</span><span class="p">,</span><span class="w"> </span><span class="n">atomicSize</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>设计要点</strong>: 原子操作共享内存用于存储 fetch-before-write 结果。每个 rank 占用 <code>128 × 8B = 1KB</code>，支持最大 128 个并发原子操作。</p>
+<h3 id="77">7.7 底层协议结构</h3>
+<p><strong>HCCP 协议</strong> (<code>dl_hccp_def.h</code>):
+- <code>HccpMrInfo</code>: Memory Region 信息 (addr/size/access/lkey/rkey)
+- <code>HccpQpExtAttrs</code>: QP 扩展属性 (qpMode/cqAttr/qp_attr/version/mem_align)
+- <code>ai_data_plane_wq</code> / <code>ai_data_plane_cq</code>: 硬件队列描述 (wqn/cqn/buf_addr/wqebb_size/depth/head/tail/db_reg)
+- <code>AiQpRMAWQ</code> / <code>AiQpRMACQ</code>: 运行时 SQ/CQ 信息 (含 atomicAddr/atomicLkey)</p>
+<p><strong>Hcomm 协议</strong> (<code>dl_hcomm_def.h</code>):
+- <code>ChannelEntity</code>: 通道实体 (engine/protocol/bufferNum/notifyNum/sqNum/cqNum)
+- <code>SqContext</code> / <code>CqContext</code>: 队列上下文 (roceSq/roceCq 包含 qpn/cqn/sqVa/cqVa/dbVa 等)
+- <code>RegedBufferEntity</code>: 注册缓冲区 (addr/size/protectionInfo)
+- <code>ProtectionInfo</code>: 保护信息 (type=PROTECTION_TYPE_ROCE, lkey/rkey)</p>
+<hr />
+<h2 id="8">8. 编译注入机制</h2>
+<h3 id="81-shmem_home_path">8.1 SHMEM_HOME_PATH 环境变量</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># ascendc_impl_build.py:167-178</span>
+<span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;SHMEM_HOME_PATH&#39;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">SHMEM_HOME_PATH</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="s2">&quot;/usr/local/Ascend/shmem/latest&quot;</span><span class="p">)</span>
+
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/host_device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/internal&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src/device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/memfabric_hybrid/include/smem/device&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="82">8.2 编译期后端选择</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># compile_ascend_proj.sh:179-192</span>
+<span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;&quot;</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;-I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/include -I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/src/device&quot;</span>
+<span class="k">fi</span>
+<span class="c1"># 通过 sed 注入到 build.make 的 --compile-options 中</span>
+find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </span>-name<span class="w"> </span><span class="s2">&quot;build.make&quot;</span><span class="w"> </span>-exec<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">&quot;s|--compile-options=\&quot;\&quot;|--compile-options=\\\&quot;</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">\\\&quot;|g&quot;</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
+</code></pre></div>
+
+<h3 id="83">8.3 算子选择过滤</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># select_ops.py:55-60, 116-121</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">get_meta</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;requires_shmem&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+
+<span class="c1"># 在 resolve() 中:</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">shmem</span><span class="p">:</span>
+    <span class="n">dropped</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
+    <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">dropped</span><span class="p">:</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;NOTE: dropping </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s2"> (requires SHMEM, which is not installed)</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">candidates</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
+</code></pre></div>
+
+<h3 id="84">8.4 当前算子注册表状态</h3>
+<div class="highlight"><pre><span></span><code><span class="c1">// operator_registry.json</span>
+<span class="nt">&quot;operator_meta&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;dispatch_layout&quot;</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;fused_deep_moe&quot;</span><span class="p">:</span><span class="w">     </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;family&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fused_deep_moe&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;variant&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;base&quot;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;moe_combine_normal&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;moe_dispatch_normal&quot;</span><span class="p">:{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;notify_dispatch&quot;</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>当前所有算子 <code>requires_shmem: false</code></strong>, 即默认使用 HCCL Window 模式。SHMEM 模式基础设施已完整就绪，但尚未在算子层启用。</p>
+<hr />
+<h2 id="9-hccl-window">9. 与 HCCL Window 模式的本质区别</h2>
+<h3 id="91">9.1 架构层面对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>SHMEM 模式</th>
+<th>HCCL Window 模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信路径</strong></td>
+<td>AIV 核心直接操作 RoCE 硬件 WQE/CQE</td>
+<td>通过 HCCL Window 机制 (<code>winContext_-&gt;localWindowsIn</code>)</td>
+</tr>
+<tr>
+<td><strong>运行时开销</strong></td>
+<td>单次 kernel 内完成 RDMA 操作，无 HCCL 调度</td>
+<td>需经过 HCCL 调度层、Window 资源管理</td>
+</tr>
+<tr>
+<td><strong>延迟</strong></td>
+<td>微秒级 (直接 doorbell 振铃)</td>
+<td>数十微秒级 (HCCL 软件栈开销)</td>
+</tr>
+<tr>
+<td><strong>灵活性</strong></td>
+<td>支持任意地址、任意长度的 P2P 传输</td>
+<td>受限于 Window 预分配区域</td>
+</tr>
+<tr>
+<td><strong>原子操作</strong></td>
+<td>16 种 RDMA 原子操作 (CAS/FA/AND/OR/XOR)</td>
+<td>依赖 HCCL 集合通信原语</td>
+</tr>
+<tr>
+<td><strong>计算-通信重叠</strong></td>
+<td>同一 kernel 内交替执行 GEMM 和 RDMA</td>
+<td>需多 kernel 协作，HBM 读写开销</td>
+</tr>
+<tr>
+<td><strong>后端选择</strong></td>
+<td>编译期 traits 系统 (IN_DIE/XSCALE)</td>
+<td>HCCL 内部自动选择</td>
+</tr>
+<tr>
+<td><strong>内存注册</strong></td>
+<td>显式 MR 注册 (HcommMemReg)</td>
+<td>HCCL 隐式管理</td>
+</tr>
+<tr>
+<td><strong>QP 管理</strong></td>
+<td>显式 SQ/CQ 上下文管理</td>
+<td>HCCL 抽象</td>
+</tr>
+</tbody>
+</table>
+<h3 id="92">9.2 代码层面对比</h3>
+<p><strong>SHMEM 模式</strong> (直接 RDMA):</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 算子 kernel 内部直接发起 RDMA</span>
+<span class="n">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="n">remote_addr</span><span class="p">,</span><span class="w"> </span><span class="n">local_addr</span><span class="p">,</span><span class="w"> </span><span class="n">ub_buf</span><span class="p">,</span><span class="w"> </span><span class="n">len</span><span class="p">,</span><span class="w"> </span><span class="n">remote_pe</span><span class="p">);</span>
+<span class="c1">// ↑ 直接构造 WQE → doorbell → 硬件执行</span>
+</code></pre></div>
+
+<p><strong>HCCL Window 模式</strong> (当前默认):</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 通过 HCCL Window 机制</span>
+<span class="n">winContext_</span><span class="o">-&gt;</span><span class="n">localWindowsIn</span><span class="p">[</span><span class="n">peer_rank</span><span class="p">]</span><span class="w">  </span><span class="c1">// 预分配的 Window 区域</span>
+<span class="n">HcclRankRelationResV2</span><span class="w">                    </span><span class="c1">// HCCL 管理的 rank 关系</span>
+<span class="c1">// ↑ 需经过 HCCL 调度、Window 资源同步</span>
+</code></pre></div>
+
+<h3 id="93">9.3 性能影响分析</h3>
+<p>SHMEM 模式的核心优势在于 <strong>消除 HCCL 软件栈开销</strong>:</p>
+<ol>
+<li><strong>零调度延迟</strong>: 直接 doorbell 振铃 (~100ns) vs HCCL 调度 (~10-50μs)</li>
+<li><strong>Kernel 内融合</strong>: FusedDeepMoE 可在同一 kernel 内交替执行 GEMM 和 RDMA，避免多次 kernel launch 和 HBM 读写</li>
+<li><strong>细粒度 P2P</strong>: 支持 token 级别的动态路由，无需预定义通信模式</li>
+<li><strong>硬件原子操作</strong>: 利用 RDMA 硬件原子操作实现无锁同步</li>
+</ol>
+<h3 id="94">9.4 启用路径</h3>
+<p>要将算子从 HCCL Window 模式切换到 SHMEM 模式:</p>
+<ol>
+<li><strong>修改 operator_registry.json</strong>: 将目标算子的 <code>requires_shmem</code> 设为 <code>true</code></li>
+<li><strong>确保 SHMEM 安装</strong>: 设置 <code>SHMEM_HOME_PATH</code> 环境变量指向 SHMEM 安装目录</li>
+<li><strong>算子代码改造</strong>: 在 kernel 中调用 <code>aclshmemx_roce_*</code> API 替代 HCCL Window 操作</li>
+<li><strong>编译</strong>: <code>select_ops.py</code> 会自动包含该算子，编译注入 SHMEM include 路径</li>
+</ol>
+<hr />
+<h2 id="10">10. 关键设计洞察</h2>
+<h3 id="101-rdma">10.1 用户态 RDMA 的极致优化</h3>
+<p>CAM 的 SHMEM 模式是 <strong>用户态 RDMA 在 AI 芯片上的极致实现</strong>:</p>
+<ul>
+<li><strong>AIV 核心直接驱动</strong>: 不同于传统 RDMA 由 CPU 或专用 NIC 驱动，CAM 让 AIV 向量核心直接构造 WQE 和振铃 doorbell</li>
+<li><strong>Cache-line 精确刷新</strong>: 使用 <code>dcci_cachelines()</code> 精确刷新 64B 缓存行，确保 HBM 数据对硬件可见</li>
+<li><strong>Inline 模式</strong>: 原子操作使用 inline 模式 (数据在 WQE 内)，避免额外的 DMA 读取</li>
+</ul>
+<h3 id="102">10.2 编译时多态的工程价值</h3>
+<p>traits 系统实现了 <strong>零成本抽象</strong>:</p>
+<ul>
+<li>无虚函数表 (vtable) 开销</li>
+<li>无运行时 switch/if 分支</li>
+<li>未使用的后端代码在编译期完全消除</li>
+<li><code>if constexpr</code> 确保编译期分支消除</li>
+</ul>
+<h3 id="103">10.3 版本兼容性的优雅处理</h3>
+<p>XSCALE 后端的 V1/V2 API 版本通过 <code>std::conditional_t</code> 实现编译期选择:</p>
+<div class="highlight"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">conditional_t</span><span class="o">&lt;</span><span class="n">ACLSHMEMI_XSCALE_API_VERSION_VAR</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="p">,</span>
+<span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v2</span><span class="o">&gt;</span><span class="p">;</span>
+</code></pre></div>
+
+<p>这允许同一份代码支持不同硬件世代的 WQE 格式差异。</p>
+<h3 id="104">10.4 同步机制的精心设计</h3>
+<ul>
+<li><strong>SQ head/tail 分离</strong>: 软件写 head (producer), 硬件写 tail (consumer via CQE)</li>
+<li><strong>CQ owner bit</strong>: 硬件/软件同步无 atomic 操作，每轮 depth 翻转一次</li>
+<li><strong>SQ 满检查</strong>: 阈值 16 的预检查避免死锁，同时最大化 SQ 利用率</li>
+<li><strong>超时保护</strong>: 5 分钟超时防止硬件异常导致无限等待</li>
+</ul>
+<h3 id="105">10.5 原子操作的统一抽象</h3>
+<p>通过 <code>aclshmemi_rdma_atomic_params</code> union + <code>IS_MASKED</code> 模板参数，实现了:</p>
+<ul>
+<li>8B/4B 数据类型统一处理</li>
+<li>masked/unmasked 模式编译期选择</li>
+<li>多种原子操作 (FA/CAS/AND/OR/XOR) 的统一 WQE 构造路径</li>
+</ul>
+<hr />
+<h2 id="11_1">11. 总结</h2>
+<p>CAM 的 SHMEM 模式是一个 <strong>完整的用户态 RDMA 子系统</strong>，其核心优势在于:</p>
+<ol>
+<li><strong>硬件直通</strong>: AIV 核心直接操作 RoCE 硬件，消除 HCCL 软件栈开销</li>
+<li><strong>编译时多态</strong>: traits 系统实现零运行时开销的后端选择</li>
+<li><strong>原子操作丰富</strong>: 16 种原子操作变体，支持 8B/4B masked/unmasked 模式</li>
+<li><strong>版本兼容</strong>: V1/V2 API 版本编译期选择，支持多硬件世代</li>
+<li><strong>工程完备</strong>: 超时保护、错误处理、日志调试机制齐全</li>
+</ol>
+<p>当前所有算子默认使用 HCCL Window 模式 (<code>requires_shmem: false</code>)，但 SHMEM 模式基础设施已完整就绪，是 CAM 未来性能突破的关键路径。</p>
+<div class="footer">
+<p>📊 UMDK/CAM 深度分析报告 | 生成日期: 2026-07-21</p>
+<p>分析工具: Claude Code 9-Agent 并行分析</p>
+<p><a href="CAM深度分析报告.html">← 返回主报告</a> | <a href="#top">↑ 返回顶部</a></p>
+</div>
+</div>
+</body>
+</html>
