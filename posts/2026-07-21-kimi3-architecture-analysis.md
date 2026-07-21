@@ -232,12 +232,12 @@ The memory hierarchy for million-token KV-Cache:
 
 Kimi3's 3:1 KDA:MLA ratio means 25% of layers use MLA (compressed full attention). At 1M tokens:
 
-| Layer Type | Time Complexity (seq len $L$) | Why |
+| Layer Type | Time Complexity | Why |
 |---|---|---|
-| KDA (linear, 75% of layers) | $\mathcal{O}(L)$ total | Fixed-size recurrent state; $\mathcal{O}(1)$ per token |
-| MLA (compressed, 25% of layers) | $\mathcal{O}(L^2)$ | Same as standard attention; compression reduces dimension but not asymptotic complexity |
+| KDA (linear, 75% of layers) | O(L) total | Fixed-size recurrent state; O(1) per token |
+| MLA (compressed, 25% of layers) | ==O(L²)== | Same as standard attention; compression reduces dimension but not asymptotic complexity |
 
-> **Key insight:** MLA's 32× compression reduces the constant factor (dimension $d \to d_{\text{latent}}$), but ==time complexity remains $\mathcal{O}(L^2)$==, identical to standard attention. This is the ==fundamental ceiling== of hybrid linear architectures — compression cannot change asymptotic complexity.
+> **Key insight:** MLA's 32× compression reduces the constant factor, but ==time complexity remains O(L²)==, identical to standard attention. This is the ==fundamental ceiling== of hybrid linear architectures — compression cannot change asymptotic complexity.
 
 ---
 
