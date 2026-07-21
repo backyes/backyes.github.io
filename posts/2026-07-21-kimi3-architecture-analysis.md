@@ -230,15 +230,14 @@ The memory hierarchy for million-token KV-Cache:
 
 ### 5.3 The Full-Attention Bottleneck
 
-Kimi3's 3:1 KDA:MLA ratio means 25% of layers are full attention. At 1M tokens:
+Kimi3's 3:1 KDA:MLA ratio means 25% of layers use MLA (compressed full attention). At 1M tokens:
 
-```
-Full attention compute per layer: O(n²) = O(10¹²)
-Linear attention compute per layer: O(1) = constant (recurrent state is fixed-size)
-Ratio: 10⁶× difference per layer
-```
+| Layer Type | Compute per Token | Why |
+|---|---|---|
+| KDA (linear, 75% of layers) | Constant O(1) | Fixed-size recurrent state, independent of context length |
+| MLA (compressed, 25% of layers) | O(n) per token | Must attend to all n tokens (compression reduces memory, not compute) |
 
-Even with MLA's 32× compression, the full-attention layers dominate at extreme scales. This is the ==fundamental ceiling== of hybrid linear architectures.
+> **Key insight:** Even though MLA has 32× memory compression, its compute still scales linearly with context. At 1M tokens, the MLA layers dominate total compute. This is the ==fundamental ceiling== of hybrid linear architectures — you cannot escape the O(n) per-token cost of attention layers.
 
 ---
 
