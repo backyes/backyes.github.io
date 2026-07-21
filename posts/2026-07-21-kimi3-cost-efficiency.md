@@ -50,7 +50,7 @@ All data in this section comes from the [Kimi Linear paper](https://arxiv.org/ab
 **Experimental setup:**
 - Model: 3B activated / 48B total parameters
 - Pretraining corpus: 1.4T tokens
-- Batch size: 6× at optimal batch, ==2.2× at batch=1==
+- Batch size: 6× at optimal batch, ~2× at batch=1 (==inferred from Figure 7b, not explicitly stated==)
 
 **Critical analysis:**
 - The 6× claim uses optimal batch size (not specified, likely 4-8)
