@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Google Rapid Storage 深度调研报告 — 是否为 KV Cache 而生？</title>
+<style>
+:root{
+  --bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--border:#30363d;--border2:#21262d;
+  --fg:#d7dbe0;--fg2:#c9d1d9;--muted:#7d848d;--muted2:#6e7681;
+  --accent:#4a8fe0;--accent-soft:rgba(74,143,224,.12);
+  --green:#3fb950;--amber:#d29922;--red:#f85149;
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --font-serif:'Source Serif Pro','Georgia',serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-sans);line-height:1.7}
+.container{max-width:900px;margin:0 auto;padding:40px 24px 80px}
+h1{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px;color:var(--fg)}
+h2{font-size:1.5rem;font-weight:700;margin:2em 0 .6em;padding-bottom:.4em;border-bottom:2px solid var(--accent);color:var(--fg)}
+h3{font-size:1.25rem;font-weight:600;margin:1.5em 0 .5em;padding-left:10px;border-left:3px solid var(--accent);color:var(--fg2)}
+p{margin:0 0 1.2em}
+.subtitle{color:var(--muted);font-size:.9rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+mark{background:linear-gradient(180deg,transparent 60%,var(--accent-soft) 60%);padding:0 3px;color:var(--fg);font-weight:600}
+strong{color:var(--fg);font-weight:600}
+.key-num{color:var(--accent);font-weight:700;font-size:1.1em}
+code{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:var(--font-mono)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+table{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto}
+th{background:var(--surface);font-weight:600;padding:8px 10px;border:1px solid var(--border);text-align:left}
+td{padding:7px 10px;border:1px solid var(--border);vertical-align:top}
+tr:nth-child(even) td{background:rgba(24,27,32,.25)}
+tr:hover td{background:rgba(74,143,224,.08)}
+blockquote{border-left:4px solid var(--accent);background:var(--surface);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+blockquote p{margin:0}
+.hl-blue{border-left:4px solid var(--accent);background:rgba(74,143,224,.08);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.hl-amber{border-left:4px solid var(--amber);background:rgba(210,153,34,.08);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.hl-green{border-left:4px solid var(--green);background:rgba(63,185,80,.08);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.hl-red{border-left:4px solid var(--red);background:rgba(248,81,73,.08);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.hl-blue p,.hl-amber p,.hl-green p,.hl-red p{margin:0}
+hr{border:none;border-top:1px solid var(--border);margin:2em 0}
+.toc{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin:2em 0}
+.toc h3{margin:0 0 .8em;padding-left:0;border:none;font-size:1.1rem}
+.toc ul{list-style:none;padding:0;margin:0}
+.toc li{margin:.4em 0}
+.toc a{color:var(--muted);font-size:.9rem}
+.toc a:hover{color:var(--accent)}
+.src-list{list-style:none;padding:0}
+.src-list li{padding:8px 0;border-bottom:1px solid var(--border2);font-size:.88em}
+.src-list li:last-child{border-bottom:none}
+.src-num{color:var(--accent);font-weight:600;display:inline-block;width:2em}
+.src-url{color:var(--muted);font-family:var(--font-mono);font-size:.82em;word-break:break-all}
+.src-desc{color:var(--fg2);margin-top:2px}
+@media(max-width:768px){
+  .container{padding:24px 16px 60px}
+  h1{font-size:1.5rem}
+  h2{font-size:1.3rem}
+  h3{font-size:1.1rem}
+  table{font-size:.8rem}
+  th,td{padding:6px 8px}
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Google Rapid Storage 深度调研报告</h1>
+<p class="subtitle">副标题：它真的是为 AI 大模型 KV Cache 而生的吗？<br>
+调研日期：2026-07-22 ｜ 状态：<b style="color:var(--amber)">调研草稿 (Draft)</b></p>
+
+<div class="toc">
+<h3>目录</h3>
+<ul>
+<li><a href="#q1">一、核心结论：一句话回答</a></li>
+<li><a href="#q2">二、Google Rapid Storage 是什么？</a></li>
+<li><a href="#q3">三、技术规格与架构</a></li>
+<li><a href="#q4">四、Google 的 KV Cache 存储层级全景</a></li>
+<li><a href="#q5">五、为什么会产生"为 KV Cache 而生"的误解？</a></li>
+<li><a href="#q6">六、Rapid Storage 的真实定位</a></li>
+<li><a href="#q7">七、与竞品的对比分析</a></li>
+<li><a href="#q8">八、分析师与市场观点</a></li>
+<li><a href="#q9">九、时间线与设计逻辑</a></li>
+<li><a href="#q10">十、总结：存储层级视角下的答案</a></li>
+<li><a href="#sources">附录：调研来源清单</a></li>
+</ul>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q1">一、核心结论：一句话回答</h2>
+
+<div class="hl-amber">
+<p><b>不是。</b>Google Rapid Storage（含 Rapid Bucket 和 Rapid Cache）本质上是为 <b>训练数据加载、checkpoint 写入/恢复、推理模型权重冷启动</b> 设计的<b>高性能对象存储层</b>，而非为推理时 KV Cache 的存取而生。</p>
+<p>Google 为 KV Cache 外部化设计的存储方案是 <b>Managed Lustre</b>（并行文件系统，支持 RDMA）和未公开细节的 <b>"Dedicated KV Cache scalable storage subsystem"</b>。</p>
+</div>
+
+<p>但这个"不是"背后，隐藏着一个更有趣的故事：Google 的<b>整个 AI Hypercomputer 存储栈</b>确实是为 KV Cache 经济学而重构的——只是不同层级承担不同的角色。Rapid Storage 解决的是"数据如何快速到达加速器"，而 KV Cache 的外部化需要的是"推理状态如何在节点间共享和快速恢复"。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q2">二、Google Rapid Storage 是什么？</h2>
+
+<p>Google Cloud Storage Rapid 是 Google 在 2026 年 4 月 Next '26 大会上发布的<b>高性能对象存储产品线</b>，基于 Google 内部使用的 Colossus 分布式存储系统（与 Gemini 和 YouTube 共享同一套基础设施）<span class="src-num">[1]</span>。</p>
+
+<p>它包含两个核心产品：</p>
+
+<table>
+<tr><th>产品</th><th>定位</th><th>核心指标</th><th>状态</th></tr>
+<tr><td><b>Rapid Bucket</b></td><td>高性能区域对象存储桶</td><td>==15 TB/s== 带宽<br>==20M== 请求/秒<br>亚毫秒延迟</td><td>GA</td></tr>
+<tr><td><b>Rapid Cache</b></td><td>SSD 读取缓存层（原 Anywhere Cache）</td><td>==2.5 TB/s== 聚合读取吞吐<br>ingest-on-write: checkpoint 恢复加速 ==2.2x==</td><td>GA</td></tr>
+</table>
+
+<p>关键设计特征：</p>
+<ul>
+<li><b>Zonal（区域级）</b>：数据与计算资源同区域放置，消除跨区域带宽费用和延迟</li>
+<li><b>双 API 访问</b>：同时支持高性能 gRPC 和 S3 兼容 API</li>
+<li><b>框架原生集成</b>：与 PyTorch、JAX 深度集成，支持 Cloud Storage FUSE 挂载为本地文件系统</li>
+<li><b>分层命名空间（Hierarchical Namespace）</b>：提供真正的文件系统语义，文件读写 QPS 提升 ==8x==</li>
+</ul>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q3">三、技术规格与架构</h2>
+
+<h3>3.1 Rapid Bucket 性能数据 <span class="src-num">[1]</span><span class="src-num">[2]</span></h3>
+
+<table>
+<tr><th>指标</th><th>Rapid Bucket</th><th>传统对象存储</th><th>提升倍数</th></tr>
+<tr><td>带宽</td><td>==15 TB/s==</td><td>~1-2 TB/s</td><td>==7-15x==</td></tr>
+<tr><td>请求速率</td><td>==20M ops/s==</td><td>~100K ops/s</td><td>==200x==</td></tr>
+<tr><td>Checkpoint 写入</td><td>基准</td><td>基准</td><td>==3.2x== 加速</td></tr>
+<tr><td>Checkpoint 恢复</td><td>基准</td><td>基准</td><td>==5x== 加速</td></tr>
+<tr><td>GPU Blocked Time</td><td>基准</td><td>基准</td><td>==50%== 减少</td></tr>
+<tr><td>数据加载速度</td><td>基准</td><td>基准</td><td>==2.5x== 加速</td></tr>
+</table>
+
+<h3>3.2 Rapid Cache 性能数据 <span class="src-num">[1]</span></h3>
+
+<table>
+<tr><th>指标</th><th>数值</th></tr>
+<tr><td>聚合读取吞吐</td><td>==2.5 TB/s==</td></tr>
+<tr><td>适用场景</td><td>突发工作负载（推理模型加载）</td></tr>
+<tr><td>代码变更要求</td><td>零代码变更（对现有桶透明）</td></tr>
+<tr><td>ingest-on-write</td><td>Checkpoint 恢复 ==2.2x== 加速</td></tr>
+</table>
+
+<h3>3.3 架构层次 <span class="src-num">[3]</span></h3>
+
+<table>
+<tr><th>层级</th><th>产品</th><th>存储类型</th><th>延迟</th><th>容量</th><th>KV Cache 适用性</th></tr>
+<tr><td>L0</td><td>TPU 8i 片上 SRAM</td><td>片上 Vmem</td><td>~ns</td><td>==384 MB/chip==</td><td>==最优==：KV Cache 首选驻留位置</td></tr>
+<tr><td>L1</td><td>TPU 8i HBM</td><td>高带宽内存</td><td>~100 ns</td><td>==288 GB/chip==</td><td>==次优==：KV Cache 主要容量层</td></tr>
+<tr><td>L2</td><td>Managed Lustre</td><td>并行文件系统+RDMA</td><td>亚毫秒</td><td>==80 PB==</td><td>==KV Cache 外部化首选==</td></tr>
+<tr><td>L3</td><td>Rapid Bucket/Cache</td><td>对象存储</td><td>亚毫秒（打开文件）</td><td>==EB 级==</td><td>==不适合 KV Cache==：训练数据/checkpoint/模型权重</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q4">四、Google 的 KV Cache 存储层级全景</h2>
+
+<p>理解 Rapid Storage 与 KV Cache 的关系，需要理解 Google 为推理设计的完整存储层级。官方文档 <span class="src-num">[3]</span> 明确给出了各场景的推荐方案：</p>
+
+<h3>4.1 Google 官方推荐：各存储产品的定位 <span class="src-num">[3]</span></h3>
+
+<table>
+<tr><th>使用场景</th><th>首选方案</th><th>次选方案</th><th>为什么</th></tr>
+<tr><td><b>训练数据准备</b></td><td>Rapid Bucket</td><td>Managed Lustre</td><td>容量 + 吞吐 + 成本效率</td></tr>
+<tr><td><b>Checkpoint 写入/恢复</b></td><td>Managed Lustre</td><td>Rapid Bucket</td><td>亚毫秒延迟 + 并行访问</td></tr>
+<tr><td><b>推理模型权重加载</b></td><td>Rapid Cache / Rapid Bucket</td><td>Managed Lustre</td><td>消除推理冷启动</td></tr>
+<tr><td><b>KV Cache 外部化</b></td><td>==Managed Lustre==</td><td>—</td><td>亚毫秒延迟 + 跨节点拉取</td></tr>
+</table>
+
+<div class="hl-blue">
+<p><b>关键发现</b>：Google Cloud 官方文档明确将 <b>"KV cache offloading"</b> 的首选方案指向 <b>Managed Lustre</b>，而非 Rapid Storage。Managed Lustre 允许不同节点"拉取" KV Cache 并恢复对话，而无需重新处理整个聊天历史。</p>
+</div>
+
+<h3>4.2 Managed Lustre 的 KV Cache 能力 <span class="src-num">[2]</span><span class="src-num">[3]</span></h3>
+
+<table>
+<tr><th>指标</th><th>数值</th></tr>
+<tr><td>吞吐量</td><td>==10 TB/s==（较去年提升 10x）</td></tr>
+<tr><td>容量</td><td>==80 PB==</td></tr>
+<tr><td>延迟</td><td>亚毫秒（通过 RDMA 和 TPUDirect）</td></tr>
+<tr><td>KV Cache TTFT 改善</td><td>==40%== 降低（对比仅用主机内存）</td></tr>
+<tr><td>KV Cache 吞吐改善</td><td>==75%== 提升</td></tr>
+<tr><td>架构</td><td>基于 DDN EXAScaler Lustre</td></tr>
+</table>
+
+<blockquote>
+<p><b>Google Cloud 官方博文引用：</b>"We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache." <span class="src-num">[2]</span></p>
+<p>（我们相信 Google Cloud Managed Lustre 应作为外部 KV Cache 的主要存储解决方案。）</p>
+</blockquote>
+
+<h3>4.3 TPU 8i 的片上 KV Cache 设计 <span class="src-num">[4]</span></h3>
+
+<p>Google 为 KV Cache 优化的真正"主力"不是外部存储，而是 TPU 8i 芯片本身：</p>
+
+<table>
+<tr><th>规格</th><th>TPU 8i</th><th>TPU 8t</th><th>说明</th></tr>
+<tr><td>片上 SRAM (Vmem)</td><td>==384 MB==</td><td>128 MB</td><td>8i 是 8t 的 ==3x==</td></tr>
+<tr><td>HBM 容量</td><td>==288 GB==</td><td>216 GB</td><td>8i 是 8t 的 ==1.33x==</td></tr>
+<tr><td>HBM 带宽</td><td>==8,601 GB/s==</td><td>6,528 GB/s</td><td>8i 是 8t 的 ==1.3x==</td></tr>
+<tr><td>专用引擎</td><td>CAE（集合通信加速）</td><td>SparseCore（嵌入）</td><td>不同负载优化</td></tr>
+<tr><td>网络拓扑</td><td>Boardfly（7 跳）</td><td>3D Torus（16 跳）</td><td>推理 vs 训练</td></tr>
+</table>
+
+<blockquote>
+<p><b>Google TPU 8i 技术深潜引用：</b>"With 3x more on-chip SRAM over the previous generation, TPU 8i can host a larger KV Cache entirely on silicon, significantly reducing the idle time of the cores during long-context decoding." <span class="src-num">[4]</span></p>
+</blockquote>
+
+<p>TPU 8i 的 Pod 级 SRAM 总量：==384 MB × 1,152 chips = 432 GB==。这是 Google 为 KV Cache 设计的"第一道防线"——让 KV Cache 尽可能驻留在最快的存储层级上。</p>
+
+<h3>4.4 "Dedicated KV Cache scalable storage subsystem" <span class="src-num">[5]</span></h3>
+
+<p>在 Next '26 的 AI infrastructure 博客中，Google 还宣布了一个未公开细节的组件：</p>
+
+<blockquote>
+<p>"Dedicated KV Cache scalable storage subsystem" <span class="src-num">[5]</span></p>
+</blockquote>
+
+<p>这个组件在公告中被单独列出，与 TPU 8t/8i、Virgo Network、Managed Lustre 并列。截至调研时（2026-07-22），Google 尚未发布该子系统的技术细节。它很可能是专门用于 KV Cache 外部化的独立存储层，但具体架构未知。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q5">五、为什么会产生"为 KV Cache 而生"的误解？</h2>
+
+<p>这个误解有其合理性——以下是几个导致混淆的因素：</p>
+
+<h3>5.1 同时发布，语境混同</h3>
+<p>Rapid Storage 和 TPU 8i 的 SRAM 扩容在同一场 Next '26 大会上发布，且都被包装在"AI Hypercomputer for the agentic era"叙事中。TPU 8i 的 3x SRAM 确实是为 KV Cache 设计的，但这不意味着 Rapid Storage 也是。</p>
+
+<h3>5.2 "Agentic Era"叙事中的存储重定义</h3>
+<p>Google 官方博文明确指出："During AI inference, storage is the access layer that makes it responsive, acting as the source for the context that AI agents need to be effective." <span class="src-num">[1]</span></p>
+<p>这里的"context"被一些读者理解为 KV Cache，但实际上指的是 Agent 运行时的完整上下文数据（包括历史对话、工具调用结果、系统提示等），其存储方式远不止 KV Cache 一种。</p>
+
+<h3>5.3 命名暗示</h3>
+<p>"Rapid"（快速）这个名字暗示低延迟，容易让人联想到 KV Cache 外部化时对延迟的苛刻要求。但实际上，Rapid 指的是对象存储层级的吞吐量和 IOPS 提升，而非针对 KV Cache 的细粒度随机访问优化。</p>
+
+<h3>5.4 行业趋势的投射</h3>
+<p>2026 年，KV Cache 外部化是整个行业的热点话题（LMCache、Mooncake、NVIDIA 的 KV Cache offload 等）。在这个背景下，任何新发布的"AI 存储"产品都容易被默认解读为"为 KV Cache 而生"。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q6">六、Rapid Storage 的真实定位</h2>
+
+<h3>6.1 训练阶段：数据供给线</h3>
+<p>Rapid Bucket 的核心价值是确保昂贵的 TPU/GPU 不会因为等待数据而闲置：</p>
+<ul>
+<li>==50%== 减少 GPU blocked time（对比传统区域存储）</li>
+<li>==2.5x== 加速数据加载</li>
+<li>Checkpoint 写入 ==3.2x== 加速，恢复 ==5x== 加速</li>
+</ul>
+
+<p>这些指标指向的是<b>训练吞吐量和加速器利用率</b>，而非推理延迟。</p>
+
+<h3>6.2 推理阶段：模型权重分发</h3>
+<p>Rapid Cache 的核心价值是加速推理服务的<b>冷启动</b>：</p>
+<ul>
+<li>将模型权重预热到推理节点同区域的 SSD 缓存中</li>
+<li>==2.5 TB/s== 聚合读取吞吐，消除推理冷启动延迟</li>
+<li>与新发布的 Run:AI Model Streamer for vLLM 集成</li>
+</ul>
+
+<p>这解决的是"模型如何快速加载到 GPU 上"的问题，而非"KV Cache 如何在推理过程中存取"的问题。</p>
+
+<h3>6.3 为什么 Rapid Storage 不适合 KV Cache？</h3>
+
+<div class="hl-red">
+<p><b>架构层面的不匹配：</b></p>
+<ul>
+<li><b>对象存储语义</b>：KV Cache 需要细粒度的随机读写（按 token 索引存取 KV block），而对象存储是大文件顺序读写优化</li>
+<li><b>一致性模型</b>：KV Cache 需要强一致性（推理状态不能丢失或过期），对象存储的最终一致性模型不适合</li>
+<li><b>访问粒度</b>：KV Cache 外部化需要 ~KB 级别的随机读取，对象存储的 ~MB 级别块访问粒度过粗</li>
+<li><b>延迟要求</b>：推理时 KV Cache 的读取延迟直接影响 TTFT，需要亚毫秒级响应，对象存储难以满足</li>
+</ul>
+</div>
+
+<p>相比之下，Managed Lustre 作为 POSIX 并行文件系统，天然支持：</p>
+<ul>
+<li>细粒度文件级随机访问</li>
+<li>跨节点的共享访问（多 worker 可同时读取同一 KV Cache）</li>
+<li>RDMA 直达（绕过 CPU，TPU Direct 直连）</li>
+<li>亚毫秒级延迟</li>
+</ul>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q7">七、与竞品的对比分析</h2>
+
+<table>
+<tr><th>维度</th><th>Google Rapid Storage</th><th>AWS S3 + FSx</th><th>Azure Blob + NetApp</th><th>VAST Data</th></tr>
+<tr><td><b>定位</b></td><td>高性能对象存储</td><td>对象 + 并行文件</td><td>对象 + 企业文件</td><td>AI 专用数据平台</td></tr>
+<tr><td><b>最大吞吐</b></td><td>==15 TB/s==</td><td>~1 TB/s (S3)</td><td>~5 TB/s</td><td>~10+ TB/s</td></tr>
+<tr><td><b>KV Cache 方案</b></td><td>Managed Lustre</td><td>FSx Lustre</td><td>NetApp NFS</td><td>VAST DataStore</td></tr>
+<tr><td><b>与训练框架集成</b></td><td>PyTorch/JAX 原生</td><td>S3 SDK</td><td>REST API</td><td>S3 兼容</td></tr>
+<tr><td><b>TPU 集成</b></td><td>TPUDirect 直连</td><td>N/A</td><td>N/A</td><td>N/A</td></tr>
+<tr><td><b>差异化</b></td><td>Colossus 内部系统下放</td><td>生态最广</td><td>企业特性</td><td>AI 专用硬件</td></tr>
+</table>
+
+<p>Google 的独特优势在于 Colossus 是经过 Gemini 和 YouTube 验证的内部系统，其性能和可靠性已在 Google 自身业务中得到大规模验证。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q8">八、分析师与市场观点</h2>
+
+<h3>8.1 IO Fund 分析 <span class="src-num">[6]</span></h3>
+<p>Beth Kindig（IO Fund 首席技术分析师）的分析聚焦于 TPU 8i 的推理优势，特别是：</p>
+<ul>
+<li>384 MB SRAM 对 KV Cache 的加速作用</li>
+<li>Boardfly 拓扑的 50% 延迟降低</li>
+<li>与 NVIDIA NVL72 的内存一致性对比（331.8 TB vs 20.7 TB）</li>
+</ul>
+<p><b>注意</b>：她的分析中并未将 Rapid Storage 与 KV Cache 直接关联。</p>
+
+<h3>8.2 Blocks & Files 分析 <span class="src-num">[2]</span></h3>
+<p>Chris Mellor 的报道明确区分了 Rapid Storage 和 Managed Lustre：</p>
+<blockquote>
+<p>"Managed Lustre can be used as a shared KV-cache for AI inference, improving performance and economics. It reduced the mean time to first token by more than 40 percent compared to using KV Cache in host memory alone."</p>
+</blockquote>
+<p>Managed Lustre 被定位为共享 KV Cache 方案，而非 Rapid Storage。</p>
+
+<h3>8.3 Stratechery 观点 <span class="src-num">[7]</span></h3>
+<p>Ben Thompson 在 Google Cloud CEO Thomas Kurian 的访谈分析中提到 Rapid Storage 可提供 15 TB/s 吞吐，但同样未将其直接与 KV Cache 关联，而是作为 AI 数据管道的一部分。</p>
+
+<h3>8.4 存储行业分析 <span class="src-num">[8]</span></h3>
+<p>StorageNews 的分析：</p>
+<blockquote>
+<p>"Managed Lustre remains preferable for inference workloads requiring shared KV-cache states, yet Smart Storage dominates dataset selection phases."</p>
+</blockquote>
+<p>明确将 Managed Lustre 定位为共享 KV Cache 的首选，而 Rapid Storage/Smart Storage 用于数据准备阶段。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q9">九、时间线与设计逻辑</h2>
+
+<table>
+<tr><th>时间</th><th>事件</th><th>与 KV Cache 的关联</th></tr>
+<tr><td>2025</td><td>Anywhere Cache（后改名 Rapid Cache）GA</td><td>训练数据缓存，与 KV Cache 无关</td></tr>
+<tr><td>2026 Feb</td><td>Ironwood TPU v7 推理优化首次尝试</td><td>推理专用 TPU 的开端</td></tr>
+<tr><td>2026 Apr</td><td>Next '26: TPU 8t/8i + Rapid Storage + Managed Lustre 10T</td><td><b>TPU 8i SRAM 3x 扩容明确为 KV Cache</b><br>Rapid Storage 定位为训练数据加速</td></tr>
+<tr><td>2026 May</td><td>DDN/Managed Lustre 作为共享 KV Cache 方案推广</td><td>KV Cache 外部化方案明确</td></tr>
+<tr><td>2026 Jul</td><td>GKE + llm-d (CNCF Sandbox) 开源</td><td>分布式推理框架，KV Cache 路由</td></tr>
+</table>
+
+<h3>设计逻辑推演</h3>
+<p>从 Google 的 TPU 设计哲学可以推导出其存储层级的设计逻辑：</p>
+
+<div class="hl-green">
+<p><b>Google 的 KV Cache 策略是"尽可能不上外部存储"：</b></p>
+<ol>
+<li><b>L0 优先</b>：384 MB 片上 SRAM → 让 KV Cache 驻留在最快层级</li>
+<li><b>L1 扩展</b>：288 GB HBM → 单芯片内容纳完整 KV Cache</li>
+<li><b>L2 共享</b>：Managed Lustre → 跨节点共享/恢复 KV Cache</li>
+<li><b>Rapid Storage 的角色</b>：确保训练数据/模型权重/Checkpoint 不成为加速器瓶颈</li>
+</ol>
+</div>
+
+<p>Rapid Storage 解决的是"如何让 TPU/GPU 持续满负荷运转"的问题——这是一个<b>供给端</b>的问题。KV Cache 外部化解决的是"如何让推理状态在节点间高效流转"的问题——这是一个<b>状态管理</b>的问题。两者在 AI Infra 中都是关键组件，但解决的是不同层面的问题。</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="q10">十、总结：存储层级视角下的答案</h2>
+
+<h3>核心结论矩阵</h3>
+<table>
+<tr><th>问题</th><th>答案</th><th>依据</th></tr>
+<tr><td>Rapid Storage 是为 KV Cache 而生吗？</td><td>==不是==</td><td>官方定位：训练数据/checkpoint/模型权重</td></tr>
+<tr><td>Google 有为 KV Cache 设计的存储吗？</td><td>==有==</td><td>Managed Lustre（首选）+ "Dedicated KV Cache subsystem"（未公开）</td></tr>
+<tr><td>TPU 8i 的 3x SRAM 扩容是为 KV Cache 吗？</td><td>==是==</td><td>官方明确："host a larger KV Cache entirely on silicon"</td></tr>
+<tr><td>Rapid Storage 对推理有帮助吗？</td><td>==间接==</td><td>加速模型权重加载（冷启动），但不直接服务 KV Cache</td></tr>
+<tr><td>为什么容易混淆？</td><td>同时发布 + Agentic 叙事 + 行业热点</td><td></td></tr>
+</table>
+
+<h3>一句话总结</h3>
+<div class="hl-blue">
+<p><b>Google Rapid Storage 是 AI 数据管道的"高速公路"，让数据快速到达加速器；而 KV Cache 外部化需要的是"保险箱"——Managed Lustre 提供的共享、持久、细粒度状态存储。两者互补，但不可互相替代。</b></p>
+</div>
+
+<h3>对模型设计者的启示</h3>
+<p>从模型架构设计的角度看 Google 的存储层级设计：</p>
+<ul>
+<li>如果你设计的是 <b>长上下文模型</b>，TPU 8i 的 384 MB SRAM 意味着你可以将模型的 KV Cache 完全驻留在片上，这是比 GPU 方案（HBM 有限，需要 offload）更具优势的架构</li>
+<li>如果你设计的是 <b>Agent 系统</b>，Managed Lustre 的 KV Cache 共享能力意味着多 Agent 可以共享上下文状态，减少重复计算</li>
+<li>Rapid Storage 对你模型设计的<b>直接影响最小</b>——它更多影响的是训练效率和推理部署的冷启动时间</li>
+</ul>
+
+<hr>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="sources">附录：调研来源清单</h2>
+
+<h3>成功访问的来源</h3>
+<ol class="src-list">
+<li><span class="src-num">[1]</span> <b>Google Cloud Blog — Storage innovations to accelerate your AI workloads at Next '26</b><br>
+<span class="src-url">https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements</span><br>
+<span class="src-desc">核心来源：Rapid Bucket/Rapid Cache/Managed Lustre 的官方定位、性能指标、Smart Storage 功能</span>
+</li>
+<li><span class="src-num">[2]</span> <b>Blocks & Files — Google's cloud storage gets faster and smarter for AI</b><br>
+<span class="src-url">https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551</span><br>
+<span class="src-desc">第三方分析：Managed Lustre 作为共享 KV Cache 方案的 40% TTFT 改善、75% 吞吐提升</span>
+</li>
+<li><span class="src-num">[3]</span> <b>Google Cloud Documentation — About storage services for AI and ML workloads</b><br>
+<span class="src-url">https://docs.cloud.google.com/ai-hypercomputer/docs/storage</span><br>
+<span class="src-desc">官方文档：KV cache offloading 首选 Managed Lustre，Rapid Storage 用于训练数据/模型权重</span>
+</li>
+<li><span class="src-num">[4]</span> <b>Google Cloud Blog — TPU 8t and TPU 8i technical deep dive</b><br>
+<span class="src-url">https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive</span><br>
+<span class="src-desc">TPU 8i 架构深潜：384 MB SRAM 3x 扩容为 KV Cache、CAE、Boardfly 拓扑</span>
+</li>
+<li><span class="src-num">[5]</span> <b>Google Cloud Blog — AI infrastructure at Next '26</b><br>
+<span class="src-url">https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26</span><br>
+<span class="src-desc">Next '26 总览：Dedicated KV Cache scalable storage subsystem 被单独列出</span>
+</li>
+<li><span class="src-num">[6]</span> <b>IO Fund — Google TPU v8 vs Nvidia: How Inference Is Rewriting the AI Market</b><br>
+<span class="src-url">https://io-fund.com/ai-stocks/google-tpu-v8-vs-nvidia-inference-rewrites-ai-market</span><br>
+<span class="src-desc">分析师观点：TPU 8i 推理优势、与 NVIDIA NVL72 内存一致性对比</span>
+</li>
+<li><span class="src-num">[7]</span> <b>Stratechery — An Interview with Google Cloud CEO Thomas Kurian</b><br>
+<span class="src-url">https://stratechery.com/2026/an-interview-with-google-cloud-ceo-thomas-kurian-about-the-agentic-moment/</span><br>
+<span class="src-desc">战略分析：Rapid Storage 15 TB/s 在 Agentic AI 语境下的角色</span>
+</li>
+<li><span class="src-num">[8]</span> <b>StorageNews — Rapid cloud storage fixes AI training bottlenecks</b><br>
+<span class="src-url">https://storagenews.top/posts/rapid-cloud-storage-cuts-gpu-idle-time-by-half/</span><br>
+<span class="src-desc">存储行业分析：Managed Lustre 用于 KV Cache，Smart Storage 用于数据选择</span>
+</li>
+</ol>
+
+<h3>访问失败/受限的来源</h3>
+<ol class="src-list" start="9">
+<li><span class="src-num">[9]</span> <b>HPCwire — Google Bolsters AI Hypercomputer</b><br>
+<span class="src-url">https://www.hpcwire.com/2026/04/22/google-bolsters-ai-hypercomputer-with-new-tpu-chips-virgo-interconnect-speedier-lustre/</span><br>
+<span class="src-desc">403 Cloudflare 拦截，无法访问</span>
+</li>
+<li><span class="src-num">[10]</span> <b>Tech Field Day — Google Cloud Presents at AI Infrastructure Field Day 2</b><br>
+<span class="src-url">https://techfieldday.com/appearance/google-cloud-presents-at-ai-infrastructure-field-day-2-2/</span><br>
+<span class="src-desc">搜索结果中提及：Rapid Storage 基于 Cloud Storage Fuse，20M 请求/秒</span>
+</li>
+<li><span class="src-num">[11]</span> <b>IBM Redbooks — Context Without Limits: KV Cache Platform</b><br>
+<span class="src-url">https://www.redbooks.ibm.com/docs/MD260021/MD260021.html</span><br>
+<span class="src-desc">搜索结果中提及：共享存储 KV Cache 基础设施方案</span>
+</li>
+<li><span class="src-num">[12]</span> <b>Google Cloud — Cloud Storage Rapid video (YouTube)</b><br>
+<span class="src-url">https://www.youtube.com/watch?v=EKjCo-0wXao</span><br>
+<span class="src-desc">视频内容，未直接观看</span>
+</li>
+</ol>
+
+<h3>关键搜索查询记录</h3>
+<ol class="src-list" start="13">
+<li><span class="src-num">[13]</span> Google: <code>"Google Rapid Storage" KV Cache TPU AI</code></li>
+<li><span class="src-num">[14]</span> Google: <code>"dedicated KV Cache scalable storage subsystem" google</code></li>
+<li><span class="src-num">[15]</span> Google: <code>google "rapid storage" "kv cache" OR "externalized kv" OR "kv offload" 2026</code></li>
+</ol>
+
+<hr>
+<p style="color:var(--muted);font-size:.85rem;text-align:center;margin-top:40px">
+报告生成时间：2026-07-22 ｜ 基于 Google Cloud 官方文档、技术博客、第三方分析报告<br>
+本报告为调研草稿，关键结论基于官方公开信息交叉验证
+</p>
+
+</div>
+</body>
+</html>
