@@ -1,11 +1,11 @@
 ---
-title: "[Draft] Why I'm Bullish on CXL — A Market Game Theory Perspective"
+title: "Why I'm Bullish on CXL — A Market Game Theory Perspective"
 date: 2026-07-22
 tags: ["CXL", "UALink", "Memory-Pooling", "AI-Inference", "Marvell", "Broadcom", "Interconnect", "Open-Standard"]
 excerpt: "CXL is not just another interconnect protocol. From a market game theory lens, I believe CXL's long-term positioning is structurally underappreciated. Four forces are converging to make CXL the inevitable backbone of open-memory infrastructure."
 ---
 
-# [Draft] Why I'm Bullish on CXL — A Market Game Theory Perspective
+# Why I'm Bullish on CXL — A Market Game Theory Perspective
 
 ## The setup
 
