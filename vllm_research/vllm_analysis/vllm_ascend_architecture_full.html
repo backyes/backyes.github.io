@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vLLM-Ascend 全模块架构分析 · 2026-07-22</title>
+<style>
+:root{
+  --bg:#111317;--fg:#d7dbe0;--fg2:#b4b9c0;--muted:#7d848d;--muted2:#5a6068;
+  --accent:#4a8fe0;--accent-soft:rgba(74,143,224,.12);
+  --surface:#181b20;--surface2:#1f2329;--border:#2a2f37;--border2:#23272e;--callout:#1b2028;
+  --green:#7ee787;--purple:#d2a8ff;--red:#ff7b72;--orange:#ffa657;
+}
+*{box-sizing:grid}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);line-height:1.7;font-family:'Inter',-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif}
+#shell{display:grid;grid-template-columns:240px 1fr;gap:18px;max-width:1300px;margin:0 auto;padding:12px}
+#nav{position:sticky;top:12px;align-self:start;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:.82rem;max-height:90vh;overflow:auto}
+#nav b{font-size:.85rem;display:block;margin-bottom:8px;color:var(--accent)}
+#nav ol{margin:6px 0;padding-left:18px}
+#nav li{margin:2px 0}
+#nav a{color:var(--fg2);text-decoration:none;border-bottom:1px solid transparent;transition:color .15s}
+#nav a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+article{padding:0 10px 80px}
+.topbar{font-size:.82rem;color:var(--muted);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.topbar a{color:var(--accent)}
+h1{font-size:1.55rem;font-weight:600;border-bottom:2px solid var(--accent);padding-bottom:8px;letter-spacing:-.01em;margin:0 0 12px}
+h2{font-size:1.28rem;color:var(--accent);font-weight:600;border-bottom:1px solid var(--border);margin-top:2.2em;padding-bottom:4px}
+h3{font-size:1.06rem;font-weight:600;margin-top:1.4em;color:var(--fg)}
+h4{font-size:.98rem;font-weight:600;margin-top:1.2em;color:var(--fg2)}
+p,li{font-size:.94rem}
+code{background:var(--surface2);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.84em;font-family:'JetBrains Mono',monospace}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;overflow-x:auto;font-size:.82em;line-height:1.55}
+pre code{background:none;border:none;padding:0}
+blockquote{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-size:.92rem}
+table{border-collapse:collapse;margin:12px 0;width:100%;font-size:.88rem}
+th,td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--surface);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+tr:nth-child(even) td{background:rgba(24,27,32,.3)}
+tr:hover td{background:rgba(74,143,224,.06)}
+.tag{display:inline-block;background:var(--accent);color:#fff;font-size:65%;padding:1px 6px;border-radius:9px;margin-right:5px;font-weight:500}
+.srcband{background:var(--callout);border-left:3px solid var(--accent);padding:6px 14px;margin:0 0 14px;font-size:.82rem;border-radius:0 6px 6px 0}
+.src{color:var(--muted);font-size:.78rem;margin-left:8px}
+.callout{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:12px 0;font-size:.9rem;border-radius:0 6px 6px 0}
+.pbox{border-left:4px solid var(--green);background:var(--callout);padding:10px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.warn{border-left:4px solid var(--red);background:var(--callout);padding:10px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.insight{border-left:4px solid var(--purple);background:var(--callout);padding:10px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.inv{background:var(--surface);border-left:4px solid var(--accent);padding:10px 16px;margin:14px 0;font-style:italic;border-radius:0 6px 6px 0}
+.key-num{color:var(--accent);font-size:1.3em;font-weight:700}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:940px){
+  body{max-width:100vw!important;overflow-x:hidden!important}
+  #shell{grid-template-columns:1fr!important;padding:8px!important;max-width:100%!important}
+  #nav{position:static!important;max-height:none!important;font-size:.8rem!important}
+  article{padding:0 0 60px!important}
+  h1{font-size:1.3rem!important}
+  h2{font-size:1.1rem!important}
+  table{font-size:.76rem!important;display:block!important;overflow-x:auto!important}
+  th,td{padding:4px 6px!important}
+  pre{padding:8px!important;font-size:.74em!important;white-space:pre-wrap!important;word-break:break-word!important}
+  code{word-break:break-word!important;font-size:.78em!important}
+  .grid2,.grid3{grid-template-columns:1fr!important}
+}
+</style>
+</head>
+<body>
+<div id="shell">
+
+<nav id="nav">
+<b>vLLM-Ascend 全模块架构分析</b>
+<div style="font-size:.75rem;color:var(--muted2);margin-bottom:8px">2026-07-22 · 6 agent 综合</div>
+<ol>
+<li><a href="#s_0">0. Executive Summary</a></li>
+<li><a href="#s_1">1. 为什么要 vllm_ascend</a></li>
+<li><a href="#s_2">2. 五个核心设计问题</a></li>
+<li><a href="#s_3">3. 工程关键挑战</a></li>
+<li><a href="#s_4">4. 软件架构：6 层 Overlay</a></li>
+<li><a href="#s_5">5. Platform + Device + 310P</a></li>
+<li><a href="#s_6">6. Attention 全栈 5 变体</a></li>
+<li><a href="#s_7">7. Scheduler + Core 创新</a></li>
+<li><a href="#s_8">8. 分布式 + KV 传输 + EPLB</a></li>
+<li><a href="#s_9">9. 编译 + ACL Graph + Pass</a></li>
+<li><a href="#s_10">10. 模型 + 量化 + Ops + Patch</a></li>
+<li><a href="#s_11">11. 横向架构评估</a></li>
+<li><a href="#s_12">12. References &amp; File Index</a></li>
+</ol>
+</nav>
+
+<article>
+<div class="topbar">📘 vLLM-Ascend 架构 · <a href="index.html">home</a> · <a href="vllm_architecture_unified.html">unified vLLM report</a> · <a href="hbm_index_architecture.html">HBM index</a></div>
+
+<h1>vLLM-Ascend 全模块源码架构分析</h1>
+<p style="font-size:1.02rem;color:var(--muted)">一份覆盖 <b>442 文件 / 127k 行</b> 的全模块深度分析。围绕 5 个核心问题：为什么要 vllm_ascend、设计要解决什么问题、工程关键挑战、软件架构设计、与 upstream vLLM 的关系。由 6 个 agent 并行切片深读后综合。</p>
+
+<!-- ===== §0 Executive Summary ===== -->
+<h2 id="s_0">0. Executive Summary — 5 条 Headline Facts</h2>
+
+<div class="pbox">
+<p><b>Headline 1</b> — vllm_ascend 不是"后端适配"，而是 <b>6 层 overlay</b>：Platform 子类 → Config injection → Monkey-patch → Worker 子类 → Device Op Adaptor → Custom Ops/Compile Backend。核心哲学：<b>extension not fork</b>。</p>
+</div>
+<div class="pbox">
+<p><b>Headline 2</b> — NPU 与 GPU 在 <b>6 个维度不可调和</b>：全局 init-once 约束、无 device capability 概念、4 种芯片变体（A2/A3/310P/A5）算子语义不同、ACL Graph vs CUDA Graph、HCCL vs NCCL、Sleep 模式 + CPU 绑定。</p>
+</div>
+<div class="insight">
+<p><b>Headline 3</b> — <b>EPLB 是 Ascend 对 vLLM 唯一净新增子系统</b>：五层流水线（updator → worker 子进程 → policy → D2D loader → adaptor），FlashLB 用 μ+z·σ 风险调整 + depth=4 树搜索 + LPT + Hungarian 最小化迁移。零 upstream 修改。</p>
+</div>
+<div class="pbox">
+<p><b>Headline 4</b> — <b>KV 传输已从 cache 进化为 memory tier</b>：L1 HBM P2P（Mooncake RDMA）→ L2 跨节点 Pool（Ascend Store, 三后端）→ L3 NVMe SSD offload。对应 OS cache→DRAM→swapfile 同构。</p>
+</div>
+<div class="pbox">
+<p><b>Headline 5</b> — <b>5 种 Attention 变体 = 模型结构 × NPU 硬件特性</b> 的笛卡尔积：FIA（标准 paged）、MLA（latent absorption）、DSA（indexer+compressor+SWA 三级缓存）、SFA（block-sparse + 独立 indexer cache）、FA3（第三方旁路）。<code>update_graph_params()</code> 是 NPU full-graph replay 的硬需求。</p>
+</div>
+
+<h3>0.2 分析覆盖范围</h3>
+<table>
+<tr><th>Agent</th><th>模块切片</th><th>文件数</th><th>行数</th><th>核心发现</th></tr>
+<tr><td>A1</td><td>Platform + Device + 310P</td><td>~45</td><td>~12000</td><td>6 层 overlay、310P 6659 行不可参数化、patch 三层体系</td></tr>
+<tr><td>A2</td><td>Attention 全栈</td><td>~18</td><td>~13000</td><td>5 变体、DSA index→paged 链路、update_graph_params 架构税</td></tr>
+<tr><td>A3</td><td>Scheduler + Core</td><td>~6</td><td>~4500</td><td>Roofline 决定 recompute、PP 气泡消除、mixin 注入</td></tr>
+<tr><td>A4</td><td>分布式 + KV + EPLB</td><td>~35</td><td>~20000</td><td>EPLB 原创、KV memory tier 三级、HCCL shim</td></tr>
+<tr><td>A5</td><td>编译 + ACL Graph</td><td>~12</td><td>~2500</td><td>Full replay ≠ CUDA Graph、70+ pass 双后端</td></tr>
+<tr><td>A6</td><td>模型 + Quant + Ops + Patch</td><td>~120</td><td>~37000</td><td>三目录量化、33 patch、Xlite 图运行时、MoE 动态路由</td></tr>
+</table>
+
+<!-- ===== §1 为什么要 vllm_ascend ===== -->
+<h2 id="s_1">1. 为什么要 vllm_ascend — NPU 与 GPU 的 6 维不可调和差异</h2>
+<div class="srcband"><span class="tag">§1</span><b>硬件差异根因</b><span class="src">source: agent1 §1 + agent2 §2 + agent5 §1</span></div>
+
+<h3>1.1 全局 init-once 约束 vs 可重入初始化</h3>
+<p>GPU 的 <code>cudaMemGetInfo</code> 是可重入的；NPU 的 <code>torch_npu</code> 全局状态机只允许一次初始化。<code>platform.py:275</code> 的 <code>get_device_total_memory</code> 被迫 <code>raise NotImplementedError</code>——不是"值不同"，而是"调用时机有有毒副作用"。</p>
+
+<h3>1.2 Device capability 模型不存在</h3>
+<p>GPU 用 <code>(major, minor)</code> 标识计算能力（sm80 vs sm90），vLLM 据此分派 kernel。NPU 没有这层概念——<code>platform.py:244</code> 返回 <code>None</code>。芯片变体通过 <code>AscendDeviceType</code> 枚举区分（A2/A3/_310P/A5），capability 对上层透明。</p>
+
+<h3>1.3 四种芯片变体 = 四种算子语义空间</h3>
+<table>
+<tr><th>芯片</th><th>MoE Routing</th><th>Attention</th><th>内存模型</th><th>权重布局</th></tr>
+<tr><td>A2 (910B)</td><td>npu_moe_init_routing</td><td>FIA kernel</td><td>标准 HBM</td><td>ND</td></tr>
+<tr><td>A3 (910C)</td><td>npu_moe_init_routing</td><td>FIA (不同 CANN)</td><td>标准 HBM</td><td>ND</td></tr>
+<tr><td>310P (300I DUO)</td><td>AllGather-based</td><td>KV-quantized sparse</td><td>RC 共享内存</td><td>NZ (fractal_z)</td></tr>
+<tr><td>A5 (950, 2026)</td><td>routing_v2 (dtype 透传)</td><td>A5 FIA variant</td><td>标准 HBM</td><td>ND</td></tr>
+</table>
+
+<h3>1.4 图执行：ACL Graph vs CUDA Graph</h3>
+<div class="warn">
+<p><b>核心差异</b>：CUDA Graph 是"录制-回放"模型（replay 零 host 介入）；ACL Graph 是<b>"录制-参数更新-回放"</b>模型。NPU attention 的 block_table/seq_len 无法 capture 时固化，必须通过 <code>update_graph_params()</code> 在 replay 前逐 layer 显式更新。</p>
+</div>
+
+<h3>1.5 通信：HCCL vs NCCL</h3>
+<p>三个本质差异：进程组绑定（HCCL 需显式 <code>torch.npu.device</code> 上下文）、AllReduce stream 转换（<code>pyhccl.py:186</code> 封装）、UniqueId 分发（HCCL 需显式 broadcast）。</p>
+
+<h3>1.6 NPU 独有特性：Sleep 模式 + CPU 绑定</h3>
+<p>GPU 显存独占不需要腾挪。NPU 在多租户/RL 场景需要 sleep/wakeup 让出显存（<code>sleep_mem_optimized.py</code>：ACL graph + HCCL 双层释放/恢复）。HCCL 依赖 host-side PCIe 拓扑亲和，CPU 绑定对性能敏感（<code>cpu_binding.py</code>：3 种模式 + A5 UVB poll window）。</p>
+
+<div class="inv">结论：vllm_ascend 不是"vLLM 的 NPU 后端"，而是一个完整 overlay——6 层适配覆盖 Platform 到 Custom Ops 的全栈。</div>
+
+<!-- ===== §2 五个核心设计问题 ===== -->
+<h2 id="s_2">2. vllm_ascend 要解决的 5 个核心设计问题</h2>
+<div class="srcband"><span class="tag">§2</span><b>设计问题</b><span class="src">source: agent1-6 §2 综合</span></div>
+
+<h3>2.1 设计问题 1：Platform 接口的"承诺 vs 能力" mismatch</h3>
+<p>vLLM 的 <code>VllmConfig</code> 是 GPU 中心的配置空间。NPU 必须在 init 早期做一次配置翻译——<code>_fix_incompatible_config</code>（<code>platform.py:1025-1243</code>）系统性清除 <b>10 个配置域、30+ GPU 专用参数</code>（cascade_attn / cpu_kvcache / nvtx_tracing / nsight / partial_prefills / flash_attn_version 等）。<code>check_and_update_config</code>（360 行 14 步）是枢纽。</p>
+
+<h3>2.2 设计问题 2：为什么需要 5 种 Attention 变体</h3>
+<p>"模型结构 × NPU 硬件特性"的笛卡尔积。MLA 的 KV cache 存 latent <code>[num_blocks, block_size, kv_lora_rank]</code>；DSA 叠加 compressor + indexer + SWA 三级缓存；SFA 的 indexer 是独立虚拟 AttentionLayer。每种变体的 <code>get_kv_cache_shape()</code> 返回不同 shape，物理分配无法统一。</p>
+
+<h3>2.3 设计问题 3：NPU Roofline 决定 Scheduler 策略</h3>
+<p>NPU 算力/带宽比（~200-267 FLOPS/byte）显著高于 GPU（~156-295），使得 <code>cost(recompute) &lt; cost(swap)</code>。RecomputeScheduler 把 preemption 从"swap to CPU"改为"drop-and-recompute"。ProfilingChunkScheduler 用二次公式 <code>a·x²+(2aL+b)·x=T</code> 解出等时 chunk 大小，消除 PP 气泡。</p>
+
+<h3>2.4 设计问题 4：KV Cache 从 cache 进化为 Memory Tier</h3>
+<p>PD 分离场景下多对多 KV 共享需求迫使引入 Pool 路径（Ascend Store）。三级 tier：L1 HBM P2P → L2 跨节点 Pool（Mooncake/Memcache/Yuanrong 三后端）→ L3 NVMe SSD offload。与 OS cache→DRAM→swapfile 同构。</p>
+
+<h3>2.5 设计问题 5：MoE Expert 负载不均衡</h3>
+<p>DeepSeek-V3/R1 的 routed expert 引入负载不均衡——hot expert 所在 NPU 成为瓶颈。EPLB 在推理阶段动态调整 expert 到 NPU 的物理映射：把 hot expert 复制到多个 NPU，让 gate 路由到空闲副本。这是 Ascend 对 vLLM 生态的<b>唯一净新增子系统</b>。</p>
+
+<!-- ===== §3 工程关键挑战 ===== -->
+<h2 id="s_3">3. 工程实现的关键挑战</h2>
+<div class="srcband"><span class="tag">§3</span><b>工程挑战</b><span class="src">source: agent1 §3 + agent3 §3 + agent4 §3 + agent6 §3 综合</span></div>
+
+<h3>3.1 310P 变体的 6659 行独立代码</h3>
+<p>5 个不可参数化的差异迫使独立子类：</p>
+<ul>
+<li><b>无 Triton</b>（Atlas 300I DUO 不支持）→ CPU numpy slot_mapping + copy_to_gpu</li>
+<li><b>RC 共享内存</b>（host/device 共享物理内存）→ <code>get_device_total_memory</code> 语义不存在</li>
+<li><b>5D KV cache</b>（head_dim 按 16 对齐切分）→ 独立 attention 实现</li>
+<li><b>NZ 权重布局</b>（fractal_z 格式 + transpose）→ 独立 fused_moe</li>
+<li><b>CPU RNG sampler</b>（无 Triton）→ 独立 sample 路径</li>
+</ul>
+<p><code>is_310p()</code> 在全库被调用 30+ 次，形成隐式分派网——<b>可维护性瓶颈</b>。增加第 5 种芯片变体必须在所有分派点添加新分支。</p>
+
+<h3>3.2 Patch 系统的工程约束</h3>
+<div class="warn">
+<p>vLLM 在 engine-core 子进程加载 plugin，E2E test conftest hook 不运行。全局 patch 必须在 plugin 入口点内部自举——<code>_GLOBAL_PATCH_APPLIED</code> 一次性语义 + <code>_ensure_global_patch()</code> 在 4 个入口调用。28 + 25+ 子模块覆盖 vLLM 内部 GPU 硬编码路径。</p>
+</div>
+<p>33 个 patch 文件遵循"Less is more / 写移除计划 / 随时清理"三原则，通过 <code>vllm_version_is()</code> / <code>is_310p()</code> 条件导入实现版本隔离。</p>
+
+<h3>3.3 量化方案选择的工程逻辑</h3>
+<table>
+<tr><th>场景</th><th>方案</th><th>原因</th></tr>
+<tr><td>MoE 模型</td><td>W4A8_DYNAMIC</td><td>INT4 pack + EPLB 兼容</td></tr>
+<tr><td>Dense 模型</td><td>W8A8_DYNAMIC</td><td>INT8 精度/性能平衡</td></tr>
+<tr><td>极端压缩 (EP off)</td><td>W4A4_FLATQUANT / LAOS</td><td>NZ 格式约束排除</td></tr>
+<tr><td>PD 分离</td><td>W8A8_MIX (PDMix)</td><td>Prefill dynamic + Decode static</td></tr>
+<tr><td>OCP 标准</td><td>MXFP4 / MXFP8</td><td>E8M0 scale dtype</td></tr>
+</table>
+<p><b>W4A4∧EPLB 不兼容</b>：W4A4 权重被 pack 成 int4pack 格式，无法运行时按 expert 粒度拆分（<code>w4a4_flatquant.py:161</code>）。</p>
+
+<h3>3.4 EPLB 的跨进程设计</h3>
+<p>FlashLB 的 numba JIT 编译 + 树搜索耗时可达数十 ms，不能阻塞 forward pipeline。EplbProcess 跑在独立子进程中，通过 <code>Manager().dict()</code> 做跨进程数据交换。三段式状态机：Heat Collection (600 步) → Algorithm Execution (50 步) → Weight Update (逐层 D2D)。</p>
+
+<h3>3.5 ACL Graph 的精细工程</h3>
+<ul>
+<li><b>GC 禁用</b>：piecewise 模式下每层 capture 一个 graph，反复 gc 极慢</li>
+<li><b>ExternalEvent 排序</b>：graph stream 等待 host update_stream 上的 metadata 写入完成</li>
+<li><b>weak_ref 内存优化</b>：capture 后立即释放 output 和 workspaces 强引用</li>
+<li><b>双后端编译</b>：npugraph_ex（首选）vs torch._inductor + fusion_pass_compile（fallback）</li>
+</ul>
+
+<!-- ===== §4 软件架构设计 ===== -->
+<h2 id="s_4">4. 软件架构设计 — 6 层 Overlay 模型</h2>
+<div class="srcband"><span class="tag">§4</span><b>架构总览</b><span class="src">source: agent1 §5 + agent4 §5 综合</span></div>
+
+<h3>4.1 六层 Overlay 架构</h3>
+<table>
+<tr><th>层</th><th>机制</th><th>关键文件</th><th>哲学</th></tr>
+<tr><td>1. Platform 子类</td><td>NPUPlatform(Platform) override</td><td><code>platform.py</code></td><td>接口承诺 → 设备能力 translators</td></tr>
+<tr><td>2. Config injection</td><td>AscendConfig 单例 + additional_config</td><td><code>ascend_config.py</code></td><td>运行时翻译，不修改 VllmConfig 类</td></tr>
+<tr><td>3. Monkey-patch</td><td>import 时替换 vLLM 内部函数/类</td><td><code>patch/platform/ patch/worker/</code></td><td>覆盖 GPU 硬编码路径</td></tr>
+<tr><td>4. Worker 子类</td><td>worker_cls 字符串注入</td><td><code>worker/ _310p/ xlite/</code></td><td>vLLM 原生扩展点</td></tr>
+<tr><td>5. Device Op Adaptor</td><td>运行时多态分派</td><td><code>device_op.py</code></td><td>策略模式：Base/A5/310P</td></tr>
+<tr><td>6. Custom Ops + Compile</td><td>oot_compiler + ACL Graph</td><td><code>compilation/ ops/</code></td><td>AscendCompiler + 70+ pass</td></tr>
+</table>
+
+<h3>4.2 为什么是"extension not fork"</h3>
+<ul>
+<li><code>NPUPlatform</code> 继承 <code>Platform</code>（不复制修改）</li>
+<li><code>_fix_incompatible_config</code> 只重置不存在的参数，不添加新字段到 VllmConfig</li>
+<li><code>register()</code> 返回字符串路径——vLLM 主仓完全不知道 NPU 存在</li>
+<li><code>AscendConfig</code> 挂在 <code>additional_config</code> 上</li>
+<li><code>worker_cls</code> 是 vLLM 原生扩展点</li>
+<li>EPLB 全部通过 <code>if self.dynamic_eplb:</code> 条件分支注入</li>
+</ul>
+
+<h3>4.3 五种适配机制分类学</h3>
+<table>
+<tr><th>机制</th><th>示例</th><th>使用场景</th><th>overlay 侵入性</th></tr>
+<tr><td><b>Subclass</b></td><td>NPUPlatform, NPUWorker, AscendMLAImpl</td><td>接口明确、差异面的关键路径</td><td>低</td></tr>
+<tr><td><b>Custom Op</b></td><td>ops/fused_moe/ 完全重写</td><td>NPU 通信/计算路径完全不同</td><td>中</td></tr>
+<tr><td><b>Config Injection</b></td><td>AscendConfig → additional_config</td><td>新增配置维度</td><td>最低</td></tr>
+<tr><td><b>Monkey-patch</b></td><td>patch/worker/patch_deepseek_mtp.py</td><td>小幅修改现有类</td><td>中（技术债）</td></tr>
+<tr><td><b>Full Rewrite</b></td><td>ops/fused_moe/moe_mlp.py</td><td>GMM+SwiGLU 融合路径</td><td>高（仅限独立模块）</td></tr>
+</table>
+
+<!-- ===== §5 Platform + Device + 310P ===== -->
+<h2 id="s_5">5. Platform + Device + 310P 变体</h2>
+<div class="srcband"><span class="tag">§5</span><b>硬件抽象层</b><span class="src">source: agent1 全量</span></div>
+
+<h3>5.1 入口与注册体系</h3>
+<p><code>vllm_ascend/__init__.py</code> 定义 5 个注册入口：<code>register()</code>（Platform）、<code>register_connector()</code>（KV + weight connector）、<code>register_model_loader()</code>（netloader/rforkloader）、<code>register_service_profiling()</code>、<code>register_model()</code>。除 <code>register()</code> 和 <code>register_model()</code> 外，其余都在调用前触发 <code>_ensure_global_patch()</code>。</p>
+
+<h3>5.2 worker_cls 三路分派</h3>
+<pre><code># platform.py:612-623
+if is_310p():
+    worker_cls = "vllm_ascend._310p.worker_310p.NPUWorker310"
+elif ascend_config.xlite_graph_config.enabled:
+    worker_cls = "vllm_ascend.xlite.xlite_worker.XliteWorker"
+else:
+    worker_cls = "vllm_ascend.worker.worker.NPUWorker"</code></pre>
+
+<h3>5.3 Device Op Adaptor 策略模式</h3>
+<p><code>device_op.py:1964</code> 的 <code>get_device_adaptor()</code> 在运行时根据芯片类型返回 BaseDeviceAdaptor / A5DeviceAdaptor / Ascend310PDeviceAdaptor。三种 adaptor 覆盖 20+ 个算子接口（attention score、MoE routing、softmax 等）。</p>
+
+<h3>5.4 Sleep 内存优化三层管理</h3>
+<p><code>SleepWakeupManager</code>（<code>sleep_mem_optimized.py:34</code>）组合：</p>
+<ul>
+<li><code>AclGraphSleepWakeupManager</code>：释放 attention workspace、重置 graph params、清空 graph pool</li>
+<li><code>HcclSleepWakeupManager</code>：destroy HCCL process groups（释放通信显存）</li>
+<li><code>CaMemAllocator</code>（<code>camem.py</code>）：CANN-mem pluggable allocator，按 tag 选择性 offload</li>
+</ul>
+
+<!-- ===== §6 Attention 全栈 ===== -->
+<h2 id="s_6">6. Attention 全栈 — 5 种变体 + Context Parallel</h2>
+<div class="srcband"><span class="tag">§6</span><b>Attention 变体</b><span class="src">source: agent2 全量</span></div>
+
+<h3>6.1 5 种变体的唯一职责</h3>
+<table>
+<tr><th>变体</th><th>唯一职责</th><th>对应模型</th><th>核心算法</th><th>update_graph_params</th></tr>
+<tr><td><b>FIA (attention_v1)</b></td><td>标准 paged attention via NPU FIA kernel</td><td>Qwen/LLaMA/Mixtral</td><td>npu_fused_infer_attention_score + C8 INT8 KV</td><td>✅ 完整实现</td></tr>
+<tr><td><b>MLA (mla_v1)</b></td><td>Latent absorption：存 latent，decode 时 up-project</td><td>DeepSeek-V2/V3/R1</td><td>chunked prefill workspace + kv_b_proj</td><td>✅ 完整实现</td></tr>
+<tr><td><b>DSA (dsa_v1)</b></td><td>Dynamic Sparse Attention：indexer+compressor+SWA 三级缓存</td><td>DeepSeek-V4</td><td>QLI topk → compressor → dsa_sparse_attn</td><td>❌ 空 pass</td></tr>
+<tr><td><b>SFA (sfa_v1)</b></td><td>Sparse Flash Attention：indexer 独立 cache + block-sparse</td><td>DeepSeek-V3.2</td><td>npu_sparse_flash_attention</td><td>❌ 空 pass</td></tr>
+<tr><td><b>FA3 (fa3_v1)</b></td><td>第三方 flash_attn_npu_v3 包装</td><td>实验性</td><td>flash_attn_with_kvcache (纯 eager)</td><td>N/A</td></tr>
+</table>
+
+<h3>6.2 DSA index → paged attention 数据流</h3>
+<pre><code>hidden_states
+  ├─ _mla_prolog_multistream() → q, qr (dual-stream overlap)
+  ├─ _indexer_qkv_prepare() → indexer QKV
+  │     └─ npu_quant_matmul + inplace_partial_rotary_mul + hadamard rotate
+  ├─ compressor() → compressed_kv + compress_slot_mapping
+  ├─ _indexer_qli() → topk_indices
+  │     └─ npu_vllm_quant_lightning_indexer(layout_key="PA_BSND")
+  │        ← 直接在 paged block 上做 score 计算
+  └─ dsa_sparse_attn(q, ori_kv, sparse_count=index_topk)</code></pre>
+
+<div class="insight">
+<p><b>IndexCache 优化</b>：DSA 的 <code>index_topk_pattern</code>（如 "FSSF"）控制哪些层运行 indexer，哪些层复用前层 topk。indexer 是计算密集型 kernel（全量 KV block 上算 score），跳过非必要层可降低 30-50% decode latency。算法-硬件协同设计范例。</p>
+</div>
+
+<h3>6.3 Context Parallel：NPU ≠ GPU Ring-Attention</h3>
+<table>
+<tr><th>维度</th><th>GPU Ring-Attention</th><th>NPU Ascend CP</th></tr>
+<tr><td>KV 分布</td><td>环形轮转，每 rank 存 1/N</td><td>每 rank 存 full KV（AllGather 获取）</td></tr>
+<tr><td>通信模式</td><td>环形 P2P send/recv</td><td>AllGather (PCP) + All-to-All (DCP)</td></tr>
+<tr><td>输出合并</td><td>reduce-scatter</td><td>AllGather out+lse + online softmax merge</td></tr>
+</table>
+
+<h3>6.4 Registry / Dispatch 机制</h3>
+<p>不是 subclass polymorphism，是 <b>registry pattern</b>：<code>platform.py:791</code> 的 <code>backend_map</code> 根据 <code>(use_mla, use_sparse, use_compress)</code> 三元组查表返回 backend 类路径。CP 是 backend 的透明扩展——<code>get_impl_cls()</code> 内部通过 <code>enable_cp()</code> 开关返回 CP 变体，上层无感。</p>
+
+<!-- ===== §7 Scheduler + Core ===== -->
+<h2 id="s_7">7. Scheduler + Core — 三种调度创新</h2>
+<div class="srcband"><span class="tag">§7</span><b>调度器创新</b><span class="src">source: agent3 全量</span></div>
+
+<h3>7.1 三种 Scheduler 对比</h3>
+<table>
+<tr><th>维度</th><th>RecomputeScheduler</th><th>ProfilingChunkScheduler</th><th>SRF (mixin)</th></tr>
+<tr><td><b>解决的问题</b></td><td>NPU 带宽紧时 preemption 代价过高</td><td>PP 流水线气泡（attention O(n²)）</td><td>长请求饿死短请求</td></tr>
+<tr><td><b>核心算法</b></td><td>drop-and-recompute（free blocks）</td><td>二次公式 a·x²+(2aL+b)·x=T</td><td>三路队列 + aging</td></tr>
+<tr><td><b>roofline 依据</b></td><td>NPU 算力强带宽紧</td><td>attention FLOPS ∝ seq_len²</td><td>SLA 公平性</td></tr>
+<tr><td><b>对 upstream 改动</b></td><td>preempt 分支 + SchedulerOutput 加 2 字段</td><td>time_budget 维度叠加</td><td>3 个 override 方法</td></tr>
+<tr><td><b>关键文件:行</b></td><td>recompute_scheduler.py:316-340</td><td>scheduler_profiling_chunk.py:261-307</td><td>short_request_first_scheduler.py:419-435</td></tr>
+</table>
+
+<h3>7.2 三种挂载点</h3>
+<table>
+<tr><th>挂载点</th><th>侵入性</th><th>适用场景</th><th>示例</th></tr>
+<tr><td>scheduler_cls 字符串替换</td><td>低</td><td>整个 scheduler 类替换</td><td>ProfilingChunkScheduler</td></tr>
+<tr><td>SchedulerConfig 整体替换</td><td>中</td><td>新 scheduler + 新 config 字段</td><td>RecomputeSchedulerConfig</td></tr>
+<tr><td>Mixin 注入</td><td>低</td><td>修改部分调度策略</td><td>ShortRequestFirstSchedulerMixin</td></tr>
+</table>
+
+<div class="inv">
+<p><b>关键约束</b>：RecomputeScheduler 和 ProfilingChunkScheduler 互斥（都替换 scheduler_cls）。SRF 通过 mixin 注入 RecomputeScheduler。三套 scheduler 通过 <code>platform.py:648-690</code> 的枢纽逻辑选择。</p>
+</div>
+
+<!-- ===== §8 分布式 + KV 传输 + EPLB ===== -->
+<h2 id="s_8">8. 分布式通信 + KV 传输 + EPLB</h2>
+<div class="srcband"><span class="tag">§8</span><b>多节点子系统</b><span class="src">source: agent4 全量</span></div>
+
+<h3>8.1 通信层架构</h3>
+<p><code>PyHcclCommunicator</code>（<code>pyhccl.py:37</code>）是轻量 shim：ctypes 加载 <code>libhccl.so</code>，构造时 rank 0 生成 UniqueId、broadcast 给所有 rank。<code>NPUCommunicator</code>（<code>npu_communicator.py:23</code>）暴露 vLLM 兼容接口。<code>all2all_manager</code> 是 no-op stub——NPU 用 MC2 + all_gather 走 MoE 通信。</p>
+
+<h3>8.2 KV 传输三级 Memory Tier</h3>
+<table>
+<tr><th>Tier</th><th>实现</th><th>后端</th><th>传输模型</th></tr>
+<tr><td>L1 HBM P2P</td><td>MooncakeConnector (3552L)</td><td>Mooncake TransferEngine</td><td>Decode 端 pull (RDMA read)</td></tr>
+<tr><td>L2 Cross-node Pool</td><td>AscendStoreConnector (328L)</td><td>Mooncake / Memcache / Yuanrong</td><td>Put/Get 全局对象存储</td></tr>
+<tr><td>L3 NVMe SSD</td><td>enable_ssd_offload</td><td>Mooncake SSD spill</td><td>冷 KV 自动 spill/load</td></tr>
+</table>
+
+<h3>8.3 EPLB 五层流水线</h3>
+<pre><code>EplbUpdator (主进程)
+  ├─ forward_before(): 取 update_info → D2D 异步启动
+  ├─ forward_end(): gather load → wakeup worker
+  │
+  ├─ [shared_dict] → EplbProcess (子进程)
+  │     └─ EplbWorker.do_update()
+  │           ├─ fetch load_info
+  │           ├─ policy.rebalance_experts() → 新 placement
+  │           └─ compose_expert_update_info_greedy()
+  │
+  ├─ [Queue] → D2DExpertWeightLoader
+  │     └─ generate_expert_d2d_transfer_task()
+  │     └─ asyn_expert_weight_transfer()
+  │
+  └─ VllmEplbAdaptor
+        └─ 注册 MoE layer + 管理 expert_param</code></pre>
+
+<h3>8.4 FlashLB 算法（type=3，生产级）</h3>
+<ol>
+<li><b>统计建模</b>：μ + z·√σ 风险调整负载（z=0.674 对应 75% 置信度）</li>
+<li><b>树搜索</b>：depth=4 层，neighbor_search width=8 局部搜索</li>
+<li><b>LPT 部署</b>：greedy 放到 risk 最低 device</li>
+<li><b>Hungarian 最小化迁移</b>：<code>scipy.optimize.linear_sum_assignment</code> 对齐新旧部署</li>
+<li><b>numba JIT</b>：核心循环 <code>@njit(fastmath=True, cache=True)</code></li>
+</ol>
+
+<h3>8.5 EPLB 四策略对比</h3>
+<table>
+<tr><th>策略</th><th>Type</th><th>算法</th><th>生产价值</th></tr>
+<tr><td>RandomLoadBalance</td><td>0</td><td>随机交换 NPU 1/3 末尾 expert</td><td>仅 baseline</td></tr>
+<tr><td>DefaultEplb</td><td>1</td><td>贪心 BFD 冗余分配</td><td>基础负载均衡</td></tr>
+<tr><td>SwiftBalanceEplb</td><td>2</td><td>约束局部交换 + 阈值触发</td><td>中等规模</td></tr>
+<tr><td><b>FlashLB</b></td><td><b>3</b></td><td><b>树搜索 + LPT + Hungarian + numba</b></td><td><b>生产级</b></td></tr>
+</table>
+
+<!-- ===== §9 编译 + ACL Graph ===== -->
+<h2 id="s_9">9. 编译 + ACL Graph + 70+ Fusion Pass</h2>
+<div class="srcband"><span class="tag">§9</span><b>图层</b><span class="src">source: agent5 全量</span></div>
+
+<h3>9.1 ACL Graph vs CUDA Graph</h3>
+<table>
+<tr><th>维度</th><th>CUDA Graph</th><th>ACL Graph (NPU)</th></tr>
+<tr><td>回放模型</td><td>纯 replay（零 host 介入）</td><td>host 先 update_graph_params() → ExternalEvent wait → replay</td></tr>
+<tr><td>参数更新</td><td>不需要（或 input pointer）</td><td>GraphParams 四元组（events/workspaces/handles/attn_params）</td></tr>
+<tr><td>跨 stream 排序</td><td>graph 内自动</td><td>ExternalEvent.wait(stream) + current_stream().synchronize()</td></tr>
+<tr><td>GC 影响</td><td>无</td><td>capture 时 patch gc.collect + empty_cache 为空操作</td></tr>
+</table>
+
+<h3>9.2 GraphParams 四元组</h3>
+<pre><code>@dataclass
+class GraphParams:
+    events: dict[int, list[ExternalEvent]]        # 每 size 每 layer
+    workspaces: dict[int, Tensor]                 # attention 间接参数
+    handles: dict[int, list[NPUTaskGroupHandle]]  # task group handle
+    attn_params: dict[int, list[tuple]]           # 已捕获 attn 元数据</code></pre>
+
+<h3>9.3 70+ Fusion Pass 分类学</h3>
+<table>
+<tr><th>类别</th><th>Pass</th><th>Pattern → Replacement</th><th>开关</th></tr>
+<tr><td>通算融合</td><td>MatmulAllReduceAddRMSNorm</td><td>Matmul+AllReduce+RMSNorm → 融合 kernel</td><td>fuse_allreduce_rms</td></tr>
+<tr><td>通算融合</td><td>SequenceParallelism</td><td>AllReduce → ReduceScatter+AllGather</td><td>enable_sp</td></tr>
+<tr><td>量化融合</td><td>AddRMSNormQuant</td><td>AddRMSNorm+Quant → npu_add_rms_norm_quant (12 variant)</td><td>fuse_norm_quant</td></tr>
+<tr><td>算子融合</td><td>QKNormRope</td><td>split+RMSNorm×2+RoPE → 单融合 kernel</td><td>fuse_qknorm_rope</td></tr>
+<tr><td>算子融合</td><td>MulsAdd</td><td>x*scale+y → Triton muls_add</td><td>fuse_muls_add</td></tr>
+<tr><td>消除简化</td><td>NoOpElimination</td><td>no-op view/reshape → 直通</td><td>默认</td></tr>
+</table>
+
+<h3>9.4 双后端编译</h3>
+<p><code>AscendCompiler</code> 通过 <code>enable_npugraph_ex</code> 开关分派：</p>
+<ul>
+<li><b>npugraph_ex 路径</b>（首选）：自带 pattern matcher，不经过 GraphFusionPassManager</li>
+<li><b>fusion_pass_compile 路径</b>（fallback）：torch._inductor + GraphFusionPassManager</li>
+</ul>
+<p><code>BasePattern.register()</code> 同时向两者注册，保证 pass 在两个后端都能匹配。</p>
+
+<!-- ===== §10 模型 + 量化 + Ops + Patch ===== -->
+<h2 id="s_10">10. 模型支持 + 量化 + 自定义算子 + Patch + Xlite</h2>
+<div class="srcband"><span class="tag">§10</span><b>模型与算子</b><span class="src">source: agent6 全量</span></div>
+
+<h3>10.1 模型注册三目录枚举</h3>
+<table>
+<tr><th>目录</th><th>注册机制</th><th>注册模型</th></tr>
+<tr><td><code>models/__init__.py</code></td><td>ModelRegistry.register_model()</td><td>DeepseekV4, DeepseekV4MTP, LlamaEagle3Vwn</td></tr>
+<tr><td><code>xlite/</code></td><td>_architecture_strategy_map 自动注册</td><td>Llama, Qwen2/3, Qwen3Moe, Glm4Moe, MiniMaxM2</td></tr>
+<tr><td><code>patch/worker/</code></td><td>monkey-patch 注入</td><td>DeepSeek MTP, Qwen3.5, DFlash, DSpark, Step3.5, Kimi K25</td></tr>
+</table>
+
+<h3>10.2 Xlite — 图运行时而非 edge runtime</h3>
+<p>Xlite 是华为 openEuler GVirt 项目下的图编译运行时，作为 ACL Graph 的替代路径。三层结构：</p>
+<ul>
+<li><code>XliteModel</code>（抽象基类，子类按架构注册到 <code>_architecture_strategy_map</code>）</li>
+<li><code>XliteWrapper</code>（持有 C++ Runtime，dispatch 在 xlite graph 和原始 runnable 之间）</li>
+<li><code>XliteModelRunner</code> / <code>XliteWorker</code>（替换 NPU 默认 runner）</li>
+</ul>
+
+<h3>10.3 量化方案选择逻辑</h3>
+<p><code>AscendModelSlimConfig.get_quant_method()</code>（<code>modelslim_config.py:637</code>）是核心路由。NZ format 是硬约束（<code>ACL_FORMAT_FRACTRAL_NZ</code>），msModelSlim 生态兼容（三种布局），MXFP 系列是 OCP 标准落地。</p>
+
+<h3>10.4 MoE 通信四维度动态路由</h3>
+<pre><code>select_moe_comm_method(num_tokens, vllm_config):
+  A2 + EP → MC2 (tokens ≤ capacity) / AllGather
+  A3 + EP → FUSED_MC2 (w8a8 + small EP) / MC2 / AlltoAll
+  A5 + EP → MC2 / AllGather / AlltoAll
+  310P    → AllGather
+  no EP   → AllGather</code></pre>
+
+<h3>10.5 Patch 分类学</h3>
+<table>
+<tr><th>类别</th><th>文件数</th><th>触发条件</th><th>移除条件</th></tr>
+<tr><td>Platform/分布式</td><td>3</td><td>always</td><td>upstream 支持</td></tr>
+<tr><td>Platform/调度</td><td>4</td><td>always</td><td>upstream merge</td></tr>
+<tr><td>Platform/KV Cache</td><td>3</td><td>always</td><td>上游化</td></tr>
+<tr><td>Platform/版本兼容</td><td>4</td><td>vllm_version_is("0.23/0.24")</td><td>版本 EOL</td></tr>
+<tr><td>Worker/模型结构</td><td>8</td><td>not 310P / always</td><td>upstream merge</td></tr>
+<tr><td>Worker/算子</td><td>4</td><td>HAS_TRITON / always</td><td>稳定</td></tr>
+<tr><td>Worker/权重</td><td>2</td><td>always</td><td>upstream merge</td></tr>
+</table>
+
+<h3>10.6 Spec Decode 在 NPU 上的复杂性</h3>
+<p><code>AscendSpecDecodeBaseProposer</code>（2156 行）承载三大复杂性：</p>
+<ul>
+<li><b>TP-patch</b>：draft/target 不同 TP size 时 patch TP group</li>
+<li><b>ACL Graph</b>：GLM 系列不支持 draft graph mode，FULL mode 需 <code>_pad_query_start_loc_for_fia</code></li>
+<li><b>PCP/DP 集成</b>：PCP 需独立 block table 拷贝，DP 需 allgather + reduce</li>
+</ul>
+
+<!-- ===== §11 横向架构评估 ===== -->
+<h2 id="s_11">11. 横向架构评估与洞察</h2>
+<div class="srcband"><span class="tag">§11</span><b>Cross-cutting Assessment</b><span class="src">source: 综合 6 agent 报告</span></div>
+
+<h3>11.1 "变化速率不同"原则在 vllm-ascend 的体现</h3>
+<table>
+<tr><th>变化速率</th><th>子系统</th><th>表现</th></tr>
+<tr><td><b>never</b></td><td>推理数学 / EngineCore.step</td><td>1 step = schedule → forward → sample</td></tr>
+<tr><td><b>yearly</b></td><td>Platform / Worker / Scheduler</td><td>NPUPlatform 子类、三种 scheduler</td></tr>
+<tr><td><b>monthly</b></td><td>Attention / Compilation / EPLB</td><td>5 变体、70+ pass、FlashLB</td></tr>
+<tr><td><b>weekly</b></td><td>Patch / 310P 变体 / 量化</td><td>33 patch、is_310p() 分派网、10+ 量化</td></tr>
+</table>
+
+<h3>11.2 最脆弱的架构决策</h3>
+<div class="warn">
+<p><b>310P 分派网</b>：<code>is_310p()</code> 在 30+ 处被调用形成隐式分派。增加第 5 种芯片变体时必须在所有分派点添加新分支。建议：把分派逻辑集中到一个 <code>DeviceCapability</code> 对象中，用策略模式替代 if/else 网。</p>
+</div>
+<div class="warn">
+<p><b>Patch 技术债</b>：33 个 patch 文件中至少 10 个标注了 upstream PR 作为移除条件。vLLM upstream 迭代快，patch 容易 stale。建议：定期审计 patch 的 upstream 状态。</p>
+</div>
+
+<h3>11.3 最有价值的架构决策</h3>
+<div class="insight">
+<p><b>"Extension not fork"</b>：6 层 overlay 在 vLLM 的 4 个扩展点（Platform 子类 / worker_cls / custom ops / additional_config）上做文章。EPLB 零 upstream 修改。这使得 vllm-ascend 能跟随 vLLM 主仓迭代而不产生合并冲突。</p>
+</div>
+<div class="insight">
+<p><b>Scheduler 的 mixin 注入</b>：SRF 只替换了 waiting queue 数据结构，schedule() 主循环零修改。这是"关注点分离"的最佳实践。</p>
+</div>
+<div class="insight">
+<p><b>KV memory tier 三级架构</b>：L1 P2P → L2 Pool → L3 SSD 的演化路径与 OS 内存层级同构，为未来 CXL/持久内存预留了扩展空间。</p>
+</div>
+
+<h3>11.4 与 vLLM 统一报告的关联</h3>
+<p>本报告与 <code>vllm_architecture_unified.html</code>（vLLM upstream 12 章分析）互补：</p>
+<ul>
+<li>统一报告回答"vLLM 为什么这样设计"（软件架构第一性原理）</li>
+<li>本报告回答"vLLM-Ascend 为什么需要 overlay"（硬件差异 + 工程约束）</li>
+<li>统一报告的 §7 (Ascend Overlay) 和 §9 (Playbook) 与本报告 §4 重叠，但本报告提供了更深的源码证据</li>
+</ul>
+
+<!-- ===== §12 References ===== -->
+<h2 id="s_12">12. References &amp; File Index</h2>
+<div class="srcband"><span class="tag">§12</span><b>引用与文件索引</b><span class="src">source: 综合 6 agent 报告</span></div>
+
+<h3>12.1 关键文件全索引</h3>
+<table>
+<tr><th>文件</th><th>行数</th><th>职责</th></tr>
+<tr><td><code>vllm_ascend/platform.py</code></td><td>1255</td><td>NPUPlatform + 配置翻译枢纽</td></tr>
+<tr><td><code>vllm_ascend/ascend_config.py</code></td><td>897</td><td>AscendConfig 单例 + 8 子配置</td></tr>
+<tr><td><code>vllm_ascend/worker/model_runner_v1.py</code></td><td>5187</td><td>NPU ModelRunner（最大文件）</td></tr>
+<tr><td><code>vllm_ascend/attention/dsa_v1.py</code></td><td>2820</td><td>DSA attention（最复杂变体）</td></tr>
+<tr><td><code>vllm_ascend/attention/sfa_v1.py</code></td><td>1919</td><td>SFA attention</td></tr>
+<tr><td><code>vllm_ascend/attention/mla_v1.py</code></td><td>1767</td><td>MLA attention</td></tr>
+<tr><td><code>vllm_ascend/attention/attention_v1.py</code></td><td>1849</td><td>FIA attention</td></tr>
+<tr><td><code>vllm_ascend/core/recompute_scheduler.py</code></td><td>1173</td><td>RecomputeScheduler</td></tr>
+<tr><td><code>vllm_ascend/core/scheduler_profiling_chunk.py</code></td><td>756</td><td>ProfilingChunkScheduler</td></tr>
+<tr><td><code>vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py</code></td><td>3552</td><td>P2P KV 传输</td></tr>
+<tr><td><code>vllm_ascend/eplb/core/policy/policy_flashlb.py</code></td><td>1026</td><td>FlashLB 算法</td></tr>
+<tr><td><code>vllm_ascend/compilation/acl_graph.py</code></td><td>381</td><td>ACL Graph Wrapper</td></tr>
+<tr><td><code>vllm_ascend/compilation/compiler_interface.py</code></td><td>368</td><td>AscendCompiler</td></tr>
+<tr><td><code>vllm_ascend/models/deepseek_v4.py</code></td><td>1515</td><td>DeepSeek V4 适配</td></tr>
+<tr><td><code>vllm_ascend/spec_decode/llm_base_proposer.py</code></td><td>2156</td><td>Spec decode 核心</td></tr>
+<tr><td><code>vllm_ascend/ops/fused_moe/fused_moe.py</code></td><td>798</td><td>MoE 核心</td></tr>
+<tr><td><code>vllm_ascend/quantization/modelslim_config.py</code></td><td>984</td><td>量化配置 + 路由</td></tr>
+<tr><td><code>vllm_ascend/sample/rejection_sampler.py</code></td><td>1566</td><td>Rejection sampler</td></tr>
+<tr><td><code>vllm_ascend/patch/__init__.py</code></td><td>1199</td><td>Patch 管理</td></tr>
+<tr><td><code>vllm_ascend/cpu_binding.py</code></td><td>806</td><td>CPU 绑定</td></tr>
+<tr><td><code>vllm_ascend/device/device_op.py</code></td><td>1971</td><td>Device adaptor</td></tr>
+<tr><td><code>vllm_ascend/_310p/model_runner_310p.py</code></td><td>1042</td><td>310P runner</td></tr>
+</table>
+
+<h3>12.2 外部引用</h3>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm-ascend">vllm-project/vllm-ascend</a> — 代码仓库</li>
+<li><a href="https://docs.vllm.ai/projects/ascend/">Ascend 官方文档</a></li>
+<li><a href="https://blog.vllm.ai/2025/05/12/hardware-plugin.html">Introducing vLLM Hardware Plugin (2025/05)</a></li>
+<li><a href="https://github.com/vllm-project/vllm/issues/11162">RFC: Hardware Pluggable (#11162)</a></li>
+<li><code>vllm_architecture_unified.html</code> — vLLM upstream 12 章统一报告</li>
+<li><code>hbm_index_architecture.html</code> — HBM 索引专题</li>
+</ul>
+
+<h3>12.3 Agent 报告原件</h3>
+<table>
+<tr><th>文件</th><th>内容</th><th>行数</th></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/01_platform_device.md</code></td><td>Platform + Device + 310P</td><td>540</td></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/02_attention.md</code></td><td>Attention 全栈</td><td>450</td></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/03_scheduler_core.md</code></td><td>Scheduler + Core</td><td>469</td></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/04_distributed_eplb.md</code></td><td>分布式 + EPLB</td><td>506</td></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/05_compilation_graph.md</code></td><td>编译 + ACL Graph</td><td>356</td></tr>
+<tr><td><code>_ascend_full_analysis/agent_reports/06_models_quant_ops.md</code></td><td>模型 + 量化 + Ops</td><td>459</td></tr>
+</table>
+
+<div class="meta">vLLM 2db39c704 · Ascend b266da5d · 全模块分析 2026-07-22 · 6 agent 并行切片 + 综合</div>
+</article>
+</div>
+</body>
+</html>
