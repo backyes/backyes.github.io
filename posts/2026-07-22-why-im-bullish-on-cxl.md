@@ -137,7 +137,13 @@ Will NVIDIA try to maintain NVLink's proprietary advantage? Of course. But even 
 Intellectual honesty requires listing the bear cases:
 
 1. **Deployment slower than expected.** CXL 2.0/3.0 adoption has been gradual. Enterprise inertia is real.
-2. **NVIDIA's counter-move.** If NVLink/NVSwitch adds pooling features, the open-camp urgency decreases.
+2. **NVIDIA's counter-move: NVLink Fusion + NVLink-C2C.** NVIDIA is not standing still. At Computex 2025 and GTC 2026, NVIDIA announced **NVLink Fusion** — opening the proprietary NVLink fabric to third-party custom silicon (MediaTek, Marvell, Fujitsu, Qualcomm) via the **NVLink-C2C** chip-to-chip interconnect [9a][9b]. NVLink-C2C delivers up to ==1.8 TB/s== per GPU with cache-coherent shared memory access, enabling pooled memory subsystems across the NVLink fabric [9c]. In essence, NVIDIA is building a *proprietary alternative to CXL for memory disaggregation* — using NVLink as the pooling bus instead of PCIe/CXL.
+
+![NVIDIA NVLink Fusion Architecture — NVLink-C2C enables third-party chip integration and memory pooling over NVLink fabric](assets/nvlink-fusion-cxl-pooling.png)
+
+*Source: NVIDIA — NVLink Fusion opens the NVLink fabric to custom silicon via NVLink-C2C, enabling cache-coherent memory pooling as a proprietary alternative to CXL [9a][9b]*
+
+This is a real competitive threat. If NVIDIA makes NVLink pooling "just work" seamlessly within their ecosystem, some customers may not care about open standards. However, NVLink Fusion still requires NVIDIA's blessing — every third-party chip needs an NVIDIA bridge chip and licensing. For hyperscalers who want *true* supply chain independence (multiple sources, no single point of control), CXL remains the only open path. NVIDIA's move validates the market need but doesn't eliminate the demand for an open alternative.
 3. **UALink eats into CXL's scope.** If UALink expands to include memory semantics, CXL could be marginalized. (Current signals suggest complementarity, not competition.)
 4. **DDR5/DDR6 bandwidth improvements reduce the pooling need.** If HBM keeps scaling, maybe local memory is "good enough."
 
@@ -200,6 +206,18 @@ CXL won by choosing to be open at exactly the moment the market needed an open m
 [7c] [Astera Labs — Leo CXL Controller](https://www.asteralabs.com/) — CXL 2.0 smart memory controller shipping
 
 [7d] [Panmnesia — CXL 3.2 Fabric Switch](https://panmnesia.com/news/en/) — First PBR implementation, up to 4,096 nodes, sampling Nov 2025
+
+### NVIDIA's Counter-Move
+
+[9a] [NVIDIA Newsroom — NVLink Fusion](https://nvidianews.nvidia.com/news/nvidia-nvlink-fusion-semi-custom-ai-infrastructure-partner-ecosystem) — NVLink Fusion announced May 2025, opens NVLink fabric to custom silicon via NVLink-C2C; partners include MediaTek, Marvell, Fujitsu, Qualcomm
+
+[9b] [Counterpoint Research — NVLink Fusion: NVIDIA's Response to UALink?](https://counterpointresearch.com/en/insights/post-insight-research-notes-blogs-nvlink-fusion-nvidias-response-to-ualink) — Analysis of NVLink Fusion as competitive response to open standards
+
+[9c] [NVIDIA Developer — NVLink: The Scale-Up Network for AI Factories](https://developer.nvidia.com/blog/nvidia-nvlink-the-scale-up-network-for-ai-factories/) — NVLink-C2C cache-coherent interconnect, 1.8 TB/s per GPU in GB200/GB300 NVL72
+
+[9d] [ACM Digital Library — Towards Memory Disaggregation via NVLink C2C](https://dl.acm.org/doi/10.1145/3723851.3723853) — Academic benchmarking of NVLink for memory disaggregation (Grace CPU accessing GPU memory via NVLink)
+
+[9e] [SDxCentral — NVIDIA opens NVLink fabric to hyperscaler custom silicon](https://www.sdxcentral.com/news/nvidia-opens-nvlink-fabric-to-hyperscaler-custom-silicon/) — UCIe interface for third-party chip integration
 
 ---
 
