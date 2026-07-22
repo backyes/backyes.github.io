@@ -11,7 +11,7 @@ excerpt: "CXL is not just another interconnect protocol. From a market game theo
 
 The CXL component market was worth roughly ==$1.3–2.1B== in 2025 [1a][1b]. Forecasts put it at ==$12.3B== by 2030 — a ~32% CAGR [1c]. That's strong growth, but the number itself isn't why I'm bullish. Plenty of technologies have strong TAM projections and still fail.[^tam]
 
-[^tam]: **TAM (Total Addressable Market)** = 可寻址市场总规模，指某一产品或服务在理论上能达到的最大市场收入。TAM 高不代表一定能赢——技术路线、生态、执行时机同样关键。
+[^tam]: **TAM** = Total Addressable Market
 
 What makes CXL different is its *position in the market game*. Four structural forces are converging, and CXL sits at the intersection of all of them.
 
@@ -54,6 +54,22 @@ Think about it. You can buy a white-box switch. You can run open-source SONiC. Y
 Broadcom and Marvell aren't charity organizations. Their aggressive push into CXL controllers and switches isn't altruism — it's a *second ecosystem*. A market where hyperscalers can buy from multiple vendors, negotiate pricing, and avoid being locked into any single platform's memory architecture [3].
 
 This is the same dynamic that drove the open networking movement (white-box switches, SONiC). CXL is open networking for memory. The demand is there because the pain of the alternative is there.
+
+### But proprietary alternatives are emerging too
+
+The demand for memory pooling is so real that even the incumbents are building proprietary answers. Two examples:
+
+**NVIDIA NVLink Fusion** (Computex 2025 / GTC 2026): NVIDIA opened its NVLink fabric to third-party custom silicon via **NVLink-C2C**, a cache-coherent chip-to-chip interconnect delivering ==1.8 TB/s== per GPU [9a][9b][9c]. NVIDIA is essentially using NVLink as a proprietary memory pooling bus — an alternative to CXL, but still requiring NVIDIA's bridge chips and licensing.
+
+![NVIDIA NVLink-C2C enables memory pooling over NVLink fabric](https://developer-blogs.nvidia.com/wp-content/uploads/2022/11/memory-access-grace-hopper-superchip.png)
+
+*NVIDIA's proprietary approach: NVLink-C2C enables cache-coherent memory pooling over NVLink, but every third-party chip needs NVIDIA's blessing [9a][9d]*
+
+**Huawei UB (Ultra-Bus)**: Huawei's proprietary interconnect also claims DDR pooling capabilities [9e][9f]. It's a vertically integrated solution — works well within Huawei's ecosystem, but it's a closed stack. Like NVLink Fusion, it solves the technical problem without solving the *supply chain* problem.
+
+> ==Both NVIDIA and Huawei are building proprietary DDR pooling. This validates the market need — but also proves the demand for an *open* alternative.==
+
+Hyperscalers don't want to choose between NVIDIA's bus and Huawei's bus. They want a bus that works with *any* vendor's silicon, *any* vendor's switches, *any* vendor's memory modules. That's CXL. It's the only open-standard DDR pooling bus technology on the table, and every proprietary alternative that launches only makes CXL's value proposition stronger.
 
 ---
 
@@ -132,22 +148,6 @@ Will NVIDIA try to maintain NVLink's proprietary advantage? Of course. But even 
 
 ---
 
-## NVIDIA's counter-move: NVLink Fusion
-
-NVIDIA is not standing still. At Computex 2025 and GTC 2026, NVIDIA announced **NVLink Fusion** — opening the proprietary NVLink fabric to third-party custom silicon (MediaTek, Marvell, Fujitsu, Qualcomm) via the **NVLink-C2C** chip-to-chip interconnect [9a][9b]. NVLink-C2C delivers up to ==1.8 TB/s== per GPU with cache-coherent shared memory access, enabling pooled memory subsystems across the NVLink fabric [9c].
-
-In essence, NVIDIA is building a *proprietary alternative to CXL for memory disaggregation* — using NVLink as the pooling bus instead of PCIe/CXL.
-
-![NVIDIA NVLink-C2C enables memory pooling over NVLink fabric — Grace CPU accessing GPU memory via NVLink](https://developer-blogs.nvidia.com/wp-content/uploads/2022/11/memory-access-grace-hopper-superchip.png)
-
-*NVIDIA NVLink-C2C: cache-coherent chip-to-chip interconnect enabling memory pooling across the NVLink fabric. Grace CPU accesses GPU HBM via NVLink — NVIDIA's proprietary approach to memory disaggregation that competes with CXL's open-standard approach [9a][9b][9c][9d]*
-
-Academic research confirms NVLink's viability for memory disaggregation — a 2025 paper from Hasso Plattner Institute benchmarks Grace CPU accessing GPU memory via NVLink for disaggregated memory workloads [9d].
-
-This is a real competitive response. But note the key limitation: **NVLink Fusion still requires NVIDIA's blessing**. Every third-party chip needs an NVIDIA bridge chip and licensing. For hyperscalers who want *true* supply chain independence — multiple sources, no single point of control — CXL remains the only open path. NVIDIA's move validates the market need for memory pooling but doesn't eliminate the demand for an open-standard alternative.
-
----
-
 ## Bottom line
 
 > ==I'm bullish on CXL not because of the TAM number, but because of the game theory. Every major player — hyperscalers, chip vendors, switch makers — has a structural incentive to make CXL succeed. That's rare in infrastructure.==
@@ -215,6 +215,12 @@ CXL won by choosing to be open at exactly the moment the market needed an open m
 [9d] [ACM Digital Library — Towards Memory Disaggregation via NVLink C2C](https://dl.acm.org/doi/10.1145/3723851.3723853) — Academic benchmarking of NVLink for memory disaggregation (Grace CPU accessing GPU memory via NVLink)
 
 [9e] [SDxCentral — NVIDIA opens NVLink fabric to hyperscaler custom silicon](https://www.sdxcentral.com/news/nvidia-opens-nvlink-fabric-to-hyperscaler-custom-silicon/) — UCIe interface for third-party chip integration
+
+### Proprietary Alternatives (NVIDIA & Huawei)
+
+[9f] [Huawei — UltraBus (UB) Interconnect](https://www.huawei.com/en/news/2024/5/huawei-ultra-bus) — Huawei's proprietary interconnect claiming DDR pooling capabilities; vertically integrated within Huawei's ecosystem
+
+[9g] [Huawei — UB-enabled AI clusters](https://www.huawei.com/en/news/2025/9/huawei-910c-ai-accelerator) — Huawei 910C and Ascend clusters using UB for memory pooling; closed stack, validates market demand for DDR pooling
 
 ---
 
