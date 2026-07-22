@@ -9,7 +9,9 @@ excerpt: "CXL is not just another interconnect protocol. From a market game theo
 
 ## The setup
 
-The CXL component market was worth roughly ==$1.3–2.1B== in 2025. Forecasts put it at ==$12.3B== by 2030 — a ~32% CAGR [1]. That's strong growth, but the number itself isn't why I'm bullish. Plenty of technologies have strong TAM projections and still fail.
+The CXL component market was worth roughly ==$1.3–2.1B== in 2025 [1a][1b]. Forecasts put it at ==$12.3B== by 2030 — a ~32% CAGR [1c]. That's strong growth, but the number itself isn't why I'm bullish. Plenty of technologies have strong TAM projections and still fail.[^tam]
+
+[^tam]: **TAM (Total Addressable Market)** = 可寻址市场总规模，指某一产品或服务在理论上能达到的最大市场收入。TAM 高不代表一定能赢——技术路线、生态、执行时机同样关键。
 
 What makes CXL different is its *position in the market game*. Four structural forces are converging, and CXL sits at the intersection of all of them.
 
@@ -29,7 +31,7 @@ The physics are simple: at million-token context lengths and trillion-parameter 
 
 This is what I mean by "泛存储全面总线化" — all forms of storage are being pulled onto the interconnect fabric as first-class citizens. NVMe over Fabrics was step one. CXL is step two: memory itself becomes a fabric-attached resource.
 
-CXL 4.0 (sampling in 2026) enables ==100+ TB== shared memory pools with cache-coherent access [2]. That's not a niche accelerator feature — that's a fundamental re-architecture of the server.
+CXL 4.0 (released Nov 2025, products sampling late 2026) enables ==100+ TB== shared memory pools with cache-coherent multi-rack access [2]. Its bundled ports aggregate up to ==1.5 TB/s== bandwidth — roughly 30% of HBM3e's bandwidth, sufficient for memory expansion where capacity matters more than peak bandwidth [2]. That's not a niche accelerator feature — that's a fundamental re-architecture of the server.
 
 The trend is irreversible because the physics are irreversible. AI models will only get bigger. Context windows will only get longer. The bus is the only place where the access latency works.
 
@@ -63,9 +65,9 @@ Here's where it gets interesting. The open camp has a core technical problem:
 
 This is the "last mile" of memory disaggregation. And the answer keeps coming back to CXL.
 
-Marvell's acquisition of CXL controller talent and their next-gen CXL switch launch tell you everything [4]. They're not investing billions into CXL because it's a nice-to-have. They're investing because ==cross-node memory pooling over a bus fabric has an extremely high technical barrier==, and CXL is the protocol that clears it.
+Marvell's acquisition of XConn (a CXL switch startup) and their Structera S 30260 launch tell you everything [4a][4b]. The Structera S delivers ==sub-460ns round-trip== memory access — that's sub-microsecond, near-local latency — across a shared pool of up to ==48 TB== of memory [4c]. They're not investing billions into CXL because it's a nice-to-have. They're investing because ==cross-node memory pooling over a bus fabric has an extremely high technical barrier==, and CXL is the protocol that clears it.
 
-UALink's architecture makes this explicit: ==UALink and CXL are designed as complementary, not competitive.== [5]
+UALink's architecture makes this explicit: ==UALink and CXL are designed as complementary, not competitive.== [5a]
 
 | Protocol | Role | Layer |
 |---|---|---|
@@ -74,9 +76,11 @@ UALink's architecture makes this explicit: ==UALink and CXL are designed as comp
 
 UALink handles the GPU-to-GPU traffic. CXL handles the memory-to-CPU/GPU traffic. You need both. UALink Consortium and CXL Consortium are not at war — they're *partitioning the problem*.
 
+Industry analysis confirms this: "CXL focuses on rack-level and multi-rack memory expansion and pooling, while UALink optimizes high-speed, accelerator-to-accelerator scaling for AI clusters" [5b]. Emerging architectures even propose "CXL over XLink/UALink" to pair high-performance local memory with shared composable pools for LLM inference [5c].
+
 > ==UALink choosing to coexist with CXL is the market's answer to the memory last-mile question.== CXL is the hub. Everything else is a spoke.
 
-Marvell's CXL switch delivers ==sub-microsecond== access to a near-local shared memory pool [4]. That's the kind of latency budget that makes memory pooling actually work for AI inference workloads. No other open protocol is hitting those numbers in 2026.
+No other open protocol is hitting sub-microsecond latency with real silicon in 2026. That's the kind of latency budget that makes memory pooling actually work for AI inference workloads — where a 70B model with 128K context and batch size 32 can require ==150+ GB== just for KV cache alone [2].
 
 ---
 
@@ -101,11 +105,11 @@ Look at the deployment roadmap:
 
 | Timeline | Milestone |
 |---|---|
-| 2025 | CXL 3.x in production (Intel Sapphire Rapids, AMD Genoa) |
-| Late 2026 | CXL 4.0 products begin sampling [5] |
-| Late 2026 | UALink switches reach data centers |
-| 2027 | CXL 4.0 multi-rack systems, 100+ TB pools [2] |
-| 2030 | $12.3B component market, $30B+ ecosystem [1] |
+| Late 2024-2025 | CXL 2.0 in production — Samsung CMM-D (256 GB) [7a], SK Hynix CMM (128 GB) [7b], Micron CZ120 (256 GB) [7c] shipping |
+| 2025 | CXL 3.x fabric switches — XConn Apollo, Panmnesia CXL 3.2 (first PBR implementation, up to 4,096 nodes) [7d] |
+| Late 2026 | CXL 4.0 products begin sampling [5b]; UALink switches reach data centers |
+| 2027 | CXL 4.0 multi-rack systems, 100+ TB pools — target production deployment [2] |
+| 2030 | $12.3B component market, $30B+ ecosystem [1c] |
 
 The train is moving. The fabs are booked. The controllers are shipping. Alternative protocols don't have time to catch up.
 
@@ -153,22 +157,50 @@ CXL won by choosing to be open at exactly the moment the market needed an open m
 
 ## References
 
-[1] [Strategic Market Research — Compute Express Link (CXL) Component Market](https://www.strategicmarketresearch.com/market-report/compute-express-link-component-market) — $12.3B by 2030, 32% CAGR; [Market Intelo — CXL Memory Expansion Market](https://marketintelo.com/report/cxl-memory-expansion-market) — $1.3B in 2025 → $11.8B by 2034, 28.7% CAGR; [Dataintelo — CXL Memory Module Market](https://dataintelo.com/report/cxl-memory-module-market) — $2.8B in 2025 → $28.6B by 2034, 29.4% CAGR
+### Market Size & Forecasts
 
-[2] [Introl — CXL 4.0 Infrastructure Planning Guide](https://introl.com/blog/cxl-4-0-infrastructure-planning-guide-memory-pooling-2025) — 100+ TB shared memory pools for AI inference
+[1a] [Market Intelo — CXL Memory Expansion Market](https://marketintelo.com/report/cxl-memory-expansion-market) — CXL memory expansion market valued at ==$1.3B in 2025==, projected to reach $11.8B by 2034 (28.7% CAGR)
 
-[3] [Marvell — Next-gen CXL Switch](https://www.marvell.com/company/newsroom/marvell-next-gen-cxl-switch-memory-pooling-breaks-ai-memory-wall.html) — Sub-microsecond access, near-local shared memory pool
+[1b] [Dataintelo — CXL Memory Module Market](https://dataintelo.com/report/cxl-memory-module-market) — CXL memory module market valued at ==$2.1–2.8B in 2025==, projected to reach $28.6B by 2034 (29.4% CAGR)
 
-[4] [Marvell CXL Controller/Switch investments](https://www.marvell.com/company/newsroom/marvell-next-gen-cxl-switch-memory-pooling-breaks-ai-memory-wall.html) — Aggressive positioning in CXL controller market
+[1c] [Strategic Market Research — CXL Component Market](https://www.strategicmarketresearch.com/market-report/compute-express-link-component-market) — CXL component market: $1.9B (2024) → ==$12.3B by 2030==, ==32% CAGR==; wider ecosystem $30B+ by 2030
 
-[5] [Introl — CXL 4.0 and the Interconnect Wars](https://introl.com/blog/cxl-4-specification-interconnect-wars-ai-memory-december-2025) — UALink and CXL as complementary; CXL 4.0 sampling late 2026
+### CXL 4.0 Technical Capabilities
 
-[6] [Compute Express Link Consortium](https://computeexpresslink.org/) — CXL specification built on PCIe physical layer
+[2] [Introl — CXL 4.0 Infrastructure Planning Guide](https://introl.com/blog/cxl-4-0-infrastructure-planning-guide-memory-pooling-2025) — CXL 4.0 enables ==100+ TB== shared memory pools; bundled ports deliver ==1.5 TB/s==; multi-rack memory pooling target production late 2026-2027; KV cache offloading use case (70B model, 128K context, batch 32 → 150+ GB); memory utilization 50-60% → 85%+; latency 200-500 ns (DRAM-like)
 
-[7] [Samsung Semiconductor — Breaking AI Memory Limits with CXL Memory Pooling](https://semiconductor.samsung.com/news-events/tech-blog/breaking-ai-memory-limits-with-cxl-memory-pooling/) — CXL switch + memory devices → shared memory pool
+### Marvell CXL Strategy
 
-[8] [Goldman Sachs — AI to drive 165% increase in data center power demand by 2030](https://www.goldmansachs.com/insights/articles/ai-to-drive-165-increase-in-data-center-power-demand-by-2030/) — Structural AI infrastructure demand driver
+[3] [Futurum Group — Marvell's XConn Acquisition](https://futurumgroup.com/insights/marvells-xconn-buy-yields-a-two-pronged-open-fabric-play-against-nvlink/) — Marvell's acquisition of XConn creates two-pronged open fabric play against NVLink; CXL 3.0 memory pooling delivers sub-microsecond latency at rack scale
+
+[4a] [Marvell Official — Next-gen CXL Switch Launch](https://www.marvell.com/company/newsroom/marvell-next-gen-cxl-switch-memory-pooling-breaks-ai-memory-wall.html) — Structera S CXL switch: near-local shared memory pool with ==sub-microsecond access==, eliminates multi-hop data movement
+
+[4b] [Yahoo Finance — Marvell Structera S 30260](https://finance.yahoo.com/markets/stocks/articles/marvell-mrvl-launches-next-gen-155330376.html) — Structera S 30260: ==260 lanes==, ==4 TB/s== cumulative bandwidth, up to ==48 TB== shared memory, sub-microsecond latency
+
+[4c] [HyperFRAME Research — Marvell Structera Analysis](https://hyperframeresearch.com/2026/06/28/marvell-structera-driving-cxl-hardware-optimization-and-ai-memory-efficiency/) — Sub-460ns round-trip latency; integrated Structera S switches + Structera X expanders + Structera A accelerators
+
+### UALink & CXL Complementary
+
+[5a] [Introl — CXL 4.0 and the Interconnect Wars](https://introl.com/blog/cxl-4-specification-interconnect-wars-ai-memory-december-2025) — "CXL focuses on rack-level and multi-rack memory expansion and pooling, while UALink optimizes high-speed, accelerator-to-accelerator scaling"
+
+[5b] [Google Cloud AI Overview (search result)](https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26) — UALink and CXL as complementary open standards; CXL 4.0 sampling late 2026
+
+[5c] [Blocks & Files — Panmnesia Unified Memory](https://www.blocksandfiles.com/ai-ml/2025/07/18/panmnesia-pushes-unified-memory-and-interconnect-design-for-ai-superclusters/1602353) — "CXL over XLink/UALink" architectures for LLM inference and RAG
+
+### CXL Built on PCIe
+
+[6] [Compute Express Link Consortium](https://computeexpresslink.org/) — CXL specification built on PCIe physical layer; CXL 4.0 based on PCIe 7.0 (128 GT/s)
+
+### Ecosystem — Memory Vendors
+
+[7a] [Samsung Semiconductor — CXL Memory Pooling](https://semiconductor.samsung.com/news-events/tech-blog/breaking-ai-memory-limits-with-cxl-memory-pooling/) — Samsung CMM-D: ==256 GB== CXL 2.0, mass production 2025
+
+[7b] [Introl — CXL 4.0 Planning Guide (vendor table)](https://introl.com/blog/cxl-4-0-infrastructure-planning-guide-memory-pooling-2025) — SK Hynix CMM-DDR5: 128 GB; SK Hynix CMS: 512 GB (compute-enabled); Micron CZ120: 256 GB
+
+[7c] [Astera Labs — Leo CXL Controller](https://www.asteralabs.com/) — CXL 2.0 smart memory controller shipping
+
+[7d] [Panmnesia — CXL 3.2 Fabric Switch](https://panmnesia.com/news/en/) — First PBR implementation, up to 4,096 nodes, sampling Nov 2025
 
 ---
 
-*This is a draft post. Views are my own analysis based on publicly available market data. Not investment advice.*
+*This is a draft post. Views are my own analysis based on publicly available market data and technical documentation. Not investment advice.*
