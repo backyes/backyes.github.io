@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>[Draft] Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck · backyes</title>
+<title>Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck · backyes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -36,7 +36,6 @@
 .article-body pre code{background:none;border:none;padding:0}
 .article-body a{color:var(--accent);text-decoration:none}
 .article-body a:hover{text-decoration:underline}
-.cite{color:var(--accent);font-weight:600;font-size:.85em}
 .article-body hr{border:none;border-top:1px solid var(--border-soft);margin:2em 0}
 .back{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}
 @media(max-width:768px){
@@ -59,18 +58,18 @@
 </div></nav>
 <article class="article">
   <a href="../posts.html" class="back">← 返回 Posts</a>
-  <h1>[Draft] Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck</h1>
+  <h1>Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck</h1>
   <div class="meta"><span>📅 2026-07-22</span><div><span class="ptag">Google-Cloud</span><span class="ptag">Managed-Lustre</span><span class="ptag">LMCache</span><span class="ptag">Rapid-Storage</span><span class="ptag">KV-Cache</span><span class="ptag">AI-Inference</span><span class="ptag">Storage-Hierarchy</span></div></div>
   <div class="article-body">
 <h2>NVIDIA ICMS: Storage at the Bus Edge</h2>
-<p>At CES/GTC 2026, NVIDIA announced <strong>ICMS</strong> (Inference Context Memory Storage, aka <strong>CMX</strong>) — a pod-level, flash-backed KV Cache tier for the Vera Rubin platform <span class="cite">[8]</span><span class="cite">[9]</span>. BlueField-4 DPUs in dedicated flash enclosures, Spectrum-X Ethernet for RDMA transport, delivering <mark>5×</mark> token throughput over traditional secondary storage <span class="cite">[8]</span>. The bet: push storage <em>toward</em> the GPU — solve the memory wall at the bus edge.</p>
+<p>At CES/GTC 2026, NVIDIA announced <strong>ICMS</strong> (Inference Context Memory Storage, aka <strong>CMX</strong>) — a pod-level, flash-backed KV Cache tier for the Vera Rubin platform [8][9]. BlueField-4 DPUs in dedicated flash enclosures, Spectrum-X Ethernet for RDMA transport, delivering <mark>5×</mark> token throughput over traditional secondary storage [8]. The bet: push storage <em>toward</em> the GPU — solve the memory wall at the bus edge.</p>
 <p>ICMS is essentially a G3.5 tier: faster than network storage (G4), slower than HBM (G3), managed by DOCA/Dynamo/NIXL for KV block pre-staging.</p>
 <h2>The question</h2>
-<p>At 42.7:1 storage:compute ratio <span class="cite">[1]</span>, KV Cache <em>is</em> the workload. How does Google design the storage system around it?</p>
+<p>At 42.7:1 storage:compute ratio [1], KV Cache <em>is</em> the workload. How does Google design the storage system around it?</p>
 <p>Google's answer is not one solution — it's two complementary approaches, each optimized for different workload characteristics. Understanding both is essential for anyone building AI inference infrastructure.</p>
 <hr>
 <h2>Approach 1: Node-Local Tiered Storage (HBM + CPU RAM + Local SSD)</h2>
-<p>Google's collaboration with LMCache <span class="cite">[11]</span> demonstrates a tiered storage approach on GKE. The core idea: extend KV Cache from GPU HBM to larger, cost-effective node-local tiers, keeping all data on the accelerator node.</p>
+<p>Google's collaboration with LMCache [11] demonstrates a tiered storage approach on GKE. The core idea: extend KV Cache from GPU HBM to larger, cost-effective node-local tiers, keeping all data on the accelerator node.</p>
 <p><strong>Experiment setup:</strong> A3 mega node, 8× H100 Mega 80GB GPUs, Llama-3.3-70B-Instruct, LMCache v0.3.3, vLLM serving.</p>
 <table><thead><tr><th>Tier</th><th>Capacity</th><th>Role</th></tr></thead><tbody>
 <tr><td><strong>HBM (Tier 1)</strong></td><td>640 GiB</td><td>Fastest, smallest — fits ~1.1M–1.3M tokens</td></tr>
@@ -100,26 +99,26 @@
 <p><strong>Limitation:</strong> Node-local storage is fixed in size and cannot be shared across nodes. For multi-tenant or larger-than-node workloads, a different approach is needed.</p>
 <hr>
 <h2>Approach 2: Centralized Shared Storage (Managed Lustre)</h2>
-<p>For workloads that exceed node-local capacity or require multi-tenant sharing, Google recommends Managed Lustre <span class="cite">[2]</span>:</p>
+<p>For workloads that exceed node-local capacity or require multi-tenant sharing, Google recommends Managed Lustre [2]:</p>
 <blockquote><p>"We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache."</p></blockquote>
 <p><strong>Why not just local SSD?</strong></p>
-<p>Google's blog <span class="cite">[2]</span> makes the case:</p>
+<p>Google's blog [2] makes the case:</p>
 <blockquote><p>"On GPUs, Lustre is assisted by locally attached SSDs. And on TPUs, where local SSDs are not available, Lustre's role is even more central."</p></blockquote>
 <blockquote><p>"While Local SSDs and CPU RAM are effective node-local tiers, they are fixed in size and cannot be shared. Managed Lustre provides a parallel file system to act as the massive, high-throughput external storage, making it a great solution for large-scale, multi-node, and multi-tenant AI inference workloads where the cache exceeds the capacity of the host machine."</p></blockquote>
 <p>The key insight: local SSDs <em>can</em> be shared in distributed setups, but their I/O bandwidth is limited by host NIC capacity. Lustre provides higher aggregate bandwidth and centralized sharing — critical for long-context workloads where KV Cache sizes reach terabytes.</p>
-<p><strong>Performance data (DeepSeek-R1, A3-Ultra, 8× H200, 8× 141 GB HBM, 50K context, ~75% hit rate, ~3.4 TiB KV Cache) <span class="cite">[2]</span>:</strong></p>
+<p><strong>Performance data (DeepSeek-R1, A3-Ultra, 8× H200, 8× 141 GB HBM, 50K context, ~75% hit rate, ~3.4 TiB KV Cache) [2]:</strong></p>
 <table><thead><tr><th>Metric</th><th>Result</th></tr></thead><tbody>
 <tr><td>Inference throughput</td><td><mark>+75%</mark> vs host memory only</td></tr>
 <tr><td>Mean time to first token (MTTF)</td><td><mark>−40%+</mark> vs host memory only</td></tr>
 <tr><td>I/O parallelism</td><td>32 worker threads for KV reads</td></tr>
 </tbody></table>
-<p><strong>TCO analysis (1M TPS workload, A3-Ultra VMs + Managed Lustre) <span class="cite">[2]</span>:</strong></p>
+<p><strong>TCO analysis (1M TPS workload, A3-Ultra VMs + Managed Lustre) [2]:</strong></p>
 <table><thead><tr><th>Metric</th><th>Result</th></tr></thead><tbody>
 <tr><td>TCO reduction</td><td><mark>35%</mark> vs no external storage</td></tr>
 <tr><td>Accelerator savings</td><td><mark>~40%</mark> fewer GPUs needed</td></tr>
 <tr><td>Key insight</td><td>"Storage replaces compute" — offloading KV to I/O frees accelerators for other work</td></tr>
 </tbody></table>
-<p><strong>Configuration details <span class="cite">[2]</span>:</strong></p>
+<p><strong>Configuration details [2]:</strong></p>
 <table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
 <tr><td>Lustre bandwidth</td><td>1000 MB/s per TiB (Performance Tier)</td></tr>
 <tr><td>Capacity per machine</td><td>18 TiB Lustre per A3-Ultra VM</td></tr>
@@ -127,13 +126,13 @@
 <tr><td>GPU</td><td>8× H200 per VM, 8× 141 GB HBM</td></tr>
 <tr><td>Software tuning</td><td><code>o_direct></code> flag (bypass FS cache), 32 I/O worker threads</td></tr>
 </tbody></table>
-<p><strong>Google's thesis <span class="cite">[2]</span>:</strong></p>
+<p><strong>Google's thesis [2]:</strong></p>
 <blockquote><p>"Our experiment demonstrated that with configuration tuning and an improvement in KV Cache software to adopt more I/O parallelism, Managed Lustre can substantially improve inference performance."</p></blockquote>
 <blockquote><p>"You can handle a specific number of queries per second with ~40% fewer accelerators, resulting in direct cost savings."</p></blockquote>
 <p>The storage cost is offset by compute savings. I/O bandwidth is the bottleneck, and parallel storage (Lustre) delivers more aggregate bandwidth than node-local solutions when properly tuned.</p>
 <hr>
 <h2>Rapid Storage: What It Actually Does</h2>
-<p>Rapid Storage (Rapid Bucket + Rapid Cache) is Google's high-performance object storage layer — built on Colossus, the distributed system that powers Gemini and YouTube <span class="cite">[3]</span>.</p>
+<p>Rapid Storage (Rapid Bucket + Rapid Cache) is Google's high-performance object storage layer — built on Colossus, the distributed system that powers Gemini and YouTube [3].</p>
 <table><thead><tr><th>Product</th><th>Bandwidth</th><th>Latency</th><th>Primary Use</th></tr></thead><tbody>
 <tr><td><strong>Rapid Bucket</strong></td><td>15 TB/s</td><td>Sub-ms (open file)</td><td>Training data, checkpoint write/restore</td></tr>
 <tr><td><strong>Rapid Cache</strong></td><td>2.5 TB/s</td><td>Sub-ms</td><td>Inference model weight loading (cold start)</td></tr>
@@ -144,7 +143,7 @@
 <li>Checkpoint write/restore (3.2× write, 5× restore speedup)</li>
 <li>Eliminating inference cold start (model weight pre-warming)</li>
 </ul>
-<p>For KV Cache, Google's official recommendation remains <strong>Managed Lustre</strong> or <strong>node-local tiered storage</strong> <span class="cite">[1]</span><span class="cite">[2]</span><span class="cite">[11]</span>.</p>
+<p>For KV Cache, Google's official recommendation remains <strong>Managed Lustre</strong> or <strong>node-local tiered storage</strong> [1][2][11].</p>
 <hr>
 <h2>Comparing the Three Approaches</h2>
 <table><thead><tr><th></th><th>Node-Local Tiered (LMCache)</th><th>Centralized Lustre</th><th>Rapid Storage</th></tr></thead><tbody>
@@ -173,21 +172,21 @@
 <li><strong>Centralized Lustre:</strong> RDMA helps, but network fabric bandwidth is shared across tenants. At 99% hit rates with thousands of concurrent agents, the Lustre cluster becomes the contention point.</li>
 </ul>
 <p><strong>What comes next?</strong></p>
-<p>1. <strong>CXL memory pooling</strong> — disaggregate memory from compute, pool across nodes. Google's own documentation points to CXL as the future tier <span class="cite">[4]</span>. This could break the node-local capacity ceiling without sacrificing proximity.</p>
+<p>1. <strong>CXL memory pooling</strong> — disaggregate memory from compute, pool across nodes. Google's own documentation points to CXL as the future tier [4]. This could break the node-local capacity ceiling without sacrificing proximity.</p>
 <p>2. <strong>KV Cache compression at the storage layer</strong> — current approaches compress within attention (MLA, DSA). Compressing the <em>stored</em> KV blocks themselves (quantization, sparse encoding) could reduce I/O volume by 2-4× without quality loss.</p>
 <p>3. <strong>Predictive KV pre-staging</strong> — NVIDIA's ICMS already does this with DOCA/Dynamo. At 99% hit rates, the prefill-to-decode pipeline becomes a deterministic data movement problem. Predict <em>which</em> KV blocks will be needed and pre-stage them before the decode phase begins.</p>
 <p>4. <strong>Storage-compute co-design</strong> — processing near storage (BlueField DPUs, computational storage) to reduce data movement. Instead of moving KV blocks to compute, move compute to where the KV blocks already live.</p>
 <p>The fundamental question: <strong>when KV Cache hit rates approach 99%, is the bottleneck still storage capacity — or is it I/O bandwidth efficiency?</strong> Google's data suggests we are already hitting the latter. The next generation of AI storage infrastructure will be designed around bandwidth, not capacity.</p>
 <hr>
 <h2>References</h2>
-<p><span class="cite">[1]</span> <a href="https://backyes.github.io/posts/million-seq-storage-vs-compute.html" target="_blank" rel="noopener">backyes — The Million-Token Bill</a> — 42.7:1 storage:compute ratio, 77× cache hit cost difference</p>
-<p><span class="cite">[2]</span> <a href="https://cloud.google.com/blog/products/storage-data-transfer/choosing-google-cloud-managed-lustre-for-your-external-kv-cache" target="_blank" rel="noopener">Google Cloud Blog — Choosing Managed Lustre for External KV Cache</a> — 75% throughput improvement, 35% TCO savings, 40% fewer GPUs</p>
-<p><span class="cite">[3]</span> <a href="https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements" target="_blank" rel="noopener">Google Cloud Blog — Next '26 Storage Announcements</a> — Rapid Storage official positioning and performance specs</p>
-<p><span class="cite">[4]</span> <a href="https://docs.cloud.google.com/ai-hypercomputer/docs/storage" target="_blank" rel="noopener">Google Cloud Documentation — Storage services for AI and ML workloads</a> — Official storage tier recommendations</p>
-<p><span class="cite">[5]</span> <a href="https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26" target="_blank" rel="noopener">Google Cloud Blog — AI infrastructure at Next '26</a> — "Dedicated KV Cache scalable storage subsystem" announcement</p>
-<p><span class="cite">[6]</span> <a href="https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive" target="_blank" rel="noopener">Google Cloud Blog — TPU 8t/8i technical deep dive</a> — TPU 8i 384 MB SRAM designed for KV Cache</p>
-<p><span class="cite">[7]</span> <a href="https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551" target="_blank" rel="noopener">Blocks & Files — Google's cloud storage gets faster and smarter for AI</a> — Managed Lustre as shared KV Cache</p>
-<p><span class="cite">[11]</span> <a href="https://blog.lmcache.ai/en/2025/10/07/lmcache-on-google-kubernetes-engine-boosting-llm-inference-performance-with-kv-cache-on-tiered-storage/" target="_blank" rel="noopener">LMCache Blog — LMCache on GKE: Boosting LLM Inference with KV Cache on Tiered Storage</a> — 264% throughput at 100K context, full benchmark data</p>
+<p>[1] <a href="https://backyes.github.io/posts/million-seq-storage-vs-compute.html" target="_blank" rel="noopener">backyes — The Million-Token Bill</a> — 42.7:1 storage:compute ratio, 77× cache hit cost difference</p>
+<p>[2] <a href="https://cloud.google.com/blog/products/storage-data-transfer/choosing-google-cloud-managed-lustre-for-your-external-kv-cache" target="_blank" rel="noopener">Google Cloud Blog — Choosing Managed Lustre for External KV Cache</a> — 75% throughput improvement, 35% TCO savings, 40% fewer GPUs</p>
+<p>[3] <a href="https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements" target="_blank" rel="noopener">Google Cloud Blog — Next '26 Storage Announcements</a> — Rapid Storage official positioning and performance specs</p>
+<p>[4] <a href="https://docs.cloud.google.com/ai-hypercomputer/docs/storage" target="_blank" rel="noopener">Google Cloud Documentation — Storage services for AI and ML workloads</a> — Official storage tier recommendations</p>
+<p>[5] <a href="https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26" target="_blank" rel="noopener">Google Cloud Blog — AI infrastructure at Next '26</a> — "Dedicated KV Cache scalable storage subsystem" announcement</p>
+<p>[6] <a href="https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive" target="_blank" rel="noopener">Google Cloud Blog — TPU 8t/8i technical deep dive</a> — TPU 8i 384 MB SRAM designed for KV Cache</p>
+<p>[7] <a href="https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551" target="_blank" rel="noopener">Blocks & Files — Google's cloud storage gets faster and smarter for AI</a> — Managed Lustre as shared KV Cache</p>
+<p>[11] <a href="https://blog.lmcache.ai/en/2025/10/07/lmcache-on-google-kubernetes-engine-boosting-llm-inference-performance-with-kv-cache-on-tiered-storage/" target="_blank" rel="noopener">LMCache Blog — LMCache on GKE: Boosting LLM Inference with KV Cache on Tiered Storage</a> — 264% throughput at 100K context, full benchmark data</p>
   </div>
 </article>
 <footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved</p></div></footer>

@@ -1,11 +1,11 @@
 ---
-title: "[Draft] Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck"
+title: "Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck"
 date: 2026-07-22
 tags: ["Google-Cloud", "Managed-Lustre", "LMCache", "Rapid-Storage", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
 excerpt: "Google's KV Cache strategy isn't one solution — it's two complementary approaches: node-local tiered storage (HBM + CPU RAM + Local SSD) for single-node efficiency, and centralized Lustre for multi-tenant sharing. Both prove the same point: storage is the bottleneck."
 ---
 
-# Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck
+# Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck
 
 ## NVIDIA ICMS: Storage at the Bus Edge
 
