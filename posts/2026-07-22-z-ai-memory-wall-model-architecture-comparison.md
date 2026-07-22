@@ -57,12 +57,19 @@ Kimi3 prioritizes quality through memory capacity. It uses a 3:1 hybrid of KDA (
 
 The following table maps how frontier models handle the memory-compute trade-off as of July 2026.
 
-| Model | Attention | Key Efficiency Mechanism | MoE Sparsity | MTP |
+### DSA 主导架构
+
+| Model | Attention | 压缩手段 | MoE Sparsity | MTP |
 |---|---|---|---|---|
-| **DeepSeek V4** | DSA + KV compression + FP4 | Indexing + HCA | 1.8% activation | DSpark (dynamic adaptive) |
-| **Kimi K3** | KDA (3:1 linear:MLA) | None special | 1.8% (16/896 experts) | None special |
-| **LongCat 2.0** | DSA + IndexSharing + MTP | IndexSharing, KVSharing | MoE sparse | MTP-3 |
-| **GLM5.2** | DSA + IndexSharing | IndexSharing + MTP | MoE sparse | MTP |
+| **DeepSeek V4** | DSA + FP4 | Indexing + HCA + CSA + KV压缩 | 1.8% activation | DSpark (动态自适应) |
+| **LongCat 2.0** | DSA + MTP | IndexSharing + KVSharing | MoE sparse | MTP-3 |
+| **GLM5.2** | DSA + IndexSharing | IndexSharing + KVSharing | MoE sparse | MTP |
+
+### 线性混合 Attention 架构
+
+| Model | Attention | 压缩手段 | MoE Sparsity | MTP |
+|---|---|---|---|---|
+| **Kimi K3** | KDA (3:1 linear:MLA) | 无特殊压缩 | 1.8% (16/896 experts) | 无特殊 |
 | **Qwen3.5** | GDN (Gated DeltaNet) | GQA | MoE sparse | — |
 | **MiMo V2/V2.5** | SWA (Sliding Window) | GQA | MoE sparse | — |
 
