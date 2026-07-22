@@ -1,173 +1,163 @@
 ---
-title: "[Draft] Google Rapid Storage Was Not Built for KV Cache — Dissecting the Storage Hierarchy of Google's AI Hypercomputer"
+title: "[Draft] NVIDIA ICMS vs Google's KV Cache Strategy — Two Philosophies for AI Memory Infrastructure"
 date: 2026-07-22
-tags: ["Google-Cloud", "Rapid-Storage", "KV-Cache", "TPU-8i", "Managed-Lustre", "AI-Inference", "Storage-Hierarchy"]
-excerpt: "When Google announced Rapid Storage, many assumed it was purpose-built for LLM KV Cache. A deeper investigation reveals this is a misconception. Google's solution for KV Cache externalization is Managed Lustre — plus an undisclosed dedicated subsystem. Rapid Storage solves a different problem entirely: making sure data never becomes the bottleneck for accelerators."
+tags: ["Google-Cloud", "Rapid-Storage", "Managed-Lustre", "NVIDIA-ICMS", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
+excerpt: "NVIDIA's ICMS puts storage at the high-speed bus edge. Google's Managed Lustre takes a different path — centralized shared storage for KV Cache. Two approaches, two bets on where the memory wall should be solved."
 ---
 
-# [Draft] Google Rapid Storage Was Not Built for KV Cache
+# NVIDIA ICMS vs Google's KV Cache Strategy
 
-## The Birth of a Misconception
+## Two directions for AI memory
 
-At Google Cloud Next '26 in April 2026, Google announced Cloud Storage Rapid (Rapid Bucket and Rapid Cache) alongside TPU 8i — the latter tripling on-chip SRAM to 384 MB, explicitly designed to "host massive KV Caches entirely on silicon" [5].
+At CES 2026 and GTC 2026, NVIDIA announced **ICMS** (Inference Context Memory Storage, also branded **CMX**) — a pod-level, flash-backed context tier for the Vera Rubin platform [8][9]. The idea: put high-bandwidth storage *close* to the compute, bridging GPU HBM and general-purpose network storage. Powered by BlueField DPUs in dedicated flash enclosures, ICMS delivers up to ==5×== higher tokens-per-second and ==5×== power efficiency over traditional secondary storage, using Spectrum-X Ethernet for RDMA-accelerated transport [8].
 
-These two announcements, landing in the same keynote, wrapped in the "AI Hypercomputer for the agentic era" narrative, produced a natural inference: **Rapid Storage must also be built for KV Cache.**
+NVIDIA's bet: the KV Cache bottleneck is best solved by pushing storage *toward* the accelerator — at the high-speed bus edge.
 
-That inference is wrong.
+Google took a different path. Instead of placing storage at the bus edge, Google's Managed Lustre solution puts KV Cache on a *centralized, shared parallel file system* — accessed via RDMA from any node. The bet: KV Cache externalization is a *data sharing and capacity* problem, not just a *proximity* problem.
 
-> ==Rapid Storage was not built for KV Cache.== It solves "how to get data to accelerators fast enough"; KV Cache externalization requires "how to share and restore inference state across nodes."
-
-Understanding this distinction means understanding the full storage hierarchy Google designed for AI Hypercomputer.
-
----
-
-## 1. Google's Storage Hierarchy: A Four-Layer Architecture
-
-Google Cloud's official documentation [1] explicitly maps storage products to AI workloads:
-
-| Use Case | Primary Recommendation | Why |
-|---|---|---|
-| **Training data loading** | Rapid Bucket | 15 TB/s bandwidth + EB-scale capacity + cost efficiency |
-| **Checkpoint write/restore** | Managed Lustre | Sub-ms latency + parallel data access |
-| **Inference model weight loading** | Rapid Cache / Rapid Bucket | Eliminate inference cold start |
-| ==**KV Cache offloading**== | ==**Managed Lustre**== | ==Sub-ms latency + cross-node pull== |
-
-The key finding: **KV cache offloading's primary recommendation is Managed Lustre, not Rapid Storage.**
-
-Google's own words:
-
-> "We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache." [2]
+These two approaches represent fundamentally different views on where the memory wall should be solved.
 
 ---
 
-## 2. What Rapid Storage Actually Delivers
+## 1. NVIDIA ICMS: Storage at the Bus Edge
 
-Rapid Storage is built on Colossus — Google's internal distributed storage system that powers Gemini and YouTube [3]. It ships as two products:
+**Architecture:**
 
-### Rapid Bucket
+| Component | Detail |
+|---|---|
+| **Name** | ICMS / CMX (Context Memory Storage) |
+| **Platform** | NVIDIA Vera Rubin (2026) |
+| **Processors** | BlueField-4 DPUs in dedicated flash enclosures |
+| **Fabric** | Spectrum-X Ethernet, RDMA-accelerated |
+| **Tier** | G3.5 — between in-Pod HBM (G3) and off-Pod network storage (G4) |
+| **Performance** | Up to 5× tokens/sec vs traditional secondary storage |
+| **Software** | NVIDIA DOCA, Dynamo, NIXL for KV block pre-staging |
 
-| Metric | Value | vs. Traditional Object Store |
-|---|---|---|
-| Bandwidth | ==15 TB/s== | 7-15x |
-| Request rate | ==20M ops/s== | 200x |
-| Checkpoint write | — | ==3.2x== faster |
-| Checkpoint restore | — | ==5x== faster |
-| GPU blocked time | — | ==50%== reduction |
+**The philosophy:** KV Cache should be staged *as close to the GPU as possible* — close enough to act as a memory extension, far enough to break the HBM capacity wall. ICMS is essentially a "memory bus-attached flash tier."
 
-### Rapid Cache
+---
+
+## 2. Google's Answer: Managed Lustre for External KV Cache
+
+Google's official position: "We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache." [2]
+
+The approach is fundamentally different from ICMS. Instead of placing storage at the bus edge, Lustre provides a *centralized, shared parallel file system* that any node can access via RDMA.
+
+### 2.1 Why Lustre, Not Local SSD?
+
+Google's blog [2] makes the case:
+
+> "On GPUs, Lustre is assisted by locally attached SSDs. And on TPUs, where local SSDs are not available, Lustre's role is even more central."
+
+> "While Local SSDs and CPU RAM are effective node-local tiers, they are fixed in size and cannot be shared. Managed Lustre provides a parallel file system to act as the massive, high-throughput external storage, making it a great solution for large-scale, multi-node, and multi-tenant AI inference workloads where the cache exceeds the capacity of the host machine."
+
+The key insight: local SSDs *can* be shared in distributed setups, but their I/O bandwidth is limited by host NIC capacity. Lustre provides higher aggregate bandwidth and centralized sharing — critical for long-context workloads where KV Cache sizes reach terabytes.
+
+### 2.2 Performance Data
+
+Google's experiments (DeepSeek-R1 on A3-Ultra: 8× H200, 8× 141 GB HBM, 50K token context, ~75% cache hit rate, ~3.4 TiB KV Cache) [2]:
+
+| Metric | Improvement |
+|---|---|
+| **Inference throughput** | ==+75%== vs host memory only |
+| **Mean time to first token (MTTF)** | ==−40%+== vs host memory only |
+| **I/O parallelism** | 32 worker threads for KV reads |
+
+### 2.3 TCO Analysis: 35% Savings
+
+For a workload processing 1 million TPS using A3-Ultra VMs + Managed Lustre [2]:
 
 | Metric | Value |
 |---|---|
-| Aggregate read throughput | ==2.5 TB/s== |
-| Target workload | Bursty loads (inference model loading) |
-| Code changes | Zero (transparent to existing buckets) |
+| **TCO reduction** | ==35%== vs no external storage |
+| **Accelerator savings** | ==~40%== fewer GPUs needed |
+| **Key insight** | "Storage replaces compute" — offloading KV to I/O frees accelerators for other work |
 
-These numbers point in one direction: **training throughput and accelerator utilization**, not inference-time KV Cache access.
+### 2.4 Configuration Details
 
----
+| Parameter | Value |
+|---|---|
+| **Lustre bandwidth** | 1000 MB/s per TiB (Performance Tier) |
+| **Capacity per machine** | 18 TiB Lustre per A3-Ultra VM |
+| **Cluster size** | 73 A3-Ultra machines for 1M TPS |
+| **GPU** | 8× H200 per VM, 8× 141 GB HBM |
+| **Software tuning** | `o_direct` flag, high I/O parallelism (32 threads) |
 
-## 3. Why Rapid Storage Is Architecturally Unsuitable for KV Cache
+### 2.5 The Core Argument
 
-The mismatch is fundamental:
+> "Our experiment demonstrated that with configuration tuning and an improvement in KV Cache software to adopt more I/O parallelism, Managed Lustre can substantially improve inference performance."
 
-| Requirement | KV Cache Externalization | Rapid Storage (Object Store) |
-|---|---|---|
-| **Access granularity** | ~KB random reads | ~MB block reads/writes |
-| **Consistency** | Strong (state cannot be lost) | Eventual consistency |
-| **Latency** | Sub-ms (directly impacts TTFT) | Sub-ms (open file only) |
-| **Access pattern** | Token-indexed random access | Large-file sequential I/O |
-| **Shared access** | Multiple workers simultaneously | Limited |
+> "You can handle a specific number of queries per second with ~40% fewer accelerators, resulting in direct cost savings."
 
-Managed Lustre, as a POSIX-compliant parallel file system, natively supports everything KV Cache externalization demands: fine-grained random access, cross-node sharing, RDMA direct paths.
-
-Managed Lustre's KV Cache performance [2]:
-- ==40%+== reduction in TTFT (vs. host memory only)
-- ==75%== inference throughput improvement
-- Built on DDN EXAScaler with TPUDirect RDMA support
+Google's thesis: **I/O bandwidth is the bottleneck**, and parallel storage (Lustre) can deliver more aggregate bandwidth than node-local solutions when properly tuned. The storage cost is offset by compute savings.
 
 ---
 
-## 4. Google's KV Cache Strategy: "Avoid External Storage If You Can"
+## 3. Rapid Storage: What It Actually Does
 
-TPU 8i's architecture reveals Google's KV Cache philosophy:
+Rapid Storage (Rapid Bucket + Rapid Cache) is Google's high-performance object storage layer — built on the Colossus distributed system that powers Gemini and YouTube [3].
 
-| Tier | Storage | Capacity per Chip | KV Cache Role |
+| Product | Bandwidth | Latency | Primary Use |
 |---|---|---|---|
-| **L0** | On-chip SRAM | ==384 MB== | ==Optimal==: preferred residence |
-| **L1** | HBM | ==288 GB== | ==Secondary==: main capacity layer |
-| **L2** | Managed Lustre | ==80 PB== | ==Externalization==: cross-node sharing |
-| **L3** | Rapid Storage | ==EB-scale== | ==Unsuitable==: training data/weights |
+| **Rapid Bucket** | 15 TB/s | Sub-ms (open file) | Training data, checkpoint write/restore |
+| **Rapid Cache** | 2.5 TB/s | Sub-ms | Inference model weight loading (cold start) |
 
-TPU 8i's pod-level SRAM: ==384 MB × 1,152 chips = 432 GB==. This is Google's first line of defense for KV Cache — keep it on silicon whenever possible.
+**Rapid Storage is not designed for KV Cache externalization.** Its strengths are:
+- Accelerating training data loading (50% GPU blocked time reduction)
+- Checkpoint write/restore (3.2× write, 5× restore speedup)
+- Eliminating inference cold start (model weight pre-warming)
 
-The logic is clear: **rather than shuttling KV Cache in and out of external storage, keep it on-chip.** Only when KV Cache grows too large for HBM does Managed Lustre serve as the L2 externalization tier. Rapid Storage plays no role in this chain.
-
----
-
-## 5. Where the Misconception Comes From
-
-**1. Simultaneous announcement, conflated context**
-Rapid Storage and TPU 8i's 3x SRAM increase launched at the same event, both wrapped in the "AI Hypercomputer for the agentic era" narrative. But TPU 8i's SRAM is for KV Cache; Rapid Storage is not.
-
-**2. The "Agentic Era" narrative redefines storage**
-Google stated: "During AI inference, storage is the access layer that makes it responsive" [3]. The word "context" here is misread as KV Cache, when it actually refers to the full runtime context of an Agent — far more than just KV Cache.
-
-**3. The name implies low latency**
-"Rapid" suggests low latency, which maps easily to the latency requirements of KV Cache externalization. But Rapid refers to object-store-level throughput and IOPS improvements, not fine-grained random access latency.
-
-**4. Industry trend projection**
-In 2026, KV Cache externalization is the industry's hottest topic (LMCache, Mooncake, NVIDIA KV offload). Any new "AI storage" product is presumed to be "for KV Cache" by default.
+For KV Cache, Google's official recommendation remains **Managed Lustre** [1][2].
 
 ---
 
-## 6. What About the "Dedicated KV Cache Scalable Storage Subsystem"?
+## 4. Comparing the Three Approaches
 
-In the Next '26 announcement [4], Google listed a separate, undisclosed component:
-
-> "Dedicated KV Cache scalable storage subsystem"
-
-It was announced alongside TPU 8t/8i, Virgo Network, and Managed Lustre. As of this writing (July 2026), Google has released no technical details.
-
-If it exists as a separate product, *that* would be Google's purpose-built KV Cache storage — but it is not Rapid Storage.
-
----
-
-## 7. Implications for Model Designers
-
-**If you design long-context models:**
-TPU 8i's 384 MB SRAM means your model's KV Cache can reside entirely on-chip. This is a structural advantage over GPU-based approaches (limited HBM, mandatory offload). For million-token context windows, TPU 8i's storage hierarchy delivers significantly lower KV Cache access latency than GPU alternatives.
-
-**If you design Agent systems:**
-Managed Lustre's KV Cache sharing enables multiple Agents to share context state, eliminating redundant computation. This is Google's core storage advantage in the Agentic AI era.
-
-**Rapid Storage has minimal direct impact on your model design:**
-It primarily affects training efficiency and inference cold-start time, not KV Cache management during inference.
+| Dimension | NVIDIA ICMS | Google Managed Lustre | Google Rapid Storage |
+|---|---|---|---|
+| **Architecture** | Bus-attached flash (DPU-powered) | Centralized parallel file system (RDMA) | Distributed object storage (Colossus) |
+| **Proximity** | Pod-level (close to GPU) | Rack/cluster-level (network-accessed) | Regional |
+| **Sharing** | Pod-scoped | Multi-node, multi-tenant | Zonal |
+| **KV Cache role** | Primary tier for KV staging | Primary tier for external KV | Not recommended for KV |
+| **Core bet** | Proximity solves the wall | Shared bandwidth solves the wall | Throughput solves training, not inference |
+| **Best for** | Single-pod, latency-sensitive KV | Multi-tenant, long-context, shared KV | Training data, model weights |
 
 ---
 
-## 8. In One Sentence
+## 5. What This Means for AI Infrastructure
 
-> ==Google Rapid Storage is the "highway" for AI data pipelines — getting data to accelerators fast. KV Cache externalization needs a "vault" — the shared, durable, fine-grained state storage that Managed Lustre provides. They complement each other but are not interchangeable.==
+The NVIDIA-Google divergence reflects a deeper question: **where should the KV Cache bottleneck be solved?**
 
-Rapid Storage solves a supply-side problem (keeping TPUs/GPUs fully utilized); KV Cache externalization solves a state-management problem (moving inference state efficiently across nodes). In Google's AI Hypercomputer architecture, each has its role — neither was built *for* the other.
+- **NVIDIA says:** at the bus edge — push storage as close to the GPU as possible, use DPUs to manage the flash tier.
+- **Google says:** in the network — provide a centralized, high-bandwidth shared tier that any node can access, and optimize I/O parallelism in software.
+
+Both approaches acknowledge the same reality: at 42.7:1 storage:compute ratio [1], the KV Cache *is* the workload. The question is whether to solve this with proximity (ICMS) or with shared bandwidth (Lustre).
+
+For infrastructure planners, the implication is clear: **there is no one-size-fits-all.** The optimal KV Cache architecture depends on workload characteristics — single-pod vs multi-tenant, latency-sensitive vs throughput-bound, shared vs isolated contexts.
 
 ---
 
 ## References
 
-[1] [Google Cloud Documentation — Storage services for AI and ML workloads](https://docs.cloud.google.com/ai-hypercomputer/docs/storage) — Official storage tier recommendations; KV cache offloading → Managed Lustre
+[1] [backyes — The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html) — 42.7:1 storage:compute ratio, 77× cache hit cost difference
 
-[2] [Blocks & Files — Google's cloud storage gets faster and smarter for AI](https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551) — Managed Lustre as shared KV Cache: 40% TTFT improvement
+[2] [Google Cloud Blog — Choosing Managed Lustre for External KV Cache](https://cloud.google.com/blog/products/storage-data-transfer/choosing-google-cloud-managed-lustre-for-your-external-kv-cache) — 75% throughput improvement, 35% TCO savings, 40% fewer GPUs
 
 [3] [Google Cloud Blog — Storage innovations at Next '26](https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements) — Rapid Storage official positioning and performance specs
 
-[4] [Google Cloud Blog — AI infrastructure at Next '26](https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26) — "Dedicated KV Cache scalable storage subsystem" announcement
+[4] [Google Cloud Documentation — Storage services for AI and ML workloads](https://docs.cloud.google.com/ai-hypercomputer/docs/storage) — Official storage tier recommendations
 
-[5] [Google Cloud Blog — TPU 8t/8i technical deep dive](https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive) — TPU 8i 384 MB SRAM designed for KV Cache
+[5] [Google Cloud Blog — AI infrastructure at Next '26](https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26) — "Dedicated KV Cache scalable storage subsystem" announcement
 
-[6] [IO Fund — Google TPU v8 vs Nvidia](https://io-fund.com/ai-stocks/google-tpu-v8-vs-nvidia-inference-rewrites-ai-market) — Analyst perspective on TPU 8i inference advantages
+[6] [Google Cloud Blog — TPU 8t/8i technical deep dive](https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive) — TPU 8i 384 MB SRAM designed for KV Cache
 
-[7] [StorageNews — Rapid cloud storage fixes AI training bottlenecks](https://storagenews.top/posts/rapid-cloud-storage-cuts-gpu-idle-time-by-half/) — Managed Lustre for KV Cache; Smart Storage for data selection
+[7] [Blocks & Files — Google's cloud storage gets faster and smarter for AI](https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551) — Managed Lustre as shared KV Cache
+
+[8] [NVIDIA Developer — Introducing BlueField-4-Powered CMX](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/) — ICMS architecture, 5× performance, Spectrum-X fabric
+
+[9] [NVIDIA Newsroom — BlueField-4 Powers AI-Native Storage](https://nvidianews.nvidia.com/news/nvidia-bluefield-4-powers-new-class-of-ai-native-storage-infrastructure-for-the-next-frontier-of-ai) — ICMS launch announcement
+
+[10] [NVIDIA Investor Relations — BlueField-4](https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-BlueField-4-Powers-New-Class-of-AI-Native-Storage-Infrastructure-for-the-Next-Frontier-of-AI/default.aspx) — ICMS/CMX branding
 
 ---
 
