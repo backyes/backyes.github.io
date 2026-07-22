@@ -15,7 +15,7 @@ These observations point to a deeper question: the frontier model landscape is s
 
 ## The split
 
-The frontier model landscape has split into two diverging philosophies. DeepSeek pushes extreme cost-efficiency — compressing KV cache, quantizing to FP4, activating only 1.8% of parameters. Kimi3 pushes toward high-precision — larger context windows, fuller KV caches, less aggressive compression.
+The frontier model landscape has split into two diverging philosophies. DeepSeek pushes extreme cost-efficiency — compressing KV cache, quantizing to FP4, activating only 1.8% of parameters. Kimi3 pushes toward high-precision — larger context windows, fuller KV caches, less aggressive compression. We cannot verify the internal architecture of Claude Fable 5 or GPT-5.6 Sol, so we focus on what we can observe: DeepSeek's compression-first approach vs. Kimi3's memory-rich approach.
 
 This may not be a temporary divergence. It appears to be a fundamental architectural choice, and it likely has significant implications for how we think about AI storage infrastructure.
 
