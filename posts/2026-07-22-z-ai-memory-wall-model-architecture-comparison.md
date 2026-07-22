@@ -19,7 +19,13 @@ The frontier model landscape has split into two diverging philosophies. DeepSeek
 
 This may not be a temporary divergence. It appears to be a fundamental architectural choice, and it likely has significant implications for how we think about AI storage infrastructure.
 
-Our previous analysis ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) showed that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==. Storage dominates the bill. So when models make opposite choices about how much storage to consume per token, they are making opposite bets about what the storage layer should look like.
+Our previous analysis ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) showed that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==.
+
+![Storage vs Compute Cost — DeepSeek vs Kimi (July 2026)](https://backyes.github.io/posts/assets/daily_cost_comparison.png)
+
+*Storage vs Compute cost per day. DeepSeek: $0.83 storage + $0.89 compute. Kimi: $64.34 storage + $6.13 compute. Storage dominates both bills [1].*
+
+So when models make opposite choices about how much storage to consume per token, they are making opposite bets about what the storage layer should look like.
 
 > **The memory wall is not a problem to be solved — it is a design constraint that shapes the entire inference stack.**
 
@@ -27,22 +33,27 @@ Our previous analysis ([The Million-Token Bill](https://backyes.github.io/posts/
 
 ## Two Directions, Two Storage Philosophies
 
+![Storage vs Compute Cost — DeepSeek vs Kimi (July 2026)](https://backyes.github.io/posts/assets/daily_cost_comparison.png)
+
+*Daily Agent session cost (July 20, 2026): DeepSeek $1.72 total vs Kimi $70.47 total — a **41×** difference. Storage accounts for 48% of DeepSeek's cost but **91%** of Kimi's [1].*
+
 ### Cost-Efficiency: DeepSeek
 
-DeepSeek's goal is simple: minimize storage cost per token.
+DeepSeek's architecture is built around one goal: minimize storage cost per token. The key innovations:
 
-| Technique | Impact |
-|---|---|
-| MLA (Multi-head Latent Attention) | 32× KV cache compression |
-| DSA (Dense-Sparse Attention) | Near-linear scaling, offloadable |
-| FP4 Quantization | 2× memory reduction |
-| MoE 1.8% activation | Only 1.8% of params active per token |
+| Technique | What It Does | Storage Impact |
+|---|---|---|
+| **DSA (Dense-Sparse Attention)** | Sparse index + selective full attention on hot tokens | Near-linear scaling, enables KV offload |
+| **HCA (Highly Compressed Attention)** | Partial layers use extreme KV compression | Drastic KV size reduction in critical layers |
+| **CSA (Compressed Sparse Attention)** | Combines sparse indexing with compressed KV storage | Multiplicative compression effect |
+| **FP4 Quantization** | 4-bit weights + activations | 2× memory reduction |
+| **MoE 1.8% activation** | Only 16 of 896 experts active per token | Minimal active parameter footprint |
 
-Result: DeepSeek Pro charges ==$0.003625/M== cache hit tokens — ==77×== cheaper than Kimi3 [1].
+The DSA+HCA+CSA stack is DeepSeek's core differentiator: it doesn't just compress KV — it fundamentally restructures *which tokens get full attention* and *which get compressed or offloaded*. Result: ==$0.003625/M== cache hit tokens — ==77×== cheaper than Kimi3 [1].
 
 ### High-Precision: Kimi3
 
-The high-precision camp prioritizes quality through memory capacity. Kimi3 exemplifies this: it uses a 3:1 hybrid of KDA (linear attention) and MLA, supports 1M token context, and does not aggressively compress its KV cache. Our first post confirmed the consequence — Kimi3's cache hit cost (==$0.28/M==) is ==77×== higher than DeepSeek's (==$0.003625/M==), cache miss cost (==$2.78/M==) is ==6×== higher, and output cost (==$13.90/M==) is ==16×== higher [1]. This is the direct price of a memory-rich architecture: higher quality, but a substantially larger storage footprint that infrastructure must accommodate.
+Kimi3 prioritizes quality through memory capacity. It uses a 3:1 hybrid of KDA (linear attention) and MLA, supports 1M token context, and does not aggressively compress its KV cache. The consequence: Kimi3's cache hit cost (==$0.28/M==) is ==77×== higher than DeepSeek's, cache miss (==$2.78/M==) is ==6×== higher, output (==$13.90/M==) is ==16×== higher [1]. This is the price of a memory-rich architecture — higher quality, larger storage footprint.
 
 ---
 
@@ -75,10 +86,6 @@ For sparsity and multi-token prediction:
 
 The two-direction split creates a concrete design constraint for storage infrastructure. Our first post ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) revealed the numbers behind one Agent session (July 14–20, 2026) [1]:
 
-![Daily Token Consumption](assets/daily_cost_comparison.png)
-
-**Daily cost comparison — DeepSeek vs Kimi (July 2026)** [1]
-
 | Metric | DeepSeek | Kimi K3 | Ratio |
 |---|---|---|---|
 | **Peak Day Total Cost** | $1.72 | $70.47 | **41×** |
@@ -87,7 +94,7 @@ The two-direction split creates a concrete design constraint for storage infrast
 | **Full Week Storage Cost** | $1.74 | $134.51 | **77×** |
 | **Full Week Total Cost** | $6.45 | $70.33 | **10.9×** |
 
-The storage:compute ratio is ==42.7:1== — meaning 99.1% of tokens are "remembered," not "computed." On peak day (July 20), a single Agent session generated ==229.6M== cache hit tokens. Storage dominates the bill.
+On peak day (July 20), a single Agent session generated ==229.6M== cache hit tokens. Storage accounts for 48% of DeepSeek's cost — but **91%** of Kimi's.
 
 ### The Critical Question
 
