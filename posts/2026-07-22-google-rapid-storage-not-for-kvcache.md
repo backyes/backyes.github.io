@@ -1,11 +1,11 @@
 ---
-title: "[Draft] How Google Thinks About KV Cache Storage — And Quantitative data"
+title: "[Draft] Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck"
 date: 2026-07-22
 tags: ["Google-Cloud", "Managed-Lustre", "LMCache", "Rapid-Storage", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
 excerpt: "Google's KV Cache strategy isn't one solution — it's two complementary approaches: node-local tiered storage (HBM + CPU RAM + Local SSD) for single-node efficiency, and centralized Lustre for multi-tenant sharing. Both prove the same point: storage is the bottleneck."
 ---
 
-# How Google Thinks About KV Cache Storage — And Quantitative data
+# Google's KV Cache Storage Strategy: Two Approaches, One Bottleneck
 
 ## NVIDIA ICMS: Storage at the Bus Edge
 
@@ -149,7 +149,7 @@ For KV Cache, Google's official recommendation remains **Managed Lustre** or **n
 
 ---
 
-## 我们能进一步思考什么？
+## What Comes Next?
 
 Google's two-pronged approach reflects a simple principle: **match the storage architecture to the workload.**
 
@@ -161,24 +161,24 @@ Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, 
 
 **But the story doesn't end here.**
 
-Consider where Agentic AI is heading: million-token context windows with ==90%== or even ==99%== cache hit rates. At 42.7:1 storage:compute ratio, every percentage point of hit rate improvement means more data to store, more data to move. The I/O bandwidth demand scales linearly with hit rate — a 99% hit workload needs ==1.3×== the I/O of a 75% hit workload at the same context length.
+Consider where Agentic AI is heading: million-token context windows with ==90%== or even ==99%== cache hit rates. At 42.7:1 storage:compute ratio, every percentage point of hit rate improvement means more data to store and more data to move. I/O bandwidth demand scales linearly with hit rate — a 99% hit workload needs ==1.3×== the I/O of a 75% hit workload at the same context length.
 
-**The next bottleneck is I/O bandwidth efficiency.** Current solutions hit limits:
+**The next bottleneck is I/O bandwidth efficiency.** Current solutions are already hitting limits:
 
-- **Node-local tiered:** Host NIC bandwidth caps aggregate throughput. Local SSD at 5 TiB is fast but finite. When cache exceeds node capacity, you spill to SSD — and TTFT degrades.
+- **Node-local tiered:** Host NIC bandwidth caps aggregate throughput. Local SSD at 5 TiB is fast but finite. When cache exceeds node capacity, data spills to SSD — and TTFT degrades.
 - **Centralized Lustre:** RDMA helps, but network fabric bandwidth is shared across tenants. At 99% hit rates with thousands of concurrent agents, the Lustre cluster becomes the contention point.
 
 **What comes next?**
 
-1. **CXL memory pooling** — disaggregate memory from compute, pool across nodes. Google's own docs mention CXL as the future tier [4]. This could break the node-local capacity ceiling without sacrificing proximity.
+1. **CXL memory pooling** — disaggregate memory from compute, pool across nodes. Google's own documentation points to CXL as the future tier [4]. This could break the node-local capacity ceiling without sacrificing proximity.
 
-2. **KV Cache compression at the storage layer** — current approaches compress in attention (MLA, DSA). Compressing the *stored* KV blocks (quantization, sparse encoding) could reduce I/O volume by 2-4× without quality loss.
+2. **KV Cache compression at the storage layer** — current approaches compress within attention (MLA, DSA). Compressing the *stored* KV blocks themselves (quantization, sparse encoding) could reduce I/O volume by 2-4× without quality loss.
 
-3. **Predictive KV pre-staging** — NVIDIA's ICMS already does this with DOCA/Dynamo. At 99% hit rates, the prefill-to-decode pipeline becomes a deterministic data movement problem. Predict *which* KV blocks will be needed and pre-stage them before the decode phase.
+3. **Predictive KV pre-staging** — NVIDIA's ICMS already does this with DOCA/Dynamo. At 99% hit rates, the prefill-to-decode pipeline becomes a deterministic data movement problem. Predict *which* KV blocks will be needed and pre-stage them before the decode phase begins.
 
-4. **Storage-compute co-design** — processing near storage (BlueField DPUs, computational storage) to reduce data movement. Instead of moving KV blocks to compute, move compute to where the KV blocks live.
+4. **Storage-compute co-design** — processing near storage (BlueField DPUs, computational storage) to reduce data movement. Instead of moving KV blocks to compute, move compute to where the KV blocks already live.
 
-The fundamental question: **when KV Cache hit rates approach 99%, is the bottleneck still storage capacity — or is it I/O bandwidth efficiency?** Google's data suggests we're already hitting the latter. The next generation of AI storage infrastructure will be designed around bandwidth, not capacity.
+The fundamental question: **when KV Cache hit rates approach 99%, is the bottleneck still storage capacity — or is it I/O bandwidth efficiency?** Google's data suggests we are already hitting the latter. The next generation of AI storage infrastructure will be designed around bandwidth, not capacity.
 
 ---
 
