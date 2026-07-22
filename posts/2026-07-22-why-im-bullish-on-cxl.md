@@ -138,9 +138,9 @@ NVIDIA is not standing still. At Computex 2025 and GTC 2026, NVIDIA announced **
 
 In essence, NVIDIA is building a *proprietary alternative to CXL for memory disaggregation* — using NVLink as the pooling bus instead of PCIe/CXL.
 
-![NVIDIA NVLink Fusion Architecture — NVLink-C2C enables third-party chip integration and memory pooling over NVLink fabric](assets/nvlink-fusion-cxl-pooling.png)
+![NVIDIA NVLink-C2C enables memory pooling over NVLink fabric — Grace CPU accessing GPU memory via NVLink](https://developer-blogs.nvidia.com/wp-content/uploads/2022/11/memory-access-grace-hopper-superchip.png)
 
-*NVIDIA NVLink Fusion architecture: third-party chips (custom CPUs, accelerators) connect via NVLink-C2C and UCIe bridge into the NVLink fabric, enabling cache-coherent memory pooling as a proprietary alternative to CXL [9a][9b][9e]*
+*NVIDIA NVLink-C2C: cache-coherent chip-to-chip interconnect enabling memory pooling across the NVLink fabric. Grace CPU accesses GPU HBM via NVLink — NVIDIA's proprietary approach to memory disaggregation that competes with CXL's open-standard approach [9a][9b][9c][9d]*
 
 Academic research confirms NVLink's viability for memory disaggregation — a 2025 paper from Hasso Plattner Institute benchmarks Grace CPU accessing GPU memory via NVLink for disaggregated memory workloads [9d].
 
