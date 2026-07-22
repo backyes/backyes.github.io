@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>[Draft] NVIDIA ICMS vs Google's KV Cache Strategy — Two Philosophies for AI Memory Infrastructure · backyes</title>
+<title>[Draft] NVIDIA ICMS vs Google KV Cache Strategy — Two Philosophies for AI Memory Infrastructure · backyes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -58,109 +58,84 @@
 </div></nav>
 <article class="article">
   <a href="../posts.html" class="back">← 返回 Posts</a>
-  <h1>[Draft] NVIDIA ICMS vs Google's KV Cache Strategy — Two Philosophies for AI Memory Infrastructure</h1>
-  <div class="meta"><span>📅 2026-07-22</span><div><span class="ptag">Google-Cloud</span><span class="ptag">Rapid-Storage</span><span class="ptag">Managed-Lustre</span><span class="ptag">NVIDIA-ICMS</span><span class="ptag">KV-Cache</span><span class="ptag">AI-Inference</span><span class="ptag">Storage-Hierarchy</span></div></div>
+  <h1>[Draft] NVIDIA ICMS vs Google KV Cache Strategy — Two Philosophies for AI Memory Infrastructure</h1>
+  <div class="meta"><span>📅 2026-07-22</span><div><span class="ptag">Google-Cloud</span><span class="ptag">Rapid-Storage</span><span class="ptag">Managed-Lustre</span><span class="ptag">NVIDIA-ICMS</span><span class="ptag">KV-Cache</span><span class="ptag">AI-Inference</span></div></div>
   <div class="article-body">
-<h2>Two directions for AI memory</h2>
-<p>At CES 2026 and GTC 2026, NVIDIA announced <strong>ICMS</strong> (Inference Context Memory Storage, also branded <strong>CMX</strong>) — a pod-level, flash-backed context tier for the Vera Rubin platform [8][9]. The idea: put high-bandwidth storage <em>close</em> to the compute, bridging GPU HBM and general-purpose network storage. Powered by BlueField DPUs in dedicated flash enclosures, ICMS delivers up to <mark>5×</mark> higher tokens-per-second and <mark>5×</mark> power efficiency over traditional secondary storage, using Spectrum-X Ethernet for RDMA-accelerated transport [8].</p>
-<p>NVIDIA's bet: the KV Cache bottleneck is best solved by pushing storage <em>toward</em> the accelerator — at the high-speed bus edge.</p>
-<p>Google took a different path. Instead of placing storage at the bus edge, Google's Managed Lustre solution puts KV Cache on a <em>centralized, shared parallel file system</em> — accessed via RDMA from any node. The bet: KV Cache externalization is a <em>data sharing and capacity</em> problem, not just a <em>proximity</em> problem.</p>
-<p>These two approaches represent fundamentally different views on where the memory wall should be solved.</p>
+<p>NVIDIA's ICMS (Inference Context Memory Storage, aka CMX) is a pod-level flash tier for Vera Rubin [8][9]. BlueField-4 DPUs in dedicated enclosures, Spectrum-X RDMA fabric, <mark>5×</mark> token throughput over traditional storage. The bet: push storage <em>toward</em> the GPU — solve the wall at the bus edge.</p>
+<p>Google's bet is different. Managed Lustre puts KV Cache on a <em>centralized parallel file system</em>, accessed via RDMA from any node [2]. The wall is a <em>capacity and sharing</em> problem, not just a <em>proximity</em> problem.</p>
+<p>Two philosophies. Both acknowledge the same reality: at 42.7:1 storage:compute ratio [1], KV Cache <em>is</em> the workload.</p>
 <hr>
 <h2>1. NVIDIA ICMS: Storage at the Bus Edge</h2>
-<p><strong>Architecture:</strong></p>
 <table><thead><tr><th>Component</th><th>Detail</th></tr></thead><tbody>
-<tr><td><strong>Name</strong></td><td>ICMS / CMX (Context Memory Storage)</td></tr>
-<tr><td><strong>Platform</strong></td><td>NVIDIA Vera Rubin (2026)</td></tr>
-<tr><td><strong>Processors</strong></td><td>BlueField-4 DPUs in dedicated flash enclosures</td></tr>
-<tr><td><strong>Fabric</strong></td><td>Spectrum-X Ethernet, RDMA-accelerated</td></tr>
-<tr><td><strong>Tier</strong></td><td>G3.5 — between in-Pod HBM (G3) and off-Pod network storage (G4)</td></tr>
-<tr><td><strong>Performance</strong></td><td>Up to 5× tokens/sec vs traditional secondary storage</td></tr>
-<tr><td><strong>Software</strong></td><td>NVIDIA DOCA, Dynamo, NIXL for KV block pre-staging</td></tr>
+<tr><td>Platform</td><td>Vera Rubin (2026)</td></tr>
+<tr><td>Processors</td><td>BlueField-4 DPUs in flash enclosures</td></tr>
+<tr><td>Fabric</td><td>Spectrum-X Ethernet, RDMA</td></tr>
+<tr><td>Tier</td><td>G3.5 — between HBM (G3) and network storage (G4)</td></tr>
+<tr><td>Performance</td><td><mark>5×</mark> tokens/sec vs traditional storage</td></tr>
+<tr><td>Software</td><td>DOCA, Dynamo, NIXL for KV pre-staging</td></tr>
 </tbody></table>
-<p><strong>The philosophy:</strong> KV Cache should be staged <em>as close to the GPU as possible</em> — close enough to act as a memory extension, far enough to break the HBM capacity wall. ICMS is essentially a "memory bus-attached flash tier."</p>
+<p><strong>Philosophy:</strong> KV Cache should sit as close to the GPU as possible — a memory bus-attached flash tier.</p>
 <hr>
-<h2>2. Google's Answer: Managed Lustre for External KV Cache</h2>
-<p>Google's official position: "We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache." [2]</p>
-<p>The approach is fundamentally different from ICMS. Instead of placing storage at the bus edge, Lustre provides a <em>centralized, shared parallel file system</em> that any node can access via RDMA.</p>
-<h3>2.1 Why Lustre, Not Local SSD?</h3>
-<p>Google's blog [2] makes the case:</p>
-<blockquote><p>"On GPUs, Lustre is assisted by locally attached SSDs. And on TPUs, where local SSDs are not available, Lustre's role is even more central."</p></blockquote>
-<blockquote><p>"While Local SSDs and CPU RAM are effective node-local tiers, they are fixed in size and cannot be shared. Managed Lustre provides a parallel file system to act as the massive, high-throughput external storage, making it a great solution for large-scale, multi-node, and multi-tenant AI inference workloads where the cache exceeds the capacity of the host machine."</p></blockquote>
-<p>The key insight: local SSDs <em>can</em> be shared in distributed setups, but their I/O bandwidth is limited by host NIC capacity. Lustre provides higher aggregate bandwidth and centralized sharing — critical for long-context workloads where KV Cache sizes reach terabytes.</p>
-<h3>2.2 Performance Data</h3>
-<p>Google's experiments (DeepSeek-R1 on A3-Ultra: 8× H200, 8× 141 GB HBM, 50K token context, ~75% cache hit rate, ~3.4 TiB KV Cache) [2]:</p>
-<table><thead><tr><th>Metric</th><th>Improvement</th></tr></thead><tbody>
-<tr><td><strong>Inference throughput</strong></td><td><mark>+75%</mark> vs host memory only</td></tr>
-<tr><td><strong>Mean time to first token (MTTF)</strong></td><td><mark>−40%+</mark> vs host memory only</td></tr>
-<tr><td><strong>I/O parallelism</strong></td><td>32 worker threads for KV reads</td></tr>
+<h2>2. Google Managed Lustre: Shared Bandwidth</h2>
+<blockquote><p>"We believe that Google Cloud Managed Lustre should be your primary storage solution for external KV Cache." [2]</p></blockquote>
+<h3>Why not local SSD?</h3>
+<blockquote><p>"On GPUs, Lustre is assisted by locally attached SSDs. On TPUs, where local SSDs are not available, Lustre's role is even more central. While Local SSDs and CPU RAM are effective node-local tiers, they are fixed in size and cannot be shared." [2]</p></blockquote>
+<p>Local SSDs <em>can</em> be distributed, but host NIC bandwidth becomes the bottleneck. Lustre delivers higher aggregate bandwidth with centralized sharing.</p>
+<h3>Performance (DeepSeek-R1, A3-Ultra, 8× H200, 50K context, ~75% hit rate, ~3.4 TiB KV) [2]:</h3>
+<table><thead><tr><th>Metric</th><th>Result</th></tr></thead><tbody>
+<tr><td>Inference throughput</td><td><mark>+75%</mark> vs host memory only</td></tr>
+<tr><td>MTTF</td><td><mark>−40%+</mark></td></tr>
+<tr><td>I/O parallelism</td><td>32 worker threads</td></tr>
 </tbody></table>
-<h3>2.3 TCO Analysis: 35% Savings</h3>
-<p>For a workload processing 1 million TPS using A3-Ultra VMs + Managed Lustre [2]:</p>
-<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>
-<tr><td><strong>TCO reduction</strong></td><td><mark>35%</mark> vs no external storage</td></tr>
-<tr><td><strong>Accelerator savings</strong></td><td><mark>~40%</mark> fewer GPUs needed</td></tr>
-<tr><td><strong>Key insight</strong></td><td>"Storage replaces compute" — offloading KV to I/O frees accelerators for other work</td></tr>
+<h3>TCO (1M TPS, A3-Ultra + Lustre) [2]:</h3>
+<table><thead><tr><th>Metric</th><th>Result</th></tr></thead><tbody>
+<tr><td>TCO reduction</td><td><mark>35%</mark> vs no external storage</td></tr>
+<tr><td>Accelerator savings</td><td><mark>~40%</mark> fewer GPUs</td></tr>
 </tbody></table>
-<h3>2.4 Configuration Details</h3>
+<h3>Configuration [2]:</h3>
 <table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
-<tr><td><strong>Lustre bandwidth</strong></td><td>1000 MB/s per TiB (Performance Tier)</td></tr>
-<tr><td><strong>Capacity per machine</strong></td><td>18 TiB Lustre per A3-Ultra VM</td></tr>
-<tr><td><strong>Cluster size</strong></td><td>73 A3-Ultra machines for 1M TPS</td></tr>
-<tr><td><strong>GPU</strong></td><td>8× H200 per VM, 8× 141 GB HBM</td></tr>
-<tr><td><strong>Software tuning</strong></td><td><code>o_direct></code> flag, high I/O parallelism (32 threads)</td></tr>
+<tr><td>Lustre bandwidth</td><td>1000 MB/s per TiB</td></tr>
+<tr><td>Capacity</td><td>18 TiB per A3-Ultra VM</td></tr>
+<tr><td>Cluster</td><td>73 VMs for 1M TPS</td></tr>
+<tr><td>Tuning</td><td><code>o_direct></code>, 32 I/O threads</td></tr>
 </tbody></table>
-<h3>2.5 The Core Argument</h3>
-<blockquote><p>"Our experiment demonstrated that with configuration tuning and an improvement in KV Cache software to adopt more I/O parallelism, Managed Lustre can substantially improve inference performance."</p></blockquote>
-<blockquote><p>"You can handle a specific number of queries per second with ~40% fewer accelerators, resulting in direct cost savings."</p></blockquote>
-<p>Google's thesis: <strong>I/O bandwidth is the bottleneck</strong>, and parallel storage (Lustre) can deliver more aggregate bandwidth than node-local solutions when properly tuned. The storage cost is offset by compute savings.</p>
+<p><strong>Thesis:</strong> "Storage replaces compute" — offload KV to I/O, free accelerators for other work.</p>
 <hr>
-<h2>3. Rapid Storage: What It Actually Does</h2>
-<p>Rapid Storage (Rapid Bucket + Rapid Cache) is Google's high-performance object storage layer — built on the Colossus distributed system that powers Gemini and YouTube [3].</p>
-<table><thead><tr><th>Product</th><th>Bandwidth</th><th>Latency</th><th>Primary Use</th></tr></thead><tbody>
-<tr><td><strong>Rapid Bucket</strong></td><td>15 TB/s</td><td>Sub-ms (open file)</td><td>Training data, checkpoint write/restore</td></tr>
-<tr><td><strong>Rapid Cache</strong></td><td>2.5 TB/s</td><td>Sub-ms</td><td>Inference model weight loading (cold start)</td></tr>
+<h2>3. Rapid Storage: Not for KV Cache</h2>
+<table><thead><tr><th>Product</th><th>Bandwidth</th><th>Use Case</th></tr></thead><tbody>
+<tr><td>Rapid Bucket</td><td>15 TB/s</td><td>Training data, checkpoints</td></tr>
+<tr><td>Rapid Cache</td><td>2.5 TB/s</td><td>Model weight loading</td></tr>
 </tbody></table>
-<p><strong>Rapid Storage is not designed for KV Cache externalization.</strong> Its strengths are:</p>
+<p>Rapid Storage accelerates training and cold start. For KV Cache, Google recommends Managed Lustre [1][2].</p>
+<hr>
+<h2>4. Comparison</h2>
+<table><thead><tr><th></th><th>NVIDIA ICMS</th><th>Google Lustre</th><th>Rapid Storage</th></tr></thead><tbody>
+<tr><td>Architecture</td><td>Bus-attached flash (DPU)</td><td>Centralized parallel FS (RDMA)</td><td>Object storage (Colossus)</td></tr>
+<tr><td>Proximity</td><td>Pod-level</td><td>Cluster-level</td><td>Regional</td></tr>
+<tr><td>Sharing</td><td>Pod-scoped</td><td>Multi-tenant</td><td>Zonal</td></tr>
+<tr><td>KV role</td><td>Primary KV staging</td><td>External KV</td><td>Not for KV</td></tr>
+<tr><td>Core bet</td><td>Proximity</td><td>Shared bandwidth</td><td>Training throughput</td></tr>
+</tbody></table>
+<hr>
+<h2>5. The View</h2>
+<p>The NVIDIA-Google divergence is a question: <strong>where to solve the wall?</strong></p>
 <ul>
-<li>Accelerating training data loading (50% GPU blocked time reduction)</li>
-<li>Checkpoint write/restore (3.2× write, 5× restore speedup)</li>
-<li>Eliminating inference cold start (model weight pre-warming)</li>
+<li>NVIDIA: at the bus edge, storage close to GPU, DPU-managed.</li>
+<li>Google: in the network, centralized shared tier, software-optimized I/O.</li>
 </ul>
-<p>For KV Cache, Google's official recommendation remains <strong>Managed Lustre</strong> [1][2].</p>
-<hr>
-<h2>4. Comparing the Three Approaches</h2>
-<table><thead><tr><th>Dimension</th><th>NVIDIA ICMS</th><th>Google Managed Lustre</th><th>Google Rapid Storage</th></tr></thead><tbody>
-<tr><td><strong>Architecture</strong></td><td>Bus-attached flash (DPU-powered)</td><td>Centralized parallel file system (RDMA)</td><td>Distributed object storage (Colossus)</td></tr>
-<tr><td><strong>Proximity</strong></td><td>Pod-level (close to GPU)</td><td>Rack/cluster-level (network-accessed)</td><td>Regional</td></tr>
-<tr><td><strong>Sharing</strong></td><td>Pod-scoped</td><td>Multi-node, multi-tenant</td><td>Zonal</td></tr>
-<tr><td><strong>KV Cache role</strong></td><td>Primary tier for KV staging</td><td>Primary tier for external KV</td><td>Not recommended for KV</td></tr>
-<tr><td><strong>Core bet</strong></td><td>Proximity solves the wall</td><td>Shared bandwidth solves the wall</td><td>Throughput solves training, not inference</td></tr>
-<tr><td><strong>Best for</strong></td><td>Single-pod, latency-sensitive KV</td><td>Multi-tenant, long-context, shared KV</td><td>Training data, model weights</td></tr>
-</tbody></table>
-<hr>
-<h2>5. What This Means for AI Infrastructure</h2>
-<p>The NVIDIA-Google divergence reflects a deeper question: <strong>where should the KV Cache bottleneck be solved?</strong></p>
-<ul>
-<li><strong>NVIDIA says:</strong> at the bus edge — push storage as close to the GPU as possible, use DPUs to manage the flash tier.</li>
-<li><strong>Google says:</strong> in the network — provide a centralized, high-bandwidth shared tier that any node can access, and optimize I/O parallelism in software.</li>
-</ul>
-<p>Both approaches acknowledge the same reality: at 42.7:1 storage:compute ratio [1], the KV Cache <em>is</em> the workload. The question is whether to solve this with proximity (ICMS) or with shared bandwidth (Lustre).</p>
-<p>For infrastructure planners, the implication is clear: <strong>there is no one-size-fits-all.</strong> The optimal KV Cache architecture depends on workload characteristics — single-pod vs multi-tenant, latency-sensitive vs throughput-bound, shared vs isolated contexts.</p>
+<p>No one-size-fits-all. Single-pod latency-sensitive → ICMS. Multi-tenant long-context shared → Lustre. Training data → Rapid Storage.</p>
 <hr>
 <h2>References</h2>
-<p>[1] <a href="https://backyes.github.io/posts/million-seq-storage-vs-compute.html" target="_blank" rel="noopener">backyes — The Million-Token Bill</a> — 42.7:1 storage:compute ratio, 77× cache hit cost difference</p>
-<p>[2] <a href="https://cloud.google.com/blog/products/storage-data-transfer/choosing-google-cloud-managed-lustre-for-your-external-kv-cache" target="_blank" rel="noopener">Google Cloud Blog — Choosing Managed Lustre for External KV Cache</a> — 75% throughput improvement, 35% TCO savings, 40% fewer GPUs</p>
-<p>[3] <a href="https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements" target="_blank" rel="noopener">Google Cloud Blog — Storage innovations at Next '26</a> — Rapid Storage official positioning and performance specs</p>
-<p>[4] <a href="https://docs.cloud.google.com/ai-hypercomputer/docs/storage" target="_blank" rel="noopener">Google Cloud Documentation — Storage services for AI and ML workloads</a> — Official storage tier recommendations</p>
-<p>[5] <a href="https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26" target="_blank" rel="noopener">Google Cloud Blog — AI infrastructure at Next '26</a> — "Dedicated KV Cache scalable storage subsystem" announcement</p>
-<p>[6] <a href="https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive" target="_blank" rel="noopener">Google Cloud Blog — TPU 8t/8i technical deep dive</a> — TPU 8i 384 MB SRAM designed for KV Cache</p>
-<p>[7] <a href="https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551" target="_blank" rel="noopener">Blocks & Files — Google's cloud storage gets faster and smarter for AI</a> — Managed Lustre as shared KV Cache</p>
-<p>[8] <a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA Developer — Introducing BlueField-4-Powered CMX</a> — ICMS architecture, 5× performance, Spectrum-X fabric</p>
-<p>[9] <a href="https://nvidianews.nvidia.com/news/nvidia-bluefield-4-powers-new-class-of-ai-native-storage-infrastructure-for-the-next-frontier-of-ai" target="_blank" rel="noopener">NVIDIA Newsroom — BlueField-4 Powers AI-Native Storage</a> — ICMS launch announcement</p>
-<p>[10] <a href="https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-BlueField-4-Powers-New-Class-of-AI-Native-Storage-Infrastructure-for-the-Next-Frontier-of-AI/default.aspx" target="_blank" rel="noopener">NVIDIA Investor Relations — BlueField-4</a> — ICMS/CMX branding</p>
-<hr>
-<p><em>The full research report (including all accessed/failed sources) is available at: <a href="/posts/research/google-rapid-storage/research_report.html" target="_blank" rel="noopener">Google Rapid Storage Deep Research Report</a></em></p>
+<p>[1] <a href="https://backyes.github.io/posts/million-seq-storage-vs-compute.html" target="_blank" rel="noopener">backyes — The Million-Token Bill</a> — 42.7:1 storage:compute ratio</p>
+<p>[2] <a href="https://cloud.google.com/blog/products/storage-data-transfer/choosing-google-cloud-managed-lustre-for-your-external-kv-cache" target="_blank" rel="noopener">Google Cloud Blog — Managed Lustre for KV Cache</a> — 75% throughput, 35% TCO, 40% fewer GPUs</p>
+<p>[3] <a href="https://cloud.google.com/blog/products/storage-data-transfer/next26-storage-announcements" target="_blank" rel="noopener">Google Cloud Blog — Next '26 Storage</a> — Rapid Storage specs</p>
+<p>[4] <a href="https://docs.cloud.google.com/ai-hypercomputer/docs/storage" target="_blank" rel="noopener">Google Cloud Docs — Storage for AI</a> — Tier recommendations</p>
+<p>[5] <a href="https://cloud.google.com/blog/products/compute/ai-infrastructure-at-next26" target="_blank" rel="noopener">Google Cloud Blog — Next '26 AI</a> — Dedicated KV Cache subsystem</p>
+<p>[6] <a href="https://cloud.google.com/blog/products/compute/tpu-8t-and-tpu-8i-technical-deep-dive" target="_blank" rel="noopener">Google Cloud Blog — TPU 8t/8i</a> — 384 MB SRAM for KV</p>
+<p>[7] <a href="https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551" target="_blank" rel="noopener">Blocks & Files</a> — Lustre as shared KV</p>
+<p>[8] <a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA — BlueField-4 CMX</a> — ICMS architecture</p>
+<p>[9] <a href="https://nvidianews.nvidia.com/news/nvidia-bluefield-4-powers-new-class-of-ai-native-storage-infrastructure-for-the-next-frontier-of-ai" target="_blank" rel="noopener">NVIDIA Newsroom</a> — ICMS launch</p>
+<p>[10] <a href="https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-BlueField-4-Powers-New-Class-of-AI-Native-Storage-Infrastructure-for-the-Next-Frontier-of-AI/default.aspx" target="_blank" rel="noopener">NVIDIA Investor Relations</a> — CMX branding</p>
   </div>
 </article>
 <footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved</p></div></footer>
