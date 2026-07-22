@@ -132,25 +132,6 @@ Will NVIDIA try to maintain NVLink's proprietary advantage? Of course. But even 
 
 ---
 
-## What could go wrong?
-
-Intellectual honesty requires listing the bear cases:
-
-1. **Deployment slower than expected.** CXL 2.0/3.0 adoption has been gradual. Enterprise inertia is real.
-2. **NVIDIA's counter-move: NVLink Fusion + NVLink-C2C.** NVIDIA is not standing still. At Computex 2025 and GTC 2026, NVIDIA announced **NVLink Fusion** — opening the proprietary NVLink fabric to third-party custom silicon (MediaTek, Marvell, Fujitsu, Qualcomm) via the **NVLink-C2C** chip-to-chip interconnect [9a][9b]. NVLink-C2C delivers up to ==1.8 TB/s== per GPU with cache-coherent shared memory access, enabling pooled memory subsystems across the NVLink fabric [9c]. In essence, NVIDIA is building a *proprietary alternative to CXL for memory disaggregation* — using NVLink as the pooling bus instead of PCIe/CXL.
-
-![NVIDIA NVLink Fusion Architecture — NVLink-C2C enables third-party chip integration and memory pooling over NVLink fabric](assets/nvlink-fusion-cxl-pooling.png)
-
-*Source: NVIDIA — NVLink Fusion opens the NVLink fabric to custom silicon via NVLink-C2C, enabling cache-coherent memory pooling as a proprietary alternative to CXL [9a][9b]*
-
-This is a real competitive threat. If NVIDIA makes NVLink pooling "just work" seamlessly within their ecosystem, some customers may not care about open standards. However, NVLink Fusion still requires NVIDIA's blessing — every third-party chip needs an NVIDIA bridge chip and licensing. For hyperscalers who want *true* supply chain independence (multiple sources, no single point of control), CXL remains the only open path. NVIDIA's move validates the market need but doesn't eliminate the demand for an open alternative.
-3. **UALink eats into CXL's scope.** If UALink expands to include memory semantics, CXL could be marginalized. (Current signals suggest complementarity, not competition.)
-4. **DDR5/DDR6 bandwidth improvements reduce the pooling need.** If HBM keeps scaling, maybe local memory is "good enough."
-
-These are real risks. But none of them change the structural dynamics. Even if CXL grows slower than the 32% CAGR forecast, the direction is clear: memory disaggregation is happening, and CXL is the open-standard vehicle.
-
----
-
 ## Bottom line
 
 > ==I'm bullish on CXL not because of the TAM number, but because of the game theory. Every major player — hyperscalers, chip vendors, switch makers — has a structural incentive to make CXL succeed. That's rare in infrastructure.==
