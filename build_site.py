@@ -482,7 +482,7 @@ def main():
     cards = gen_cards()
     search_db = gen_search_db(posts)
     tag_cloud = gen_tag_cloud(posts)
-    posts_preview = gen_posts_list(posts[:5])  # index 预览前 5 篇
+    posts_preview = gen_posts_list(posts[:6])  # index 预览前 6 篇
     posts_full = gen_posts_list(posts, full=True)
     posts_search_db = json.dumps(
         [{"t":p["title"],"d":p["excerpt"],"u":p["url"],"tags":" ".join(p.get("tags",[]))}
