@@ -25,7 +25,7 @@ In the old world, storage sits *below* the compute — you pull data up through 
 
 That hierarchy is collapsing.
 
-The physics are simple: at million-token context lengths and trillion-parameter MoE models, the working dataset doesn't fit in one box. It barely fits in one rack. Data must be *infinitely close* to compute — not just physically, but topologically. Every hop adds latency. Every copy wastes power.
+The physics are simple: the working dataset doesn't fit in one box. It barely fits in one rack. Even NVIDIA — the most HBM-rich vendor — is hitting the wall. Their LPX chip pushes SRAM usage to the extreme, because for MoE models the expert routing creates *random, fine-grained memory access patterns* that HBM bandwidth alone can't feed. The only way to keep the compute fed is to put more memory closer — closer than HBM, closer than a remote node. Data must be *infinitely close* to compute — not just physically, but topologically. Every hop adds latency. Every copy wastes power.
 
 > ==Storage is no longer a tier below compute. It's becoming a peer on the bus.==
 
