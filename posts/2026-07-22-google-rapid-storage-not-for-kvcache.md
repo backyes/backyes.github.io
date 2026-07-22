@@ -39,9 +39,9 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 
 **Test 2: Cache exceeds HBM (4.0M–4.3M tokens).**
 
-![LMCache Test 2 & 3: Throughput and Latency vs Context Length](https://backyes.github.io/posts/assets/lmcache_test_results.png)
+![LMCache Test 2 — TTFT, Throughput, Latency vs Context](https://backyes.github.io/posts/assets/lmcache_test2.png)
 
-*Left: throughput improvement (%). Right: latency reduction (%). Blue = Test 2 (4M–4.3M tokens, exceeds HBM). Amber = Test 3 (12.6M–13.7M tokens, saturates HBM + CPU RAM).*
+*Test 2: A3 mega, 8× H100, Llama-3.3-70B. Cache exceeds HBM (640 GiB) but fits within HBM + CPU RAM (1.7 TiB total). TTFT blue, Throughput green, Latency amber.*
 
 | Context | Best Setup | TTFT | Throughput | Latency |
 |---|---|---|---|---|
@@ -53,7 +53,13 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 
 At 100K context, node-local tiered storage delivers ==2.6×== throughput (==+264%==) and ==73%== latency reduction vs HBM-only. The cache stays on the node — no network round-trips.
 
+---
+
 **Test 3: Cache saturates HBM + CPU RAM (12.6M–13.7M tokens), spills to Local SSD.**
+
+![LMCache Test 3 — TTFT, Throughput, Latency vs Context](https://backyes.github.io/posts/assets/lmcache_test3.png)
+
+*Test 3: Same setup. Cache saturates HBM + CPU RAM, spills to Local SSD (5 TiB). Throughput still gains, but TTFT degrades at 10K–50K — the cost of SSD spillover.*
 
 | Context | Best Setup | TTFT | Throughput | Latency |
 |---|---|---|---|---|
