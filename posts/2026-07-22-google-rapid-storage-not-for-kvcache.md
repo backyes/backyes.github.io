@@ -1,11 +1,11 @@
 ---
-title: "Google's KV Cache Storage Strategy: Lustre's TTFT, Throughput, and Latency — Two Approaches, One Bottleneck"
+title: "Google Chooses Lustre on SSD for KV Cache: TTFT, Throughput, and Latency Analysis — Beyond Local SSD"
 date: 2026-07-22
 tags: ["Google-Cloud", "Managed-Lustre", "LMCache", "Rapid-Storage", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
 excerpt: "Google's KV Cache strategy isn't one solution — it's two complementary approaches: node-local tiered storage (HBM + CPU RAM + Local SSD) for single-node efficiency, and centralized Lustre for multi-tenant sharing. Both prove the same point: storage is the bottleneck."
 ---
 
-# Google's KV Cache Storage Strategy: Lustre's TTFT, Throughput, and Latency — Two Approaches, One Bottleneck
+# Google Chooses Lustre on SSD for KV Cache: TTFT, Throughput, and Latency Analysis — Beyond Local SSD
 
 ## NVIDIA ICMS: Storage at the Bus Edge
 
