@@ -71,6 +71,8 @@ At 100K context, node-local tiered storage delivers ==2.6×== throughput (==+264
 
 Even with SSD spillover, 100K context still delivers ==+130%== throughput. But TTFT degrades when cache exceeds comfortable capacity — signaling the practical limit of node-local approaches.
 
+> **Why does TTFT degrade at 10K–50K but recover at 100K, while throughput keeps improving across all points?** In Test 3, the cache saturates HBM + CPU RAM and spills to Local SSD. At 10K–50K, the system is in a "worst of both worlds" regime: too large for fast memory, too small to fully amortize SSD I/O costs. By 100K, the workload reaches a new steady state where the massive cache hit rate (and batch efficiency) outweighs the SSD latency penalty — TTFT recovers, and throughput continues to climb.
+
 **Key insight:** Tiered node-local storage works best when the cache fits within HBM + CPU RAM. SSD spillover still helps throughput but adds latency. The ceiling is node capacity.
 
 **Limitation:** Node-local storage is fixed in size and cannot be shared across nodes. For multi-tenant or larger-than-node workloads, a different approach is needed.
