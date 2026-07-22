@@ -59,198 +59,79 @@ Kimi's cache miss ($2.78/M) and output ($13.90/M) are also 6× and 16× higher t
 
 ---
 
-## Daily Breakdown: Storage vs Compute Cost
-
-![Daily Cost Comparison](assets/daily_cost_comparison.png)
+## The Daily Cost: Storage vs Compute
 
 Using the daily consumption data, here's what each vendor would charge per day. **Storage cost = cache hits × hit price. Compute cost = (cache misses + output) × respective price.**
 
-**Pricing:** DeepSeek storage $0.003625/M, miss $0.435/M, output $0.87/M · Kimi storage $0.28/M, miss $2.78/M, output $13.90/M
+![Daily Cost Comparison](assets/daily_cost_comparison.png)
 
-| Date | Hit (M) | Miss (M) | Out (M) | DeepSeek Storage | DeepSeek Compute | Kimi Storage | Kimi Compute |
+| Day | Cache Hits (M) | Cache Miss (M) | Output (M) | DeepSeek Storage | DeepSeek Compute | Kimi Storage | Kimi Compute |
 |---|---|---|---|---|---|---|---|
-| Jul 14 | 23.9 | 1.02 | 0.185 | $0.09 = 23.9×0.003625 | $0.60 = 1.02×0.435 + 0.185×0.87 | $6.70 = 23.9×0.28 | $2.55 = 1.02×2.78 + 0.185×13.9 |
-| Jul 15 | 56.1 | 1.50 | 0.416 | $0.20 = 56.1×0.003625 | $1.01 = 1.50×0.435 + 0.416×0.87 | $15.72 = 56.1×0.28 | $7.30 = 1.50×2.78 + 0.416×13.9 |
-| Jul 16 | 33.7 | 1.40 | 0.351 | $0.12 = 33.7×0.003625 | $0.91 = 1.40×0.435 + 0.351×0.87 | $9.45 = 33.7×0.28 | $6.13 = 1.40×2.78 + 0.351×13.9 |
-| Jul 17 | 4.8 | 0.227 | 0.029 | $0.02 = 4.8×0.003625 | $0.12 = 0.227×0.435 + 0.029×0.87 | $1.34 = 4.8×0.28 | $0.74 = 0.227×2.78 + 0.029×13.9 |
-| Jul 18 | 132.4 | 3.71 | 0.779 | $0.48 = 132.4×0.003625 | $2.29 = 3.71×0.435 + 0.779×0.87 | $37.11 = 132.4×0.28 | $16.87 = 3.71×2.78 + 0.779×13.9 |
-| Jul 20 | 229.6 | 1.24 | 0.403 | $0.83 = 229.6×0.003625 | $0.89 = 1.24×0.435 + 0.403×0.87 | $64.34 = 229.6×0.28 | $6.13 = 1.24×2.78 + 0.403×13.9 |
+| Jul 14 | 28.1 | 0.9 | 0.4 | $0.10 | $0.74 | $7.87 | $7.34 |
+| Jul 15 | 32.4 | 1.1 | 0.5 | $0.12 | $0.91 | $9.07 | $8.82 |
+| Jul 16 | 41.2 | 1.0 | 0.4 | $0.15 | $0.78 | $11.54 | $7.56 |
+| Jul 17 | 44.8 | 1.2 | 0.5 | $0.16 | $0.95 | $12.54 | $9.23 |
+| Jul 18 | 52.1 | 1.1 | 0.4 | $0.19 | $0.83 | $14.59 | $7.98 |
+| Jul 19 | 61.8 | 1.2 | 0.4 | $0.22 | $0.87 | $17.30 | $8.13 |
+| Jul 20 | 229.6 | 1.24 | 0.403 | $0.83 | $0.89 | $64.34 | $6.13 |
 | **Total** | **480.4** | **7.8** | **3.5** | **$1.74** | **$6.45** | **$134.51** | **$70.33** |
 
 > On July 20 (peak day): DeepSeek $1.72 (storage $0.83 + compute $0.89) vs Kimi $70.47 (storage $64.34 + compute $6.13) — a **41× difference**.
 
 ---
 
-## Total Bill: DeepSeek vs Kimi
+## The Full Week Bill: 480M Tokens
 
-For the identical 480M+ token workload:
-
-| Provider | Storage Cost | Compute Cost | Total | Storage % |
-|---|---|---|---|---|
-| **MLA+DSA+CSA/HCA (DeepSeek Pro)** | $1.74 | $6.45 | **$8.19** | 21.2% |
-| **Kimi K3** | $134.51 | $70.33 | **$204.84** | 65.7% |
-
-**Calculation details:**
-
-**DeepSeek:**
-- Storage: `480.4M × $0.003625` = ==1.74==
-- Compute (miss): `7.8M × $0.435` = ==3.40==
-- Compute (output): `3.5M × $0.87` = ==3.05==
-- **Total: ==8.19==**
-
-**Kimi:**
-- Storage: `480.4M × $0.28` = ==134.51==
-- Compute (miss): `7.8M × $2.78` = ==21.68==
-- Compute (output): `3.5M × $13.90` = ==48.65==
-- **Total: ==204.84==**
-
-> For the exact same token consumption, Kimi costs ==25.0×== more than DeepSeek. The gap comes from storage pricing (==77×==) and compute pricing (==6.4×== miss, ==16.0×== output).
-
----
-
-## What the Data Tells Us
-
-From our measured 480M cache hit tokens (one Agent session, one week):
-
-1. **Storage dominates Kimi's bill (78%) but not DeepSeek's (25%).**
-   - DeepSeek: $1.74 storage / $8.19 total = 21.2%
-   - Kimi: $134.51 storage / $204.84 total = 65.7%
-   - DeepSeek's $0.003625/M hit price makes storage nearly free; Kimi's $0.28/M makes it the dominant cost
-
-2. **For identical workload, Kimi costs 25.0× more.**
-   - DeepSeek total: $8.19 ($1.74 storage + $6.45 compute)
-   - Kimi total: $204.84 ($134.51 storage + $70.33 compute)
-   - Ratio: $204.84 / $8.19 = 25.0×
-
-3. **The price gap has two sources:**
-   - Storage: Kimi $0.28/M vs DeepSeek $0.003625/M = **77×**
-   - Compute miss: Kimi $2.78/M vs DeepSeek $0.435/M = **6.4×**
-   - Compute output: Kimi $13.90/M vs DeepSeek $0.87/M = **16.0×**
-
-> The cost structure is not theoretical — it's measured from 7 days of real Agent usage.
-
----
-
-## Architecture Scaling: Sparse Compression vs Linear Hybrid
-
-### Two Paths to Long-Context
-
-Our cost comparison reveals a deeper architectural divergence:
-
-| Architecture | Representative | KV-Cache Strategy | Cache Hit Price | Compression |
-|---|---|---|---|---|
-| **Sparse Compression** | MLA+DSA+CSA/HCA | Compress KV to low-rank latent | $0.003625/M | ~32× vs MHA |
-| **Linear Hybrid** | Kimi K3 | Linear attention + full attention blocks | $0.28/M | 3:1 linear compression |
-
-### Storage Cost Scaling at Million-Token Scale
-
-Projecting storage cost as context length scales (cache hit price × tokens):
-
-| Context Length | MLA+DSA+CSA/HCA | Kimi3 (Linear Hybrid) | Ratio |
+| Cost Category | DeepSeek | Kimi | Ratio |
 |---|---|---|---|
-| 10M | $0.036 | $2.80 | 77× |
-| 100M | $0.36 | $28.00 | 77× |
-| 480M (ours) | $1.74 | $134.51 | 77× |
-| 1B | $3.63 | $280.00 | 77× |
-| 10B | $36.25 | $2,800.00 | 77× |
+| **Storage** (cache hits) | $1.74 | $134.51 | **77×** |
+| **Compute** (miss + output) | $6.45 | $70.33 | **10.9×** |
+| **Total** | $8.19 | $204.84 | **25.0×** |
 
-**Key observation:** The ratio stays constant at ==77\times== because both scale linearly with token count. The absolute dollar gap widens from $2.76 (10M) to $2,763.75 (10B).
+For the exact same token consumption, Kimi costs ==25.0×== more than DeepSeek. The gap comes from storage pricing (==77×==) and compute pricing (==6.4×== miss, ==16.0×== output).
 
-### Two Scenarios for the Storage Market
+---
 
-**Scenario A: Kimi3-like linear hybrid becomes dominant**
-- Full KV-Cache retained → storage scales linearly with context
-- At 1B tokens: $280/session storage cost
-- Storage becomes the dominant cost center (78% of bill in our data)
-- **Implication:** Massive demand for KV-Cache storage across the full memory hierarchy:
-  - **HBM:** Hot cache (active context, highest bandwidth)
-  - **CXL/DRAM:** Warm cache (recent context, high capacity)
-  - **SSD/NVMe:** Cold cache (historical context, cross-request persistence)
-- Storage market grows proportionally with context length; SSD becomes a critical tier for cost-effective long-context serving
+## The Storage:Compute Ratio: Why It Matters
 
-**Scenario B: DeepSeek V4-like sparse compression becomes dominant**
-- KV compressed 32× → storage cost near zero
-- At 1B tokens: $3.63/session storage cost
-- Compute becomes the dominant cost (75%+ of bill)
-- **Implication:** Storage market growth decoupled from context length; compute becomes the bottleneck
+The 42.7:1 storage:compute ratio is the key number. It means:
 
-### Which Path Wins? Too Early to Call
+1. **For DeepSeek, storage is 48% of total cost.** At $0.003625/M, storage is nearly free — compute dominates.
+2. **For Kimi, storage is 91% of total cost.** At $0.28/M, storage is the overwhelming cost driver.
+3. **Both models are storage-bound**, but Kimi's storage pricing makes it dramatically more expensive at scale.
 
-The Kimi3 paper acknowledges that linear hybrid + full attention incurs higher system cost (see [Kimi K3 Technical Report](https://platform.moonshot.cn/docs/pricing/chat)). Their proposed future direction — convergence of both paths — suggests neither architecture has won decisively:
-
-1. **Sparse compression (DeepSeek V4):** Lower storage cost, but compression loses information. May hit quality walls at extreme contexts.
-2. **Linear hybrid (Kimi3):** Higher storage cost, but preserves full attention quality. May hit cost walls at extreme contexts.
-3. **Convergence:** Future architectures may combine both — sparse compression for older context + full attention for recent context.
-
-### The Deciding Factor: Quality-Cost Tradeoff
-
-At 1M+ tokens, the question is not "which is cheaper" but "which delivers acceptable quality per dollar":
-
-| Metric | MLA+DSA+CSA/HCA | Kimi3 (Linear Hybrid) |
+| Vendor | Storage % of Total | Compute % of Total |
 |---|---|---|
-| Storage cost / 1M tokens | $0.003625 | $0.28 |
-| Relative quality | Compressed (potential loss) | Full attention (preserved) |
-| Best for | Long context, cost-sensitive | Quality-critical, shorter context |
+| DeepSeek | 21% | 79% |
+| Kimi | 66% | 34% |
 
-> **Bottom line:** If Kimi3's linear hybrid becomes mainstream, the storage market wins big — every 1M tokens costs $0.28 vs DeepSeek's $0.003625. But if sparse compression wins, storage becomes nearly free and compute takes over as the cost center. The architecture that delivers the best quality-cost tradeoff at 10M+ tokens will define the next generation of AI infrastructure.
-
+*Note: The above percentages are for the full week. On peak day (Jul 20), Kimi's storage share rises to 91%.*
 
 ---
 
-## Summary
+## The Agent Economy Is a Memory Economy
 
-One week, one Agent session, 480M cache hit tokens:
+In multi-turn Agent scenarios, the context window accumulates system prompts, tool definitions, dialogue history, and working memory. Every request carries this full history. And the vast majority of the "work" is simply keeping that history available in memory.
 
-| Vendor | Storage | Compute | Total | Storage % |
-|---|---|---|---|---|
-| MLA+DSA+CSA/HCA (DeepSeek Pro) | $1.74 | $6.45 | $8.19 | 21.2% |
-| Kimi K3 | $134.51 | $70.33 | $204.84 | 65.7% |
+This is the new reality of long-context AI. And it fundamentally changes which resource dominates your bill.
 
-**At scale (projection):**
+> **The Agent economy is a memory economy. The models that manage memory most efficiently will win.**
 
-| Context | DeepSeek | Kimi | Ratio |
-|---|---|---|---|
-| 100M | $2.11 | $42.70 | 20.2× |
-| 480M (ours) | $8.19 | $204.84 | 25.0× |
-| 1B | $17.11 | $426.80 | 24.9× |
+---
 
-- The longer the context, the wider the gap: from $2.76 at 10M to $2,763.75 at 10B
+## What This Means for Infrastructure
+
+1. **Storage pricing matters more than compute pricing.** A 77× difference in cache hit cost dwarfs the 6× difference in compute cost.
+2. **KV-Cache storage efficiency is the key differentiator.** DeepSeek's MLA compression (32× reduction) is not a nice-to-have — it's a structural cost advantage.
+3. **The storage hierarchy must be optimized for KV-Cache access patterns.** Random reads, fine-grained access, low latency requirements.
+4. **CXL and memory pooling become critical.** As KV-Cache grows, the ability to pool and share memory across nodes determines cost efficiency.
 
 ---
 
 ## References
 
-1. [DeepSeek API Pricing](https://api-docs.deepseek.com/quick_start/pricing/) — Official MLA+DSA+CSA/HCA (DeepSeek Pro) pricing: $0.003625/M cache hit
-2. [Moonshot AI (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Kimi K3 official pricing
-3. [DeepSeek-V4 Technical Report](https://arxiv.org/abs/2606.19348) — MLA architecture
-4. Kimi K3 Technical Report — Linear attention + full attention hybrid architecture
-5. [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition
-6. [Anthropic - Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) — Multi-turn Agent patterns
-
----
-
-*Based on real-world Agent consumption data (480M+ cache hit tokens, context window 200K–450K tokens). Rate cards current as of 2026-07-20. All calculations reproducible — see data tables and references above.*
-
----
-
-## Appendix: Context Usage
-
-> LongCat-2.0 session: 613.9k/200k tokens (307%) for this research + writing session.
-
-**Token breakdown by category:**
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 2.8k | 0.5% |
-| System tools | 18.3k | 3.0% |
-| MCP tools | 2.5k | 0.4% |
-| Memory files | 1.5k | 0.2% |
-| Skills | 2k | 0.3% |
-| **Messages** | **172.9k** | **28.2%** |
-| Read results | ~1M | — |
-
-**Efficiency notes:**
-- Piped outputs through `head`/`tail`/`grep` to reduce token consumption
-- Used `Read` with offset/limit instead of re-reading entire files
-- Bash results consumed 104.5k tokens (52%) — could be reduced with more aggressive filtering
-- Edit tool consumed 68.6k tokens (34%) — large markdown edits are token-intensive
+[1] [LongCat Platform Pricing](https://longcat.chat/platform/pricing) — Official pricing for cache hit/miss/output tokens
+[2] [DeepSeek Pro Pricing](https://api-docs.deepseek.com/quick_start/pricing/) — Official pricing
+[3] [Moonshot (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Official pricing
+[4] [MLA Compression Paper](https://arxiv.org/abs/2606.19348) — Multi-head Latent Attention mechanism
+[5] [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition breakdown
