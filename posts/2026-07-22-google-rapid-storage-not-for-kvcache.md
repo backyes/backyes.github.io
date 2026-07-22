@@ -1,11 +1,11 @@
 ---
-title: "What is Google's Concern and Solution for KV Cache Storage?"
+title: "Google's KV Cache Storage Strategy: Lustre's TTFT, Throughput, and Latency — Two Approaches, One Bottleneck"
 date: 2026-07-22
 tags: ["Google-Cloud", "Managed-Lustre", "LMCache", "Rapid-Storage", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
 excerpt: "Google's KV Cache strategy isn't one solution — it's two complementary approaches: node-local tiered storage (HBM + CPU RAM + Local SSD) for single-node efficiency, and centralized Lustre for multi-tenant sharing. Both prove the same point: storage is the bottleneck."
 ---
 
-# What is Google's Concern and Solution for KV Cache Storage?
+# Google's KV Cache Storage Strategy: Lustre's TTFT, Throughput, and Latency — Two Approaches, One Bottleneck
 
 ## NVIDIA ICMS: Storage at the Bus Edge
 
@@ -71,7 +71,9 @@ At 100K context, node-local tiered storage delivers ==2.6×== throughput (==+264
 
 Even with SSD spillover, 100K context still delivers ==+130%== throughput. But TTFT degrades when cache exceeds comfortable capacity — signaling the practical limit of node-local approaches.
 
-> **Why does TTFT degrade at 10K–50K but recover at 100K, while throughput keeps improving across all points?** In Test 3, the cache saturates HBM + CPU RAM and spills to Local SSD. At 10K–50K, the system is in a "worst of both worlds" regime: too large for fast memory, too small to fully amortize SSD I/O costs. By 100K, the workload reaches a new steady state where the massive cache hit rate (and batch efficiency) outweighs the SSD latency penalty — TTFT recovers, and throughput continues to climb.
+> **🔍 Open question: Why does TTTT degrade at 10K–50K but recover at 100K, while throughput keeps improving?**
+>
+> **One hypothesis (worth discussing):** At 10K–50K, the cache is in a "worst of both worlds" regime — too large for fast memory, too small to amortize SSD I/O costs. By 100K, the workload may reach a new steady state where massive cache hit rates and batch efficiency outweigh the SSD latency penalty. But this is speculation — the actual cause could be vLLM scheduling behavior, SSD read-ahead effects, or KV Cache eviction dynamics. The data raises the question; it doesn't answer it.
 
 **Key insight:** Tiered node-local storage works best when the cache fits within HBM + CPU RAM. SSD spillover still helps throughput but adds latency. The ceiling is node capacity.
 
