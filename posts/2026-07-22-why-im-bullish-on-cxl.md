@@ -132,6 +132,22 @@ Will NVIDIA try to maintain NVLink's proprietary advantage? Of course. But even 
 
 ---
 
+## NVIDIA's counter-move: NVLink Fusion
+
+NVIDIA is not standing still. At Computex 2025 and GTC 2026, NVIDIA announced **NVLink Fusion** — opening the proprietary NVLink fabric to third-party custom silicon (MediaTek, Marvell, Fujitsu, Qualcomm) via the **NVLink-C2C** chip-to-chip interconnect [9a][9b]. NVLink-C2C delivers up to ==1.8 TB/s== per GPU with cache-coherent shared memory access, enabling pooled memory subsystems across the NVLink fabric [9c].
+
+In essence, NVIDIA is building a *proprietary alternative to CXL for memory disaggregation* — using NVLink as the pooling bus instead of PCIe/CXL.
+
+![NVIDIA NVLink Fusion Architecture — NVLink-C2C enables third-party chip integration and memory pooling over NVLink fabric](assets/nvlink-fusion-cxl-pooling.png)
+
+*NVIDIA NVLink Fusion architecture: third-party chips (custom CPUs, accelerators) connect via NVLink-C2C and UCIe bridge into the NVLink fabric, enabling cache-coherent memory pooling as a proprietary alternative to CXL [9a][9b][9e]*
+
+Academic research confirms NVLink's viability for memory disaggregation — a 2025 paper from Hasso Plattner Institute benchmarks Grace CPU accessing GPU memory via NVLink for disaggregated memory workloads [9d].
+
+This is a real competitive response. But note the key limitation: **NVLink Fusion still requires NVIDIA's blessing**. Every third-party chip needs an NVIDIA bridge chip and licensing. For hyperscalers who want *true* supply chain independence — multiple sources, no single point of control — CXL remains the only open path. NVIDIA's move validates the market need for memory pooling but doesn't eliminate the demand for an open-standard alternative.
+
+---
+
 ## Bottom line
 
 > ==I'm bullish on CXL not because of the TAM number, but because of the game theory. Every major player — hyperscalers, chip vendors, switch makers — has a structural incentive to make CXL succeed. That's rare in infrastructure.==
