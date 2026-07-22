@@ -13,7 +13,7 @@ At CES/GTC 2026, NVIDIA announced **ICMS** (Inference Context Memory Storage, ak
 
 ICMS is essentially a G3.5 tier: faster than network storage (G4), slower than HBM (G3), managed by DOCA/Dynamo/NIXL for KV block pre-staging.
 
-## Google怎么思考Long context KVCache system
+## How Google Thinks About Long-Context KV Cache Systems
 
 Our previous analysis found that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==. As Google's own blog puts it: "The KV Cache's immense GPU memory footprint, amplified by system prompt size, is the primary bottleneck in LLM serving, directly constraining context length, concurrency, and overall system throughput." [2]
 
