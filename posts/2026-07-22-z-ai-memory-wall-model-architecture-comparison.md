@@ -33,10 +33,6 @@ So when models make opposite choices about how much storage to consume per token
 
 ## Two Directions, Two Storage Philosophies
 
-![Storage vs Compute Cost — DeepSeek vs Kimi (July 2026)](https://backyes.github.io/posts/assets/daily_cost_comparison.png)
-
-*Daily Agent session cost (July 20, 2026): DeepSeek $1.72 total vs Kimi $70.47 total — a **41×** difference. Storage accounts for 48% of DeepSeek's cost but **91%** of Kimi's [1].*
-
 ### Cost-Efficiency: DeepSeek
 
 DeepSeek's architecture is built around one goal: minimize storage cost per token. The key innovations:
