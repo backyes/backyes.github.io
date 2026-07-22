@@ -7,13 +7,19 @@ excerpt: "The frontier model landscape is splitting into two directions: cost-ef
 
 # Two Paths, One Battlefield
 
+CNBC noted that "Kimi K3 still trails on overall performance, but leads on frontend coding, web browsing comprehension" [6]. Bleap rates it highest on "Multi-Step Workflow Reliability" [7]. The market is paying a premium for quality — and the storage bill reflects it.
+
+Benchmark data (July 2026): Kimi K3 scores ==88.3%== on Terminal-Bench 2.1 (vs GPT-5.6 Sol's 88.8%) [2], ==80.96/100== on BenchLM (#4 of 200) [5]. In a 35-benchmark head-to-head vs Claude Fable 5: Fable wins 22, K3 wins 12, 1 tie — but K3 leads on Terminal-Bench, SWE Marathon (+7), and BrowseComp [4].
+
+These observations point to a deeper question: the frontier model landscape is splitting into two directions, and the storage layer is where this divergence becomes concrete.
+
 ## The split
 
-The frontier model landscape has split into two diverging philosophies. DeepSeek pushes extreme cost-efficiency — compressing KV cache, quantizing to FP4, activating only 1.8% of parameters. Kimi3, Claude Fable 5, and GPT-5.6 Sol push toward high-precision — larger context windows, fuller KV caches, less aggressive compression.
+The frontier model landscape has split into two diverging philosophies. DeepSeek pushes extreme cost-efficiency — compressing KV cache, quantizing to FP4, activating only 1.8% of parameters. Kimi3 pushes toward high-precision — larger context windows, fuller KV caches, less aggressive compression.
 
-This is not a temporary divergence. It is a fundamental architectural choice, and it has direct implications for how we build AI storage infrastructure.
+This may not be a temporary divergence. It appears to be a fundamental architectural choice, and it likely has significant implications for how we think about AI storage infrastructure.
 
-Our previous analysis showed that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==. Storage dominates the bill. So when models make opposite choices about how much storage to consume per token, they are making opposite bets about what the storage layer should look like.
+Our previous analysis ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) showed that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==. Storage dominates the bill. So when models make opposite choices about how much storage to consume per token, they are making opposite bets about what the storage layer should look like.
 
 > **The memory wall is not a problem to be solved — it is a design constraint that shapes the entire inference stack.**
 
@@ -34,11 +40,9 @@ DeepSeek's goal is simple: minimize storage cost per token.
 
 Result: DeepSeek Pro charges ==$0.003625/M== cache hit tokens — ==77×== cheaper than Kimi3 [1].
 
-### High-Precision: Kimi3, Claude Fable 5, GPT-5.6
+### High-Precision: Kimi3
 
-The high-precision camp prioritizes quality through memory capacity. Kimi3 uses a 3:1 hybrid of KDA (linear attention) and MLA, supports 1M token context, and does not aggressively compress its KV cache. The result is higher quality on complex tasks — but at ==$0.28/M== cache hit, ==6×== higher cache miss cost, and ==16×== higher output cost than DeepSeek [1].
-
-CNBC notes: "Kimi K3 still trails Claude Fable 5 and GPT-5.6 Sol on overall performance, but leads on frontend coding, web browsing comprehension, and cost-efficiency" [6]. Bleap rates it highest on "Multi-Step Workflow Reliability" [7]. The market is paying a premium for quality.
+The high-precision camp prioritizes quality through memory capacity. Kimi3 exemplifies this: it uses a 3:1 hybrid of KDA (linear attention) and MLA, supports 1M token context, and does not aggressively compress its KV cache. Our first post confirmed the consequence — Kimi3's cache hit cost (==$0.28/M==) is ==77×== higher than DeepSeek's (==$0.003625/M==), cache miss cost (==$2.78/M==) is ==6×== higher, and output cost (==$13.90/M==) is ==16×== higher [1]. This is the direct price of a memory-rich architecture: higher quality, but a substantially larger storage footprint that infrastructure must accommodate.
 
 ---
 
@@ -54,8 +58,6 @@ The following table maps how frontier models handle the memory-compute trade-off
 | **GLM5.2** | DSA + IndexSharing | IndexSharing + MTP | Optimize |
 | **Qwen3.5** | GDN (Gated DeltaNet) | GQA | Minimize |
 | **MiMo V2/V2.5** | SWA (Sliding Window) | GQA | Minimize |
-| **Claude Fable 5** | Unknown | Unknown | Neutral |
-| **GPT-5.6 Sol** | Unknown | Unknown | Neutral |
 
 For sparsity and multi-token prediction:
 
@@ -66,8 +68,6 @@ For sparsity and multi-token prediction:
 | LongCat 2.0 | MoE sparse | MTP-3 |
 | GLM5.2 | MoE sparse | MTP |
 | Qwen3.5 | MoE sparse | — |
-
-Benchmark data (July 2026): Kimi K3 scores ==88.3%== on Terminal-Bench 2.1 (vs GPT-5.6 Sol's 88.8%) [2], ==80.96/100== on BenchLM (#4 of 200) [5]. In a 35-benchmark head-to-head vs Claude Fable 5: Fable wins 22, K3 wins 12, 1 tie — but K3 leads on Terminal-Bench, SWE Marathon (+7), and BrowseComp [4].
 
 ---
 
