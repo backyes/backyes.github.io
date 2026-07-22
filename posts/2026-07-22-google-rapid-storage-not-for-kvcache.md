@@ -1,11 +1,11 @@
 ---
-title: "Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck"
+title: "What is Google's Concern and Solution for KV Cache Storage?"
 date: 2026-07-22
 tags: ["Google-Cloud", "Managed-Lustre", "LMCache", "Rapid-Storage", "KV-Cache", "AI-Inference", "Storage-Hierarchy"]
 excerpt: "Google's KV Cache strategy isn't one solution — it's two complementary approaches: node-local tiered storage (HBM + CPU RAM + Local SSD) for single-node efficiency, and centralized Lustre for multi-tenant sharing. Both prove the same point: storage is the bottleneck."
 ---
 
-# Google's KV Cache Strategy: Why Lustre? Why Not Object Storage? — Two Approaches, One Bottleneck
+# What is Google's Concern and Solution for KV Cache Storage?
 
 ## NVIDIA ICMS: Storage at the Bus Edge
 
@@ -13,11 +13,13 @@ At CES/GTC 2026, NVIDIA announced **ICMS** (Inference Context Memory Storage, ak
 
 ICMS is essentially a G3.5 tier: faster than network storage (G4), slower than HBM (G3), managed by DOCA/Dynamo/NIXL for KV block pre-staging.
 
-## The question
+## The concern
 
-At 42.7:1 storage:compute ratio [1], KV Cache *is* the workload. How does Google design the storage system around it?
+Our previous analysis found that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==. As Google's own blog puts it: "The KV Cache's immense GPU memory footprint, amplified by system prompt size, is the primary bottleneck in LLM serving, directly constraining context length, concurrency, and overall system throughput." [2]
 
-Google's answer is not one solution — it's two complementary approaches, each optimized for different workload characteristics. Understanding both is essential for anyone building AI inference infrastructure.
+This is Google's concern: at 42.7:1 storage:compute ratio [1], KV Cache *is* the workload. Compute is almost an afterthought.
+
+How does Google design the storage system around it? The answer is not one solution — it's two complementary approaches, each optimized for different workload characteristics.
 
 ---
 
@@ -45,7 +47,7 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 | 50K | HBM + CPU RAM + SSD | −68% | +179% | −64% |
 | 100K | HBM + CPU RAM + SSD | −79% | +264% | −73% |
 
-At 100K context, node-local tiered storage delivers ==2.6×== throughput and ==73%== latency reduction vs HBM-only. The cache stays on the node — no network round-trips.
+At 100K context, node-local tiered storage delivers ==2.6×== throughput (==+264%==) and ==73%== latency reduction vs HBM-only. The cache stays on the node — no network round-trips.
 
 **Test 3: Cache saturates HBM + CPU RAM (12.6M–13.7M tokens), spills to Local SSD.**
 
@@ -81,7 +83,7 @@ Google's blog [2] makes the case:
 
 The key insight: local SSDs *can* be shared in distributed setups, but their I/O bandwidth is limited by host NIC capacity. Lustre provides higher aggregate bandwidth and centralized sharing — critical for long-context workloads where KV Cache sizes reach terabytes.
 
-**Performance data (DeepSeek-R1, A3-Ultra, 8× H200, 8× 141 GB HBM, 50K context, ~75% hit rate, ~3.4 TiB KV Cache) [2]:**
+**Performance data [2]:** DeepSeek-R1 on A3-Ultra (8× H200, 8× 141 GB HBM), ==50K== token context, ==~75%== cache hit rate, ==~3.4 TiB== total KV Cache.
 
 | Metric | Result |
 |---|---|
@@ -89,31 +91,35 @@ The key insight: local SSDs *can* be shared in distributed setups, but their I/O
 | Mean time to first token (MTTF) | ==−40%+== vs host memory only |
 | I/O parallelism | 32 worker threads for KV reads |
 
-**TCO analysis (1M TPS workload, A3-Ultra VMs + Managed Lustre) [2]:**
+> "In an experiment with a 50K token context and a high cache hit rate (about 75%), using Managed Lustre improved total inference throughput by ==75%== and reduced MTTF by more than ==40%== compared to using KV Cache in host memory alone." [2]
+
+**TCO analysis [2]:** Workload processing ==1 million TPS== using A3-Ultra VMs + Managed Lustre.
 
 | Metric | Result |
 |---|---|
 | TCO reduction | ==35%== vs no external storage |
 | Accelerator savings | ==~40%== fewer GPUs needed |
-| Key insight | "Storage replaces compute" — offloading KV to I/O frees accelerators for other work |
+| Key insight | "Storage replaces compute" — offloading KV to I/O frees accelerators |
+
+> "TCO analysis yielded a ==35%== savings from using an external attention/KV Cache for a workload processing 1 million Tokens per Second (TPS)... when compared to a workload leveraging no external storage." [2]
+
+> "You can handle a specific number of queries per second with ==~40%== fewer accelerators, resulting in direct cost savings." [2]
 
 **Configuration details [2]:**
 
 | Parameter | Value |
 |---|---|
-| Lustre bandwidth | 1000 MB/s per TiB (Performance Tier) |
-| Capacity per machine | 18 TiB Lustre per A3-Ultra VM |
-| Cluster size | 73 A3-Ultra machines for 1M TPS target |
+| Lustre bandwidth | ==1000 MB/s per TiB== (Performance Tier) |
+| Capacity per machine | ==18 TiB== Lustre per A3-Ultra VM |
+| Cluster size | ==73== A3-Ultra machines for 1M TPS target |
 | GPU | 8× H200 per VM, 8× 141 GB HBM |
-| Software tuning | `o_direct` flag (bypass FS cache), 32 I/O worker threads |
+| Software tuning | `o_direct` flag (bypass FS cache), ==32== I/O worker threads |
 
-**Google's thesis [2]:**
+> "Our experiment demonstrated that with configuration tuning and an improvement in KV Cache software to adopt more I/O parallelism, Managed Lustre can substantially improve inference performance." [2]
 
-> "Our experiment demonstrated that with configuration tuning and an improvement in KV Cache software to adopt more I/O parallelism, Managed Lustre can substantially improve inference performance."
+> "You can handle a specific number of queries per second with ==~40%== fewer accelerators, resulting in direct cost savings." [2]
 
-> "You can handle a specific number of queries per second with ~40% fewer accelerators, resulting in direct cost savings."
-
-The storage cost is offset by compute savings. I/O bandwidth is the bottleneck, and parallel storage (Lustre) delivers more aggregate bandwidth than node-local solutions when properly tuned.
+**The core argument:** I/O bandwidth is the bottleneck. At ==1000 MB/s per TiB==, Lustre delivers ==18 TB/s== aggregate bandwidth per VM — far exceeding what host NIC-attached local SSDs can provide. The storage cost is offset by compute savings: ==40%== fewer accelerators for the same workload.
 
 ---
 
