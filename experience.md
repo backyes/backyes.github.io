@@ -1,7 +1,7 @@
 # 建站经验沉淀
 
 > backyes.github.io — LLM Infrastructure Insights (Research Hub)
-> 最后更新: 2026-07-20
+> 最后更新: 2026-07-22
 
 ## 一、技术栈选型
 
@@ -137,7 +137,37 @@ excerpt: "摘要..."
 
 `build_site.py` 自动解析 frontmatter → 生成 posts.html / 单篇 HTML / search DB。
 
-## 六、维护命令
+## 六、手写文章常见问题
+
+### 6.1 自定义 md_to_html 不支持 footnote 语法
+- `[^tam]` 会被当作乱码文字直接渲染到 HTML
+- **解决**: 直接在正文中内联解释，不用 footnote 语法
+- 例：`(TAM, Total Addressable Market)` 而非 `[^tam]`
+
+### 6.2 首页 posts 列表从 .md 源文件生成
+- `gen_posts_list(posts[:N])` 只显示前 N 篇
+- 如果 .md 源文件被删除，首页列表消失（但 HTML 页面可能还在）
+- **恢复**: 重建 .md 源文件 + 调整 `posts[:N]` 数量
+
+### 6.3 backyes.github.io 有独立 build_site.py 副本
+- 修改 workspace 的 build_site.py 后，需要同步到 backyes.github.io
+- 或者直接修改 backyes.github.io/build_site.py
+- **建议**: 修改后两个地方都更新，或通过 sync 脚本自动同步
+
+### 6.4 图片引用路径
+- posts 中引用图片用绝对路径更可靠：`https://backyes.github.io/posts/assets/xxx.png`
+- 相对路径 `assets/xxx.png` 在 posts.html 中有效，但在 index.html 预览中可能失效
+
+### 6.5 表格设计原则
+- 避免主观列（如 "Storage Philosophy: Minimize/Maximize"）— 不够客观
+- 表格分类时用明确的技术维度（如 "DSA 主导" vs "线性混合 Attention"）
+- 合并相关表格比拆成多个小表格更易读
+
+### 6.6 文章标题措辞
+- 探讨性文章用 "may / appears / likely" 而非 "is / will be"
+- 避免给结论，而是给观点和思考框架
+
+## 七、维护命令
 
 ```bash
 cd ~/work/claude_workspace
