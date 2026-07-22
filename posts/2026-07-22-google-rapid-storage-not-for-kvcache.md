@@ -39,6 +39,10 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 
 **Test 2: Cache exceeds HBM (4.0M–4.3M tokens).**
 
+![LMCache Test 2 & 3: Throughput and Latency vs Context Length](https://backyes.github.io/posts/assets/lmcache_test_results.png)
+
+*Left: throughput improvement (%). Right: latency reduction (%). Blue = Test 2 (4M–4.3M tokens, exceeds HBM). Amber = Test 3 (12.6M–13.7M tokens, saturates HBM + CPU RAM).*
+
 | Context | Best Setup | TTFT | Throughput | Latency |
 |---|---|---|---|---|
 | 1K | HBM only | Baseline | Baseline | Baseline |
