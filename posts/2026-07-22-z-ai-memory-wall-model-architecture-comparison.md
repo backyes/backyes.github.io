@@ -71,28 +71,45 @@ For sparsity and multi-token prediction:
 
 ---
 
-## What This Means for AI Infrastructure
+## The Storage Imperative: What Happens If Kimi3's Path Persists
 
-The two-direction split creates a concrete design constraint for storage infrastructure.
+The two-direction split creates a concrete design constraint for storage infrastructure. Our first post ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) revealed the numbers behind one Agent session (July 14–20, 2026) [1]:
 
-**You cannot optimize for both directions simultaneously.**
+![Daily Token Consumption](assets/daily_cost_comparison.png)
 
-A storage hierarchy designed for DeepSeek's compressed KV will starve Kimi3's memory-hungry architecture. A hierarchy designed for Kimi3's full KV will waste money on DeepSeek's compressed approach. Our first post's data proves the gap is structural, not marginal [1]:
+**Daily cost comparison — DeepSeek vs Kimi (July 2026)** [1]
 
-| Metric | Value |
-|---|---|
-| Storage:Compute Ratio | 42.7:1 |
-| DeepSeek Cache Hit Cost | $0.003625/M |
-| Kimi K3 Cache Hit Cost | $0.28/M |
-| Cost Difference | 77× |
+| Metric | DeepSeek | Kimi K3 | Ratio |
+|---|---|---|---|
+| **Peak Day Total Cost** | $1.72 | $70.47 | **41×** |
+| **Storage Cost (cache hits)** | $0.83 | $64.34 | **77×** |
+| **Compute Cost (miss + output)** | $0.89 | $6.13 | **6.9×** |
+| **Full Week Storage Cost** | $1.74 | $134.51 | **77×** |
+| **Full Week Total Cost** | $6.45 | $70.33 | **10.9×** |
+
+The storage:compute ratio is ==42.7:1== — meaning 99.1% of tokens are "remembered," not "computed." On peak day (July 20), a single Agent session generated ==229.6M== cache hit tokens. Storage dominates the bill.
+
+### The Critical Question
+
+**What if Kimi3's memory-rich path is not a temporary experiment, but a persistent direction?**
+
+If high-precision models continue to prioritize quality over compression, then:
+
+1. **KV Cache total storage becomes the primary bottleneck.** A 1M-token context window with full (uncompressed) KV cache requires substantially more HBM than DeepSeek's compressed approach. At 42.7:1 storage:compute ratio, every token of additional context multiplies the memory requirement.
+
+2. **HBM data movement efficiency determines cost.** Moving KV data between HBM, DRAM, and compute units consumes power and adds latency. If storage is 99% of the workload, then data movement efficiency — not raw compute throughput — becomes the key optimization target.
+
+3. **The storage hierarchy must be redesigned.** DeepSeek's compressed KV can fit in less HBM with more aggressive offloading. Kimi3's full KV demands either more HBM (expensive) or faster tiered storage (CXL, NVMe) with minimal overhead.
+
+This is not a theoretical concern. At Kimi3's pricing ($0.28/M cache hit), running the same Agent session that cost $1.74 on DeepSeek costs ==$134.51== — ==77×== more [1]. If the market continues to value Kimi3's quality advantage (as CNBC and Bleap suggest), then **storage cost reduction becomes the single most important lever for infrastructure efficiency.**
 
 ### The Infrastructure Implication
 
 For infrastructure planners, the message is straightforward:
 
 1. **Support compressed KV** (DeepSeek-style) — less HBM, more compute for decompression
-2. **Support full KV** (Kimi3-style) — more HBM, lower compute overhead
-3. **Tier the storage** — hot KV in HBM, warm in DRAM, cold in SSD
+2. **Support full KV** (Kimi3-style) — more HBM, lower compute overhead, faster tiered storage
+3. **Optimize data movement** — at 99% storage workload, moving data efficiently matters more than computing faster
 4. **Stay protocol-agnostic** — CXL for open memory pooling, NVLink for NVIDIA-integrated
 
 The key insight: **the storage layer determines which model architectures you can serve efficiently.** A facility optimized only for DeepSeek will struggle to run Kimi3-class models cost-effectively, and vice versa.
@@ -104,10 +121,9 @@ The key insight: **the storage layer determines which model architectures you ca
 Don't all-in on either direction. The market needs both:
 
 - **Cost-sensitive, high-volume workloads** → DeepSeek's efficiency path
-- **Quality-sensitive, Agent-heavy workloads** → Kimi3/Claude/GPT's precision path
-- **The middle ground** → Models like LongCat 2.0 that combine DSA + IndexSharing + MTP
+- **Quality-sensitive, Agent-heavy workloads** → Kimi3's precision path
 
-The winners in AI infrastructure will be the ones whose storage hierarchies can serve the full spectrum — from DeepSeek's compressed efficiency to Kimi3's memory-rich precision. The storage layer is where model strategy becomes hardware reality.
+The winners in AI infrastructure will be the ones whose storage hierarchies can serve both directions — from DeepSeek's compressed efficiency to Kimi3's memory-rich precision. The storage layer is where model strategy becomes hardware reality.
 
 ---
 
