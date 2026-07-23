@@ -175,34 +175,15 @@ For KV Cache, Google's official recommendation remains **Managed Lustre** or **n
 
 ## What Comes Next?
 
-Google's two-pronged approach reflects a simple principle: **match the storage architecture to the workload.**
+Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, the storage layer determines inference cost and performance.
 
-- **Single-node, long-context, latency-sensitive** → tiered node-local (HBM + CPU RAM + SSD)
-- **Multi-tenant, capacity-bound, shared contexts** → centralized Lustre
-- **Training data and model weights** → Rapid Storage
+But Agentic AI is heading toward million-token contexts with ==90–99%== cache hit rates. Every percentage point of hit rate improvement means more data to store and more data to move. At 99% hit rates, a single workload needs ==1.3×== the I/O bandwidth of a 75% hit workload at the same context length.
 
-Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, the storage layer determines inference cost and performance. The compute is almost an afterthought.
+**The open question: when KV Cache scales to millions of tokens, can Lustre keep up?**
 
-**But the story doesn't end here.**
+Google's Lustre solution delivers ==75%== throughput improvement today at 50K context. But it runs on a shared RDMA fabric with fixed per-VM bandwidth (==18 TB/s== per A3-Ultra). At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (5 TiB SSD).
 
-Consider where Agentic AI is heading: million-token context windows with ==90%== or even ==99%== cache hit rates. At 42.7:1 storage:compute ratio, every percentage point of hit rate improvement means more data to store and more data to move. I/O bandwidth demand scales linearly with hit rate — a 99% hit workload needs ==1.3×== the I/O of a 75% hit workload at the same context length.
-
-**The next bottleneck is I/O bandwidth efficiency.** Current solutions are already hitting limits:
-
-- **Node-local tiered:** Host NIC bandwidth caps aggregate throughput. Local SSD at 5 TiB is fast but finite. When cache exceeds node capacity, data spills to SSD — and TTFT degrades.
-- **Centralized Lustre:** RDMA helps, but network fabric bandwidth is shared across tenants. At 99% hit rates with thousands of concurrent agents, the Lustre cluster becomes the contention point.
-
-**What comes next?**
-
-1. **CXL memory pooling** — disaggregate memory from compute, pool across nodes. Google's own documentation points to CXL as the future tier [4]. This could break the node-local capacity ceiling without sacrificing proximity.
-
-2. **KV Cache compression at the storage layer** — current approaches compress within attention (MLA, DSA). Compressing the *stored* KV blocks themselves (quantization, sparse encoding) could reduce I/O volume by 2-4× without quality loss.
-
-3. **Predictive KV pre-staging** — NVIDIA's ICMS already does this with DOCA/Dynamo. At 99% hit rates, the prefill-to-decode pipeline becomes a deterministic data movement problem. Predict *which* KV blocks will be needed and pre-stage them before the decode phase begins.
-
-4. **Storage-compute co-design** — processing near storage (BlueField DPUs, computational storage) to reduce data movement. Instead of moving KV blocks to compute, move compute to where the KV blocks already live.
-
-The fundamental question: **when KV Cache hit rates approach 99%, is the bottleneck still storage capacity — or is it I/O bandwidth efficiency?** Google's data suggests we are already hitting the latter. The next generation of AI storage infrastructure will be designed around bandwidth, not capacity.
+Current solutions are already at their limits. The next generation of AI infrastructure will be designed around bandwidth — not capacity alone.
 
 ---
 

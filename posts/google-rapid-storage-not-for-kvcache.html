@@ -22,8 +22,6 @@
 .article-body .key-callout p:last-child{margin:0}
 .article-body .key-num{color:var(--accent);font-weight:700;font-size:1.1em}
 .article-body .hl-blue{background:rgba(74,143,224,.12);border-left:3px solid var(--accent);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
-.article-body .hl-red{background:rgba(248,81,73,.12);border-left:3px solid #f85149;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
-.article-body .hl-red p{margin:0}
 .article-body .hl-amber{background:rgba(210,153,34,.12);border-left:3px solid #d29922;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
 .article-body .hl-green{background:rgba(63,185,80,.12);border-left:3px solid #3fb950;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
 .article-body .hl-blue p,.article-body .hl-amber p,.article-body .hl-green p{margin:0}
@@ -80,7 +78,7 @@
 <tr><td><strong>Local SSD (Tier 3)</strong></td><td>5 TiB</td><td>Largest, slowest node-local — total ~12M–13M tokens</td></tr>
 </tbody></table>
 <p><strong>Benchmark command:</strong></p>
-<blockquote class="hl-red"><p><code>python3 sglang/bench_serving.py --host=${IP} --port=${PORT} --dataset-name='generated-shared-prefix' --model=$MODEL --tokenizer=$MODEL --backend=vllm --gsp-num-groups=80 --gsp-prompts-per-group=20 --gsp-system-prompt-len=1000 --gsp-question-len=256 --gsp-output-len=512 --request-rate=800 --max-concurrency=200</code></p></blockquote>
+<blockquote><p><code>python3 sglang/bench_serving.py --host=${IP} --port=${PORT} --dataset-name='generated-shared-prefix' --model=$MODEL --tokenizer=$MODEL --backend=vllm --gsp-num-groups=80 --gsp-prompts-per-group=20 --gsp-system-prompt-len=1000 --gsp-question-len=256 --gsp-output-len=512 --request-rate=800 --max-concurrency=200></code></p></blockquote>
 <p><strong>Test 1: Cache fits in HBM (1.1M–1.3M tokens).</strong> Adding slower storage tiers offered no advantage. HBM-only is optimal.</p>
 <p><strong>Test 2: Cache exceeds HBM (4.0M–4.3M tokens).</strong></p>
 <img src="https://backyes.github.io/posts/assets/lmcache_test2.png" alt="LMCache Test 2 — TTFT, Throughput, Latency vs Context" style="max-width:100%;display:block;margin:1.5em auto">
@@ -105,7 +103,7 @@
 <tr><td>100K</td><td>HBM + CPU RAM + SSD</td><td>−3%</td><td>+130%</td><td>−57%</td></tr>
 </tbody></table>
 <p>Even with SSD spillover, 100K context still delivers <mark>+130%</mark> throughput. But TTFT degrades when cache exceeds comfortable capacity — signaling the practical limit of node-local approaches.</p>
-<blockquote class="hl-red"><p><strong>🔍 Open question: Why does TTFT degrade at 10K–50K but recover at 100K, while throughput keeps improving?</strong></p><p><strong>One hypothesis (worth discussing):</strong> At 10K–50K, the cache is in a "worst of both worlds" regime — too large for fast memory, too small to amortize SSD I/O costs. By 100K, the workload may reach a new steady state where massive cache hit rates and batch efficiency outweigh the SSD latency penalty. But this is speculation — the actual cause could be vLLM scheduling behavior, SSD read-ahead effects, or KV Cache eviction dynamics. The data raises the question; it doesn't answer it.</p></blockquote>
+<blockquote><p><strong>🔍 Open question: Why does TTTT degrade at 10K–50K but recover at 100K, while throughput keeps improving?</strong></p></blockquote>
 <blockquote><p></p></blockquote>
 <blockquote><p><strong>One hypothesis (worth discussing):</strong> At 10K–50K, the cache is in a "worst of both worlds" regime — too large for fast memory, too small to amortize SSD I/O costs. By 100K, the workload may reach a new steady state where massive cache hit rates and batch efficiency outweigh the SSD latency penalty. But this is speculation — the actual cause could be vLLM scheduling behavior, SSD read-ahead effects, or KV Cache eviction dynamics. The data raises the question; it doesn't answer it.</p></blockquote>
 <p><strong>Key insight:</strong> Tiered node-local storage works best when the cache fits within HBM + CPU RAM. SSD spillover still helps throughput but adds latency. The ceiling is node capacity.</p>
@@ -172,26 +170,11 @@
 </tbody></table>
 <hr>
 <h2>What Comes Next?</h2>
-<p>Google's two-pronged approach reflects a simple principle: <strong>match the storage architecture to the workload.</strong></p>
-<ul>
-<li><strong>Single-node, long-context, latency-sensitive</strong> → tiered node-local (HBM + CPU RAM + SSD)</li>
-<li><strong>Multi-tenant, capacity-bound, shared contexts</strong> → centralized Lustre</li>
-<li><strong>Training data and model weights</strong> → Rapid Storage</li>
-</ul>
-<p>Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, the storage layer determines inference cost and performance. The compute is almost an afterthought.</p>
-<p><strong>But the story doesn't end here.</strong></p>
-<p>Consider where Agentic AI is heading: million-token context windows with <mark>90%</mark> or even <mark>99%</mark> cache hit rates. At 42.7:1 storage:compute ratio, every percentage point of hit rate improvement means more data to store and more data to move. I/O bandwidth demand scales linearly with hit rate — a 99% hit workload needs <mark>1.3×</mark> the I/O of a 75% hit workload at the same context length.</p>
-<p><strong>The next bottleneck is I/O bandwidth efficiency.</strong> Current solutions are already hitting limits:</p>
-<ul>
-<li><strong>Node-local tiered:</strong> Host NIC bandwidth caps aggregate throughput. Local SSD at 5 TiB is fast but finite. When cache exceeds node capacity, data spills to SSD — and TTFT degrades.</li>
-<li><strong>Centralized Lustre:</strong> RDMA helps, but network fabric bandwidth is shared across tenants. At 99% hit rates with thousands of concurrent agents, the Lustre cluster becomes the contention point.</li>
-</ul>
-<p><strong>What comes next?</strong></p>
-<p>1. <strong>CXL memory pooling</strong> — disaggregate memory from compute, pool across nodes. Google's own documentation points to CXL as the future tier [4]. This could break the node-local capacity ceiling without sacrificing proximity.</p>
-<p>2. <strong>KV Cache compression at the storage layer</strong> — current approaches compress within attention (MLA, DSA). Compressing the <em>stored</em> KV blocks themselves (quantization, sparse encoding) could reduce I/O volume by 2-4× without quality loss.</p>
-<p>3. <strong>Predictive KV pre-staging</strong> — NVIDIA's ICMS already does this with DOCA/Dynamo. At 99% hit rates, the prefill-to-decode pipeline becomes a deterministic data movement problem. Predict <em>which</em> KV blocks will be needed and pre-stage them before the decode phase begins.</p>
-<p>4. <strong>Storage-compute co-design</strong> — processing near storage (BlueField DPUs, computational storage) to reduce data movement. Instead of moving KV blocks to compute, move compute to where the KV blocks already live.</p>
-<p>The fundamental question: <strong>when KV Cache hit rates approach 99%, is the bottleneck still storage capacity — or is it I/O bandwidth efficiency?</strong> Google's data suggests we are already hitting the latter. The next generation of AI storage infrastructure will be designed around bandwidth, not capacity.</p>
+<p>Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, the storage layer determines inference cost and performance.</p>
+<p>But Agentic AI is heading toward million-token contexts with <mark>90–99%</mark> cache hit rates. Every percentage point of hit rate improvement means more data to store and more data to move. At 99% hit rates, a single workload needs <mark>1.3×</mark> the I/O bandwidth of a 75% hit workload at the same context length.</p>
+<p><strong>The open question: when KV Cache scales to millions of tokens, can Lustre keep up?</strong></p>
+<p>Google's Lustre solution delivers <mark>75%</mark> throughput improvement today at 50K context. But it runs on a shared RDMA fabric with fixed per-VM bandwidth (<mark>18 TB/s</mark> per A3-Ultra). At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (5 TiB SSD).</p>
+<p>Current solutions are already at their limits. The next generation of AI infrastructure will be designed around bandwidth — not capacity alone.</p>
 <hr>
 <h2>References</h2>
 <p>[1] <a href="https://backyes.github.io/posts/million-seq-storage-vs-compute.html" target="_blank" rel="noopener">backyes — The Million-Token Bill</a> — 42.7:1 storage:compute ratio, 77× cache hit cost difference</p>
