@@ -188,9 +188,9 @@ But Agentic AI is heading toward million-token contexts with ==90–99%== cache 
 
 **The open question: when KV Cache scales to millions of tokens, can Lustre keep up?**
 
-Google's Lustre solution delivers ==75%== throughput improvement today at 50K context. But it runs on a shared RDMA fabric with per-VM bandwidth of ==18 TiB × 1000 MB/s = 18 GB/s== — shared across all tenants. At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (5 TiB SSD).
+Google's Lustre solution delivers ==75%== throughput improvement today at 50K context. But it runs on a shared RDMA fabric with per-VM bandwidth of ==18 TiB × 1000 MB/s = 18 GB/s== — shared across all tenants. At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (==18 TiB== local SSD + 1 TiB CPU RAM + 640 GiB HBM).
 
-Current solutions are already at their limits. The next generation of AI infrastructure will be designed around bandwidth — not capacity alone.
+> **Will Google also move toward on-node FLASH/NAND, following the TPU super-node path?** As KV Cache grows to millions of tokens, even Lustre's shared RDMA fabric may not suffice. NVIDIA's ICMS already puts flash at the bus edge. Google's TPU strategy relies on massive on-package HBM — but as Agentic AI pushes context lengths further, will Google also adopt on-node FLASH/NAND tiers to complement Lustre? The answer may define the next era of AI storage architecture.
 
 ---
 
