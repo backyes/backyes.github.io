@@ -13,7 +13,7 @@ This July, I was running a multi-turn Agent session on [LongCat-2.0](https://lon
 
 **LongCat-2.0 Daily Token Consumption — July 2026**
 
-![Daily Token Consumption](assets/token_usage_july_2026.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="assets/token_usage_july_2026.png" alt="Daily Token Consumption" style="max-width:100%;display:block;margin:0 auto"></a>
 
 Look at July 20 alone: ==229.6M== cache hit tokens consumed in a single day. Over the entire tracking period (July 14–20), the total reached ==480.4M== cache hit tokens — with only ==11.3M== actual compute tokens (cache miss + output). The ratio: ==42.7:1== storage tokens for every compute token.
 
@@ -63,7 +63,7 @@ Kimi's cache miss ($2.78/M) and output ($13.90/M) are also 6× and 16× higher t
 
 Using the daily consumption data, here's what each vendor would charge per day. **Storage cost = cache hits × hit price. Compute cost = (cache misses + output) × respective price.**
 
-![Daily Cost Comparison](assets/daily_cost_comparison.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="assets/daily_cost_comparison.png" alt="Daily Cost Comparison" style="max-width:100%;display:block;margin:0 auto"></a>
 
 | Day | Cache Hits (M) | Cache Miss (M) | Output (M) | DeepSeek Storage | DeepSeek Compute | Kimi Storage | Kimi Compute |
 |---|---|---|---|---|---|---|---|
@@ -135,3 +135,7 @@ This is the new reality of long-context AI. And it fundamentally changes which r
 [3] [Moonshot (Kimi) Pricing](https://platform.moonshot.cn/docs/pricing/chat) — Official pricing
 [4] [MLA Compression Paper](https://arxiv.org/abs/2606.19348) — Multi-head Latent Attention mechanism
 [5] [Lil'Log - Context Engineering](https://lilianweng.github.io/posts/2025-06-24-context-engineering/) — Context window composition breakdown
+
+---
+
+*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*

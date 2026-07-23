@@ -21,7 +21,7 @@ This may not be a temporary divergence. It appears to be a fundamental architect
 
 Our previous analysis ([The Million-Token Bill](https://backyes.github.io/posts/million-seq-storage-vs-compute.html)) showed that ==99.1%== of tokens in a long-context Agent session are "remembered," not "computed" [1]. The storage:compute ratio reaches ==42.7:1==.
 
-![Storage vs Compute Cost — DeepSeek vs Kimi (July 2026)](https://backyes.github.io/posts/assets/daily_cost_comparison.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="https://backyes.github.io/posts/assets/daily_cost_comparison.png" alt="Storage vs Compute Cost — DeepSeek vs Kimi (July 2026)" style="max-width:100%;display:block;margin:0 auto"></a>
 
 *Storage vs Compute cost per day. DeepSeek: $0.83 storage + $0.89 compute. Kimi: $64.34 storage + $6.13 compute. Storage dominates both bills [1].*
 
@@ -148,3 +148,7 @@ The winners in AI infrastructure will be the ones whose storage hierarchies can 
 ---
 
 *Draft post. Views are my own analysis based on publicly available data. Not investment advice.*
+
+---
+
+*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*

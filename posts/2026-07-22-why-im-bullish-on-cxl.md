@@ -59,7 +59,7 @@ The demand for memory pooling is so real that even the incumbents are building p
 
 **NVIDIA NVLink Fusion** (Computex 2025 / GTC 2026): NVIDIA opened its NVLink fabric to third-party custom silicon via **NVLink-C2C**, a cache-coherent chip-to-chip interconnect delivering ==1.8 TB/s== per GPU [9a](#ref-9a)[9b](#ref-9b)[9c](#ref-9c). NVIDIA is essentially using NVLink as a proprietary memory pooling bus — an alternative to CXL, but still requiring NVIDIA's bridge chips and licensing.
 
-![NVIDIA NVLink-C2C enables memory pooling over NVLink fabric](https://developer-blogs.nvidia.com/wp-content/uploads/2022/11/memory-access-grace-hopper-superchip.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="https://developer-blogs.nvidia.com/wp-content/uploads/2022/11/memory-access-grace-hopper-superchip.png" alt="NVIDIA NVLink-C2C enables memory pooling over NVLink fabric" style="max-width:100%;display:block;margin:0 auto"></a>
 
 *NVIDIA's proprietary approach: NVLink-C2C enables cache-coherent memory pooling over NVLink, but every third-party chip needs NVIDIA's blessing [9a](#ref-9a)[9d](#ref-9d)*
 
@@ -223,3 +223,7 @@ CXL won by choosing to be open at exactly the moment the market needed an open m
 ---
 
 *This is a draft post. Views are my own analysis based on publicly available market data and technical documentation. Not investment advice.*
+
+---
+
+*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*

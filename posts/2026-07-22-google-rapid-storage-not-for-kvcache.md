@@ -43,7 +43,7 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 
 **Test 2: Cache exceeds HBM (4.0M–4.3M tokens).**
 
-![LMCache Test 2 — TTFT, Throughput, Latency vs Context](https://backyes.github.io/posts/assets/lmcache_test2.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="https://backyes.github.io/posts/assets/lmcache_test2.png" alt="LMCache Test 2 — TTFT, Throughput, Latency vs Context" style="max-width:100%;display:block;margin:0 auto"></a>
 
 *Test 2: A3 mega, 8× H100, Llama-3.3-70B. Cache exceeds HBM (640 GiB) but fits within HBM + CPU RAM (1.7 TiB total). TTFT blue, Throughput green, Latency amber.*
 
@@ -61,7 +61,7 @@ At 100K context, node-local tiered storage delivers ==2.6×== throughput (==+264
 
 **Test 3: Cache saturates HBM + CPU RAM (12.6M–13.7M tokens), spills to Local SSD.**
 
-![LMCache Test 3 — TTFT, Throughput, Latency vs Context](https://backyes.github.io/posts/assets/lmcache_test3.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="https://backyes.github.io/posts/assets/lmcache_test3.png" alt="LMCache Test 3 — TTFT, Throughput, Latency vs Context" style="max-width:100%;display:block;margin:0 auto"></a>
 
 *Test 3: Same setup. Cache saturates HBM + CPU RAM, spills to Local SSD (5 TiB). Throughput still gains, but TTFT degrades at 10K–50K — the cost of SSD spillover.*
 
@@ -179,7 +179,7 @@ Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, 
 
 But Agentic AI is heading toward million-token contexts with ==90–99%== cache hit rates. Every percentage point of hit rate improvement means more data to move relative to compute.
 
-![I/O-to-Compute Ratio vs Cache Hit Rate](https://backyes.github.io/posts/assets/io_scaling_curve.png)
+<a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener"><img src="https://backyes.github.io/posts/assets/io_scaling_curve.png" alt="I/O-to-Compute Ratio vs Cache Hit Rate" style="max-width:100%;display:block;margin:0 auto"></a>
 
 > **I/O-to-Compute ratio normalized to 75% baseline (for every 100 tokens):**
 > - ==75%==: I/O:Compute = ==75:25== = ==3.0×== → ==1.0×== (baseline)
@@ -217,3 +217,7 @@ Google's Lustre solution delivers ==75%== throughput improvement today at 50K co
 [7] [Blocks & Files — Google's cloud storage gets faster and smarter for AI](https://www.blocksandfiles.com/public-cloud/2026/04/22/googles-cloud-storage-gets-faster-and-smarter-for-ai/5218551) — Managed Lustre as shared KV Cache
 
 [11] [LMCache Blog — LMCache on GKE: Boosting LLM Inference with KV Cache on Tiered Storage](https://blog.lmcache.ai/en/2025/10/07/lmcache-on-google-kubernetes-engine-boosting-llm-inference-performance-with-kv-cache-on-tiered-storage/) — 264% throughput at 100K context, full benchmark data
+
+---
+
+*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*
