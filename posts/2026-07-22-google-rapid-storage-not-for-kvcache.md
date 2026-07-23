@@ -181,14 +181,14 @@ But Agentic AI is heading toward million-token contexts with ==90–99%== cache 
 
 ![I/O-to-Compute Ratio vs Cache Hit Rate](https://backyes.github.io/posts/assets/io_scaling_curve.png)
 
-> **I/O-to-Compute ratio at different hit rates (for every 100 tokens):**
-> - ==75%==: I/O:Compute = ==75:25== = ==3.0×== baseline
-> - ==80%==: I/O:Compute = ==80:20== = ==4.0×== (1.3× vs 75%)
-> - ==85%==: I/O:Compute = ==85:15== = ==5.7×== (1.9× vs 75%)
-> - ==90%==: I/O:Compute = ==90:10== = ==9.0×== (3.0× vs 75%)
-> - ==95%==: I/O:Compute = ==95:5== = ==19.0×== (6.3× vs 75%)
-> - ==99%==: I/O:Compute = ==99:1== = ==99.0×== (==33×== vs 75%)
-> - ==99.5%==: I/O:Compute = ==99.5:0.5== = ==199.0×== (==66×== vs 75%)
+> **I/O-to-Compute ratio normalized to 75% baseline (for every 100 tokens):**
+> - ==75%==: I/O:Compute = ==75:25== = ==3.0×== → ==1.0×== (baseline)
+> - ==80%==: I/O:Compute = ==80:20== = ==4.0×== → ==1.3×== vs baseline
+> - ==85%==: I/O:Compute = ==85:15== = ==5.7×== → ==1.9×== vs baseline
+> - ==90%==: I/O:Compute = ==90:10== = ==9.0×== → ==3.0×== vs baseline
+> - ==95%==: I/O:Compute = ==95:5== = ==19.0×== → ==6.3×== vs baseline
+> - ==99%==: I/O:Compute = ==99:1== = ==99.0×== → ====33×== vs baseline==
+> - ==99.5%==: I/O:Compute = ==99.5:0.5== = ==199.0×== → ====66×== vs baseline==
 >
 > The relationship is **non-linear**. Moving from 75% to 99% hit rate increases the I/O-to-compute burden by ==33×==. At 99.5%, it's ==66×== the baseline. This is the fundamental scaling challenge: as hit rates approach 100%, I/O demand explodes while compute shrinks to near-zero.
 
