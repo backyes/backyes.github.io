@@ -137,7 +137,7 @@ The key insight: local SSDs *can* be shared in distributed setups, but their I/O
 
 > "You can handle a specific number of queries per second with ==~40%== fewer accelerators, resulting in direct cost savings." [2]
 
-**The core argument:** I/O bandwidth is the bottleneck. At ==1000 MB/s per TiB==, Lustre delivers ==18 TB/s== aggregate bandwidth per VM — far exceeding what host NIC-attached local SSDs can provide. The storage cost is offset by compute savings: ==40%== fewer accelerators for the same workload.
+**The core argument:** I/O bandwidth is the bottleneck. At ==1000 MB/s per TiB==, Lustre delivers ==18 GB/s== aggregate bandwidth per VM (==18 TiB × 1000 MB/s = 18,000 MB/s = 18 GB/s==) — far exceeding what host NIC-attached local SSDs can provide. The storage cost is offset by compute savings: ==40%== fewer accelerators for the same workload.
 
 ---
 
