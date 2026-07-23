@@ -35,6 +35,10 @@ Google's collaboration with LMCache [11] demonstrates a tiered storage approach 
 | **CPU RAM (Tier 2)** | 1 TiB | Mid-speed extension — total ~4M–4.3M tokens |
 | **Local SSD (Tier 3)** | 5 TiB | Largest, slowest node-local — total ~12M–13M tokens |
 
+**Benchmark command:**
+
+> `python3 sglang/bench_serving.py --host=${IP} --port=${PORT} --dataset-name='generated-shared-prefix' --model=$MODEL --tokenizer=$MODEL --backend=vllm --gsp-num-groups=80 --gsp-prompts-per-group=20 --gsp-system-prompt-len=1000 --gsp-question-len=256 --gsp-output-len=512 --request-rate=800 --max-concurrency=200`
+
 **Test 1: Cache fits in HBM (1.1M–1.3M tokens).** Adding slower storage tiers offered no advantage. HBM-only is optimal.
 
 **Test 2: Cache exceeds HBM (4.0M–4.3M tokens).**
