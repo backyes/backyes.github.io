@@ -177,11 +177,18 @@ For KV Cache, Google's official recommendation remains **Managed Lustre** or **n
 
 Both KV Cache approaches prove the same point: at 42.7:1 storage:compute ratio, the storage layer determines inference cost and performance.
 
-But Agentic AI is heading toward million-token contexts with ==90–99%== cache hit rates. Every percentage point of hit rate improvement means more data to store and more data to move. At 99% hit rates, a single workload needs ==1.3×== the I/O bandwidth of a 75% hit workload at the same context length.
+But Agentic AI is heading toward million-token contexts with ==90–99%== cache hit rates. Every percentage point of hit rate improvement means more data to store and more data to move.
+
+> **I/O bandwidth scaling calculation (at fixed context length):**
+> - At 75% hit rate: I/O ∝ ==0.75 × 42.7 = 32.0== units per compute token
+> - At 99% hit rate: I/O ∝ ==0.99 × 42.7 = 42.3== units per compute token
+> - Ratio: ==42.3 / 32.0 = 1.32× ≈ 1.3×==
+>
+> In short: ==0.99 / 0.75 = 1.32×== more I/O bandwidth needed at 99% vs 75% hit rate. The 42.7:1 ratio cancels out — it's purely a function of cache hit rate.
 
 **The open question: when KV Cache scales to millions of tokens, can Lustre keep up?**
 
-Google's Lustre solution delivers ==75%== throughput improvement today at 50K context. But it runs on a shared RDMA fabric with fixed per-VM bandwidth (==18 TB/s== per A3-Ultra). At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (5 TiB SSD).
+Google's Lustre solution delivers ==75%== throughput improvement today at 50K context. But it runs on a shared RDMA fabric with per-VM bandwidth of ==18 TiB × 1000 MB/s = 18 GB/s== — shared across all tenants. At million-token scales with thousands of concurrent agents, the fabric becomes the contention point. Node-local tiered storage, meanwhile, hits a hard ceiling at node capacity (5 TiB SSD).
 
 Current solutions are already at their limits. The next generation of AI infrastructure will be designed around bandwidth — not capacity alone.
 
