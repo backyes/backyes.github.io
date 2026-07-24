@@ -14,6 +14,11 @@ POSTS_DIR = os.path.join(REPO, 'posts')
 # visual = 卡片上的大字 (提取标题关键词)
 # tags = 具体技术关键词 (用于 Tags 页聚合)
 REPORTS = [
+    {"dst":"amd-latest-tech-2026","entry":"index.html","visual":"AMD",
+     "title":"AMD 全栈 AI 基础设施调研",
+     "desc":"AMD Advancing AI 2026 全栈深度调研 · EPYC Venice (Zen 6/6c, 256 核) / MI455X (CDNA 4, 2.61 PFLOPS FP8) / Helios 机架 / Ryzen AI Gorgon · 芯片 + 集群 + 路线图",
+     "cat":"chip","priority":"p0",
+     "tags":["AMD","EPYC","Venice","MI455X","CDNA","Helios","Zen6","RyzenAI","Gorgon","路线图"]},
     {"dst":"umdk","entry":"analysis/cam/CAM深度分析报告.html","visual":"UMDK",
      "title":"UMDK/CAM 深度分析",
      "desc":"Communication Acceleration for Matrix 架构深度分析 · 整体架构设计哲学 / 模块分解 / framework-nda 传输抽象层 / Operator Registry 与 SOC 世代 / op_host-op_kernel-op_api 三层编程模型 / 编译系统与部署",
