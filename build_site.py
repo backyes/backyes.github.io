@@ -474,7 +474,7 @@ def gen_post_page(post):
 {body_html}
   </div>
 </article>
-<footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved</p></div></footer>
+<footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved · edit by backyes.github.io</p></div></footer>
 </body>
 </html>'''
 
