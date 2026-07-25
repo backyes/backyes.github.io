@@ -373,7 +373,9 @@ At 10K concurrent sandboxes, that's **millions of CPU cores** just for orchestra
 
 ## Part 3: The Pattern — Why Server-Side CPU Is Growing
 
-### 3.1 The Common Thread
+### 3.1 Product Comparison Overview
+
+![Product Comparison](assets/product_comparison.png)
 
 Across these products, a pattern emerges:
 
