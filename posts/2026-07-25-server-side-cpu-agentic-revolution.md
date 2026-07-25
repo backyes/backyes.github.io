@@ -17,13 +17,15 @@ Today's AI coding assistants — Claude Code, Cursor, Cline — follow a simple 
      ├── Claude Code UI ────────────────│
      ├── Tool Execution (Bash, npm) ────│ ← Local CPU
      ├── File System Access ────────────│ ← Local I/O
-     └── LLM API Call ──────────────────┤ ← GPU Inference
+     ├── LLM API Call ──────────────────┤ ← GPU Inference
+     └── Retrieval MCP Call ────────────┤ ← Server CPU (文档/代码检索)
                                          │
-                                    [ GPU Cluster ]
-                                    (Model Inference Only)
+                                    [ GPU Cluster ]     [ Retrieval MCP ]
+                                    (Model Inference)    (Anthropic/Third-party)
+                                                          ↑ 提高用户粘度的功能
 ```
 
-**The pattern is clear:** Tool execution happens on the user's machine. The cloud only does LLM model inference (GPU-bound). This is why a Claude Code session can run for hours while your laptop's CPU spikes, but the cloud bill is purely for GPU token generation.
+**The pattern is clear:** Tool execution happens on the user's machine. The cloud only does LLM model inference (GPU-bound). But there's a new component: **Retrieval MCP** — a server-side service (provided by Anthropic or third parties) that Claude Code calls to retrieve documentation, code examples, or context. This is a server-side CPU operation that increases user stickiness. This is why a Claude Code session can run for hours while your laptop's CPU spikes, but the cloud bill is purely for GPU token generation — **for now**.
 
 **But this is about to change.**
 
