@@ -44,14 +44,18 @@ This post analyzes real product designs to explain why.
 
 ### 1.3 Why Server-Side? The Product Reasons
 
+<div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.25);border-radius:8px;padding:16px 20px;margin:1.5em 0">
+
 | Product | Why Server-Side? | CPU Driver |
 |---|---|---|
-| **DeepSeek** | Search engines, real-time data, parallel queries | Search cluster + data pipeline |
-| **Manus** | Autonomous execution, multi-step tasks | Browser cluster + code sandbox |
-| **Kimi** | Parallel web scraping, GB-scale data processing | Headless browsers + chunking |
-| **Volcano** | Multi-tenant enterprise isolation | Container orchestration |
-| **Meituan** | Internal API access (orders, payments, GPS) | RPC middleware + auth |
-| **E2B** | Managed serverless environments | MicroVM orchestration |
+| 🔴 **DeepSeek** | Search engines, real-time data, parallel queries | Search cluster + data pipeline |
+| 🔴 **Manus** | Autonomous execution, multi-step tasks | Browser cluster + code sandbox |
+| 🔴 **Kimi** | Parallel web scraping, GB-scale data processing | Headless browsers + chunking |
+| 🔴 **Volcano** | Multi-tenant enterprise isolation | Container orchestration |
+| 🔴 **Meituan** | Internal API access (orders, payments, GPS) | RPC middleware + auth |
+| 🔴 **E2B** | Managed serverless environments | MicroVM orchestration |
+
+</div>
 
 ---
 
