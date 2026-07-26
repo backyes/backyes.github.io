@@ -80,7 +80,25 @@ Parallel to compute dies is the 3D stacking of memory. HBM (High Bandwidth Memor
 
 This is the core challenge of packaging technology.
 
-A single HBM3E has over **1,000 to 2,000 signal pins** on its bottom. The routing density between 8 HBM stacks + 2 compute dies far exceeds the capability of traditional packaging substrates. How is this solved?
+A single HBM3E has over **1,000 to 2,000 signal pins** on its bottom (HBM3 uses a 1024-bit interface per stack). The routing density between 8 HBM stacks + 2 compute dies far exceeds the capability of traditional packaging substrates. How is this solved?
+
+**Why HBM Must Sit Next to GPU — The Real Reason**
+
+It's intuitive to think "HBM is close to GPU because shorter traces = lower latency." That's partially true, but not the fundamental constraint. The real reason is **routing impossibility**:
+
+- A single HBM3 stack needs **1,024 high-speed signal traces** just for the data interface — plus hundreds more for power, ground, and control
+- 8 HBM stacks + 2 compute dies = **10,000+ high-speed traces** must be routed in the package
+- Traditional organic substrate line/space: **~2 μm** — physically impossible to route 10,000 traces at the required density
+
+This is the **Silicon Interconnect Density Problem**: conventional substrates lack the routing capability, regardless of distance. CoWoS solves this by bringing silicon-level routing density into the package:
+
+| Substrate Type | Line/Space Capability | Can Route HBM? |
+|---|---|---|
+| Traditional PCB | ~50–100 μm | ❌ Impossible |
+| Organic Substrate (FCBGA) | ~2 μm | ❌ Impossible at HBM density |
+| **Silicon Interposer (CoWoS)** | **~0.4 μm (sub-micron)** | ✅ Routable |
+
+> **Key insight**: CoWoS's core value isn't "making traces shorter" — it's **importing silicon-level routing capability into the packaging world**. The interposer acts as a "silicon PCB," solving the density problem that organic substrates physically cannot.
 
 **The evolution of three generations of packaging substrates is an arms race in "interconnect density":**
 
