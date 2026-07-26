@@ -139,7 +139,7 @@ The discussion so far has focused on **signal interconnect density** — but tha
 | Dimension | Challenge | Why It Matters |
 |---|---|---|
 | **Signal** | 10,000+ high-speed traces between compute dies and HBM | Without silicon-level routing, HBM simply cannot connect |
-| **Power** | HBM + GPU package already at **hundreds of watts**; GB200 NVL72 rack approaches **tens of kW** | Power delivery network (PDN) must handle extreme current density without excessive voltage drop; HBM placement and power delivery must be co-designed |
+| **Power** | HBM + GPU package already at **hundreds of watts**; GB200 NVL72 rack consumes **~120 kW** (up to 132 kW peak per HPE/Supermicro specs) | Power delivery network (PDN) must handle extreme current density without excessive voltage drop; HBM placement and power delivery must be co-designed |
 | **Thermal** | Logic dies: extreme heat density (~100W/cm²); HBM: heat-sensitive (max 85°C); 2.5D stacking traps heat | Thermal interface material (TIM), heat spreader, and cooling architecture are co-designed with packaging; otherwise bandwidth is built but cannot be fully utilized |
 | **Mechanical** | Warpage from CTE mismatch, thin-wafer handling, solder joint reliability | Manufacturing yield and long-term reliability depend on mechanical integrity |
 
@@ -161,7 +161,9 @@ In AI workloads, the dominant energy cost isn't computation — it's **data move
 | Moving 1 bit across a mm on-chip | ~10–50 pJ |
 | Moving 1 bit off-chip (package-to-package) | ~100–1000 pJ |
 
-> **Key insight**: Moving data can cost **10–100× more energy than computing on it**. 2.5D packaging reduces distance laterally; 3D stacking eliminates it vertically.
+> Energy estimates based on Horowitz (ISSCC 2014) energy decomposition model; actual values vary by process node and implementation.
+
+> ==Key insight: Moving data can cost **10–100× more energy than computing on it**. 2.5D packaging reduces distance laterally; 3D stacking eliminates it vertically.==
 
 **The 3D Vision: Compute | Cache | Memory**
 
@@ -267,7 +269,7 @@ Advanced packaging has become the **core bottleneck** of the AI chip supply chai
 
 | Constraint | Who Controls It | Why It Matters |
 |---|---|---|
-| **TSMC CoWoS Capacity** | TSMC (70% market share) | NVIDIA alone books >50% of 2026 CoWoS output |
+| **TSMC CoWoS Capacity** | TSMC (70% market share) | NVIDIA is the single largest CoWoS customer, booking a dominant share of 2026 output |
 | **HBM Supply** | Samsung, SK Hynix (duopoly) | HBM3E yield learning still ongoing; capacity allocated 6-12 months ahead |
 | **ABF Substrate** | Ibiden, Unimicron, Shinko | Low-CTE ABF for CoWoS requires specialized resin formulations |
 | **TSV (Through-Silicon Via)** | HBM makers only | Yield on 12-high HBM stacks directly impacts usable output |
