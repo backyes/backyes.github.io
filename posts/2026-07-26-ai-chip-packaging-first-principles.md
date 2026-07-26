@@ -1,11 +1,11 @@
 ---
-title: "How to Understand the First Principles of AI Chip Packaging"
+title: "The First Principles of AI Chip Packaging"
 date: 2026-07-26
 tags: ["packaging", "CoWoS", "chiplet", "HBM", "NVIDIA", "AI-Infra"]
 excerpt: "The bottleneck of AI compute is shifting from the microscopic world of transistors to the macroscopic order of packaging. This post breaks down Chiplet stacking, interconnect density evolution (FCBGS-S→CoWoS-L), NVIDIA's 5-generation GPU packaging roadmap, and the manufacturing physics behind Blackwell's 4-die warpage crisis."
 ---
 
-# How to Understand the First Principles of AI Chip Packaging
+# The First Principles of AI Chip Packaging
 
 > Study notes · Written July 2026
 
