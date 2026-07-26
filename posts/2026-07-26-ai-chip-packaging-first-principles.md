@@ -19,7 +19,7 @@ excerpt: "The bottleneck of AI compute is shifting from the microscopic world of
 
 Let's build some intuition first.
 
-A single NVIDIA Blackwell B200 chip has a package substrate area of approximately **2,500 mm²** (about 5×5 cm, roughly 4 times the size of a postage stamp), housing 2 compute dies + 8 HBM3E memory stacks inside. For comparison, the H100's package substrate is ~2,000 mm². Meanwhile, TSMC's N3E process only delivers about **60%** transistor density improvement over N4.
+A single NVIDIA Blackwell B200 package houses 2 compute dies (~1,000 mm² each) + 8 HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately **2,800 mm²** (about 3.3× the photolithography reticle limit), while the underlying organic package substrate approaches **10,000 mm²** (~10×10 cm). For comparison, the H100's monolithic compute die is 814 mm², its CoWoS-S interposer ~1,700–2,000 mm², and its package substrate ~3,025 mm² (55×55 mm). Meanwhile, TSMC's N3E process only delivers about **60%** transistor density improvement over N4.
 
 The numbers don't lie: per-GPU compute doubles every generation, but process density only improves 60%. **Where does the remaining 40% — and more — come from?**
 
@@ -41,7 +41,7 @@ AI chip packaging technology can be decomposed into two dimensions:
 
 Traditional monolithic dies face severe yield collapse below 3nm: the larger the die, the higher the probability of hitting a defect. The Chiplet approach is "divide and conquer" — break a large chip into multiple smaller dies, each manufactured on its most suitable process, then interconnected at high speed through packaging.
 
-AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of **2 compute dies** connected via NV-HBI (NV-High Bandwidth Interface, ~1.8 TB/s bidirectional bandwidth), equivalent to a single massive chip.
+AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of **2 compute dies** connected via NV-HBI (NV-High Bandwidth Interface) with an extraordinary **10 TB/s bidirectional die-to-die bandwidth** — over 5× the system-level NVLink 5 bandwidth (~1.8 TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
 
 **b) Memory die stacking — HBM**
 
@@ -80,23 +80,24 @@ This is the "locally precise, globally economical" hybrid packaging philosophy.
 
 ## 3. NVIDIA's 5-Generation GPU Packaging Roadmap
 
-The table below summarizes NVIDIA's packaging technology evolution from Pascal to Blackwell:
+The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pascal to Blackwell. Note: "Die Size" refers to the compute die (monolithic), while interposer and package substrate areas are called out in the text where relevant.
 
-| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Interconnect Bandwidth | Package Area |
+| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Die Size (mm²) | Interconnect Bandwidth |
 |---|---|---|---|---|---|---|---|
-| 2016 | **Pascal** | GTX 1080 Ti / P100 | 16nm | FCBGA | GDDR5X / HBM2 | 320 GB/s (HBM2) | ~471 mm² |
-| 2017 | **Volta** | V100 | 12nm | **CoWoS-S** debut | HBM2 | 900 GB/s | ~815 mm² |
-| 2020 | **Ampere** | A100 | 7nm | CoWoS-S | HBM2e | 2,039 GB/s | ~826 mm² |
-| 2022 | **Hopper** | H100 | 4nm | CoWoS-S | HBM3 | 3,350 GB/s | ~814 mm² |
-| 2024 | **Blackwell** | B200 / GB200 | 4nm | **CoWoS-L** | HBM3E | **8,000 GB/s** (per socket) | **~2,500 mm²** |
+| 2016 | **Pascal** | Tesla P100 (GP100) | 16nm | **CoWoS-S** debut | HBM2 (4 stacks) | 610 | 720 GB/s (HBM2) |
+| 2016 | **Pascal** | GTX 1080 Ti (GP102) | 16nm | FCBGA | GDDR5X | 471 | 484 GB/s (GDDR5X) |
+| 2017 | **Volta** | V100 | 12nm | CoWoS-S | HBM2 | 815 | 900 GB/s |
+| 2020 | **Ampere** | A100 | 7nm | CoWoS-S | HBM2e | 826 | 2,039 GB/s |
+| 2022 | **Hopper** | H100 | 4nm | CoWoS-S | HBM3 | 814 | 3,350 GB/s |
+| 2024 | **Blackwell** | B200 (2-die Chiplet) | 4nm | **CoWoS-L** | HBM3E (8 stacks) | ~1,000 ×2 | 8,000 GB/s (per socket) |
 
 > Data sources: NVIDIA official Spec Sheets, [TechPowerUp GPU Database](https://www.techpowerup.com/gpu-specs/), [TSMC Technology Documentation](https://www.tsmc.com/english/dedicatedFoundry/technology/advanced_packaging.htm)
 
 **Three key inflection points:**
 
-1. **Volta→Ampere**: CoWoS-S matures, HBM goes from optional to standard, memory bandwidth increases 2.3×
-2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, package area surges from ~800 mm² to ~2,500 mm², Chiplet architecture lands for the first time
-3. **Blackwell single-package integration**: 2 compute dies (~1,000 mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges for die-to-die and die-to-HBM bidirectional high-speed interconnect
+1. **Pascal P100**: NVIDIA's first datacenter CoWoS-S adoption — HBM2 + silicon interposer debut
+2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, interposer area surges from ~1,700–2,000 mm² to ~2,800 mm², Chiplet architecture lands for the first time
+3. **Blackwell single-package integration**: 2 compute dies (~1,000 mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches 10 TB/s** — the key enabler for the dual-die Chiplet design
 
 ---
 
@@ -106,7 +107,7 @@ Blackwell B200's CoWoS-L packaging encountered a classic but thorny problem in e
 
 ### 4.1 Why Is Warpage Such a Big Deal?
 
-When a package houses 2 ultra-large compute dies (~1,000 mm² each) + 8 HBM stacks, connected via CoWoS-L's organic RDL base and LSI silicon bridges, the problem arises:
+When a package's interposer spans ~2,800 mm² (3.3× reticle limit) housing 2 ultra-large compute dies (~1,000 mm² each) + 8 HBM stacks, connected via CoWoS-L's organic RDL base and LSI silicon bridges, the problem arises:
 
 - **CTE (Coefficient of Thermal Expansion) mismatch**: Silicon dies (CTE ~2.6 ppm/°C) and organic substrates (CTE ~17 ppm/°C) shrink at vastly different rates during reflow solder cooling
 - **Larger area = worse warpage**: Blackwell's package area is **2.2×** that of H100, and warpage scales quadratically with size
