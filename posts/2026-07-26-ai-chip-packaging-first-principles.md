@@ -261,6 +261,20 @@ According to Yole Group, the global advanced packaging market reached approximat
 
 **Hidden variables**: Advanced packaging capacity investment for 10,000 wafers/month approaches that of a 14nm fab, with single production lines costing tens of billions. High-precision bonding equipment lead times have generally extended beyond 1 year. After large volumes of new capacity come online in 2027, industry pricing competition may intensify.
 
+**The Supply Chain Bottleneck: Where AI Chips Actually Get Stuck**
+
+Advanced packaging has become the **core bottleneck** of the AI chip supply chain. NVIDIA GPU shipment constraints are rarely about GPU wafer supply — they're about **HBM + CoWoS capacity**. The critical constraint points form a fragile chain:
+
+| Constraint | Who Controls It | Why It Matters |
+|---|---|---|
+| **TSMC CoWoS Capacity** | TSMC (70% market share) | NVIDIA alone books >50% of 2026 CoWoS output |
+| **HBM Supply** | Samsung, SK Hynix (duopoly) | HBM3E yield learning still ongoing; capacity allocated 6-12 months ahead |
+| **ABF Substrate** | Ibiden, Unimicron, Shinko | Low-CTE ABF for CoWoS requires specialized resin formulations |
+| **TSV (Through-Silicon Via)** | HBM makers only | Yield on 12-high HBM stacks directly impacts usable output |
+| **Hybrid Bonding Equipment** | Besi, EV Group, Canon | Sub-micron alignment precision; equipment lead times >12 months |
+
+> **Key insight**: The AI chip supply chain has a **"packaging wall"** — you can design the world's fastest GPU die, but without CoWoS slots and HBM allocation, it cannot ship. This is why NVIDIA signs multi-year capacity reservations with TSMC, why Samsung and SK Hynix are building $10B+ HBM fabs in the US, and why packaging — once a low-margin back-end process — now commands strategic priority equal to front-end wafer fabrication.
+
 ---
 
 ## 6. Summary: The First Principles of Packaging
