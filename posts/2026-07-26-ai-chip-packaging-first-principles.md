@@ -169,15 +169,8 @@ In AI workloads, the dominant energy cost isn't computation — it's **data move
 
 **The 3D Vision: Compute | Cache | Memory**
 
-```
-┌─────────────────────┐
-│   Memory (HBM)      │  ← Top
-├─────────────────────┤
-│   Cache (SRAM)      │  ← Middle
-├─────────────────────┤
-│   Compute Logic     │  ← Bottom
-└─────────────────────┘
-```
+![3D Integration with Hybrid Bonding](assets/hybrid_bonding_3d.svg)
+*Figure: Future 3D stack — Compute die | Cache | Memory connected by Hybrid Bonding.backyes.github.io*
 
 Future AI accelerators may stack **compute die → cache die → memory die** vertically, connected by **Hybrid Bonding** — a copper-to-copper direct bond at micron-scale pitch that eliminates solder bumps entirely. This achieves:
 

@@ -228,12 +228,18 @@ def md_to_html(text):
                 out.append(f'<tr>{td}</tr>')
             out.append('</tbody></table>')
             continue
-        # 标题
+        # 标题（添加 anchor id 用于 TOC 跳转）
         hm = re.match(r'^(#{1,3})\s+(.*)', s)
         if hm:
             close_ul()
             level = len(hm.group(1))
-            out.append(f'<h{level}>{inline(hm.group(2))}</h{level}>')
+            title_text = hm.group(2)
+            # 生成 anchor: 去除 markdown 格式，转小写，空格改横线
+            anchor_text = re.sub(r'\*\*([^*]+)\*\*', r'\1', title_text)
+            anchor_text = re.sub(r'=([^=]+)==', r'\1', anchor_text)
+            anchor = re.sub(r'[^\w\- ]', '', anchor_text).strip().replace(' ', '-').lower()
+            anchor = re.sub(r'-+', '-', anchor)[:50]
+            out.append(f'<h{level} id="{anchor}">{inline(title_text)}</h{level}>')
             i += 1; continue
         # 引用 >
         if s.startswith('>'):
@@ -390,6 +396,26 @@ def gen_tags_full(posts):
         out += '</ul></div>'
     return out
 
+# ──── 提取文章目录（TOC）────
+def extract_toc(body):
+    """从 markdown body 提取 H2/H3 标题，生成 TOC HTML"""
+    toc_items = []
+    for line in body.split('\n'):
+        if line.startswith('## '):
+            title = line[3:].strip()
+            anchor = re.sub(r'[^\w一-鿿\- ]', '', title).strip().replace(' ', '-').lower()
+            anchor = re.sub(r'-+', '-', anchor)[:50]
+            toc_items.append(f'<a href="#{anchor}" class="toc-h2">{title}</a>')
+        elif line.startswith('### '):
+            title = line[4:].strip()
+            anchor = re.sub(r'[^\w一-鿿\- ]', '', title).strip().replace(' ', '-').lower()
+            anchor = re.sub(r'-+', '-', anchor)[:50]
+            toc_items.append(f'<a href="#{anchor}" class="toc-h3">{title}</a>')
+    if not toc_items:
+        return ''
+    items_html = '\n'.join(f'<li>{item}</li>' for item in toc_items)
+    return f'<div class="toc"><div class="toc-title">Contents</div><ul>{items_html}</ul></div>'
+
 # ──── 生成单篇文章 HTML ────
 def gen_post_page(post):
     with open(post["source"], 'r', encoding='utf-8') as f:
@@ -407,6 +433,7 @@ def gen_post_page(post):
             break
     body = '\n'.join(body_lines[start:]).strip()
     body_html = md_to_html(body)
+    toc_html = extract_toc(body)
     tags_html = "".join(f'<span class="ptag">{t}</span>' for t in post.get("tags",[]))
     return f'''<!doctype html>
 <html lang="zh">
@@ -418,7 +445,18 @@ def gen_post_page(post):
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/css/main.css">
 <style>
-.article{{max-width:960px;margin:0 auto;padding:40px 32px 80px}}
+.article-layout{{display:flex;gap:32px;max-width:1160px;margin:0 auto;padding:0 32px}}
+.toc-sidebar{{flex:0 0 220px;position:sticky;top:0;align-self:flex-start;padding:40px 0;max-height:100vh;overflow-y:auto}}
+.toc{{font-size:.82rem}}
+.toc-title{{font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;font-size:.75rem}}
+.toc ul{{list-style:none;padding:0;margin:0;border-left:2px solid var(--border-soft)}}
+.toc li{{margin:0}}
+.toc a{{display:block;padding:6px 0 6px 14px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;margin-left:-2px;transition:all .15s}}
+.toc a:hover{{color:var(--fg);border-left-color:var(--accent)}}
+.toc a.toc-h2{{font-weight:500}}
+.toc a.toc-h3{{font-size:.78rem;padding-left:24px;color:var(--muted-2)}}
+.toc a.toc-h3:hover{{color:var(--muted)}}
+.article{{flex:1;max-width:960px;padding:40px 0 80px;min-width:0}}
 .article h1{{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px}}
 .article .meta{{color:var(--muted-2);font-size:.85rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}}
 .article-body{{font-family:var(--font-serif);font-size:1.1rem;line-height:1.8;color:var(--fg-2)}}
@@ -450,8 +488,12 @@ def gen_post_page(post):
 .article-body a:hover{{text-decoration:underline}}
 .article-body hr{{border:none;border-top:1px solid var(--border-soft);margin:2em 0}}
 .back{{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}}
+@media(max-width:900px){{
+  .toc-sidebar{{display:none}}
+  .article-layout{{padding:0 16px}}
+}}
 @media(max-width:768px){{
-  .article{{padding:24px 16px 60px}}
+  .article{{padding:24px 0 60px}}
   .article-body h2{{font-size:1.3rem}}
   .article-body h3{{font-size:1.1rem}}
   .article-body table{{font-size:.8rem}}
@@ -468,14 +510,19 @@ def gen_post_page(post):
     <li><a href="../tags.html">Tags</a></li>
   </ul>
 </div></nav>
-<article class="article">
-  <a href="../posts.html" class="back">← 返回 Posts</a>
-  <h1>{post["title"]}</h1>
-  <div class="meta"><span>📅 {post["date"]}</span><div>{tags_html}</div></div>
-  <div class="article-body">
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    {toc_html}
+  </aside>
+  <article class="article">
+    <a href="../posts.html" class="back">← 返回 Posts</a>
+    <h1>{post["title"]}</h1>
+    <div class="meta"><span>📅 {post["date"]}</span><div>{tags_html}</div></div>
+    <div class="article-body">
 {body_html}
-  </div>
-</article>
+    </div>
+  </article>
+</div>
 <footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved · edit by backyes.github.io</p></div></footer>
 </body>
 </html>'''
