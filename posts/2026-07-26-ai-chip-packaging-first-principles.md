@@ -1,11 +1,11 @@
 ---
-title: "Survey on AI Chip Packaging"
+title: "AI Chip Packaging's First Principles Survey"
 date: 2026-07-26
 tags: ["packaging", "CoWoS", "chiplet", "HBM", "NVIDIA", "AI-Infra"]
 excerpt: "The bottleneck of AI compute is shifting from the microscopic world of transistors to the macroscopic order of packaging. This post breaks down Chiplet stacking, interconnect density evolution (FCBGS-S→CoWoS-L), NVIDIA's 5-generation GPU packaging roadmap, and the manufacturing physics behind Blackwell's 4-die warpage crisis."
 ---
 
-# Survey on AI Chip Packaging
+# AI Chip Packaging's First Principles Survey
 
 > Study notes · Written July 2026
 
@@ -56,35 +56,35 @@ The classic explanation for Chiplet adoption is **die yield**: under defect dens
 
 | Factor | Problem | Chiplet Solution |
 |---|---|---|
-| **Reticle Limit** | Maximum lithography exposure ~800 mm²; future AI accelerators need 1,500–2,000 mm² compute die | Split into multiple smaller dies within reticle bounds |
+| **Reticle Limit** | Maximum lithography exposure ~$800$ mm²; future AI accelerators need $1,500$–$2,000$ mm² compute die | Split into multiple smaller dies within reticle bounds |
 | **Process Heterogeneity** | Not all modules need leading-edge nodes — compute die wants N3/N4, IO/cache benefit from mature nodes | Each chiplet on its optimal process, then integrated via packaging |
 | **Design Reuse** | Building every GPU tier from scratch is prohibitively expensive | Reuse compute/IO chiplets across product lines, amortizing R&D |
 | **System Architecture Evolution** | Future AI systems aren't "one GPU + HBM" — they're compute + HBM + cache + network + memory expansion | Chiplet is the **architectural paradigm** enabling heterogeneous integration |
 
-> **Key insight**: Chiplet is not just a manufacturing workaround for yield — it's the **system architecture paradigm** for next-gen AI accelerators. Yield is the entry ticket; reticle limits, process heterogeneity, and modular system design are the deeper structural drivers.
+> ==Key insight: Chiplet is not just a manufacturing workaround for yield — it's the **system architecture paradigm** for next-gen AI accelerators. Yield is the entry ticket; reticle limits, process heterogeneity, and modular system design are the deeper structural drivers.==
 
 AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of $2$ compute dies connected via NV-HBI (NV-High Bandwidth Interface) with ~$10$ TB/s class die-to-die bandwidth (exact figure depends on bidirectional aggregation definition) — over $5$× the system-level NVLink 5 bandwidth (~$1.8$ TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
 
 **b) Memory die stacking — HBM**
 
-Parallel to compute dies is the 3D stacking of memory. HBM (High Bandwidth Memory) vertically stacks 8-12 DRAM dies, connected through TSVs (Through-Silicon Vias) and Micro-Bumps. A single HBM3E stack delivers 24GB capacity and 1.2 TB/s bandwidth; a GPU paired with 6-8 HBM stacks breaks through **5 TB/s** total memory bandwidth.
+Parallel to compute dies is the 3D stacking of memory. HBM (High Bandwidth Memory) vertically stacks 8-12 DRAM dies, connected through TSVs (Through-Silicon Vias) and Micro-Bumps. A single HBM3E stack delivers $24$GB capacity and $1.2$ TB/s bandwidth; a GPU paired with $6$-$8$ HBM stacks breaks through $5$ TB/s total memory bandwidth.
 
-![HBM memory stack and compute die Chiplet architecture diagram](https://www.semiconductor-digest.com/wp-content/uploads/2024/02/HBM3_Stack_diagram.jpg)
-*Figure: HBM multi-die vertical stack + compute die in 2.5D side-by-side packaging. Source: Semiconductor Digest*
+![HBM memory stack and compute die Chiplet architecture diagram](assets/hbm_2_5d_arch.svg)
+*Figure: 2.5D Packaging — GPU die + HBM stacks side-by-side on silicon interposer.backyes.github.io*
 
 ### 2.2 How Do Compute Dies and HBM Interconnect at High Speed?
 
 This is the core challenge of packaging technology.
 
-A single HBM3E has over **1,000 to 2,000 signal pins** on its bottom (HBM3 uses a 1024-bit interface per stack). The routing density between 8 HBM stacks + 2 compute dies far exceeds the capability of traditional packaging substrates. How is this solved?
+A single HBM3E has over $1,000$ to $2,000$ signal pins on its bottom (HBM3 uses a $1024$-bit interface per stack). The routing density between $8$ HBM stacks + $2$ compute dies far exceeds the capability of traditional packaging substrates. How is this solved?
 
 **Why HBM Must Sit Next to GPU — The Real Reason**
 
 It's intuitive to think "HBM is close to GPU because shorter traces = lower latency." That's partially true, but not the fundamental constraint. The real reason is **routing impossibility**:
 
-- A single HBM3 stack needs **1,024 high-speed signal traces** just for the data interface — plus hundreds more for power, ground, and control
-- 8 HBM stacks + 2 compute dies = **10,000+ high-speed traces** must be routed in the package
-- Traditional organic substrate line/space: **~2 μm** — physically impossible to route 10,000 traces at the required density
+- A single HBM3 stack needs $1,024$ high-speed signal traces just for the data interface — plus hundreds more for power, ground, and control
+- $8$ HBM stacks + $2$ compute dies = $10,000$+ high-speed traces must be routed in the package
+- Traditional organic substrate line/space: ~$2$ μm — physically impossible to route $10,000$ traces at the required density
 
 This is the **Silicon Interconnect Density Problem**: conventional substrates lack the routing capability, regardless of distance. CoWoS solves this by bringing silicon-level routing density into the package:
 
@@ -94,7 +94,7 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 | Organic Substrate (FCBGA) | ~2 μm | ❌ Impossible at HBM density |
 | **Silicon Interposer (CoWoS)** | **~0.4 μm (sub-micron)** ❸ | ✅ Routable |
 
-> **Key insight**: CoWoS's core value isn't "making traces shorter" — it's **importing silicon-level routing capability into the packaging world**. The interposer acts as a "silicon PCB," solving the density problem that organic substrates physically cannot.
+> ==Key insight: CoWoS's core value isn't "making traces shorter" — it's **importing silicon-level routing capability into the packaging world**. The interposer acts as a "silicon PCB," solving the density problem that organic substrates physically cannot.==
 
 **The evolution of three generations of packaging substrates is an arms race in "interconnect density":**
 
@@ -104,8 +104,8 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 | **2nd Gen** | **CoWoS-S** (Chip-on-Wafer-on-Substrate) | Introduces **Silicon Interposer**, sub-micron routing on silicon wafer | A100, H100, AMD MI250/MI300 | Interposer size limited by reticle size (~2.5× reticle), large-area manufacturing suffers warpage and low yield |
 | **3rd Gen** | **CoWoS-L** (Chip-on-Wafer-on-Substrate-Local) | **Organic RDL for large-area base + embedded micro silicon bridges (LSI)** for critical channels hybrid packaging | **Blackwell B200/GB200**, AMD MI325X | Higher process complexity, but breaks size limits and mitigates warpage |
 
-![CoWoS-S vs CoWoS-L packaging structure comparison](https://www.tsmc.com/download/english/ir/annual-reports/2024/photo/2024AnnualReport_Photo_09.jpg)
-*Figure: CoWoS-S uses a full silicon interposer (left) vs CoWoS-L's organic RDL + local silicon bridge hybrid structure (right). Source: TSMC Annual Report*
+![CoWoS-S vs CoWoS-L packaging structure comparison](assets/cowos_comparison.svg)
+*Figure: CoWoS-S (full silicon interposer) vs CoWoS-L (organic RDL + local silicon bridges).backyes.github.io*
 
 > ❸ Silicon interposer line/space ~0.4 μm based on TSMC N7/N5 backend process capability; see [TSMC Technology Roadmap](https://www.tsmc.com/english/dedicatedFoundry/technology/logic.htm) and [SemiAnalysis CoWoS deep dive](https://semianalysis.com).
 
@@ -159,9 +159,9 @@ In AI workloads, the dominant energy cost isn't computation — it's **data move
 
 | Operation | Energy Cost |
 |---|---|
-| 1 FP16 MAC (multiply-accumulate) | ~1–5 pJ |
-| Moving 1 bit across a mm on-chip | ~10–50 pJ |
-| Moving 1 bit off-chip (package-to-package) | ~100–1000 pJ |
+| 1 FP16 MAC (multiply-accumulate) | ~$1$–$5$ pJ |
+| Moving 1 bit across a mm on-chip | ~$10$–$50$ pJ |
+| Moving 1 bit off-chip (package-to-package) | ~$100$–$1000$ pJ |
 
 > Energy estimates based on Horowitz (ISSCC 2014) energy decomposition model; actual values vary by process node and implementation.
 
