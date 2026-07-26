@@ -151,4 +151,4 @@ The winners in AI infrastructure will be the ones whose storage hierarchies can 
 
 ---
 
-*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*
+*© 2026 backyes · Created by backyes*

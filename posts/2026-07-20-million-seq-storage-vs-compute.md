@@ -140,4 +140,4 @@ This is the new reality of long-context AI. And it fundamentally changes which r
 
 ---
 
-*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*
+*© 2026 backyes · Created by backyes*
