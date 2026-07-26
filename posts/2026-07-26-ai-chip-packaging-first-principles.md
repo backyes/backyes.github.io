@@ -189,21 +189,23 @@ Future AI accelerators may stack **compute die → cache die → memory die** ve
 
 The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pascal to Blackwell. Note: "Die Size" refers to the compute die (monolithic), while interposer and package substrate areas are called out in the text where relevant.
 
-| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Die Size (mm²) | Interconnect Bandwidth |
-|---|---|---|---|---|---|---|---|
-| 2016 | **Pascal** | Tesla P100 (GP100) | 16nm | **CoWoS-S** debut | HBM2 (4 stacks) | 610 | 720 GB/s (HBM2) |
-| 2016 | **Pascal** | GTX 1080 Ti (GP102) | 16nm | FCBGA | GDDR5X | 471 | 484 GB/s (GDDR5X) |
-| 2017 | **Volta** | V100 | 12nm | CoWoS-S | HBM2 | 815 | 900 GB/s |
-| 2020 | **Ampere** | A100 | 7nm | CoWoS-S | HBM2e | 826 | 2,039 GB/s |
-| 2022 | **Hopper** | H100 | 4nm | CoWoS-S | HBM3 | 814 | 3,350 GB/s |
-| 2024 | **Blackwell** | B200 (2-die Chiplet) | 4nm | **CoWoS-L** | HBM3E (8 stacks) | ~1,000 ×2 | 8,000 GB/s (per socket) |
+| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Die Size (mm²) | HBM Bandwidth | Die-to-Die Bandwidth |
+|---|---|---|---|---|---|---|---|---|
+| 2016 | **Pascal** | Tesla P100 (GP100) | 16nm | **CoWoS-S** debut | HBM2 (4 stacks) | 610 | 720 GB/s | N/A (monolithic) |
+| 2016 | **Pascal** | GTX 1080 Ti (GP102) | 16nm | FCBGA | GDDR5X | 471 | 484 GB/s | N/A (monolithic) |
+| 2017 | **Volta** | V100 | 12nm | CoWoS-S | HBM2 | 815 | 900 GB/s | N/A (monolithic) |
+| 2020 | **Ampere** | A100 | 7nm | CoWoS-S | HBM2e | 826 | 2,039 GB/s | N/A (monolithic) |
+| 2022 | **Hopper** | H100 | 4nm | CoWoS-S | HBM3 | 814 | 3,350 GB/s | N/A (monolithic) |
+| 2024 | **Blackwell** | B200 (2-die Chiplet) | 4nm | **CoWoS-L** | HBM3E (8 stacks) | ~1,000 ×2 ❶ | 8,000 GB/s | ~10 TB/s class ❷ |
 
+> ❶ Die size estimate based on Blackwell package teardowns and NVIDIA architecture disclosures; official figure not published.
+> ❷ NV-HBI die-to-die bandwidth; exact figure depends on bidirectional aggregation definition.
 > Data sources: NVIDIA official Spec Sheets, [TechPowerUp GPU Database](https://www.techpowerup.com/gpu-specs/), [TSMC Technology Documentation](https://www.tsmc.com/english/dedicatedFoundry/technology/advanced_packaging.htm)
 
 **Three key inflection points:**
 
 1. **Pascal P100**: NVIDIA's first datacenter CoWoS-S adoption — HBM2 + silicon interposer debut
-2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, interposer area surges from ~1,700–2,000 mm² to ~2,800 mm², Chiplet architecture lands for the first time
+2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, interposer area surges from ~1,700–2,000 mm² to ~2,800 mm² (~$1.4$–$1.65$×), Chiplet architecture lands for the first time
 3. **Blackwell single-package integration**: 2 compute dies (~$1,000$ mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches ~10 TB/s class** — the key enabler for the dual-die Chiplet design
 
 ---
@@ -217,7 +219,7 @@ Blackwell B200's CoWoS-L packaging encountered a classic but thorny problem in e
 When a package's interposer spans ~2,800 mm² (3.3× reticle limit) housing 2 ultra-large compute dies (~1,000 mm² each) + 8 HBM stacks, connected via CoWoS-L's organic RDL base and LSI silicon bridges, the problem arises:
 
 - **CTE (Coefficient of Thermal Expansion) mismatch**: Silicon dies (CTE ~2.6 ppm/°C) and organic substrates (CTE ~17 ppm/°C) shrink at vastly different rates during reflow solder cooling
-- **Larger area = worse warpage**: Blackwell's package area is **2.2×** that of H100, and warpage scales quadratically with size
+- **Larger area = worse warpage**: Blackwell's die area (~$1,000$ mm² ×2) is ~$2.45$× H100's single die ($814$ mm²); its interposer (~$2,800$ mm²) is ~$1.4$–$1.65$× H100's (~$1,700$–$2,000$ mm²); warpage scales quadratically with size, making large-area packaging disproportionately harder
 - **Consequences**: Warpage causes misalignment in Micro-Bump and Hybrid Bonding, yield loss, and reliability risks
 
 ### 4.2 How NVIDIA and TSMC Fixed the Problem
