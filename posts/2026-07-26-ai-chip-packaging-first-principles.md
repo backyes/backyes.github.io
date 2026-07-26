@@ -84,14 +84,14 @@ It's intuitive to think "HBM is close to GPU because shorter traces = lower late
 
 - A single HBM3 stack needs $1,024$ high-speed signal traces just for the data interface — plus hundreds more for power, ground, and control
 - $8$ HBM stacks + $2$ compute dies = $10,000$+ high-speed traces must be routed in the package
-- Traditional organic substrate line/space: ~$2$ μm — physically impossible to route $10,000$ traces at the required density
+- Traditional organic substrate line/space: ~$10$-$15$ μm — physically impossible to route $10,000$ traces at the required density
 
 This is the **Silicon Interconnect Density Problem**: conventional substrates lack the routing capability, regardless of distance. CoWoS solves this by bringing silicon-level routing density into the package:
 
 | Substrate Type | Line/Space Capability | Can Route HBM? |
 |---|---|---|
 | Traditional PCB | ~50–100 μm | ❌ Impossible |
-| Organic Substrate (FCBGA) | ~2 μm | ❌ Impossible at HBM density |
+| Organic Substrate (FCBGA) | ~10-15 μm | ❌ Impossible at HBM density |
 | **Silicon Interposer (CoWoS)** | **~0.4 μm (sub-micron)** ❸ | ✅ Routable |
 
 > ==Key insight: CoWoS's core value isn't "making traces shorter" — it's **importing silicon-level routing capability into the packaging world**. The interposer acts as a "silicon PCB," solving the density problem that organic substrates physically cannot.==
@@ -100,7 +100,7 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 
 | Generation | Technology | Routing Method | Applied Products | Key Limitations |
 |---|---|---|---|---|
-| **1st Gen** | **FCBGA** (Flip-Chip Ball Grid Array) | Direct routing on organic substrate | RTX 30/40 series (GDDR6X), early AI cards | Line/space ~2μm, limited routing density, cannot support HBM high-density interconnect |
+| **1st Gen** | **FCBGA** (Flip-Chip Ball Grid Array) | Direct routing on organic substrate | RTX 30/40 series (GDDR6X), early AI cards | Line/space ~10-15μm, limited routing density, cannot support HBM high-density interconnect |
 | **2nd Gen** | **CoWoS-S** (Chip-on-Wafer-on-Substrate) | Introduces **Silicon Interposer**, sub-micron routing on silicon wafer | A100, H100, AMD MI250/MI300 | Interposer size limited by reticle size (~2.5× reticle), large-area manufacturing suffers warpage and low yield |
 | **3rd Gen** | **CoWoS-L** (Chip-on-Wafer-on-Substrate-Local) | **Organic RDL for large-area base + embedded micro silicon bridges (LSI)** for critical channels hybrid packaging | **Blackwell B200/GB200**, AMD MI325X | Higher process complexity, but breaks size limits and mitigates warpage |
 
@@ -186,7 +186,7 @@ Future AI accelerators may stack **compute die → cache die → memory die** ve
 
 The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pascal to Blackwell. Note: "Die Size" refers to the compute die (monolithic), while interposer and package substrate areas are called out in the text where relevant.
 
-| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Die Size (mm²) | HBM Bandwidth | Die-to-Die Bandwidth |
+| Gen | Architecture | Representative Chip | Process | Packaging Tech | Memory | Die Size (mm²) | Memory Bandwidth | Die-to-Die Bandwidth |
 |---|---|---|---|---|---|---|---|---|
 | 2016 | **Pascal** | Tesla P100 (GP100) | 16nm | **CoWoS-S** debut | HBM2 (4 stacks) | 610 | 720 GB/s | N/A (monolithic) |
 | 2016 | **Pascal** | GTX 1080 Ti (GP102) | 16nm | FCBGA | GDDR5X | 471 | 484 GB/s | N/A (monolithic) |
@@ -207,7 +207,7 @@ The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pasc
 
 ---
 
-## 4. Rubin Ultra's 4-Die Warpage Crisis: When Physics Kills a Design
+## 4. The Warpage Crises: From Blackwell Delay to Rubin Ultra Cancellation
 
 The most dramatic recent example of packaging physics limiting AI chip design occurred in 2026 with **Rubin Ultra** — a crisis that played out in real-time during this article's writing.
 
