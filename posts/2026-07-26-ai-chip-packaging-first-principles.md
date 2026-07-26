@@ -19,7 +19,7 @@ excerpt: "The bottleneck of AI compute is shifting from the microscopic world of
 
 Let's build some intuition first.
 
-A single NVIDIA Blackwell B200 package houses 2 compute dies (~1,000 mm² each) + 8 HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately **2,800 mm²** (about 3.3× the photolithography reticle limit), while the underlying organic package substrate approaches **10,000 mm²** (~10×10 cm). For comparison, the H100's monolithic compute die is 814 mm², its CoWoS-S interposer ~1,700–2,000 mm², and its package substrate ~3,025 mm² (55×55 mm). Meanwhile, TSMC's N3E process only delivers about **60%** transistor density improvement over N4.
+A single NVIDIA Blackwell B200 package houses 2 compute dies (~1,000 mm² each) + 8 HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately **2,800 mm²** (about 3.3× the photolithography reticle limit), while the underlying organic package substrate approaches **10,000 mm²** (~10×10 cm). For comparison, the H100's monolithic compute die is 814 mm², its CoWoS-S interposer ~1,700–2,000 mm², and its package substrate ~3,025 mm² (55×55 mm). Meanwhile, TSMC's N3E process delivers about **60%** transistor density improvement over its baseline N5 (N4 being a minor optimization of N5 with negligible density gain). In other words, three generations of process evolution (N5→N4→N3→N3E) accumulate only a ~1.6× density uplift — far below the historical Moore's Law trajectory.
 
 The numbers don't lie: per-GPU compute doubles every generation, but process density only improves 60%. **Where does the remaining 40% — and more — come from?**
 
