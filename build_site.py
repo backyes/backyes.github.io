@@ -418,7 +418,7 @@ def gen_post_page(post):
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/css/main.css">
 <style>
-.article{{max-width:720px;margin:0 auto;padding:40px 24px 80px}}
+.article{{max-width:960px;margin:0 auto;padding:40px 32px 80px}}
 .article h1{{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px}}
 .article .meta{{color:var(--muted-2);font-size:.85rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}}
 .article-body{{font-family:var(--font-serif);font-size:1.1rem;line-height:1.8;color:var(--fg-2)}}
