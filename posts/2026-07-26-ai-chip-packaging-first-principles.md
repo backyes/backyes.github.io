@@ -42,11 +42,24 @@ Meanwhile, TSMC's N3E process delivers about $60%$ transistor density improvemen
 
 > ==The real problem: not "transistors aren't enough" but "compute grows faster than data supply." Advanced packaging doesn't replace Moore's Law; it addresses the Memory Wall by bringing data closer to compute.==
 
+> ❻ Note on attribution: B200's ~2.6× transistor count increase over H100 comes not only from packaging area expansion (2 dies vs. 1) but also from architecture innovations — FP4 precision support, Transformer Engine v2, and structured sparsity. Packaging is the *enabling layer* that lets these architecture innovations scale, not the sole contributor to compute uplift.
+
 ---
 
 ## 2. Technical Ideas: Chiplet + High-Density Interconnect
 
 AI chip packaging technology can be decomposed into two dimensions:
+
+### 2.0 Two Fundamental Integration Paradigms: 2.5D vs 3D
+
+Before diving into specifics, a crucial taxonomy: "chip stacking" in AI packaging refers to **two distinct physical mechanisms** that are often conflated:
+
+| Paradigm | Geometry | Interconnect | Examples | Scaling Potential |
+|---|---|---|---|---|
+| **2.5D** (side-by-side) | Dies sit next to each other on an interposer | Sub-micron routing through silicon interposer (CoWoS-S/L) | B200 (2 GPU dies + HBM on CoWoS-L), AMD MI300 | Limited by interposer area & warpage |
+| **3D** (vertical) | Dies stacked directly on top of each other | TSV (Through-Silicon Via) or Hybrid Bonding (Cu-Cu direct bond) | HBM internal die stacking, TSMC SoIC, future logic-on-logic | Higher density, shorter distances, harder thermal |
+
+> ❼ Why this matters: HBM itself is already 3D (8-12 DRAM dies stacked with TSV). B200's dual-GPU-die design is 2.5D (side-by-side on CoWoS-L). The next frontier — logic-on-logic stacking (compute die on cache die on memory) — is true 3D with Hybrid Bonding. Confusing these leads to underestimating how different the engineering challenges are.
 
 ### 2.1 Stacking More Compute and Memory via Area and Interconnect
 
@@ -63,14 +76,18 @@ The classic explanation for Chiplet adoption is **die yield**: under defect dens
 
 > ==Key insight: Chiplet is not just a manufacturing workaround for yield — it's the **system architecture paradigm** for next-gen AI accelerators. Yield is the entry ticket; reticle limits, process heterogeneity, and modular system design are the deeper structural drivers.==
 
-AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of $2$ compute dies connected via NV-HBI (NV-High Bandwidth Interface) with ~$10$ TB/s class die-to-die bandwidth (exact figure depends on bidirectional aggregation definition) — over $5$× the system-level NVLink 5 bandwidth (~$1.8$ TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
+AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of $2$ compute dies connected via NV-HBI (NV-High Bandwidth Interface) with ~$10$ TB/s class die-to-die bandwidth (exact figure depends on bidirectional aggregation definition). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
+
+> ❺ Note: NV-HBI (~10 TB/s) and NVLink 5 (~1.8 TB/s per GPU) operate at fundamentally different interconnect layers — on-package (mm-scale, ultra-low pJ/bit) vs. system-level (cm-to-meter scale, higher pJ/bit). Comparing raw bandwidth numbers directly can mislead; they solve different problems in the memory hierarchy.
 
 **b) Memory die stacking — HBM**
 
-Parallel to compute dies is the 3D stacking of memory. HBM (High Bandwidth Memory) vertically stacks 8-12 DRAM dies, connected through TSVs (Through-Silicon Vias) and Micro-Bumps. A single HBM3E stack delivers $24$GB capacity and $1.2$ TB/s bandwidth; a GPU paired with $6$-$8$ HBM stacks breaks through $5$ TB/s total memory bandwidth.
+Parallel to compute dies is the 3D stacking of memory. HBM (High Bandwidth Memory) vertically stacks 8-12 DRAM dies, connected through TSVs (Through-Silicon Vias) and Micro-Bumps. A single HBM3E stack delivers $24$GB capacity and $1.2$ TB/s bandwidth; a GPU paired with $8$ HBM3E stacks (Blackwell B200) achieves $8$ TB/s ($8,000$ GB/s) total memory bandwidth ❹.
 
 ![HBM memory stack and compute die Chiplet architecture diagram](assets/hbm_2_5d_arch.svg)
 *Figure: 2.5D Packaging — GPU die + HBM stacks side-by-side on silicon interposer.backyes.github.io*
+
+> ❹ HBM3E bandwidth: 1.2 TB/s per stack × 8 stacks = 9.6 TB/s theoretical; ~8 TB/s effective after overhead. This matches B200's spec of 8,000 GB/s per socket.
 
 ### 2.2 How Do Compute Dies and HBM Interconnect at High Speed?
 
