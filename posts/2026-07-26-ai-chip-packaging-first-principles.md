@@ -56,7 +56,16 @@ AI chip packaging technology can be decomposed into two dimensions:
 
 **a) Compute die stacking — Chiplet Architecture**
 
-Traditional monolithic dies face severe yield collapse below 3nm: the larger the die, the higher the probability of hitting a defect. The Chiplet approach is "divide and conquer" — break a large chip into multiple smaller dies, each manufactured on its most suitable process, then interconnected at high speed through packaging.
+The classic explanation for Chiplet adoption is **die yield**: under the Poisson defect model (Y = e^{-DA}), larger dies hit more defects and yield collapses. This is true — but it's only one of four structural forces driving Chiplet architecture:
+
+| Factor | Problem | Chiplet Solution |
+|---|---|---|
+| **Reticle Limit** | Maximum lithography exposure ~800 mm²; future AI accelerators need 1,500–2,000 mm² compute die | Split into multiple smaller dies within reticle bounds |
+| **Process Heterogeneity** | Not all modules need leading-edge nodes — compute die wants N3/N4, IO/cache benefit from mature nodes | Each chiplet on its optimal process, then integrated via packaging |
+| **Design Reuse** | Building every GPU tier from scratch is prohibitively expensive | Reuse compute/IO chiplets across product lines, amortizing R&D |
+| **System Architecture Evolution** | Future AI systems aren't "one GPU + HBM" — they're compute + HBM + cache + network + memory expansion | Chiplet is the **architectural paradigm** enabling heterogeneous integration |
+
+> **Key insight**: Chiplet is not just a manufacturing workaround for yield — it's the **system architecture paradigm** for next-gen AI accelerators. Yield is the entry ticket; reticle limits, process heterogeneity, and modular system design are the deeper structural drivers.
 
 AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of **2 compute dies** connected via NV-HBI (NV-High Bandwidth Interface) with an extraordinary **10 TB/s bidirectional die-to-die bandwidth** — over 5× the system-level NVLink 5 bandwidth (~1.8 TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
 
