@@ -36,7 +36,7 @@ This post focuses on **Packaging Scaling** — the dimension undergoing the most
 
 Let's build some intuition first.
 
-A single NVIDIA Blackwell B200 package houses $2$ compute dies (~$750$-$800$ mm² each) + $8$ HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately $2,800$ mm² (about $3.3$× the photolithography reticle limit), while the underlying organic package substrate approaches $10,000$ mm² (~10×10 cm). For comparison, the H100's monolithic compute die is $814$ mm², its CoWoS-S interposer ~$1,700$–$2,000$ mm², and its package substrate ~$3,025$ mm² (55×55 mm).
+A single NVIDIA Blackwell B200 package houses $2$ compute dies (~$750$-$800$ mm² each) + $8$ HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately $2,800$ mm² (about $3.3$× the photolithography reticle limit), while the underlying organic package substrate approaches $10,000$ mm² (~10×10 cm) ❾. For comparison, the H100's monolithic compute die is $814$ mm², its CoWoS-S interposer ~$1,700$–$2,000$ mm², and its package substrate ~$3,025$ mm² (55×55 mm).
 
 Meanwhile, TSMC's N3E process delivers about $60%$ transistor density improvement over its baseline N5 (N4 being a minor optimization of N5 with negligible density gain). Three generations of process evolution (N5→N4→N3→N3E) accumulate only a ~$1.6$× density uplift — far below the historical Moore's Law trajectory. But the real issue isn't that transistors aren't improving; it's that **compute capability is growing faster than data supply capability** — the classic Memory Wall.
 
@@ -125,6 +125,7 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 *Figure: CoWoS-S (full silicon interposer) vs CoWoS-L (organic RDL + local silicon bridges).backyes.github.io*
 
 > ❸ Silicon interposer line/space ~0.4 μm based on TSMC N7/N5 backend process capability; see [TSMC Technology Roadmap](https://www.tsmc.com/english/dedicatedFoundry/technology/logic.htm) and [SemiAnalysis CoWoS deep dive](https://semianalysis.com).
+> ❾ CoWoS-L interposer and substrate area estimates based on industry analysis (SemiAnalysis, TechInsights) and TSMC symposium disclosures; NVIDIA and TSMC have not published official package dimensions.
 
 **Key Insight: CoWoS-L's "Divide and Conquer"**
 
