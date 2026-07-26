@@ -312,20 +312,8 @@ Advanced packaging has become the **core bottleneck** of the AI chip supply chai
 
 This article has focused on **within-package** interconnect — but the next frontier for AI Infra is **beyond-package** memory hierarchy scaling. The AI system memory hierarchy is evolving into a multi-tier fabric:
 
-```
-┌─────────────────────────────────────────┐
-│  Remote Memory Fabric (CXL / NVLink /    │
-│  UALink / Ethernet) — TB/s class        │
-├─────────────────────────────────────────┤
-│  NVMe / Storage — PB capacity           │
-├─────────────────────────────────────────┤
-│  DDR / CXL Memory — TB capacity         │
-├─────────────────────────────────────────┤
-│  HBM (package-internal) — TB/s bandwidth│
-├─────────────────────────────────────────┤
-│  Compute Die (GPU/TPU)                  │
-└─────────────────────────────────────────┘
-```
+![Memory Hierarchy Fabric — From Package to Datacenter](assets/memory_fabric_hierarchy.svg)
+*Figure: AI memory hierarchy — Compute die at bottom, HBM, DDR/CXL, NVMe, and Remote Memory Fabric scaling to datacenter.backyes.github.io*
 
 **Why This Matters for AI Infra**
 
