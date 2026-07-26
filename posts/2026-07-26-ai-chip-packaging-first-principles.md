@@ -134,6 +134,57 @@ The trend mirrors Chiplet logic at the packaging level:
 
 Instead of one massive silicon interposer (the "island"), future packages will embed **multiple small silicon bridges** precisely where high-density routing is needed, connected by an organic RDL "infrastructure" that provides the bulk of area coverage. This is the packaging equivalent of Chiplet disaggregation — and it's the only path to scaling package area without hitting the reticle limit, warpage, and yield walls simultaneously.
 
+### 2.3 The Four Dimensions of Advanced Packaging: Signal Is Only One Quarter
+
+The discussion so far has focused on **signal interconnect density** — but that's only one of four engineering constraints that advanced packaging must simultaneously solve:
+
+| Dimension | Challenge | Why It Matters |
+|---|---|---|
+| **Signal** | 10,000+ high-speed traces between compute dies and HBM | Without silicon-level routing, HBM simply cannot connect |
+| **Power** | HBM + GPU package already at **hundreds of watts**; GB200 NVL72 rack approaches **tens of kW** | Power delivery network (PDN) must handle extreme current density without excessive voltage drop |
+| **Thermal** | Logic dies: extreme heat density (~100W/cm²); HBM: heat-sensitive (max 85°C); 2.5D stacking traps heat | Thermal interface material (TIM), heat spreader, and cooling architecture are co-designed with packaging |
+| **Mechanical** | Warpage from CTE mismatch, thin-wafer handling, solder joint reliability | Manufacturing yield and long-term reliability depend on mechanical integrity |
+
+> **Key insight**: Advanced packaging is a **4-dimensional co-optimization problem** — Signal + Power + Thermal + Mechanical. Signal interconnect gets the most attention because it's the visible differentiator, but power delivery and thermal constraints are equally binding at the system level. A package that routes 10,000 signals perfectly but cannot deliver 500W or dissipate the resulting heat is useless.
+
+This is why packaging engineers describe their job as "solving physics problems with materials science and mechanical engineering."
+
+### 2.4 Looking Beyond 2.5D: 3D Integration and Hybrid Bonding
+
+This article has focused on **2.5D packaging** — dies sitting side-by-side on an interposer. But the industry's trajectory points toward **3D stacking** as the next frontier.
+
+**Why 3D? The Energy Cost of Data Movement**
+
+In AI workloads, the dominant energy cost isn't computation — it's **data movement**:
+
+| Operation | Energy Cost |
+|---|---|
+| 1 FP16 MAC (multiply-accumulate) | ~1–5 pJ |
+| Moving 1 bit across a mm on-chip | ~10–50 pJ |
+| Moving 1 bit off-chip (package-to-package) | ~100–1000 pJ |
+
+> **Key insight**: Moving data can cost **10–100× more energy than computing on it**. 2.5D packaging reduces distance laterally; 3D stacking eliminates it vertically.
+
+**The 3D Vision: Compute | Cache | Memory**
+
+```
+┌─────────────────────┐
+│   Memory (HBM)      │  ← Top
+├─────────────────────┤
+│   Cache (SRAM)      │  ← Middle
+├─────────────────────┤
+│   Compute Logic     │  ← Bottom
+└─────────────────────┘
+```
+
+Future AI accelerators may stack **compute die → cache die → memory die** vertically, connected by **Hybrid Bonding** — a copper-to-copper direct bond at micron-scale pitch that eliminates solder bumps entirely. This achieves:
+
+- **10–100× higher interconnect density** than Micro-Bump
+- **Shorter vertical distances** (~10–50 μm vs. ~100+ μm)
+- **Lower power per bit transferred**
+
+> **Why this matters for AI Infra**: As model sizes grow, the "memory wall" — the gap between compute speed and memory bandwidth — becomes the binding constraint. 3D integration with Hybrid Bonding is the most promising path to collapsing that gap, because it fundamentally reduces the energy and latency of moving data between compute and memory.
+
 ---
 
 ## 3. NVIDIA's 5-Generation GPU Packaging Roadmap
