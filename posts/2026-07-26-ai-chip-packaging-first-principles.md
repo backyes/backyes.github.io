@@ -1,11 +1,11 @@
 ---
-title: "AI Chip Packaging's First Principles Survey"
+title: "Survey on AI Chip Packaging's First Principles"
 date: 2026-07-26
 tags: ["packaging", "CoWoS", "chiplet", "HBM", "NVIDIA", "AI-Infra"]
 excerpt: "AI chip packaging: from CoWoS-S to CoWoS-L, the 2026 Rubin Ultra 4-die warpage crisis that killed a design, and why packaging physics has become the binding constraint on AI compute scaling."
 ---
 
-# AI Chip Packaging's First Principles Survey
+# Survey on AI Chip Packaging's First Principles
 
 > Study notes · Written July 2026
 
