@@ -11,7 +11,24 @@ excerpt: "The bottleneck of AI compute is shifting from the microscopic world of
 
 ## One-Sentence Thesis
 
-**Moore's Law is "failing" at the process level, while AI compute demand grows exponentially — advanced packaging is the only way to close this scissors gap.**
+**AI GPU scaling no longer relies on process shrink alone — it now advances along four parallel dimensions: Logic, Memory, Packaging, and Interconnect. This post zooms in on packaging, the dimension that has moved from "backstage配角" to center stage.**
+
+---
+
+## 0. The Four Dimensions of AI GPU Scaling
+
+Before diving into packaging, let's establish the full picture. Modern AI GPU performance scaling comes from **four parallel axes**, not a single "process → packaging" replacement:
+
+| Dimension | What It Solves | Key Technology | Scaling Status |
+|---|---|---|---|
+| **Logic Scaling** | Compute density per mm² | 3nm → 2nm → 1.4nm | Slowing — diminishing returns below 3nm |
+| **Memory Scaling** | Memory bandwidth per GPU | HBM2 → HBM3 → HBM3E → HBM4 | Active — bandwidth still doubling every gen |
+| **Packaging Scaling** | Interconnect density between dies | FCBGA → CoWoS-S → CoWoS-L → CoPoS | **Most aggressive scaling vector today** |
+| **Interconnect Scaling** | Multi-GPU system bandwidth | NVLink 4 → 5 → 6, InfiniBand → NDR/XDR | Critical for training clusters |
+
+> **Key insight**: These four dimensions are **complementary, not substitutive**. You cannot "package your way out" of a process deficit — but without advanced packaging, even the densest process node cannot deliver its full system-level potential. Packaging is the **enabling layer** that lets the other three dimensions scale together.
+
+This post focuses on **Packaging Scaling** — the dimension undergoing the most dramatic transformation and the one least understood outside the manufacturing world.
 
 ---
 
