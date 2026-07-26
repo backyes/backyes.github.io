@@ -36,7 +36,7 @@ This post focuses on **Packaging Scaling** — the dimension undergoing the most
 
 Let's build some intuition first.
 
-A single NVIDIA Blackwell B200 package houses $2$ compute dies (~$1,000$ mm² each) + $8$ HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately $2,800$ mm² (about $3.3$× the photolithography reticle limit), while the underlying organic package substrate approaches $10,000$ mm² (~10×10 cm). For comparison, the H100's monolithic compute die is $814$ mm², its CoWoS-S interposer ~$1,700$–$2,000$ mm², and its package substrate ~$3,025$ mm² (55×55 mm).
+A single NVIDIA Blackwell B200 package houses $2$ compute dies (~$750$-$800$ mm² each) + $8$ HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately $2,800$ mm² (about $3.3$× the photolithography reticle limit), while the underlying organic package substrate approaches $10,000$ mm² (~10×10 cm). For comparison, the H100's monolithic compute die is $814$ mm², its CoWoS-S interposer ~$1,700$–$2,000$ mm², and its package substrate ~$3,025$ mm² (55×55 mm).
 
 Meanwhile, TSMC's N3E process delivers about $60%$ transistor density improvement over its baseline N5 (N4 being a minor optimization of N5 with negligible density gain). Three generations of process evolution (N5→N4→N3→N3E) accumulate only a ~$1.6$× density uplift — far below the historical Moore's Law trajectory. But the real issue isn't that transistors aren't improving; it's that **compute capability is growing faster than data supply capability** — the classic Memory Wall.
 
@@ -193,9 +193,9 @@ The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pasc
 | 2017 | **Volta** | V100 | 12nm | CoWoS-S | HBM2 | 815 | 900 GB/s | N/A (monolithic) |
 | 2020 | **Ampere** | A100 | 7nm | CoWoS-S | HBM2e | 826 | 2,039 GB/s | N/A (monolithic) |
 | 2022 | **Hopper** | H100 | 4nm | CoWoS-S | HBM3 | 814 | 3,350 GB/s | N/A (monolithic) |
-| 2024 | **Blackwell** | B200 (2-die Chiplet) | 4nm | **CoWoS-L** | HBM3E (8 stacks) | ~1,000 ×2 ❶ | 8,000 GB/s | ~10 TB/s class ❷ |
+| 2024 | **Blackwell** | B200 (2-die Chiplet) | 4nm | **CoWoS-L** | HBM3E (8 stacks) | ~750-800 ×2 ❶ | 8,000 GB/s | ~10 TB/s class ❷ |
 
-> ❶ Die size estimate based on Blackwell package teardowns and NVIDIA architecture disclosures; official figure not published.
+> ❶ Die size estimate: ~750-800 mm² per die based on Blackwell package teardowns and industry analysis (e.g., SemiAnalysis, TechInsights). TSMC reticle limit is ~830-858 mm²; single die cannot exceed this without stitching, which is not used in high-volume GPU production.
 > ❷ NV-HBI die-to-die bandwidth; exact figure depends on bidirectional aggregation definition.
 > Data sources: NVIDIA official Spec Sheets, [TechPowerUp GPU Database](https://www.techpowerup.com/gpu-specs/), [TSMC Technology Documentation](https://www.tsmc.com/english/dedicatedFoundry/technology/advanced_packaging.htm)
 
@@ -203,7 +203,7 @@ The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pasc
 
 1. **Pascal P100**: NVIDIA's first datacenter CoWoS-S adoption — HBM2 + silicon interposer debut
 2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, interposer area surges from ~1,700–2,000 mm² to ~2,800 mm² (~$1.4$–$1.65$×), Chiplet architecture lands for the first time
-3. **Blackwell single-package integration**: 2 compute dies (~$1,000$ mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches ~10 TB/s class** — the key enabler for the dual-die Chiplet design
+3. **Blackwell single-package integration**: 2 compute dies (~$750$-$800$ mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches ~10 TB/s class** — the key enabler for the dual-die Chiplet design
 
 ---
 
