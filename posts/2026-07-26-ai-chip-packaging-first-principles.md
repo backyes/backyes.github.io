@@ -11,7 +11,7 @@ excerpt: "The bottleneck of AI compute is shifting from the microscopic world of
 
 ## One-Sentence Thesis
 
-**AI GPU scaling no longer relies on process shrink alone — it now advances along four parallel dimensions: Logic, Memory, Packaging, and Interconnect. This post zooms in on packaging, the dimension that has moved from "backstage配角" to center stage.**
+**AI GPU scaling no longer relies on process shrink alone — it advances along four parallel dimensions: Logic, Memory, Packaging, and Interconnect. This post zooms in on packaging, the dimension that has moved from backstage to center stage.**
 
 ---
 
@@ -26,7 +26,7 @@ Before diving into packaging, let's establish the full picture. Modern AI GPU pe
 | **Packaging Scaling** | Interconnect density between dies | FCBGA → CoWoS-S → CoWoS-L → CoPoS | **Most aggressive scaling vector today** |
 | **Interconnect Scaling** | Multi-GPU system bandwidth | NVLink 4 → 5 → 6, InfiniBand → NDR/XDR | Critical for training clusters |
 
-> **Key insight**: These four dimensions are **complementary, not substitutive**. You cannot "package your way out" of a process deficit — but without advanced packaging, even the densest process node cannot deliver its full system-level potential. Packaging is the **enabling layer** that lets the other three dimensions scale together.
+> ==Key insight: These four dimensions are **complementary, not substitutive**. Advanced packaging does not replace Moore's Law; it extends system scaling when logic scaling alone can no longer satisfy bandwidth and integration requirements. Packaging is the **enabling layer** that lets the other three dimensions scale together.==
 
 This post focuses on **Packaging Scaling** — the dimension undergoing the most dramatic transformation and the one least understood outside the manufacturing world.
 
@@ -36,15 +36,11 @@ This post focuses on **Packaging Scaling** — the dimension undergoing the most
 
 Let's build some intuition first.
 
-A single NVIDIA Blackwell B200 package houses 2 compute dies (~1,000 mm² each) + 8 HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately **2,800 mm²** (about 3.3× the photolithography reticle limit), while the underlying organic package substrate approaches **10,000 mm²** (~10×10 cm). For comparison, the H100's monolithic compute die is 814 mm², its CoWoS-S interposer ~1,700–2,000 mm², and its package substrate ~3,025 mm² (55×55 mm). Meanwhile, TSMC's N3E process delivers about **60%** transistor density improvement over its baseline N5 (N4 being a minor optimization of N5 with negligible density gain). In other words, three generations of process evolution (N5→N4→N3→N3E) accumulate only a ~1.6× density uplift — far below the historical Moore's Law trajectory.
+A single NVIDIA Blackwell B200 package houses $2$ compute dies (~$1,000$ mm² each) + $8$ HBM3E memory stacks. Its CoWoS-L silicon interposer spans approximately $2,800$ mm² (about $3.3$× the photolithography reticle limit), while the underlying organic package substrate approaches $10,000$ mm² (~10×10 cm). For comparison, the H100's monolithic compute die is $814$ mm², its CoWoS-S interposer ~$1,700$–$2,000$ mm², and its package substrate ~$3,025$ mm² (55×55 mm).
 
-The numbers don't lie: per-GPU compute doubles every generation, but process density only improves 60%. **Where does the remaining 40% — and more — come from?**
+Meanwhile, TSMC's N3E process delivers about $60%$ transistor density improvement over its baseline N5 (N4 being a minor optimization of N5 with negligible density gain). Three generations of process evolution (N5→N4→N3→N3E) accumulate only a ~$1.6$× density uplift — far below the historical Moore's Law trajectory. But the real issue isn't that transistors aren't improving; it's that **compute capability is growing faster than data supply capability** — the classic Memory Wall.
 
-The answer: "spreading out" the chip, doing area, interconnects, and stacking at the packaging level.
-
-This is the first principle of packaging's journey from "backstage配角" to "center stage of AI compute":
-
-> **When planar scaling (Moore's Law) can't keep up with demand, use stacking and interconnects to trade for density.**
+> ==The real problem: not "transistors aren't enough" but "compute grows faster than data supply." Advanced packaging doesn't replace Moore's Law; it addresses the Memory Wall by bringing data closer to compute.==
 
 ---
 
@@ -56,7 +52,7 @@ AI chip packaging technology can be decomposed into two dimensions:
 
 **a) Compute die stacking — Chiplet Architecture**
 
-The classic explanation for Chiplet adoption is **die yield**: under the Poisson defect model (Y = e^{-DA}), larger dies hit more defects and yield collapses. This is true — but it's only one of four structural forces driving Chiplet architecture:
+The classic explanation for Chiplet adoption is **die yield**: under defect density and parametric variation constraints, large-area monolithic die manufacturing risk increases rapidly, making Chiplet the better yield economics choice. This is true — but yield is only one of four structural forces driving Chiplet architecture:
 
 | Factor | Problem | Chiplet Solution |
 |---|---|---|
@@ -67,7 +63,7 @@ The classic explanation for Chiplet adoption is **die yield**: under the Poisson
 
 > **Key insight**: Chiplet is not just a manufacturing workaround for yield — it's the **system architecture paradigm** for next-gen AI accelerators. Yield is the entry ticket; reticle limits, process heterogeneity, and modular system design are the deeper structural drivers.
 
-AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of **2 compute dies** connected via NV-HBI (NV-High Bandwidth Interface) with an extraordinary **10 TB/s bidirectional die-to-die bandwidth** — over 5× the system-level NVLink 5 bandwidth (~1.8 TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
+AMD's Zen series pioneered this route; NVIDIA fully embraced it in the Blackwell era: the B200 consists of $2$ compute dies connected via NV-HBI (NV-High Bandwidth Interface) with ~$10$ TB/s class die-to-die bandwidth (exact figure depends on bidirectional aggregation definition) — over $5$× the system-level NVLink 5 bandwidth (~$1.8$ TB/s per GPU). This massive on-package interconnect is what makes the two dies behave as one logical monolithic die from software's perspective.
 
 **b) Memory die stacking — HBM**
 
@@ -120,9 +116,11 @@ CoWoS-L's philosophy is inherited from Chiplet thinking — since a full silicon
 
 This is the "locally precise, globally economical" hybrid packaging philosophy.
 
-**Strategic Significance: Enabling the Next Decade of Package Scaling**
+**Strategic Significance: Only Pay for Expensive Silicon Where Necessary**
 
-CoWoS-L's importance goes beyond cost reduction — it's the **architectural foundation** for future AI accelerator packages that will grow far beyond today's scale:
+CoWoS-L's importance goes beyond cost reduction. Its core philosophy mirrors Chiplet thinking: **only pay for expensive silicon where necessary**. Instead of one massive silicon interposer covering the entire package, CoWoS-L limits high-density interconnect to critical local bridges while using economical organic RDL for the bulk of area coverage.
+
+This is the **architectural foundation** for future AI accelerator packages that will grow far beyond today's scale:
 
 | Future AI Package | Components | Why CoWoS-L is Essential |
 |---|---|---|
@@ -141,11 +139,11 @@ The discussion so far has focused on **signal interconnect density** — but tha
 | Dimension | Challenge | Why It Matters |
 |---|---|---|
 | **Signal** | 10,000+ high-speed traces between compute dies and HBM | Without silicon-level routing, HBM simply cannot connect |
-| **Power** | HBM + GPU package already at **hundreds of watts**; GB200 NVL72 rack approaches **tens of kW** | Power delivery network (PDN) must handle extreme current density without excessive voltage drop |
-| **Thermal** | Logic dies: extreme heat density (~100W/cm²); HBM: heat-sensitive (max 85°C); 2.5D stacking traps heat | Thermal interface material (TIM), heat spreader, and cooling architecture are co-designed with packaging |
+| **Power** | HBM + GPU package already at **hundreds of watts**; GB200 NVL72 rack approaches **tens of kW** | Power delivery network (PDN) must handle extreme current density without excessive voltage drop; HBM placement and power delivery must be co-designed |
+| **Thermal** | Logic dies: extreme heat density (~100W/cm²); HBM: heat-sensitive (max 85°C); 2.5D stacking traps heat | Thermal interface material (TIM), heat spreader, and cooling architecture are co-designed with packaging; otherwise bandwidth is built but cannot be fully utilized |
 | **Mechanical** | Warpage from CTE mismatch, thin-wafer handling, solder joint reliability | Manufacturing yield and long-term reliability depend on mechanical integrity |
 
-> **Key insight**: Advanced packaging is a **4-dimensional co-optimization problem** — Signal + Power + Thermal + Mechanical. Signal interconnect gets the most attention because it's the visible differentiator, but power delivery and thermal constraints are equally binding at the system level. A package that routes 10,000 signals perfectly but cannot deliver 500W or dissipate the resulting heat is useless.
+> ==Key insight: Advanced packaging is governed by a **Bandwidth-Power-Thermal triangle constraint**. You can engineer extraordinary signal density, but if the package cannot deliver power or dissipate heat, the bandwidth sits idle. Future packages must co-design HBM placement, power delivery, and cooling — otherwise "bandwidth" remains on paper, not in production.==
 
 This is why packaging engineers describe their job as "solving physics problems with materials science and mechanical engineering."
 
@@ -206,7 +204,7 @@ The table below summarizes NVIDIA's datacenter GPU packaging evolution from Pasc
 
 1. **Pascal P100**: NVIDIA's first datacenter CoWoS-S adoption — HBM2 + silicon interposer debut
 2. **Hopper→Blackwell**: CoWoS-S → CoWoS-L, interposer area surges from ~1,700–2,000 mm² to ~2,800 mm², Chiplet architecture lands for the first time
-3. **Blackwell single-package integration**: 2 compute dies (~1,000 mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches 10 TB/s** — the key enabler for the dual-die Chiplet design
+3. **Blackwell single-package integration**: 2 compute dies (~$1,000$ mm² each) + 8 HBM3E stacks, connected via CoWoS-L's LSI silicon bridges; **NV-HBI die-to-die bandwidth reaches ~10 TB/s class** — the key enabler for the dual-die Chiplet design
 
 ---
 
@@ -273,17 +271,53 @@ Advanced packaging has become the **core bottleneck** of the AI chip supply chai
 | **TSV (Through-Silicon Via)** | HBM makers only | Yield on 12-high HBM stacks directly impacts usable output |
 | **Hybrid Bonding Equipment** | Besi, EV Group, Canon | Sub-micron alignment precision; equipment lead times >12 months |
 
-> **Key insight**: The AI chip supply chain has a **"packaging wall"** — you can design the world's fastest GPU die, but without CoWoS slots and HBM allocation, it cannot ship. This is why NVIDIA signs multi-year capacity reservations with TSMC, why Samsung and SK Hynix are building $10B+ HBM fabs in the US, and why packaging — once a low-margin back-end process — now commands strategic priority equal to front-end wafer fabrication.
+> ==Key insight: The AI chip supply chain has a **"packaging wall"** — you can design the world's fastest GPU die, but without CoWoS slots and HBM allocation, it cannot ship. This is why NVIDIA signs multi-year capacity reservations with TSMC, why Samsung and SK Hynix are building $10B+ HBM fabs in the US, and why packaging — once a low-margin back-end process — now commands strategic priority equal to front-end wafer fabrication.==
 
 ---
 
-## 6. Summary: The First Principles of Packaging
+## 6. From Package Scaling to Memory Fabric Scaling
+
+This article has focused on **within-package** interconnect — but the next frontier for AI Infra is **beyond-package** memory hierarchy scaling. The AI system memory hierarchy is evolving into a multi-tier fabric:
+
+```
+┌─────────────────────────────────────────┐
+│  Remote Memory Fabric (CXL / NVLink /    │
+│  UALink / Ethernet) — TB/s class        │
+├─────────────────────────────────────────┤
+│  NVMe / Storage — PB capacity           │
+├─────────────────────────────────────────┤
+│  DDR / CXL Memory — TB capacity         │
+├─────────────────────────────────────────┤
+│  HBM (package-internal) — TB/s bandwidth│
+├─────────────────────────────────────────┤
+│  Compute Die (GPU/TPU)                  │
+└─────────────────────────────────────────┘
+```
+
+**Why This Matters for AI Infra**
+
+Advanced packaging solves **within-package bandwidth** (HBM-to-GPU at TB/s). But for inference workloads, **KV Cache** capacity requirements are already exceeding HBM capacity — a single long-context agent session can accumulate hundreds of millions of tokens of context history.
+
+This creates the next scaling challenge: **package-external memory fabric**. The emerging fabric technologies — CXL, UALink, NVLink-C2C, RDMA-based memory pooling — aim to deliver:
+
+| Layer | Technology | Role |
+|---|---|---|
+| Within-package | CoWoS / HBM | TB/s bandwidth, ~100GB capacity |
+| Package-to-package | NVLink 5 / UALink | Scale multi-GPU as one logical device |
+| Rack-scale | CXL 3.0 / Memory Pooling | TB capacity shared across nodes |
+| Datacenter-scale | RDMA / Memory Fabric | PB-scale disaggregated memory |
+
+> ==Key insight: Advanced packaging solves the "last millimeter" problem (die-to-die). The next decade's challenge is solving the "last meter" problem (GPU-to-memory-pool) — and that's where CXL, UALink, and memory fabric architectures come in.==
+
+---
+
+## 7. Summary: The First Principles of Packaging
 
 Returning to the opening question — how to understand the "first principles" of AI chip packaging?
 
 I'd like to conclude with one sentence:
 
-> **Moore's Law's "flat game" becomes increasingly difficult below 3nm; AI chip packaging opens a "3D game" — trading stacking for density, interconnects for bandwidth, and area for compute.**
+> ==Moore's Law scaling continues, but its marginal benefit for AI workloads is declining. Advanced packaging extends system scaling when logic scaling alone can no longer satisfy bandwidth and integration requirements — trading stacking for density, interconnects for bandwidth, and area for compute.==
 
 | Dimension | Traditional Paradigm | Packaging Paradigm |
 |---|---|---|
