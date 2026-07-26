@@ -92,7 +92,7 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 |---|---|---|
 | Traditional PCB | ~50–100 μm | ❌ Impossible |
 | Organic Substrate (FCBGA) | ~2 μm | ❌ Impossible at HBM density |
-| **Silicon Interposer (CoWoS)** | **~0.4 μm (sub-micron)** | ✅ Routable |
+| **Silicon Interposer (CoWoS)** | **~0.4 μm (sub-micron)** ❸ | ✅ Routable |
 
 > **Key insight**: CoWoS's core value isn't "making traces shorter" — it's **importing silicon-level routing capability into the packaging world**. The interposer acts as a "silicon PCB," solving the density problem that organic substrates physically cannot.
 
@@ -106,6 +106,8 @@ This is the **Silicon Interconnect Density Problem**: conventional substrates la
 
 ![CoWoS-S vs CoWoS-L packaging structure comparison](https://www.tsmc.com/download/english/ir/annual-reports/2024/photo/2024AnnualReport_Photo_09.jpg)
 *Figure: CoWoS-S uses a full silicon interposer (left) vs CoWoS-L's organic RDL + local silicon bridge hybrid structure (right). Source: TSMC Annual Report*
+
+> ❸ Silicon interposer line/space ~0.4 μm based on TSMC N7/N5 backend process capability; see [TSMC Technology Roadmap](https://www.tsmc.com/english/dedicatedFoundry/technology/logic.htm) and [SemiAnalysis CoWoS deep dive](https://semianalysis.com).
 
 **Key Insight: CoWoS-L's "Divide and Conquer"**
 
@@ -259,7 +261,7 @@ According to Yole Group, the global advanced packaging market reached approximat
 
 **Overseas giants**: TSMC holds about **70%** of global CoWoS capacity. In 2026, 10%-20% of its $52-56 billion CapEx is allocated to advanced packaging, targeting 130,000-140,000 wafers/month by Q4 2026. ASE is launching the largest factory expansion cycle in its history, with 6 new fabs starting construction simultaneously in 2026; CoWoS monthly capacity is expected to ramp from 20,000 wafers (end 2026) to 40,000-45,000 wafers (end 2027). Amkor signed a 10-year cooperation agreement with TSMC to undertake local CoWoS packaging capacity in Arizona.
 
-**Domestic China**: JCET (长电科技) is investing **7.8 billion RMB** to build a high-end packaging base in Lingang, Shanghai, focusing on 2.5D/3D, HBM3E, Chiplet, and CPO — the only mainland manufacturer with HBM3E high-volume mass production capability. Tongfu Microelectronics (通富微电) has **9.1 billion RMB** in 2026 CapEx focused on compute chip packaging. Huatian Technology (华天科技) raised **3 billion RMB** for advanced memory packaging production lines.
+**Domestic China** (figures from 36Kr, not independently verified): JCET (长电科技) is reported to invest **7.8 billion RMB** in a Lingang high-end packaging base focusing on 2.5D/3D, HBM3E, Chiplet, and CPO. Tongfu Microelectronics (通富微电) reportedly has **9.1 billion RMB** in 2026 CapEx for compute chip packaging. Huatian Technology (华天科技) reportedly raised **3 billion RMB** for advanced memory packaging.
 
 **Hidden variables**: Advanced packaging capacity investment for 10,000 wafers/month approaches that of a 14nm fab, with single production lines costing tens of billions. High-precision bonding equipment lead times have generally extended beyond 1 year. After large volumes of new capacity come online in 2027, industry pricing competition may intensify.
 
