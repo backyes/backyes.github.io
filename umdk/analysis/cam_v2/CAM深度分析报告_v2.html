@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UMDK/CAM 通信加速库深度分析报告 v2</title>
+<style>
+:root {
+  --bg: #1a1d23;
+  --bg-alt: #22262d;
+  --fg: #d7dbe0;
+  --muted: #7d848d;
+  --accent: #4a8fe0;
+  --accent-soft: rgba(74,143,224,.12);
+  --border: #2e333d;
+  --code-bg: #13161b;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.7; max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 2rem; border-bottom: 2px solid var(--accent); padding-bottom: 12px; }
+h2 { font-size: 1.5rem; border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-top: 3rem; }
+h3 { font-size: 1.25rem; border-left: 3px solid var(--accent); padding-left: 12px; }
+h4 { font-size: 1.1rem; color: var(--accent); }
+code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+pre { background: var(--code-bg); padding: 16px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.9rem; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-alt); }
+tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+tr:hover { background: var(--accent-soft); }
+.toc { background: var(--bg-alt); padding: 20px; border-radius: 8px; border: 1px solid var(--border); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.insight { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+.key-num { color: var(--accent); font-weight: bold; font-size: 1.2em; }
+.highlight { background: linear-gradient(180deg, transparent 60%, var(--accent-soft) 60%); }
+.changelog { background: var(--bg-alt); border: 1px solid var(--accent); border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+.changelog .removed { color: #e05555; }
+.changelog .added { color: #55c055; }
+.changelog .changed { color: #e0a055; }
+details { margin: 12px 0; }
+details summary { cursor: pointer; color: var(--accent); padding: 8px 0; }
+details summary:hover { text-decoration: underline; }
+@media (max-width: 768px) {
+  body { padding: 16px 12px; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; }
+  table { font-size: 0.8rem; display: block; overflow-x: auto; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== HEADER ==================== -->
+<header>
+<h1>UMDK/CAM 通信加速库深度分析报告 <span style="color:var(--muted);font-size:0.6em;">v2.0</span></h1>
+<p><strong>分析日期</strong>: 2026-07-27 | <strong>代码基线</strong>: UMDK/CAM 仓库 (Ascend 910_93 / 910B)</p>
+<p><strong>目标读者</strong>: AI 系统研究人员、芯片架构师、MoE 分布式训练研究者</p>
+<p><strong>分析范围</strong>: EP Normal/Low-Latency 通信算子、Fused Deep MoE 三变体、辅助通信算子、框架基础设施、构建系统、HFA 内存分配器、OPX 算子扩展库</p>
+</header>
+
+<!-- ==================== CHANGELOG ==================== -->
+<div class="changelog">
+<h2 id="changelog" style="margin-top:0;">📋 v2 相对 v1 (2026-07-21) 关键变更</h2>
+<table>
+<tr><th>变更类型</th><th>内容</th><th>影响范围</th></tr>
+<tr><td><span class="added">新增</span></td><td>EP Low-Latency 算子完整分析 (Dispatch + Combine 8阶段/4阶段流水线)</td><td>Section 3</td></tr>
+<tr><td><span class="added">新增</span></td><td>Fused Deep MoE 三变体深度对比 (BF16/W4A8/FWK) + Catlass TPL 分析</td><td>Section 4</td></tr>
+<tr><td><span class="added">新增</span></td><td>辅助通信算子分析 (Detour All-to-All/ReduceScatter + A2E/E2A 跨域通信)</td><td>Section 5</td></tr>
+<tr><td><span class="added">新增</span></td><td>框架基础设施 (CamComm/Socket Exchange/Pybind/Buffer/EXEC_NPU_CMD)</td><td>Section 6</td></tr>
+<tr><td><span class="added">新增</span></td><td>构建系统 (双层CMake/operator_registry) + HFA 分配器 + OPX 算子扩展库</td><td>Section 7</td></tr>
+<tr><td><span class="changed">深化</span></td><td>EP Normal 算子增加 Zero-Buffer 内存布局详解 + 同步协议形式化描述</td><td>Section 2</td></tr>
+<tr><td><span class="changed">深化</span></td><td>AIC/AIV 异构执行模型 + CrossCoreFlag/Callback 机制详述</td><td>Section 4.7+</td></tr>
+<tr><td><span class="changed">扩展</span></td><td>W4A8 量化方案：INT4 解包、assistMatrix 补偿、BlockQuant 后处理</td><td>Section 5</td></tr>
+<tr><td><span class="added">新增</span></td><td>跨章节设计洞察：Detour 模式、MC2 子通道、Magic+Value 协议、编译期多态</td><td>Section 8</td></tr>
+</table>
+</div>
+
+<!-- ==================== TOC ==================== -->
+<nav class="toc">
+<h2 id="toc" style="margin-top:0;">📑 目录</h2>
+<ol>
+<li><a href="#sec1">架构总览</a> — 全库算子分类与设计哲学</li>
+<li><a href="#sec2">EP Normal 通信算子</a> — Dispatch/Combine Zero-Buffer 流水线 (4 stages)</li>
+<li><a href="#sec3">EP Low-Latency 算子</a> — 细粒度同步 + 多阶段流水线 (8/4 stages)</li>
+<li><a href="#sec4">Fused Deep MoE 家族</a> — BF16/W4A8/FWK 三变体 + Catlass GEMM 引擎</li>
+<li><a href="#sec5">辅助通信算子</a> — Detour 系列 + A2E/E2A 跨域通信</li>
+<li><a href="#sec6">框架与基础设施</a> — CamComm/Socket/Pybind/Buffer/NPU Helper</li>
+<li><a href="#sec7">构建系统 / HFA / OPX</a> — 双层CMake / 高性能分配器 / 算子扩展库</li>
+<li><a href="#sec8">关键设计洞察</a> — 跨章节核心模式提炼</li>
+<li><a href="#appendix">附录</a> — 文件索引、常量表、参考链接</li>
+</ol>
+</nav>
+
+<!-- ==================== SECTION 1: Architecture Overview ==================== -->
+<section>
+<h2 id="sec1">1. 架构总览</h2>
+
+<h3 id="sec1-1">1.1 算子分类全景</h3>
+
+<table>
+<tr><th>类别</th><th>算子</th><th>定位</th><th>执行核心</th></tr>
+<tr><td rowspan="4">EP Normal</td><td>moe_dispatch_layout_zb</td><td>本地布局计算 (token count per rank/expert)</td><td>AIV 多核</td></tr>
+<tr><td>moe_notify_dispatch_zb</td><td>AllGather tokenPerExpert + 前缀和</td><td>AIV 多核</td></tr>
+<tr><td>moe_dispatch_normal_zb</td><td>shmem 写入对端 window + 可选量化</td><td>AIV 多核</td></tr>
+<tr><td>moe_combine_normal_zb</td><td>shmem 读取 + 加权归约 (topkWeights)</td><td>AIV 多核</td></tr>
+<tr><td rowspan="2">EP Low-Latency</td><td>moe_dispatch_lowlatency_zb</td><td>8阶段流水线 + 细粒度同步</td><td>AIV 多核</td></tr>
+<tr><td>moe_combine_lowlatency_zb</td><td>4阶段流水线 + 本地 expert 拷贝</td><td>AIV 多核</td></tr>
+<tr><td rowspan="3">Fused Deep MoE</td><td>fused_deep_moe</td><td>BF16 基础版 (Dispatch+GMM1+SwiGLU+GMM2+Combine)</td><td>AIC + AIV</td></tr>
+<tr><td>fused_deep_moe_w4a8</td><td>W4A8 量化推理版 (INT4 weight × INT8 activation)</td><td>AIC + AIV</td></tr>
+<tr><td>fused_deep_moe_fwk</td><td>TPL 框架参考实现</td><td>AIC + AIV</td></tr>
+<tr><td rowspan="4">辅助通信</td><td>all_to_all_detour</td><td>子集 All-to-All (非通信 rank 中转)</td><td>AICore 48核</td></tr>
+<tr><td>reduce_scatter_detour</td><td>子集 Reduce-Scatter (原子归约)</td><td>AICore 动态</td></tr>
+<tr><td>a2e</td><td>Attention → Expert 域数据分发</td><td>AIV 4-48核</td></tr>
+<tr><td>e2a</td><td>Expert → Attention 域结果回传</td><td>AIV 4-48核</td></tr>
+</table>
+
+<h3 id="sec1-2">1.2 核心设计哲学</h3>
+
+<div class="insight">
+<strong>Zero-Buffer 范式</strong>：通过 HCCL 共享内存 (shmem) 实现跨卡直接读写，完全消除中间 buffer 拷贝。每个 rank 预分配 100MB IPC buffer，前 2MB 为 flag 区，后 98MB 为数据区。
+</div>
+
+<div class="insight">
+<strong>Flag-Based Sync</strong>：基于 magic + phase 的 64-bit flag 轮询替代传统 barrier。高 32 bit 为 magic（单调递增区分不同 launch），低 32 bit 为 value/phase。
+</div>
+
+<div class="insight">
+<strong>Ping-Pong Buffer</strong>：<code>magic % 2</code> 选择 buffer，避免连续 kernel 间的数据冲突。同一 rank 上 kernel 严格串行，magic 单调递增保证 buffer 安全复用。
+</div>
+
+<div class="insight">
+<strong>AIC/AIV 异构协作</strong>：Fused Deep MoE 中 Cube 引擎 (AIC) 做矩阵乘，Vector 引擎 (AIV) 做后处理 (SwiGLU/Quant/Dequant)，通过 CrossCoreFlag + Callback 精确同步。
+</div>
+
+<h3 id="sec1-3">1.3 芯片存储层次</h3>
+
+<table>
+<tr><th>层次</th><th>容量</th><th>延迟</th><th>用途</th></tr>
+<tr><td>UB (Unified Buffer)</td><td>192KB per core</td><td>~1 cycle</td><td>热数据：计数器、flag、量化 buffer</td></tr>
+<tr><td>L1 Cache</td><td>1MB per core</td><td>~5 cycles</td><td>GMM tile 缓存 (L1A/L1B)</td></tr>
+<tr><td>L0A</td><td>256KB</td><td>~3 cycles</td><td>A 矩阵 tile</td></tr>
+<tr><td>L0B</td><td>128KB</td><td>~3 cycles</td><td>B 矩阵 tile</td></tr>
+<tr><td>L0C</td><td>256KB</td><td>~3 cycles</td><td>累加器</td></tr>
+<tr><td>L2 Cache</td><td>192MB shared</td><td>~50 cycles</td><td>共享缓存</td></tr>
+<tr><td>HBM (Global Memory)</td><td>32-64GB</td><td>~300 cycles</td><td>IPC buffer、workspace、权重</td></tr>
+<tr><td>Remote shmem</td><td>100MB IPC</td><td>RDMA latency</td><td>跨卡 zero-buffer 通信</td></tr>
+</table>
+
+</section>
+
+<!-- ==================== SECTION 2: EP Normal Operators ==================== -->
+<section>
+<h2 id="sec2">2. EP Normal 通信算子</h2>
+
+<h3 id="sec2-1">2.1 总体架构</h3>
+
+<p>EP Normal 通信算子构成 MoE 模型 Expert Parallelism 的完整 dispatch/combine 流水线，采用 <span class="highlight">zero-buffer</span> 优化策略。</p>
+
+<pre><code>EP Normal Pipeline (4 Stages)
+
+Stage 1              Stage 2              Stage 3              Stage 4
+┌──────────┐         ┌──────────┐         ┌──────────┐         ┌──────────┐
+│ Dispatch │         │  Notify  │         │ Dispatch │         │ Combine  │
+│  Layout  │────────▶│ Dispatch │────────▶│  Normal  │────────▶│  Normal  │
+│   (zb)   │         │   (zb)   │         │   (zb)   │         │   (zb)   │
+└──────────┘         └──────────┘         └──────────┘         └──────────┘
+
+本地计算             AllGather            shmem 写入           shmem 读取
+token count         tokenPerExpert       token data           + weighted sum
++ routing info      + recvCount          to remote rank       + dequant
+
+Sync:              Sync:                Sync:                Sync:
+SyncAll             BarrierAll           BarrierAll           BarrierAll
+(intra-rank)        (inter-rank)         (inter-rank)         (inter-rank)
+                    SyncAll              SyncAll              SyncAll</code></pre>
+
+<h3 id="sec2-2">2.2 共享基础设施</h3>
+
+<h4>2.2.1 comm_args.h — 通信参数定义</h4>
+
+<pre><code class="language-cpp">namespace Moe {
+constexpr int CAM_MAX_RANK_SIZE = 384;        // 最大支持 384 张 NPU 卡
+constexpr int64_t IPC_BUFF_MAX_SIZE = 100 * 1024 * 1024;  // 100MB IPC buffer
+constexpr int64_t IPC_DATA_OFFSET = 2 * 1024 * 1024;      // 前 2MB 为 flag 区
+constexpr int64_t PING_PONG_SIZE = 2;
+constexpr int64_t UB_SINGLE_DMA_SIZE_MAX = 190 * 1024;    // 单次 DMA 最大 190KB
+constexpr int64_t UB_ALIGN_SIZE = 32;              // 32B 对齐
+constexpr uint8_t COMM_NUM = 2;                // EP + TP 两个通信域
+
+struct CommArgs {
+    int rank;                                   // 全局 rank ID
+    int rankSize;                               // 全局 rank 数
+    GM_ADDR peerMems[CAM_MAX_RANK_SIZE];        // 初始化获取的对端 buffer 地址
+    int64_t sendCountMatrix[CAM_MAX_RANK_SIZE * CAM_MAX_RANK_SIZE];  // All2AllV 发送计数矩阵
+    int64_t batchSize, hiddenSize, topk;
+    int64_t expertNumPerRank;                   // 每 rank 专家数
+};
+}</code></pre>
+
+<div class="insight">
+<strong>关键洞察</strong>: <code>IPC_DATA_OFFSET = 2MB</code> — IPC buffer 的前 2MB 保留给 flag 区，之后 100MB 为数据区。<code>peerMems[]</code> 存储所有 rank 的对称内存基地址，是 zero-buffer 跨卡访问的基础。
+</div>
+
+<h4>2.2.2 zero_buffer_sync_flag.h — 核心同步机制</h4>
+
+<pre><code class="language-cpp">class ZeroBufferSyncFlag {
+    constexpr uint32_t FLAG_SLOT_SIZE = 32U;        // 每个 flag slot 32B
+    constexpr uint32_t FLAG_ELEM_NUM = 4U;          // 4 × int64_t
+    constexpr uint64_t FLAG_AREA_BASE = 100UL * 1024UL;  // flag 区起始: 100KB
+    constexpr uint32_t MAGIC_SLOT_ALIGN = 512U;     // 每 core 512B 对齐
+    constexpr uint32_t MAX_CORE_NUM_SYNC = 48U;     // 最大 48 核
+
+    // 每个 kernel 入口调用一次，获取唯一 magic
+    __aicore__ inline void IncrementMagic() {
+        GM_ADDR magicAddr = flagBaseGM_ + coreIdx_ * MAGIC_SLOT_ALIGN;
+        DataCacheCleanAndInvalid(magicGT);          // 读前 cache flush
+        magic_ = static_cast<int32_t>(magicGT(0));
+        magicGT(0) = static_cast<uint64_t>(magic_) + 1ULL;  // 自增
+        DataCacheCleanAndInvalid(magicGT);          // 写后 cache flush
+        barrierSeq_ = 0;
+    }
+
+    // All-to-all barrier: SyncAll → Write flags → Wait flags → SyncAll
+    __aicore__ inline void BarrierAll() {
+        SyncAll&lt;true&gt;();  // Step 1: 卡内同步
+        // Step 2a: 向所有对端写 barrier flag
+        for (uint32_t r = startRank; r &lt; endRank; r++) {
+            DataCopy(remoteSlot, ubFlag, FLAG_ELEM_NUM);
+        }
+        // Step 2b: 等待所有对端的 barrier flag
+        for (uint32_t r = startRank; r &lt; endRank; r++) {
+            do { DataCopy(ubFlag, localSlot, FLAG_ELEM_NUM); } 
+            while (ubFlag.GetValue(0) != barrierFlag);
+        }
+        SyncAll&lt;true&gt;();  // Step 3: 卡内同步
+    }
+};</code></pre>
+
+<h3 id="sec2-3">2.3 moe_dispatch_layout_zb — Dispatch 布局计算</h3>
+
+<p>根据 <code>topkIdx[bs, k]</code> 计算每个 rank/expert 需要接收的 token 数。</p>
+
+<pre><code class="language-cpp">// Phase 1: 统计 token 分布 (需要跨核原子操作)
+for (round = 0; round &lt; maxNumRounds; ++round) {
+    CountTokensInRound(roundStart, roundTokens, expertsPerRank);
+    SyncAll&lt;true&gt;();  // 每轮结束同步，保证原子加可见
+}
+
+// Phase 2: 计算发送序号 (无跨核依赖)
+for (round = 0; round &lt; numRounds; ++round) {
+    CalcSendTokenIdxInRound(roundStart, roundTokens);
+}</code></pre>
+
+<div class="insight">
+<strong>去重优化</strong>: 同一 token 到同一 rank 只计一次（通过 <code>seenLocal[]</code> bitmap），避免 top-k 选择同一 rank 多个 expert 时重复计数。
+</div>
+
+<h3 id="sec2-4">2.4 moe_notify_dispatch_zb — Notify 数据交换</h3>
+
+<p>通过 AllGather 交换各 rank 的 <code>tokenPerExpert</code> 数据，计算 <code>putOffset</code>（前缀和）。</p>
+
+<pre><code class="language-cpp">__aicore__ inline void Process() {
+    syncFlag_.IncrementMagic();     // Step 1: 获取 magic M
+    syncFlag_.BarrierAll();         // Step 2: 确保所有 rank 就绪
+    AllGatherSendData();            // Step 3: shmem 读取所有 rank 的 tokenPerExpert
+    SyncAll&lt;true&gt;();
+    ReloadRecvData();
+    BuildTotalRecvCount();          // 计算 putOffset (前缀和)
+    BuildMaxBs();
+    BuildTotalRecvTokens();
+    BuildRecvTokenPerExp();
+    SyncAll&lt;true&gt;();
+}</code></pre>
+
+<h3 id="sec2-5">2.5 moe_dispatch_normal_zb — Normal Dispatch 数据写入</h3>
+
+<p>根据 layout 结果将 token 数据通过 shmem 写入对端 <code>expandXOut</code> buffer。支持可选的动态量化 (BF16/FP16 → INT8)。</p>
+
+<pre><code class="language-cpp">__aicore__ inline void QuantProcess() {
+    // 1. BF16/FP16 → FP32
+    Cast(floatLocalTemp, xInTensor, RoundMode::CAST_NONE, h);
+    // 2. 计算动态 scale: scale = 127.0 / max(|x|)
+    Abs(floatLocalAbsTemp, floatLocalTemp, h);
+    ReduceMaxInplace(floatLocalAbsTemp, h);
+    dynamicScale = float(127.0) / (floatLocalAbsTemp.GetValue(0) + 1e-12f);
+    // 3. 量化: x * scale → int32 → int16 → int8
+    Muls(floatLocalTemp, floatLocalTemp, dynamicScale, h);
+    Cast(int32LocalTemp, floatLocalTemp, RoundMode::CAST_RINT, h);
+    Cast(halfLocalTemp, int32LocalTemp, RoundMode::CAST_ROUND, h);
+    Cast(xOutTensor, halfLocalTemp, RoundMode::CAST_TRUNC, h);
+    // 4. 保存 scale 到 token 末尾
+    floatLocalTemp.SetValue(hUBAlignSize / sizeof(float), float(1.0) / dynamicScale);
+}</code></pre>
+
+<h3 id="sec2-6">2.6 moe_combine_normal_zb — Normal Combine 加权归约</h3>
+
+<pre><code class="language-cpp">__aicore__ inline void ReadBufferAndWeightedSum(uint32_t tokenIndex, ...) {
+    Duplicate(sumFloatBufLocal, static_cast&lt;float&gt;(0), axisH_);  // 初始化累加器
+    for (uint32_t topkId = 0; topkId &lt; axisK_; topkId++) {
+        float scale = topkWeightsLocal.GetValue(topkId);
+        int32_t expertId = topkIdxLocal.GetValue(topkId);
+        int32_t remoteReadOffset = sendTokenIdxLocal(topkId);
+        int32_t remoteReadBase = allRecvCountLocal(expertId * epWorldSize_ + epRankId_);
+        uint64_t remoteReadAddr = static_cast&lt;uint64_t&gt;(remoteReadBase + remoteReadOffset) * hRecvXTypeLen_;
+        int32_t dstRankId = expertId / moeExpertPerRankNum_;
+        auto ptr = reinterpret_cast&lt;__gm__ uint8_t *&gt;(shmem_ptr(recvXGM_, dstRankId));
+        dstGT.SetGlobalBuffer((__gm__ XType *)(ptr + remoteReadAddr));
+        // 读取 → 类型转换 → 加权累加
+        LocalTensor&lt;XType&gt; tmpToken = weightedSumQueue_.AllocTensor&lt;XType&gt;();
+        DataCopyPad(tmpToken, dstGT, xOutCopyParams);
+        Cast(tokenFloatLocal, tmpToken, AscendC::RoundMode::CAST_NONE, axisH_);
+        Muls(weightedMulBufLocal, tokenFloatLocal, scale, axisH_);
+        Add(sumFloatBufLocal, sumFloatBufLocal, weightedMulBufLocal, axisH_);
+    }
+    Cast(xOutLocal, sumFloatBufLocal, AscendC::RoundMode::CAST_RINT, axisH_);
+    DataCopyPad(xOutGlobal_[tokenIndex * axisH_], xOutLocal, xOutCopyParams);
+}</code></pre>
+
+<h3 id="sec2-7">2.7 全 Pipeline 同步协议</h3>
+
+<pre><code>Magic 递增序列:
+
+Notify ──────▶ Dispatch ──────▶ Combine ──────▶ Notify ──────▶ ...
+magic=M       magic=M+1       magic=M+2       magic=M+3
+
+BarrierAll    BarrierAll      BarrierAll      BarrierAll
+(确保所有      (确保 Notify    (确保 GMM       (确保所有
+ rank 的       results 可见)  完成)           rank 的
+ tokenPerExpert                                              tokenPerExpert
+ 就绪)                                                       就绪)</code></pre>
+
+<h3 id="sec2-8">2.8 Zero-Buffer 内存布局</h3>
+
+<pre><code>Zero-Buffer Memory Layout (Per Rank):
+
++0x00000 ┌──────────────────────────────────────────────────────────────┐
+         │  User Data Region (100KB)                                    │
+         │  - tokenPerExpertData, recvData, putOffset, maxBs, etc.     │
++0x19000 ├──────────────────────────────────────────────────────────────┤
+         │  Flag Area Base (100KB offset from gva_gm)                   │
++0x19000 │  ┌────────────────────────────────────────────────────────┐  │
+         │  │ Magic Area (24KB = 48 cores × 512B)                   │  │
+         │  │   slot[coreIdx] at coreIdx × 512B                     │  │
++0x1F000 │  ├────────────────────────────────────────────────────────┤  │
+         │  │ Barrier PingPong Buffer 0 (epWorldSize × 32B)          │  │
+         │  ├────────────────────────────────────────────────────────┤  │
+         │  │ Barrier PingPong Buffer 1 (same layout)                │  │
+         │  ├────────────────────────────────────────────────────────┤  │
+         │  │ Flag PingPong Buffer 0                                 │  │
+         │  │   flag[srcRank][eventID] (32B each)                    │  │
+         │  ├────────────────────────────────────────────────────────┤  │
+         │  │ Flag PingPong Buffer 1                                 │  │
+         │  └────────────────────────────────────────────────────────┘  │
+         ├──────────────────────────────────────────────────────────────┤
+         │  Token Data Region (Dispatch/Combine)                       │
+         │  - expandXOut (Dispatch 写入, Combine 读取)                 │
+         │  - recvX (GMM 输出, Combine 读取)                           │
+         └──────────────────────────────────────────────────────────────┘</code></pre>
+
+</section>
+
+<!-- ==================== SECTION 3: EP Low-Latency ==================== -->
+<section>
+<h2 id="sec3">3. EP Low-Latency 算子</h2>
+
+<h3 id="sec3-1">3.1 设计哲学对比</h3>
+
+<table>
+<tr><th>维度</th><th>Normal</th><th>Low-Latency</th></tr>
+<tr><td>同步范式</td><td>全局 BarrierAll (所有 rank 同步)</td><td>逐 rank SetSyncFlag/WaitSyncFlag</td></tr>
+<tr><td>Dispatch 阶段数</td><td>4 (IncrementMagic→BarrierAll→Write→BarrierAll)</td><td>8 (LocalLayout→SetLayoutStatus→SendCountNotify→WaitNotify→InputToDstOutput→SetSyncFlag→WaitSyncFlag→CleanUp)</td></tr>
+<tr><td>Combine 阶段数</td><td>4</td><td>4 (CopyValidExpandXToRemote→SetSyncFlag→WaitSyncFlag→InputToDstOutput)</td></tr>
+<tr><td>Layout 计算</td><td>独立 Notify 算子完成</td><td>Dispatch 内部完成 (LocalLayout)</td></tr>
+<tr><td>本地 Expert 处理</td><td>无 (外部处理)</td><td>CopyValidExpandXToRemote 内部完成</td></tr>
+<tr><td>延迟上界</td><td>O(epWorldSize) 全局同步</td><td>O(rankNumPerBlock) 本地同步</td></tr>
+</table>
+
+<h3 id="sec3-2">3.2 moe_dispatch_lowlatency_zb — 8 阶段流水线</h3>
+
+<pre><code class="language-cpp">template &lt;TemplateMC2TypeClass&gt;
+__aicore__ inline void MoeDispatchLowlatencyZeroBuffer&lt;...&gt;::Process()
+{
+    if ASCEND_IS_AIV {
+        LocalLayout();          // Phase 1: 本地 expert count 统计
+        SyncAll&lt;true&gt;();        // 本地全核同步
+        SetLayoutStatus();      // Phase 2: 通知各 rank "我已写完 layout"
+        SendCountNotify();      // Phase 3: 等待并读取各 rank 的 layout
+        SyncAll&lt;true&gt;();
+        WaitNotify();           // Phase 4: 聚合全局 count 矩阵, 计算前缀和
+        SyncAll&lt;true&gt;();
+        InputToDstOutput();     // Phase 5: 执行 token → remote window 写入
+        SetSyncFlag();          // Phase 6: 通知各 rank "我的数据已就绪"
+        WaitSyncFlag();         // Phase 7: 等待所有 rank 数据就绪
+        SyncAll&lt;true&gt;();
+        CleanUp();              // Phase 8: 清理元数据
+    }
+}</code></pre>
+
+<h4>3.2.1 LocalLayout — 本地 Expert Count 统计</h4>
+
+<pre><code class="language-cpp">__aicore__ inline void LocalLayout() {
+    LocalTensor&lt;int32_t&gt; sendCountLt = sendCountLocalBuf_.Get&lt;int32_t&gt;();
+    Duplicate&lt;int32_t&gt;(sendCountLt, 0, moeExpertNum_);
+    DataCopyPad(expertIdsTensor_, expertIdsGMTensor_, expertIdsCntParams, ...);
+    SyncFunc&lt;AscendC::HardEvent::MTE2_S&gt;();
+    // 按 AIV 核分片统计
+    SplitToCore(sendToMoeExpTokenCnt_, moeUsedAivNum_, startTokenId, endTokenId, sendTokenNum);
+    for (int32_t i = startTokenId; i &lt; endTokenId; ++i) {
+        int32_t expertIdx = expertIdsTensor_(i);
+        int32_t curCnt = sendCountLt.GetValue(expertIdx) + 1;
+        sendCountLt.SetValue(expertIdx, curCnt);
+    }
+    // 原子写入共享内存
+    AscendC::SetAtomicAdd&lt;int32_t&gt;();
+    DataCopyPad(LocalNotifyDataTensor_, sendCountLt, sendCountDataCopyParams);
+    AscendC::SetAtomicNone();
+}</code></pre>
+
+<h4>3.2.2 SetSyncFlag / WaitSyncFlag — 细粒度跨卡同步</h4>
+
+<pre><code class="language-cpp">__aicore__ inline void SetSyncFlag() {
+    // 1. 准备 flag 值 (1.0f 的 IEEE754 表示 = 0x3F800000)
+    LocalTensor&lt;int32_t&gt; statusTensor = syncStatusBuf_.Get&lt;int32_t&gt;();
+    Duplicate&lt;int32_t&gt;(statusTensor, 0, rankNumPerBlock_ * 8);
+    uint64_t mask[2] = {0x101010101010101, 0};
+    Duplicate&lt;int32_t&gt;(statusTensor, 0x3F800000, mask, statusCntAlign / 8, 1, 8);
+    // 2. 向每个目标 rank 的元数据区写入 flag
+    for (uint32_t targetRankId = curBlockStartRankId_; targetRankId &lt; curBlockEndRankId_; ++targetRankId) {
+        auto ptr = GetSyncFlagAddrByRankId(targetRankId) + epRankId_ * DISPATCH_SYNC_STATE_OFFSET;
+        gmRemoteStatusGT.SetGlobalBuffer((__gm__ int32_t *)(ptr));
+        DataCopy&lt;int32_t&gt;(gmRemoteStatusGT, statusTensor[...], 8UL);
+    }
+    SyncFunc&lt;AscendC::HardEvent::MTE3_S&gt;();
+}
+
+__aicore__ inline void WaitSyncFlag() {
+    float compareTarget = 1.0f * rankNumPerBlock_;
+    while ((sumOfFlag &lt; minTarget) || (sumOfFlag &gt; maxTarget)) {
+        DataCopy(statusFp32Tensor, statusFp32TensorGT[...], intriParams);
+        SyncFunc&lt;AscendC::HardEvent::MTE2_V&gt;();
+        ReduceSum(statusSumOutTensor, statusFp32Tensor, gatherMaskOutTensor, mask, rankNumPerBlock_, 1);
+        sumOfFlag = statusSumOutTensor.GetValue(0);
+    }
+    // 清理 flag 为下一轮做准备
+    Duplicate&lt;int32_t&gt;(cleanStateTensor, 0, duplicateMask, Ceil(rankNumPerBlock_, 8), 1, 8);
+    DataCopy(statusFp32TensorGT[...], cleanStateTensor.ReinterpretCast&lt;float&gt;(), intriOutParams);
+}</code></pre>
+
+<div class="insight">
+<strong>同步协议关键</strong>: 每个 AIV 负责向 <code>rankNumPerBlock_</code> 个远程 rank 写入 flag。使用 <code>ReduceSum</code> 聚合所有 flag 值，当和等于预期值时退出轮询。flag 值为 IEEE754 float 1.0f，利用浮点比较避免整数溢出问题。
+</div>
+
+<h3 id="sec3-3">3.3 moe_combine_lowlatency_zb — 4 阶段流水线</h3>
+
+<pre><code class="language-cpp">__aicore__ inline void MoeCombineLowlatencyZeroBuffer&lt;...&gt;::Process()
+{
+    if ASCEND_IS_AIV {
+        CopyValidExpandXToRemote();  // Phase 1: 本地 expert 数据拷贝到 window
+        SyncAll&lt;true&gt;();
+        tpipe_-&gt;Reset();             // 释放 UB 供后续使用
+        SetSyncFlag();               // Phase 2: 通知各 rank "我的数据已就绪"
+        WaitSyncFlag();              // Phase 3: 等待所有 rank 数据就绪
+        SyncAll&lt;true&gt;();
+        InputToDstOutput();          // Phase 4: 读取远程数据 + 加权求和
+    }
+}</code></pre>
+
+<h4>3.3.1 CopyValidExpandXToRemote — 本地 Expert 数据拷贝</h4>
+
+<pre><code class="language-cpp">__aicore__ inline void CopyValidExpandXToRemote() {
+    if (!needCopyExpandX_) return;
+    SplitToCore(validTokenNum_, aivNum_, startTokenId, endTokenId, sendTokenNum);
+    constexpr uint32_t COPY_BUFFER_NUM = 2U;
+    tpipe_-&gt;InitBuffer(copyInBuf_, COPY_BUFFER_NUM * GM2GM_COPY_BLOCK_SIZE);
+    for (uint64_t i = 0; dataSizeRemain &gt; 0U; ++i) {
+        uint32_t copySize = min(dataSizeRemain, GM2GM_COPY_BLOCK_SIZE);
+        uint32_t bufferOffset = (i &amp; 1U) * GM2GM_COPY_BLOCK_SIZE;
+        event_t eventId = (i &amp; 1U) ? EVENT_ID0 : EVENT_ID1;
+        // 乒乓流水线: MTE2 读 → MTE3 写
+        AscendC::WaitFlag&lt;HardEvent::MTE3_MTE2&gt;(eventId);
+        DataCopyPad(copyLocal[bufferOffset], oriXByteGT[srcOffset], copyParams, copyPadParams);
+        AscendC::SetFlag&lt;HardEvent::MTE2_MTE3&gt;(eventId);
+        AscendC::WaitFlag&lt;HardEvent::MTE2_MTE3&gt;(eventId);
+        DataCopyPad(expandXByteGT[dstOffset], copyLocal[bufferOffset], copyParams);
+        AscendC::SetFlag&lt;HardEvent::MTE3_MTE2&gt;(eventId);
+        srcOffset += copySize; dstOffset += copySize; dataSizeRemain -= copySize;
+    }
+}</code></pre>
+
+<h3 id="sec3-4">3.4 同步标志内存布局</h3>
+
+<pre><code>ZeroBuffer Metadata Layout (per rank):
+┌──────────────────────────────────────────────────────────────┐
+│ FLAG_AREA_BASE (100KB offset from zeroBufferPtr)             │
+├──────────────────────────────────────────────────────────────┤
+│ Magic Area (24KB)                                            │
+├──────────────────────────────────────────────────────────────┤
+│ Barrier PingPong Buffer 0 (epWorldSize × 32B)               │
+├──────────────────────────────────────────────────────────────┤
+│ Barrier PingPong Buffer 1 (epWorldSize × 32B)               │
+├──────────────────────────────────────────────────────────────┤
+│ Flag PingPong Buffer 0 (epWorldSize × slotsPerRank × 32B)   │
+├──────────────────────────────────────────────────────────────┤
+│ Flag PingPong Buffer 1 (epWorldSize × slotsPerRank × 32B)   │
+└──────────────────────────────────────────────────────────────┘
+
+Dispatch 使用 DISPATCH_SYNC_FLAG_BASE_OFFSET = FLAG_AREA_BASE + 64KB
+Combine 使用 COMBINE_SYNC_FLAG_BASE_OFFSET = FLAG_AREA_BASE</code></pre>
+
+<div class="insight">
+<strong>Dispatch 和 Combine 使用分离的 flag 区域</strong>，因为某些 rank 可能已经进入 Combine 而其他 rank 仍在 Dispatch，共享 flag slot 会导致竞争。
+</div>
+
+<h3 id="sec3-5">3.5 适用场景决策</h3>
+
+<table>
+<tr><th>场景</th><th>推荐变体</th><th>原因</th></tr>
+<tr><td>小 batch (BS &lt; 128)</td><td>Normal</td><td>同步开销占比小，Normal 更简单</td></tr>
+<tr><td>大 batch (BS &gt; 256)</td><td>Low-Latency</td><td>细粒度同步隐藏延迟</td></tr>
+<tr><td>多卡 EP (epWorldSize &gt; 64)</td><td>Low-Latency</td><td>全局同步开销随卡数线性增长</td></tr>
+<tr><td>异构负载 (各 rank BS 不同)</td><td>Low-Latency</td><td>逐 rank 同步避免等待最慢 rank</td></tr>
+<tr><td>同构负载 (各 rank BS 相同)</td><td>Normal</td><td>全局同步开销可预测</td></tr>
+</table>
+
+</section>
+
+<!-- ==================== SECTION 4: Fused Deep MoE ==================== -->
+<section>
+<h2 id="sec4">4. Fused Deep MoE 算子家族</h2>
+
+<h3 id="sec4-1">4.1 核心动机</h3>
+
+<p>Fused Deep MoE 将传统上分散在多个算子中的操作融合为单一算子：</p>
+
+<pre><code>传统方式：Dispatch → GMM1 → SwiGLU → Quant → GMM2 → Combine
+                    ↑________ 跨设备通信 ________↓
+
+融合方式：[Dispatch + GMM1 + DeqSwigluQuant + GMM2 + DeqCombine] → Output
+          ↑________ 全在 NPU 内部完成，无额外同步点 ________↓</code></pre>
+
+<table>
+<tr><th>痛点</th><th>传统多算子方案</th><th>Fused Deep MoE</th></tr>
+<tr><td>通信-计算分离</td><td>Dispatch/Combine 独立算子，多次 kernel launch</td><td>单次 launch，通信隐藏于计算中</td></tr>
+<tr><td>中间数据写回</td><td>GMM1 输出写 GM，再读入 SwiGLU</td><td>中间结果驻留 workspace/UB，零 GM 写回</td></tr>
+<tr><td>同步开销</td><td>多次 PipeBarrier + SyncAll</td><td>单次 AIC/AIV 协作，最小同步</td></tr>
+<tr><td>内存带宽</td><td>每步都访问 GM</td><td>L1/L0 多级缓存复用</td></tr>
+</table>
+
+<h3 id="sec4-2">4.2 三变体横向对比</h3>
+
+<table>
+<tr><th>特性</th><th>fused_deep_moe</th><th>fused_deep_moe_w4a8</th><th>fused_deep_moe_fwk</th></tr>
+<tr><td>创建时间</td><td>2025-07-19</td><td>2026-06-29</td><td>2026-01-20</td></tr>
+<tr><td>定位</td><td>BF16/FP16 基础版</td><td>W4A8 量化推理</td><td>TPL 框架参考实现</td></tr>
+<tr><td>权重类型</td><td>INT8</td><td>INT4（打包为 INT32）</td><td>INT8</td></tr>
+<tr><td>激活类型</td><td>BF16/FP16</td><td>INT8（动态量化）</td><td>BF16/FP16</td></tr>
+<tr><td>Shared Expert</td><td>✅</td><td>✅</td><td>✅（简化）</td></tr>
+<tr><td>Smooth Quant</td><td>✅</td><td>✅</td><td>❌</td></tr>
+<tr><td>Zero Buffer (SHMEM)</td><td>✅</td><td>❌</td><td>❌</td></tr>
+<tr><td>Bias 支持</td><td>❌</td><td>✅</td><td>❌</td></tr>
+<tr><td>Tiling Key 位数</td><td>6 bit (64 组合)</td><td>5 bit (32 组合)</td><td>2 bit (4 组合)</td></tr>
+<tr><td>GMM1 L1 Tile</td><td>256×128×512</td><td>256×128×1024</td><td>256×128×512</td></tr>
+<tr><td>GMM2 Layout</td><td>layout::zN</td><td>layout::zN</td><td>layout::nZ</td></tr>
+</table>
+
+<h3 id="sec4-3">4.3 三阶段流水线架构</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Fused Deep MoE 三阶段流水线                          │
+│                                                                             │
+│  Stage 1: Dispatch (AIV)                                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  x [bs, h] ──→ Read expert_ids ──→ Quantize (BF16→INT8)           │   │
+│  │                    │                    │                            │   │
+│  │                    ▼                    ▼                            │   │
+│  │              expertTokenNums    expand_x [M, h] (INT8)              │   │
+│  │              epSendCount        dynamic_scale [M]                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  Stage 2: GMM1 + DeqSwigluQuant (AIC + AIV 协作)                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  AIC: GMM1 (INT8×INT8→INT32) → workspace                          │   │
+│  │       ↓ callback (CrossCoreFlag)                                    │   │
+│  │  AIV: Read INT32 → Cast FP32 → ×weight_scale → ×per_token_scale   │   │
+│  │       → SwiGLU (left: x*sigmoid(x), right: passthrough)            │   │
+│  │       → Quantize FP32→INT8 → gm_x2                                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  Stage 3: GMM2 + DeqCombine (AIC + AIV 协作)                               │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  AIC: GMM2 (INT8×INT8→INT32) → workspace                          │   │
+│  │       ↓ callback                                                    │   │
+│  │  AIV: Read INT32 → Cast FP32 → ×weight_scale → ×per_token_scale   │   │
+│  │       → AlltoAll Send → ReducePermute → Scale×ExpertScale → Add   │   │
+│  │       → output [bs, h]                                             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="sec4-4">4.4 AIC/AIV 异构执行模型</h3>
+
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│                     Single NPU Core (1C2V)                   │
+│                                                              │
+│  ┌──────────────────────┐    ┌──────────────────────────┐   │
+│  │  AIC (Cube Engine)   │    │  AIV (Vector Engine)     │   │
+│  │  - GMM 矩阵乘        │    │  - Element-wise 运算     │   │
+│  │  - L0A/L0B/L0C      │    │  - SwiGLU/Quant/Dequant  │   │
+│  │  - MTE2/MTE3 DMA    │    │  - Dispatch/Combine 逻辑 │   │
+│  └──────────┬───────────┘    └──────────┬───────────────┘   │
+│             │    CrossCoreFlag/Callback  │                   │
+│             └────────────────────────────┘                   │
+│                          │                                   │
+│                     GM (Global Memory)                       │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="sec4-5">4.5 Tiling Key 位掩码</h3>
+
+<pre><code class="language-cpp">constexpr uint32_t EXEC_FLAG_DEEP_FUSE      = (1U &lt;&lt; 0);  // 多 expert 融合
+constexpr uint32_t EXEC_FLAG_TENSOR_LIST    = (1U &lt;&lt; 1);  // 权重为 tensor list
+constexpr uint32_t EXEC_FLAG_X_ACTIVE_MASK  = (1U &lt;&lt; 2);  // 激活 mask
+constexpr uint32_t EXEC_FLAG_SHARED_EXPERT  = (1U &lt;&lt; 3);  // shared expert
+constexpr uint32_t EXEC_FLAG_SMOOTH_QUANT   = (1U &lt;&lt; 4);  // smooth scale
+constexpr uint32_t EXEC_FLAG_ZERO_BUFFER    = (1U &lt;&lt; 5);  // SHMEM 零拷贝</code></pre>
+
+<h3 id="sec4-6">4.6 Workspace 内存布局</h3>
+
+<pre><code>Workspace 布局 (GM):
+┌─────────────────────────────────────────────────────────────────┐
+│ 0x00000: System Workspace (16MB)                               │
+├─────────────────────────────────────────────────────────────────┤
+│ gmShareX1 (shared expert tokens, INT8)                          │
+│ gmX1 (MoE tokens, INT8)                                         │
+├─────────────────────────────────────────────────────────────────┤
+│ gmShareX1Scale (FP32 per-token scale)                           │
+│ gmX1Scale (FP32 per-token scale)                                │
+├─────────────────────────────────────────────────────────────────┤
+│ gmTokenFlag (INT32, token 到达标志)                              │
+├─────────────────────────────────────────────────────────────────┤
+│ gmCVSwap (AIC/AIV 交换缓冲, blockDim * L1M * L1N * 4B * stages)│
+├─────────────────────────────────────────────────────────────────┤
+│ gmShareSwigluOut (FP32, shared expert SwiGLU 输出)              │
+│ gmSwigluOut (FP32, MoE SwiGLU 输出)                             │
+├─────────────────────────────────────────────────────────────────┤
+│ gmGroupList (INT64, expert token 累积计数)                      │
+│ gmExpandIdx (INT32, 扩展索引)                                    │
+│ gmEpSendCount (INT32, EP 发送计数)                               │
+├─────────────────────────────────────────────────────────────────┤
+│ gmAllExpertTokenNums (INT64, 全局 expert token 计数)            │
+│ gmCombineSend (FP32, combine 发送缓冲)                           │
+│ gmAllEpRecvCount (INT32, 全局 EP 接收计数, ZeroBuffer 模式)     │
+└─────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="sec4-7">4.7 GEMM 引擎：Catlass TPL 深度分析</h3>
+
+<h4>4.7.1 Catlass 架构层次</h4>
+
+<pre><code>Catlass (CUDA-like Template Library for Ascend)
+├── Arch::AtlasA2          ← 架构标签（Atlas A2）
+├── Gemm::Kernel           ← Kernel 级别（问题级调度）
+├── Gemm::Block            ← Block 级别（单核内分块）
+├── Gemm::Tile             ← Tile 级别（指令级）
+└── Epilogue::Block        ← Epilogue 后处理</code></pre>
+
+<h4>4.7.2 Dispatch Policy 层次</h4>
+
+<pre><code class="language-cpp">// 基础版 GMM1：MmadAtlasA2Custom
+using MmadAtlasA2Custom =
+    Gemm::MmadAtlasA2PreloadAsyncWithCallback&lt;
+        CUSTOM_PRELOAD_STAGES,   // 1
+        CUSTOM_L1_STAGES,        // 2
+        CUSTOM_L0A_STAGES,       // 2
+        CUSTOM_L0B_STAGES,       // 2
+        CUSTOM_L0C_STAGES,       // 1
+        CUSTOM_ENABLE_UNIT_FLAG, // true
+        CUSTOM_ENABLE_SHUFFLE_K  // true
+    &gt;;
+
+// 基础版 GMM2：MmadAtlasA2PreloadAsyncWithCallbackResidentA
+using Gmm2DispatchPolicy =
+    Gemm::MmadAtlasA2PreloadAsyncWithCallbackResidentA&lt;
+        CUSTOM_PRELOAD_STAGES,   // 1
+        GMM2_L1A_STAGES,         // 4
+        GMM2_L1B_STAGES,         // 2
+        GMM2_L0A_STAGES,         // 4
+        GMM2_L0B_STAGES,         // 2
+        CUSTOM_L0C_STAGES,       // 1
+        CUSTOM_ENABLE_UNIT_FLAG, // true
+        CUSTOM_ENABLE_SHUFFLE_K  // true
+    &gt;;</code></pre>
+
+<h4>4.7.3 BlockMmad 核心执行流程</h4>
+
+<pre><code class="language-cpp">void L1TileMmad(L1TileMmadParams const &amp;params) {
+    uint32_t mPartLoop = CeilDiv&lt;L0TileShape::M&gt;(params.mRound);
+    uint32_t nPartLoop = CeilDiv&lt;L0TileShape::N&gt;(params.nRound);
+    uint32_t kPartLoop = CeilDiv&lt;L0TileShape::K&gt;(params.kActual);
+
+    for (mPartIdx = 0; mPartIdx &lt; mPartLoop; ++mPartIdx) {
+        for (kPartIdx = 0; kPartIdx &lt; kPartLoop; ++kPartIdx) {
+            // 1. L1 → L0A (A 矩阵分块)
+            copyL1ToL0A(l0ATile, l1ATile, layoutAInL0, L1A_LAYOUT);
+            for (nPartIdx = 0; nPartIdx &lt; nPartLoop; ++nPartIdx) {
+                // 2. L1 → L0B (B 矩阵分块)
+                copyL1ToL0B(l0BTile, l1BTile, layoutBInL0, L1B_LAYOUT);
+                // 3. L0C = L0A × L0B (Cube 引擎矩阵乘)
+                tileMmad(l0CTile, l0ATile, l0BTile, 
+                         mPartActual, nPartActual, kPartActual, initC, unitFlag);
+            }
+        }
+    }
+    // 4. K 循环结束后：L0C → GM (写回)
+    if (params.isKLoopLast) {
+        params.callbackBeforeFixpipe();  // 通知 AIV 可以开始 epilogue
+        copyL0CToGm(params.gmBlockC, l0CTensor, layoutCInGm, layoutCInL0, 0b11);
+        params.callbackAfterFixpipe();   // 通知 AIV epilogue 完成
+    }
+}</code></pre>
+
+<h4>4.7.4 Workspace 多阶段流水线</h4>
+
+<pre><code>// 4-Stage Workspace 流水线（WORKSPACE_STAGES = 4）
+// 时间 →
+// AIC: [GMM1_blk0] [GMM1_blk1] [GMM1_blk2] [GMM1_blk3] [GMM1_blk4]
+//       ↓callback   ↓callback   ↓callback   ↓callback   ↓callback
+// AIV:              [EPI_blk0]  [EPI_blk1]  [EPI_blk2]  [EPI_blk3]
+//
+// 每个 stage 大小 = L1M × L1N × sizeof(int32) = 256 × 128 × 4 = 128KB</code></pre>
+
+<h3 id="sec4-8">4.8 Epilogue：后处理流水线</h3>
+
+<h4>4.8.1 GMM1 Epilogue（PerTokenDequantSwiGLU）</h4>
+
+<pre><code class="language-cpp">void operator()(...) {
+    // 1. 加载 INT32 accumulator
+    copyGmToUbC(ubC, gmTileC, layoutUbC, layoutGmTileC);
+    // 2. 加载 weight_scale (per-column)
+    copyGmToUbScale(ubFp32Scale, gmTileScale, ...);
+    // 3. 加载 per_token_scale (per-token)
+    copyGmToUbPerTokenScale(ubPerTokenScale, gmTilePerTokenScale, ...);
+    // 4. INT32 → FP32
+    Cast(ubTmpMxN, ubC, CAST_RINT, TileShape::COUNT);
+    // 5. × weight_scale (row broadcast: [1,N] × [M,N])
+    tileRowBroadcastMul(ubTmpMxN, ubTmpMxN, ubFp32Scale);
+    // 6. × per_token_scale (broadcast: [M,1] × [M,N])
+    tileBroadcastOneBlk(ubTmpMx32B, ubPerTokenScale);
+    tileOneBlkColumnBroadcastMul(ubTmpMxN, ubTmpMxN, ubTmpMx32B);
+    // 7. SwiGLU 激活（仅左半部分）
+    if (isLeft) {
+        Muls(ubDenominatorMxN, ubTmpMxN, -1.0f, TileShape::COUNT);
+        Exp(ubDenominatorMxN, ubDenominatorMxN, TileShape::COUNT);
+        Adds(ubDenominatorMxN, ubDenominatorMxN, 1.0f, TileShape::COUNT);
+        Div(ubD, ubTmpMxN, ubDenominatorMxN, TileShape::COUNT);
+    } else {
+        tileOneBlkColumnBroadcastMul(ubD, ubTmpMxN, ubTmpMx32B);
+    }
+    // 8. 写回 GM
+    copyUbToGmD(gmTileD, ubD, layoutGmTileD, layoutUbD);
+}</code></pre>
+
+<h3 id="sec4-9">4.9 W4A8 量化方案</h3>
+
+<table>
+<tr><th>组件</th><th>类型</th><th>说明</th></tr>
+<tr><td>权重 (Weight)</td><td>INT4</td><td>值域 [-8, 7]，打包为 INT32（8 个 INT4 打包为一个 INT32）</td></tr>
+<tr><td>激活 (Activation)</td><td>INT8</td><td>值域 [-128, 127]，动态 per-token 量化</td></tr>
+<tr><td>Weight Scale</td><td>FP32/BF16/FP16</td><td>per-column 缩放因子</td></tr>
+<tr><td>Assist Matrix</td><td>FP32</td><td>补偿矩阵：assistMatrix[e,j] = 8.0 * Σ_k W[e,k,j]</td></tr>
+</table>
+
+<pre><code class="language-cpp">// W4A8 Epilogue 额外步骤：
+// 1. 高低 4-bit 分离
+high = (int8_weight &gt;&gt; 4) &amp; 0xF;   // 高 4 位
+low  = int8_weight &amp; 0xF;          // 低 4 位
+// 2. 有符号扩展
+if (high &gt;= 8) high -= 16;
+if (low &gt;= 8) low -= 16;
+// 3. 反量化合并
+AscendC::Muls(ubTmpMxN, ubTmpMxN, 16.0f, ...);  // high * 16
+AscendC::Add(ubTmpMxN, ubTmpMxN, ubTmpMxN[TileShape::COLUMN/2], ...);  // + low
+AscendC::Add(ubTmpMxN, ubTmpMxN, ubweighAux, ...);  // + assistMatrix</code></pre>
+
+<h3 id="sec4-10">4.10 通信层：Raw Distributed Dispatch/Combine</h3>
+
+<pre><code class="language-cpp">// Dispatch 流程
+void Process() {
+    if ASCEND_IS_AIV {
+        // 1. Shared Expert 量化（可选）
+        if constexpr (EXEC_FLAG &amp; EXEC_FLAG_SHARED_EXPERT) {
+            QuantForShareExpert();
+        }
+        // 2. AlltoAll Dispatch
+        AlltoAllDispatch();
+        // 3. SetStatus：通知目标 rank 数据已到达
+        SetStatus();
+        // 4. WaitDispatch：等待所有 rank 数据到达
+        WaitDispatch();
+        // 5. LocalWindowCopy：从 window 读取数据到本地
+        LocalWindowCopy();
+        // 6. AllGather（可选，用于 TP）
+        if constexpr (IsNeedAllgater) {
+            AllGatherSetStatusAndWait();
+            AllgatherProcessOut();
+        }
+        // 7. 更新 expertTokenNums
+        UpdataTokenNumsOut();
+    }
+}</code></pre>
+
+<h3 id="sec4-11">4.11 执行流程与跨核同步</h3>
+
+<pre><code>时间 →
+──────────────────────────────────────────────────────────────────────────────
+
+AIV Core:
+  ┌──────────────┐  ┌──────────────────────────────────────────────────────┐
+  │   Dispatch   │  │              Epilogue (GMM1 + GMM2)                  │
+  │ AlltoAll +   │  │  [EPI_blk0] [EPI_blk1] [EPI_blk2] ... [Combine]    │
+  │ LocalCopy    │  │       ↑          ↑          ↑                        │
+  └──────┬───────┘  └───────│──────────│──────────│────────────────────────┘
+         │                  │          │          │
+         │ CrossCoreFlag    │          │          │
+         │ (gmm1AivFinished)│          │          │
+         │                  │          │          │
+AIC Core:│                  │          │          │
+  ───────┼──────────────────┼──────────┼──────────┼─────────────────────────
+         │    ┌─────────────▼──────────▼──────────▼─────────────────────┐
+         │    │              GMM1 + GMM2 Compute                         │
+         │    │  [GMM1_blk0] [GMM1_blk1] ... [GMM2_blk0] [GMM2_blk1]   │
+         │    │       ↓callback      ↓callback      ↓callback           │
+         │    └──────────────────────────────────────────────────────────┘
+         │
+HCCL:    │    ┌─────────────┐              ┌─────────────┐
+         │    │ AlltoAll    │              │ AlltoAll    │
+         │    │ (Dispatch)  │              │ (Combine)   │
+         │    └─────────────┘              └─────────────┘</code></pre>
+
+<h3 id="sec4-12">4.12 通信隐藏策略</h3>
+
+<div class="insight">
+<strong>核心思想</strong>：将 AlltoAll 通信与 GMM 计算重叠。
+
+<pre><code>传统方式: [====Dispatch====] [GMM1] [SwiGLU] [GMM2] [====Combine====]
+          ↑ 通信暴露 ↑                              ↑ 通信暴露 ↑
+
+融合方式: [Dispatch+GMM1] [SwiGLU+GMM2] [Combine]
+          ↑ 通信隐藏 ↑    ↑ 计算重叠 ↑    ↑ 通信隐藏 ↑
+          
+          AlltoAll 发送在 GMM1 计算期间完成
+          AlltoAll 接收在 GMM2 计算期间完成</code></pre>
+</div>
+
+<h3 id="sec4-13">4.13 演进方向</h3>
+
+<pre><code>fused_deep_moe (2025-07)  →  fused_deep_moe_fwk (2026-01)  →  fused_deep_moe_w4a8 (2026-06)
+       BF16 基础版               TPL 框架验证                    W4A8 量化推理
+         ↓                          ↓                              ↓
+    功能完整                    简洁接口                      内存节省 50%
+    64 tiling key               4 tiling key                  支持 bias
+    Zero Buffer                 无 Zero Buffer                 INT4 补偿矩阵</code></pre>
+
+</section>
+
+<!-- ==================== SECTION 5: Auxiliary Comm Operators ==================== -->
+<section>
+<h2 id="sec5">5. 辅助通信算子</h2>
+
+<h3 id="sec5-1">5.1 执行摘要</h3>
+
+<p>CAM 辅助通信算子是一组<strong>绕过 HCCL 标准集合通信调度</strong>、直接在 AICore 上通过 IPC 共享内存窗口和 MTE 引擎完成数据搬运的底层通信原语。</p>
+
+<div class="insight">
+<strong>Detour 模式核心思想</strong>: 当通信 group 仅为全量 rank 的子集时，利用非通信 rank 作为"中转站"（detour rank），通过 GM→GM 直写规避 HCCL 的同步开销与调度延迟。
+</div>
+
+<h3 id="sec5-2">5.2 all_to_all_detour — 全互打 Detour 算子</h3>
+
+<h4>5.2.1 算法核心</h4>
+
+<pre><code class="language-cpp">// 共享内存偏移计算
+int64_t GetShareMemOffset(int srcRank, int dstRank, int memRank) {
+    return (rankSize * srcRank + dstRank) * memLen 
+           + memRank * OPT_RANK_OFFSET  // 512B 对齐
+           + (magic % PING_PONG_SIZE) * (memLen / 2); // ping-pong
+}
+
+// 获取第 order 个非通信 rank 作为 detour
+int GetDstRankId(int order) {
+    for (int i = 0; i &lt; rankSize; ++i) {
+        if (!IsCommRank(i)) {  // 跳过通信 rank
+            if (count == order) return i;
+            ++count;
+        }
+    }
+}</code></pre>
+
+<h4>5.2.2 数据流示意</h4>
+
+<pre><code>4 rank，commRank=[0,1]，detourRank=[2,3]:
+
+Rank 0 需要发送给 Rank 1 的数据：
+  ┌─────────────────────────────────────────────────────────┐
+  │ 分片 0 (直接)  │ 分片 1 (经 Rank 2) │ 分片 2 (经 Rank 3) │
+  │ → shareAddrs[1] │ → shareAddrs[2]    │ → shareAddrs[3]    │
+  └─────────────────────────────────────────────────────────┘
+
+同步协议：
+  发送方：CpGM2GM → SetFlag(S_MTE3) → CpUB2GM(flag)
+  接收方：WaitSyncFlag(magic, 1, srcCommRank, detourRank) → CpGM2GM</code></pre>
+
+<h3 id="sec5-3">5.3 reduce_scatter_detour — 归约散射 Detour 算子</h3>
+
+<pre><code class="language-cpp">// 核心参数计算
+detourRankSize = rankSize - commRankSize;  // 中转 rank 数
+in2IpcCoreNum = (detourRankSize + 1) * (commRankSize - 1) + 1;
+reduceCoreNum = detourRankSize + 2;
+perDataNumForDetourRank = (len + detourRankSize) / (detourRankSize + 1);
+
+// 归约流水线
+for (int i = 0; i &lt; piplineNum; i++) {
+    int srcCommRank = commRankIds[(commRankIdx + 1 + i) % commRankSize];
+    int detourRank = offsetIdx == 0 ? rank : GetDetourRankId(offsetIdx - 1);
+    // 等待数据就绪
+    sync.WaitSyncFlag(magic, 1, rank, rank, 1, shareMemOffsetInRank);
+    sync.WaitSyncFlag(magic, 1, srcCommRank, detourRank, 1, shareMemOffsetInDstRank);
+    // 原子归约
+    CpGM2GMPingPong(curReduceDataNum * sizeof(U), reduceSrcGt, reduceDstGt, atomOp);
+    // 通知下一级
+    sync.SetOuterFlagDetour(magic, i + 1, rank, rankSize + rank, shareMemOffsetInRank);
+}</code></pre>
+
+<h3 id="sec5-4">5.4 a2e / e2a — MoE 跨域通信</h3>
+
+<h4>5.4.1 通信模式</h4>
+
+<pre><code>Attention 域 (rank ≥ expertRankSize)          Expert 域 (rank &lt; expertRankSize)
+         │                                              │
+         │  A2E: x, expert_ids, scales ──────────────▶ │
+         │                                              │ Expert Compute
+         │  E2A: expert output ◀─────────────────────── │
+         │                                              │</code></pre>
+
+<h4>5.4.2 A2E 共享内存布局</h4>
+
+<pre><code>shareAddrs[sendRank] + IPC_DATA_OFFSET:
+┌──────────────┬───────────────────┬─────────────────────┬─────────────────┐
+│ batch_size   │ expert_ids        │ expert_scales       │ x (token data)  │
+│ (4B)         │ (batch*topk*4B)   │ (batch*topk*4B)     │ (batch*hidden*2B)│
+└──────────────┴───────────────────┴─────────────────────┴─────────────────┘</code></pre>
+
+<h4>5.4.3 多 Flag 同步</h4>
+
+<pre><code class="language-cpp">// 使用不同偏移的 flag 区分数据类型
+WAIT_FLAG_OFFSET_2 = 2;  // expert_scales
+WAIT_FLAG_OFFSET_3 = 3;  // x (token)
+WAIT_FLAG_OFFSET_4 = 4;  // batch_size
+
+// 发送 expert_ids 后的 flag
+shareFlagGt = shareAddrs[rank % expertRankSize] 
+    + (1 * attnToMoeRatio + sendOffset) * flagUnitInt64Num;
+
+// 发送 expert_scales 后的 flag
+shareFlagGt = shareAddrs[rank % expertRankSize] 
+    + (WAIT_FLAG_OFFSET_2 * attnToMoeRatio + sendOffset) * flagUnitInt64Num;
+
+// 发送 x 后的 flag
+shareFlagGt = shareAddrs[rank % expertRankSize] 
+    + (WAIT_FLAG_OFFSET_3 * attnToMoeRatio + sendOffset) * flagUnitInt64Num;</code></pre>
+
+<h3 id="sec5-5">5.5 四大算子对比</h3>
+
+<table>
+<tr><th>维度</th><th>all_to_all_detour</th><th>reduce_scatter_detour</th><th>e2a</th><th>a2e</th></tr>
+<tr><td>通信模式</td><td>All-to-All</td><td>Reduce-Scatter</td><td>域间 All-to-All（回传）</td><td>域间 All-to-All（分发）</td></tr>
+<tr><td>Detour 机制</td><td>✅ 非通信 rank 中转</td><td>✅ 非通信 rank 中转</td><td>❌ 直写对端</td><td>❌ 直写对端</td></tr>
+<tr><td>MC2 集成</td><td>❌ 纯 AICore</td><td>❌ 纯 AICore</td><td>✅ MC2 tiling</td><td>✅ MC2 tiling</td></tr>
+<tr><td>支持类型</td><td>FP16/BF16/FP32/INT32</td><td>FP16 only</td><td>BF16/FP16</td><td>BF16/FP16</td></tr>
+<tr><td>BlockDim</td><td>固定 48</td><td>动态（AIV 数）</td><td>动态（4-48）</td><td>动态（4-48）</td></tr>
+<tr><td>Workspace</td><td>无</td><td>16MB</td><td>无</td><td>无</td></tr>
+<tr><td>原子操作</td><td>❌</td><td>✅ ADD/MUL/MAX/MIN</td><td>❌</td><td>❌</td></tr>
+<tr><td>多 Flag</td><td>单 flag</td><td>单 flag</td><td>单 flag</td><td>多 flag（4 种）</td></tr>
+</table>
+
+<h3 id="sec5-6">5.6 使用场景决策树</h3>
+
+<pre><code>需要集合通信？
+├─ 通信 rank 数 &lt; 总 rank 数？
+│  ├─ 是 → 数据量 &lt; 1MB？
+│  │  ├─ 是 → 使用 Detour 算子
+│  │  │  ├─ All-to-All → all_to_all_detour
+│  │  │  └─ Reduce-Scatter → reduce_scatter_detour
+│  │  └─ 否 → 使用 HCCL 标准接口
+│  └─ 否 → 使用 HCCL 标准接口
+└─ MoE 跨域通信？
+   ├─ Attention → Expert 分发 → a2e
+   └─ Expert → Attention 回传 → e2a</code></pre>
+
+</section>
+
+<!-- ==================== SECTION 6: Framework & Infrastructure ==================== -->
+<section>
+<h2 id="sec6">6. 框架与基础设施</h2>
+
+<h3 id="sec6-1">6.1 架构总览</h3>
+
+<pre><code>Python (torch.ops.umdk_cam_op_lib.*)
+    ↓ pybind11
+ext_utils.cpp (g_comms[] 全局状态管理)
+    ↓ C API
+cam_api.cpp (CamCreateComm / CamGetCommArgs / CamDestroyComm)
+    ↓
+cam_comm.cpp (CamComm: IPC 内存管理 + 拓扑发现)
+    ↓
+cam_socket_exchange.cpp (Bootstrap AllGather)
+    ↓
+aclrtMalloc / rtIpc* / aclrtDeviceEnablePeerAccess (华为 ACL/Runtime API)</code></pre>
+
+<h3 id="sec6-2">6.2 CamComm：通信器核心</h3>
+
+<h4>6.2.1 初始化流程</h4>
+
+<pre><code>CamComm::Init() 执行步骤：
+1. 参数校验 (rank 范围检查)
+2. 创建 CamSocketExchange 实例
+3. GetMyExchangeIds() → 收集本 rank 的 devId/pid/sdid/IPC name
+4. IdsExchangeAndProcess() → AllGather 交换所有 rank 元数据
+5. InitCommon() → EnablePeerAccess() 启用 P2P
+6. InitCommMem() → SetIpcPidSdid + GetName + OpenIpcMem
+7. SyncCommArgs() → 将 CommArgs 拷贝到 Device HBM
+8. 销毁 socketExchange（初始化完成后不再需要）</code></pre>
+
+<div class="insight">
+<strong>Socket 即用即销毁</strong>: <code>socketExchange_</code> 在 <code>Init()</code> 结束时被 delete，说明 Socket 仅用于 Bootstrap 阶段的元数据交换，不参与实际数据传输。
+</div>
+
+<h4>6.2.2 芯片拓扑与物理链路</h4>
+
+<pre><code class="language-cpp">enum class ChipName {
+    CHIP_310P3 = 0, CHIP_910B1, CHIP_910B2, CHIP_910B3, CHIP_910B4,
+    CHIP_910B41, CHIP_910B2C, CHIP_910_9391, CHIP_910_9381,
+    CHIP_910_9392, CHIP_910_9382, CHIP_910_9372, CHIP_910_9361,
+    CHIP_910A5, RESERVED
+};
+
+enum class PhysicalLink { HCCS = 0, PCIE = 1, RESERVED };</code></pre>
+
+<h4>6.2.3 IPC 内存权限管理</h4>
+
+<pre><code class="language-cpp">// 910B 系列：仅设置 PID
+if (physicalInfo_.chipName &lt; ChipName::CHIP_910_9391) {
+    rtSetIpcMemPid(name.c_str(), &amp;pidInt32, HCCL_IPC_PID_ARRAY_SIZE);
+} 
+// 910A3 系列：设置 SuperPod PID + SDID
+else {
+    rtSetIpcMemorySuperPodPodPid(name.c_str(), exchangeIds[i].sdid, 
+                                  &amp;pidInt32, HCCL_IPC_PID_ARRAY_SIZE);
+}</code></pre>
+
+<div class="insight">
+<strong>架构演进</strong>: 从 910B 到 910A3 引入 SuperPod 级别的多节点互联，需要额外的 SDID（SuperPod Domain ID）来标识域。
+</div>
+
+<h3 id="sec6-3">6.3 Socket Exchange：Bootstrap 握手协议</h3>
+
+<h4>6.3.1 网络地址解析优先级</h4>
+
+<pre><code>void CamSocketExchange::GetIpAndPort()
+{
+    // 1. 优先使用构造函数传入的 serverIpPort 参数
+    if (!serverIpPort_.empty() &amp;&amp; ParseIpAndPort(...) == CAM_SUCCESS) { ... }
+    // 2. 回退到环境变量 CAM_COMM_ID
+    else if (Cam::GetEnv("CAM_COMM_ID") != nullptr &amp;&amp; ...) { ... }
+    // 3. 默认值：127.0.0.1:10067
+    if (!isParseOk) {
+        ip_ = "127.0.0.1";   // 仅监听 localhost (安全设计)
+        port_ = 10067;
+    }
+    port_ += serverRank;  // 多 communicator 端口偏移
+}</code></pre>
+
+<h4>6.3.2 节点发现</h4>
+
+<p><code>GetNodeNum()</code> 通过 <code>/proc/sys/kernel/random/boot_id</code> 读取节点 UUID，实现<strong>自动节点计数</strong>，无需用户手动配置 <code>nodeNum</code>。</p>
+
+<h3 id="sec6-4">6.4 CommArgs 结构体：Host-Device 契约</h3>
+
+<pre><code class="language-cpp">constexpr int CAM_MAX_RANK_SIZE = 384;  // 最大支持 384 rank
+
+struct CommArgs {
+    int rank = 0;                    // 全局 rank ID
+    int localRank = -1;              // 节点内 rank ID
+    int rankSize = 0;                // 全局 rank 总数
+    int localRankSize = -1;          // 节点内 rank 总数
+    uint32_t extraFlag = 0;          // 功能标志位
+    int testFlag = 0;                // 测试标志
+    
+    // 共享内存地址表：每个 rank 的 HBM buffer 地址
+    GM_ADDR peerMems[CAM_MAX_RANK_SIZE] = {};
+    
+    // 全连接通信矩阵
+    int64_t sendCountMatrix[CAM_MAX_RANK_SIZE * CAM_MAX_RANK_SIZE] = {};
+    int64_t sendCounts[CAM_MAX_RANK_SIZE] = {};
+    int64_t sdispls[CAM_MAX_RANK_SIZE] = {};
+    int64_t recvCounts[CAM_MAX_RANK_SIZE] = {};
+    int64_t rdispls[CAM_MAX_RANK_SIZE] = {};
+    
+    // MoE 模型参数
+    int64_t batchSize, hiddenSize, topk;
+    int64_t sharedExpertRankNum, expertNumPerRank;
+    int64_t dfx[50] = {};            // DFX 调试字段
+    int64_t memLen;                  // buffer 总长度
+};</code></pre>
+
+<h4>6.4.1 ExtraFlag 位域</h4>
+
+<pre><code class="language-cpp">struct ExtraFlag {
+    static constexpr uint32_t RDMA = 1;              // 启用 RDMA
+    static constexpr uint32_t TOPO_910B2C = 1 &lt;&lt; 1;  // 910B2C 拓扑
+    static constexpr uint32_t TOPO_910_93 = 1 &lt;&lt; 2;  // 910A3 拓扑
+    static constexpr uint32_t DETERMINISTIC = 1 &lt;&lt; 3;// 确定性计算
+    static constexpr uint32_t QUANT_FP16 = 1 &lt;&lt; 4;   // FP16 量化
+    static constexpr uint32_t QUANT_FP32 = 1 &lt;&lt; 5;   // FP32 量化
+    static constexpr uint32_t TOPO_910A5 = 1 &lt;&lt; 6;   // 910A5 拓扑
+    static constexpr uint32_t QUANT_DELAY = 1 &lt;&lt; 7;  // 延迟量化
+    static constexpr uint32_t QUANT_CURRENT = 1 &lt;&lt; 8;// 当前量化
+    static constexpr uint32_t TOPO_PCIE = 1 &lt;&lt; 9;    // PCIE 拓扑
+    static constexpr uint32_t ATOMIC_ENABLE = 1 &lt;&lt; 15;// 原子操作使能
+};</code></pre>
+
+<h3 id="sec6-5">6.5 Buffer 管理</h3>
+
+<h4>6.5.1 HBM 分配策略</h4>
+
+<pre><code class="language-cpp">int CamComm::InitMem() {
+    void *peerMem = nullptr;
+    aclError ret = aclrtMalloc(&amp;peerMem, memLen_,
+        (GetChipName() == ChipName::CHIP_310P3) ? 
+            ACL_MEM_MALLOC_HUGE_FIRST_P2P :    // 310P 使用 P2P 大页
+            ACL_MEM_MALLOC_HUGE_FIRST);        // 其他使用普通大页
+    peerMem_[rank_] = static_cast&lt;GM_ADDR&gt;(peerMem);
+    aclrtMemset(peerMem_[rank_], memLen_, 0, memLen_);
+    return CAM_SUCCESS;
+}
+
+// Buffer 大小由环境变量 CAM_BUFFSIZE 控制
+static uint64_t GetCamMaxWindowSize() {
+    auto defaultWindowSize = DEFAULT_CAM_BUFF_SIZE;  // 204 MB
+    if (getenv(CAM_BUFFSIZE) != nullptr) {
+        defaultWindowSize = std::stoi(getenv(CAM_BUFFSIZE));
+        if (defaultWindowSize &gt; MAX_CAM_BUFF_SIZE) {  // 上限 2000 MB
+            CAM_LOG(ERROR) &lt;&lt; "CAM_BUFFSIZE larger than MAX";
+        }
+    }
+    return static_cast&lt;uint64_t&gt;(defaultWindowSize) * 1024UL * 1024UL;
+}</code></pre>
+
+<h3 id="sec6-6">6.6 Pybind 层</h3>
+
+<h4>6.6.1 双重注册机制</h4>
+
+<pre><code class="language-cpp">// 1. pybind11 直接绑定（Python 直接调用）
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fused_deep_moe", &amp;FusedDeepMoeImplAutograd, "fused_deep_moe");
+    m.def("all2_all_detour", &amp;all2_all_detour_impl_autograd, "all2_all_detour");
+    m.def("reduce_scatter_detour", &amp;reduce_scatter_detour_impl_autograd, "reduce_scatter_detour");
+    m.def("cam_get_comm", &amp;cam_get_comm, "cam_get_comm");
+    m.def("a2e", &amp;A2eImplAutograd, "a2e");
+    m.def("e2a", &amp;E2aImplAutograd, "e2a");
+    pybind11::class_&lt;fused_deep_moe::Buffer&gt;(m, "FusedDeepMoeBuffer")
+        .def(pybind11::init&lt;&gt;())
+        .def("init", &amp;fused_deep_moe::Buffer::init)
+        .def("zb_fused_deep_moe", &amp;fused_deep_moe::Buffer::zb_fused_deep_moe);
+}
+
+// 2. PyTorch Operator Schema 注册（支持 TorchScript/编译优化）
+TORCH_LIBRARY(umdk_cam_op_lib, m) {
+    m.def("fused_deep_moe(Tensor x, Tensor expert_ids, ...) -&gt; Tensor[]");
+    m.def("all2_all_detour(Tensor sendData, Tensor commRankIds, ...) -&gt; Tensor");
+    m.def("a2e(Tensor x, ...) -&gt; Tensor[]");
+    m.def("e2a(Tensor expand_x, ...) -&gt; Tensor");
+}</code></pre>
+
+<h3 id="sec6-7">6.7 EXEC_NPU_CMD 宏</h3>
+
+<pre><code class="language-cpp">#define EXEC_NPU_CMD(aclnn_api, ...) do {
+    // 1. 获取 OpApi 函数地址（libopapi.so / libcust_opapi.so）
+    static const auto getWorkspaceSizeFuncAddr = GetOpApiFuncAddr(#aclnn_api "GetWorkspaceSize");
+    static const auto opApiFuncAddr = GetOpApiFuncAddr(#aclnn_api);
+    // 2. 初始化大内存线程局部存储
+    InitHugeMemThreadLocal initMemFunc = ...;
+    if (initMemFunc) { initMemFunc(nullptr, false); }
+    // 3. 类型转换：ATen Tensor → aclTensor
+    auto converted_params = ConvertTypes(__VA_ARGS__, workspace_size_addr, executor_addr);
+    // 4. 获取 workspace 大小
+    auto getWorkspaceSizeFunc = ConvertToOpApiFunc(converted_params, getWorkspaceSizeFuncAddr);
+    call(getWorkspaceSizeFunc, converted_params);
+    // 5. 分配 workspace
+    auto workspace_tensor = at::empty({workspace_size}, options.dtype(c10::kByte));
+    // 6. 提交到 NPU Stream
+    auto acl_call = [...]() { opApiFunc(workspace_addr, workspace_size, executor, acl_stream); };
+    at_npu::native::OpCommand cmd;
+    cmd.Name(#aclnn_api);
+    cmd.SetCustomHandler(acl_call);
+    cmd.Run();
+    // 7. 清理
+    UnInitHugeMemThreadLocal unInitMemFunc = ...;
+    if (unInitMemFunc) { unInitMemFunc(nullptr, false); }
+} while (false)</code></pre>
+
+<div class="insight">
+<strong>架构洞察</strong>: 使用 <code>static const auto</code> 实现函数地址的<strong>首次调用时解析 + 缓存</strong>，避免重复 <code>dlsym</code>。<code>ConvertTypes</code> 将 ATen 类型递归转换为 ACL 类型。<code>OpCommand</code> + <code>SetCustomHandler</code> 将调用封装为 lambda，提交到 NPU Stream 异步执行。
+</div>
+
+<h3 id="sec6-8">6.8 Buffer 类（ZeroBubble 流水线支持）</h3>
+
+<pre><code class="language-cpp">void Buffer::init(int rank, int num_ranks, uint64_t memsize, const std::string &amp;ip_port) {
+    // 初始化 SHMEM
+    aclshmemx_init_attr(ACLSHMEMX_INIT_WITH_DEFAULT, &amp;attributes);
+    // 分配 ext_info 区（2MB）
+    ext_info_ptr_ = aclshmem_malloc(EXT_INFO_SIZE);  // 2MB
+    // 分配 workspace 区（剩余空间）
+    shmem_workspace_size_ = local_mem_size - EXT_INFO_SIZE;
+    shmem_workspace_ptr_ = aclshmem_malloc(shmem_workspace_size_);
+}</code></pre>
+
+<div class="insight">
+<strong>SHMEM（Symmetric Memory）</strong> 是一种对称内存，在所有 rank 上虚拟地址相同，可直接用于流水线通信。<code>ext_info</code> 区用于存储跨 rank 的元数据，<code>zb_fused_deep_moe</code> 将 MoE 计算融合为单条 aclnn 调用。
+</div>
+
+<h3 id="sec6-9">6.9 与 NCCL 的对比</h3>
+
+<table>
+<tr><th>维度</th><th>NCCL</th><th>CAM</th></tr>
+<tr><td>Bootstrap</td><td>TCP Socket / MPI</td><td>TCP Socket（自实现）</td></tr>
+<tr><td>设备内存</td><td>CUDA IPC / cuMemMap</td><td>rtIpcSetMemoryName / rtIpcOpenMemory</td></tr>
+<tr><td>参数传递</td><td>隐式（内部管理）</td><td>显式 CommArgs 结构体</td></tr>
+<tr><td>拓扑发现</td><td>内部自动</td><td>物理链路类型枚举 + 手动配置</td></tr>
+<tr><td>多节点</td><td>支持 RDMA（NVLink/IB）</td><td>支持 HCCS + RDMA</td></tr>
+<tr><td>算子融合</td><td>不支持</td><td>支持（fused_deep_moe）</td></tr>
+</table>
+
+</section>
+
+<!-- ==================== SECTION 7: Build System / HFA / OPX ==================== -->
+<section>
+<h2 id="sec7">7. 构建系统 / HFA / OPX</h2>
+
+<h3 id="sec7-1">7.1 构建系统</h3>
+
+<h4>7.1.1 顶层构建脚本</h4>
+
+<table>
+<tr><th>选项</th><th>说明</th></tr>
+<tr><td>-c &lt;soc&gt;</td><td>目标 SOC 代际（如 ascend910_93）</td></tr>
+<tr><td>-a &lt;ops&gt;</td><td>分号分隔的算子白名单</td></tr>
+<tr><td>-q</td><td>选择 fused_deep_moe_w4a8 量化变体</td></tr>
+<tr><td>-d</td><td>Debug 构建</td></tr>
+<tr><td>-t</td><td>仅编译单元测试</td></tr>
+<tr><td>-p</td><td>仅编译 pybind whl</td></tr>
+<tr><td>-r</td><td>仅编译 run 包</td></tr>
+</table>
+
+<h4>7.1.2 双层 CMake 架构</h4>
+
+<pre><code>第一层：comm_operator/CMakeLists.txt — 通信库
+  add_library(cam SHARED ${CAM_SOURCE_FILE})
+  add_library(cam_static STATIC ${CAM_SOURCE_FILE})
+  target_link_libraries(cam ascendcl runtime c_sec)
+
+第二层：ascend_kernels/CMakeLists.txt — 算子包
+  find_package(ASC REQUIRED)
+  npu_op_package(${package_name} TYPE RUN CONFIG INSTALL_PATH ${CMAKE_BINARY_DIR}/)</code></pre>
+
+<h4>7.1.3 cmake_files 构建基础设施</h4>
+
+<table>
+<tr><th>库名</th><th>类型</th><th>用途</th></tr>
+<tr><td>cust_opapi</td><td>ACLNN</td><td>单算子调用接口</td></tr>
+<tr><td>cust_op_proto</td><td>GRAPH</td><td>图编译算子原型</td></tr>
+<tr><td>cust_optiling</td><td>TILING</td><td>Tiling 策略库</td></tr>
+</table>
+
+<h3 id="sec7-2">7.2 算子注册机制</h3>
+
+<pre><code class="language-json">{
+  "soc_versions": {
+    "ascend910_93": [
+      "a2e", "all_to_all_detour", "e2a", "fused_deep_moe",
+      "fused_deep_moe_fwk", "fused_deep_moe_w4a8",
+      "moe_combine_lowlatency_zb", "moe_combine_normal_zb",
+      "moe_dispatch_layout_zb", "moe_dispatch_lowlatency_zb",
+      "moe_dispatch_normal_zb", "moe_notify_dispatch_zb",
+      "reduce_scatter_detour"
+    ]
+  },
+  "operator_meta": {
+    "fused_deep_moe": { "requires_shmem": true, "family": "fused_deep_moe", "variant": "base" },
+    "fused_deep_moe_w4a8": { "requires_shmem": false, "family": "fused_deep_moe", "variant": "w4a8" }
+  }
+}</code></pre>
+
+<h3 id="sec7-3">7.3 HFA — HBM Fast Allocator</h3>
+
+<h4>7.3.1 架构概览</h4>
+
+<p>HFA 是一个高性能 HBM 内存分配器，专为 Ascend NPU 设计：</p>
+<ul>
+<li><strong>~99.7%</strong> HBM 利用率（跨所有对象大小）</li>
+<li><strong>~0.5 µs</strong> 稳定 alloc/free 延迟</li>
+<li>支持最大 <strong>128GB 虚拟内存</strong>、<strong>32GB 物理内存</strong></li>
+</ul>
+
+<h4>7.3.2 三层架构</h4>
+
+<pre><code>┌─────────────────────────────────────────┐
+│  HbmFastAlloc (顶层 API, thread-safe)   │
+│  - alloc/free/free_all                  │
+│  - 互斥锁 m_alloc_map_lock              │
+├─────────────────────────────────────────┤
+│  FlexAlloc (逻辑层, 非线程安全)          │
+│  - 双索引: StartMap + SizeMap           │
+│  - Best-fit 分配 + 邻居合并             │
+├─────────────────────────────────────────┤
+│  AclVirtualMemory (物理层)              │
+│  - 虚拟内存预留 + 物理页映射            │
+│  - defrag 碎片整理                      │
+└─────────────────────────────────────────┘</code></pre>
+
+<h4>7.3.3 FlexAlloc — 灵活分配器</h4>
+
+<pre><code class="language-cpp">// 核心数据结构 — 双索引
+StartMap m_free_ranges_by_offset;  // map&lt;offset_t, Range&gt; — 按起始地址排序
+SizeMap  m_free_ranges_by_size;    // multimap&lt;length_t, StartMap::iterator&gt; — 按大小排序
+
+// 分配算法 (Best-fit)
+FlexRetCode FlexAlloc::alloc(length_t req_size, size_t &amp;offset, size_t &amp;alloc_size) {
+    alloc_size = round_up_bits(req_size, OBJ_SIZE_BITS);  // 64 字节对齐
+    auto sizeIt = m_free_ranges_by_size.lower_bound(alloc_size);  // 找第一个 >= 请求的
+    if (sizeIt == end) {
+        if (get_total_free_mem() &gt;= alloc_size)
+            return FLEX_RC_ERR_FRAGMENTATION;  // 总量够但碎片化了
+        else
+            return FLEX_RC_ERR_NO_MEM;         // 真的没内存了
+    }
+    // 分裂剩余空间
+    if (blkSz &gt; alloc_size) {
+        m_free_ranges_by_offset.emplace(offset + alloc_size, Range{blkSz - alloc_size});
+    }
+}
+
+// 释放算法 — 邻居合并
+bool FlexAlloc::free(offset_t offset, length_t size) {
+    // 1. 查找前驱，若相邻则合并
+    if (prevEnd == offset) { newStart = prevStart; newSize += prevSize; }
+    // 2. 查找后继，循环合并所有相邻范围
+    while (newStart + newSize == rangeStart) { newSize += rangeSize; }
+    // 3. 插入合并后的范围到双索引
+}</code></pre>
+
+<h4>7.3.4 AclVirtualMemory — 虚拟内存抽象</h4>
+
+<table>
+<tr><th>能力</th><th>API</th><th>说明</th></tr>
+<tr><td>预留虚拟地址</td><td>aclrtReserveMemAddress()</td><td>最大 128GB</td></tr>
+<tr><td>分配物理页</td><td>aclrtMallocPhysical()</td><td>PINNED HBM</td></tr>
+<tr><td>映射物理→虚拟</td><td>aclrtMapMem()</td><td>建立页表映射</td></tr>
+<tr><td>重映射页</td><td>remap_page()</td><td>defrag 时移动物理页</td></tr>
+<tr><td>碎片整理</td><td>defrag()</td><td>合并碎片为连续块</td></tr>
+</table>
+
+<h3 id="sec7-4">7.4 OPX — Operator Extension Library</h3>
+
+<h4>7.4.1 架构概览</h4>
+
+<p>OPX 是一个设备端算子编程框架，提供完整的 AscendC 内核开发原语：</p>
+
+<pre><code>opx.h (统一入口)
+├── type_traits.h      — 元编程基础设施（自实现 tuple/invoke/apply）
+├── ub_queue.h         — UBQue 硬件队列抽象
+├── comm_def.h         — 管线同步原语 + ProcessParam
+├── swizzle.h          — 数据分块策略
+├── data_looper.h      — 数据遍历主循环（CRTP + callback）
+├── data_looper_ctx.h  — 遍历上下文（config + status）
+├── matrix_data_ctx.h  — 矩阵运算上下文
+├── vector_data_ctx.h  — 向量运算上下文
+├── matrix_data_reader.h — GM→UB 数据读取（封装 Catlass CopyGm2Ub）
+├── matrix_data_writer.h — UB→GM 数据写出（封装 Catlass CopyUb2Gm）
+├── matrix_op_start.h  — 矩阵算子起点（DataLooper + Reader）
+├── matrix_op_end.h    — 矩阵算子终点（Writer）
+├── vector_op_start.h  — 向量算子起点
+├── vector_coord.h     — 一维坐标
+├── fused.h            — 算子融合（FusedVV/Parallel/Sequential）
+└── dep_catlass.h      — Catlass 依赖适配</code></pre>
+
+<h4>7.4.2 UBQue 硬件队列</h4>
+
+<pre><code class="language-cpp">template &lt;auto src, auto dst, uint32_t depth_ = 1&gt;
+class UBQue {
+    AscendC::TBufType* bufStart;
+    AscendC::TBufHandle que[depth_];
+    uint8_t bufNum, usedCount, head, tail, bufUsedCount, bufCursor;
+};
+
+// 核心管线同步
+GetHardEventByPipe&lt;src, dst&gt;()  // 编译期计算硬件事件 ID
+AllocTensor&lt;T&gt;()               // 分配 LocalTensor，等待生产者完成
+EnQue()                        // 入队，设置生产者事件标志
+DeQue&lt;T&gt;()                    // 出队，等待消费者事件完成
+FreeTensor()                   // 释放 tensor，设置消费者完成标志</code></pre>
+
+<h4>7.4.3 DataLooper — 数据遍历主循环</h4>
+
+<pre><code class="language-cpp">// 四级循环结构
+for group_loop:       // group 列表（如 expert 列表）
+  for block_loop:     // block 级分块（多核分配）
+    for tile_loop:    // tile 级分块（sub-core 分配）
+      callback(ctx)   // 用户回调
+
+// CRTP 模式 + 8 个回调点
+// PRE/POST × LOOP/GROUP/BLOCK/TILE</code></pre>
+
+<h4>7.4.4 算子融合框架</h4>
+
+<table>
+<tr><th>模式</th><th>类</th><th>说明</th></tr>
+<tr><td>串行融合</td><td>FusedVV&lt;PreOp, PstOp&gt;</td><td>PreOp 输出 → UBQue → PstOp 消费</td></tr>
+<tr><td>顺序执行</td><td>Sequential&lt;Op...&gt;</td><td>多个算子顺序执行</td></tr>
+<tr><td>并行执行</td><td>Parallel&lt;OpTuple, StrategyTuple&gt;</td><td>多核并行执行不同算子</td></tr>
+</table>
+
+<h3 id="sec7-5">7.5 测试覆盖分析</h3>
+
+<table>
+<tr><th>测试文件</th><th>覆盖算子</th><th>测试类型</th></tr>
+<tr><td>test/cam/ut/a2e_e2a/test_a2e_e2a.py</td><td>a2e, e2a</td><td>多进程正确性测试</td></tr>
+</table>
+
+<h4>测试覆盖缺口</h4>
+
+<table>
+<tr><th>缺口</th><th>说明</th></tr>
+<tr><td>无 fused_deep_moe UT</td><td>仅有 sample（非 pytest 框架）</td></tr>
+<tr><td>无 HFA UT</td><td>README 提到 gtest 但仓库中无测试源码</td></tr>
+<tr><td>无 OPX UT</td><td>纯头文件库，无独立测试</td></tr>
+<tr><td>无性能 benchmark</td><td>README 中 Performance 标记 "To be done"</td></tr>
+<tr><td>无 MoE dispatch/combine UT</td><td>moe_*_zb 系列算子无测试</td></tr>
+</table>
+
+</section>
+
+<!-- ==================== SECTION 8: Key Design Insights ==================== -->
+<section>
+<h2 id="sec8">8. 关键设计洞察与跨章节主题</h2>
+
+<h3 id="sec8-1">8.1 Flag-Based Sync vs. 传统 Barrier</h3>
+
+<div class="insight">
+<strong>传统方式</strong> (HCCL 集合通信)：标准化但延迟高，需要额外通信开销。<br>
+<strong>Flag-Based Sync</strong> (CAM zero-buffer)：通过 shmem flag 轮询实现跨卡同步，延迟低 (RDMA write + poll)，无需额外通信。<br>
+<strong>关键保证</strong>: Magic 单调递增 ⇒ 任何历史 kernel 的 stale flag 都会被 <code>(v &amp; MAGIC_MASK) != (checkValue &amp; MAGIC_MASK)</code> 拒绝。
+</div>
+
+<h3 id="sec8-2">8.2 Detour 模式的核心思想</h3>
+
+<div class="insight">
+<strong>核心洞察</strong>: 当通信 group 是全集的子集时，非通信 rank 的 IPC 内存可以作为"免费"的中转缓冲区。
+
+<pre><code>传统方式（HCCL）：
+  Rank 0 ──RDMA──▶ Rank 1（需全局 barrier，所有 rank 等待）
+
+Detour 方式：
+  Rank 0 ──GM write──▶ Rank 2（detour）──GM read──▶ Rank 1
+  （仅需子集同步，Rank 3 不受影响）</code></pre>
+
+<strong>适用条件</strong>: 通信 rank 数 &lt; 总 rank 数，数据量 &lt; 1MB，通信频率高需要低延迟。
+</div>
+
+<h3 id="sec8-3">8.3 MC2 子通道的利用</h3>
+
+<p><code>e2a</code>/<code>a2e</code> 虽然绕过 HCCL 的标准集合通信 API，但仍然使用 <strong>MC2（Memory-Core Communication）</strong> 子通道的 tiling 配置：</p>
+
+<pre><code class="language-cpp">AscendC::Mc2CcTilingConfig mc2CcTilingConfig(groupEp, opType1, algConfigAllToAllStr);
+mc2CcTilingConfig.GetTiling(tiling-&gt;mc2InitTiling);</code></div>
+
+<p>这表明 MC2 是 HCCL 内部的<strong>硬件通信调度层</strong>，提供 <code>fullmesh</code>/<code>pairwise</code> 等拓扑算法。CAM 算子直接配置 MC2 tiling，利用其底层通信能力，但自主管理数据搬运和同步。这是一种"半绕过"策略：复用硬件能力，但规避软件调度开销。</p>
+
+<h3 id="sec8-4">8.4 编译期多态</h3>
+
+<pre><code class="language-cpp">// 大量使用 C++ 模板元编程实现编译期优化
+
+// 1. Tiling Key 编译期分支
+if constexpr (EXEC_FLAG &amp; EXEC_FLAG_DEEP_FUSE) {
+    // Deep Fuse 路径
+} else {
+    // Shallow Dispatch 路径
+}
+
+// 2. 数据类型编译期选择
+using ScaleType = Gemm::GemmType&lt;W1ScaleType, layout::VectorLayout&gt;;
+
+// 3. 编译期常量 + static_assert
+constexpr uint32_t L1A_TILE_SIZE = L1TileShape::M * L1TileShape::K * sizeof(ElementA);
+static_assert(L1A_TILE_SIZE * L1A_STAGES + L1B_TILE_SIZE * L1B_STAGES &lt;= ArchTag::L1_SIZE);</code></pre>
+
+<h3 id="sec8-5">8.5 通信隐藏策略</h3>
+
+<div class="insight">
+<strong>Fused Deep MoE 的核心创新</strong>：将 AlltoAll 通信与 GMM 计算重叠。
+
+<pre><code>传统方式: [====Dispatch====] [GMM1] [SwiGLU] [GMM2] [====Combine====]
+          ↑ 通信暴露 ↑                              ↑ 通信暴露 ↑
+
+融合方式: [Dispatch+GMM1] [SwiGLU+GMM2] [Combine]
+          ↑ 通信隐藏 ↑    ↑ 计算重叠 ↑    ↑ 通信隐藏 ↑
+          
+          AlltoAll 发送在 GMM1 计算期间完成
+          AlltoAll 接收在 GMM2 计算期间完成</code></pre>
+</div>
+
+<h3 id="sec8-6">8.6 内存层次优化</h3>
+
+<table>
+<tr><th>优化技术</th><th>实现方式</th><th>效果</th></tr>
+<tr><td>L1 ResidentA</td><td>GMM2 中 A 矩阵在 K 循环中保持不变，跳过 L1A 加载</td><td>节省 GM→L1 带宽</td></tr>
+<tr><td>Workspace 4-stage</td><td>AIC 写 stage N，AIV 读 stage N-1</td><td>完全隐藏 AIC→AIV 数据传递延迟</td></tr>
+<tr><td>UB 双缓冲</td><td>UB_STAGES=1，通过 event ID 切换</td><td>MTE2/V/MTE3 并行</td></tr>
+<tr><td>INT4 打包</td><td>8 个 INT4 打包为 1 个 INT32</td><td>L1/L0 tile 大小减半，节省 50% 存储</td></tr>
+<tr><td>Ping-Pong Buffer</td><td>magic % 2 选择 buffer</td><td>避免连续 kernel 间数据冲突</td></tr>
+<tr><td>HFA Best-fit</td><td>双索引 (StartMap + SizeMap)</td><td>~99.7% HBM 利用率，~0.5µs 延迟</td></tr>
+</table>
+
+<h3 id="sec8-7">8.7 量化融合</h3>
+
+<pre><code>传统方式：
+  GMM(INT8) → INT32 → Cast FP32 → ×scale → SwiGLU → Quant → INT8
+  ↑ 多步分离 ↑
+
+融合方式：
+  GMM(INT8) → INT32 → [Cast + Dequant + SwiGLU + Quant] → INT8
+              ↑ 全部在 UB 中完成，零 GM 写回 ↑
+
+W4A8 额外：
+  INT32 → Cast FP32 → ×weight_scale → ×16 → +low → +assistMatrix → ×per_token → SwiGLU → Quant
+          ↑ 高低 4-bit 分离与补偿矩阵融合 ↑</code></pre>
+
+<h3 id="sec8-8">8.8 设计范式总结</h3>
+
+<table>
+<tr><th>设计决策</th><th>实现方式</th><th>优势</th></tr>
+<tr><td>Bootstrap 网络</td><td>TCP Socket AllGather</td><td>与 NCCL 兼容，易于调试</td></tr>
+<tr><td>设备内存共享</td><td>IPC 命名内存 + 全局地址表</td><td>零拷贝，低延迟</td></tr>
+<tr><td>Host-Device 参数传递</td><td>CommArgs 结构体 + aclTensor 封装</td><td>单次拷贝，kernel 直接读取</td></tr>
+<tr><td>版本同步</td><td>Magic 计数器</td><td>无锁，轻量级</td></tr>
+<tr><td>多通信域</td><td>comm_id 索引的 g_comms[] 数组</td><td>支持 EP/TP 分离</td></tr>
+<tr><td>算子调用</td><td>OpApi 动态加载 + OpCommand 异步提交</td><td>支持自定义算子覆盖</td></tr>
+<tr><td>流水线并行</td><td>SHMEM 对称内存 + 融合算子</td><td>减少 bubble，提升吞吐</td></tr>
+</table>
+
+</section>
+
+<!-- ==================== APPENDIX ==================== -->
+<section>
+<h2 id="appendix">附录</h2>
+
+<h3 id="appendix-1">A. 文件索引</h3>
+
+<h4>A.1 EP Normal 算子</h4>
+
+<table>
+<tr><th>文件</th><th>行数</th><th>功能</th></tr>
+<tr><td>moe_dispatch_layout_zb/op_kernel/moe_dispatch_layout_zb.h</td><td>~500</td><td>Layout 计算 kernel</td></tr>
+<tr><td>moe_dispatch_layout_zb/op_host/moe_dispatch_layout_zb_tiling.cpp</td><td>~400</td><td>Layout host tiling</td></tr>
+<tr><td>moe_notify_dispatch_zb/op_kernel/moe_notify_dispatch_zero_buffer.h</td><td>~600</td><td>Notify AllGather kernel</td></tr>
+<tr><td>moe_notify_dispatch_zb/op_host/moe_notify_dispatch_zero_buffer_tiling.cpp</td><td>~500</td><td>Notify host tiling</td></tr>
+<tr><td>moe_dispatch_normal_zb/op_kernel/moe_dispatch_normal_zero_buffer.h</td><td>~700</td><td>Dispatch 写入 kernel</td></tr>
+<tr><td>moe_dispatch_normal_zb/op_host/moe_dispatch_normal_zero_buffer_tiling.cpp</td><td>~600</td><td>Dispatch host tiling</td></tr>
+<tr><td>moe_combine_normal_zb/op_kernel/moe_combine_normal_zero_buffer.h</td><td>~600</td><td>Combine 归约 kernel</td></tr>
+<tr><td>moe_combine_normal_zb/op_host/moe_combine_normal_zero_buffer_tiling.cpp</td><td>~500</td><td>Combine host tiling</td></tr>
+</table>
+
+<h4>A.2 EP Low-Latency 算子</h4>
+
+<table>
+<tr><th>文件</th><th>行数</th><th>功能</th></tr>
+<tr><td>moe_dispatch_lowlatency_zb/op_kernel/moe_dispatch_lowlatency_zero_buffer.h</td><td>869</td><td>Dispatch kernel 主逻辑</td></tr>
+<tr><td>moe_dispatch_lowlatency_zb/op_host/moe_dispatch_lowlatency_zero_buffer_tiling.cpp</td><td>1192</td><td>Dispatch host tiling</td></tr>
+<tr><td>moe_combine_lowlatency_zb/op_kernel/moe_combine_lowlatency_zero_buffer.h</td><td>448</td><td>Combine kernel 主逻辑</td></tr>
+<tr><td>moe_combine_lowlatency_zb/op_host/moe_combine_lowlatency_zero_buffer_tiling.cpp</td><td>1200</td><td>Combine host tiling</td></tr>
+</table>
+
+<h4>A.3 Fused Deep MoE</h4>
+
+<table>
+<tr><th>文件</th><th>行数</th><th>核心功能</th></tr>
+<tr><td>op_kernel/fused_deep_moe.h</td><td>559</td><td>主 kernel 定义</td></tr>
+<tr><td>op_kernel/fused_deep_moe_tiling.h</td><td>82</td><td>Tiling 数据结构</td></tr>
+<tr><td>op_host/fused_deep_moe_tiling.cpp</td><td>798</td><td>Host tiling</td></tr>
+<tr><td>raw_distributed/cam_moe_distribute_dispatch.h</td><td>1050</td><td>Dispatch 完整实现</td></tr>
+<tr><td>raw_distributed/cam_moe_distribute_combine.h</td><td>1048</td><td>Combine 完整实现</td></tr>
+<tr><td>gemm/kernel/grouped_matmul_slice_m_per_token_dequant_swiglu_quant_multistage_workspace.h</td><td>3381</td><td>GMM1 Kernel + BlockQuant</td></tr>
+<tr><td>gemm/block/block_mmad_preload_async_with_callback_resident_a.h</td><td>420</td><td>BlockMmad ResidentA 变体</td></tr>
+<tr><td>epilogue/block/block_epilogue_per_token_dequant_swiglu.h</td><td>331</td><td>GMM1 Epilogue</td></tr>
+</table>
+
+<h4>A.4 框架基础设施</h4>
+
+<table>
+<tr><th>文件路径</th><th>职责</th></tr>
+<tr><td>framework/communicator/cam_comm.h</td><td>CamComm 类声明</td></tr>
+<tr><td>framework/communicator/cam_comm.cpp</td><td>CamComm 实现（IPC、拓扑、初始化）</td></tr>
+<tr><td>framework/tools/socket/cam_socket_exchange.h</td><td>Socket Exchange 类声明</td></tr>
+<tr><td>framework/tools/socket/cam_socket_exchange.cpp</td><td>Socket Bootstrap 实现</td></tr>
+<tr><td>cam_api.cpp / include/cam_api.h</td><td>C 公共 API</td></tr>
+<tr><td>include/comm_args_host.h</td><td>CommArgs 结构体、ExtraFlag</td></tr>
+<tr><td>pybind/pybind.cpp</td><td>pybind11 模块 + TORCH_LIBRARY Schema</td></tr>
+<tr><td>pybind/buffer.h / buffer.cpp</td><td>ZeroBubble Buffer 类</td></tr>
+<tr><td>pybind/pytorch_extension/pytorch_npu_helper.hpp</td><td>NPU 算子调用基础设施</td></tr>
+</table>
+
+<h4>A.5 共享工具</h4>
+
+<table>
+<tr><th>文件</th><th>功能</th></tr>
+<tr><td>utils/op_kernel/comm_args.h</td><td>CommArgs 结构体、IPC 常量定义</td></tr>
+<tr><td>utils/op_kernel/sync_collectives.h</td><td>同步原语（Set/Wait Flag）</td></tr>
+<tr><td>utils/op_kernel/data_copy.h</td><td>CpGM2GMPingPong GM→GM 拷贝</td></tr>
+<tr><td>utils/op_kernel/zero_buffer_sync_flag.h</td><td>核心同步类</td></tr>
+<tr><td>utils/op_kernel/moe_distribute_base.h</td><td>HcclOpResParam 基础结构</td></tr>
+</table>
+
+<h3 id="appendix-2">B. 关键常量表</h3>
+
+<table>
+<tr><th>常量</th><th>值</th><th>说明</th></tr>
+<tr><td>CAM_MAX_RANK_SIZE</td><td>384</td><td>最大支持 384 rank</td></tr>
+<tr><td>IPC_BUFF_MAX_SIZE</td><td>100MB</td><td>单 IPC buffer 上限</td></tr>
+<tr><td>IPC_DATA_OFFSET</td><td>2MB</td><td>Flag 区与数据区分界</td></tr>
+<tr><td>UB_SINGLE_DMA_SIZE_MAX</td><td>190KB</td><td>单次 DMA 上限</td></tr>
+<tr><td>FLAG_SLOT_SIZE</td><td>32B</td><td>每个 flag slot 大小</td></tr>
+<tr><td>MAGIC_SLOT_ALIGN</td><td>512B</td><td>每 core 512B 对齐</td></tr>
+<tr><td>MAX_CORE_NUM_SYNC</td><td>48</td><td>最大 48 核</td></tr>
+<tr><td>WORKSPACE_STAGES</td><td>4</td><td>Workspace 流水线 stage 数</td></tr>
+<tr><td>GMM1 L1M/N/K</td><td>256/128/512</td><td>基础版 GMM1 L1 tile</td></tr>
+<tr><td>GMM2 L1M/N/K</td><td>128/256/512</td><td>基础版 GMM2 L1 tile</td></tr>
+<tr><td>MAX_BATCH_SIZE (ZB)</td><td>8192</td><td>Zero Buffer 模式最大 batch</td></tr>
+<tr><td>MAX_MOE_EXPERT_NUM</td><td>512</td><td>最大 MoE expert 数</td></tr>
+<tr><td>SUPPORT_TOP_K</td><td>12</td><td>最大 top-k</td></tr>
+<tr><td>STATE_OFFSET</td><td>512</td><td>状态偏移量</td></tr>
+<tr><td>PRELOAD_STAGES</td><td>1</td><td>预加载 stage 数</td></tr>
+</table>
+
+<h3 id="appendix-3">C. Tiling Key 位定义</h3>
+
+<pre><code>Bit 0 (0x01): EXEC_FLAG_DEEP_FUSE      - 多 expert 融合模式
+Bit 1 (0x02): EXEC_FLAG_TENSOR_LIST    - 权重为 tensor list 格式
+Bit 2 (0x04): EXEC_FLAG_X_ACTIVE_MASK  - 使用激活 mask
+Bit 3 (0x08): EXEC_FLAG_SHARED_EXPERT  - 使用 shared expert
+Bit 4 (0x10): EXEC_FLAG_SMOOTH_QUANT   - 使用 smooth scale
+Bit 5 (0x20): EXEC_FLAG_ZERO_BUFFER    - 使用 SHMEM 零拷贝</code></pre>
+
+<h3 id="appendix-4">D. 参考链接</h3>
+
+<ul>
+<li><strong>UMDK/CAM 仓库</strong>: 华为昇腾 NPU 上 MoE 通信加速库</li>
+<li><strong>CANN 文档</strong>: Ascend Computing Language 官方文档</li>
+<li><strong>Catlass</strong>: CUDA-like Template Library for Ascend (GEMM 模板库)</li>
+<li><strong>HCCL</strong>: Huawei Collective Communication Library</li>
+<li><strong>DeepSeek MoE 架构</strong>: Mixture-of-Experts 大规模语言模型设计</li>
+<li><strong>ZeroBubble 流水线</strong>: 流水线并行气泡消除技术</li>
+</ul>
+
+<h3 id="appendix-5">E. 版本历史</h3>
+
+<table>
+<tr><th>版本</th><th>日期</th><th>内容</th></tr>
+<tr><td>v1</td><td>2026-07-21</td><td>EP Normal 算子初步分析</td></tr>
+<tr><td>v2</td><td>2026-07-27</td><td>全库深度分析 (EP Normal + Low-Latency + Fused Deep MoE + 辅助通信 + 框架 + 构建/HFA/OPX)</td></tr>
+</table>
+
+</section>
+
+<footer style="margin-top:4rem;padding-top:1rem;border-top:1px solid var(--border);color:var(--muted);font-size:0.85rem;text-align:center;">
+<p>UMDK/CAM 通信加速库深度分析报告 v2.0 | 分析日期: 2026-07-27 | 代码基线: Ascend 910_93 / 910B</p>
+<p>本报告基于源码分析，所有代码片段均来自原始文件。</p>
+</footer>
+
+</body>
+</html>
