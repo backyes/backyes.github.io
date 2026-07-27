@@ -111,6 +111,11 @@ REPORTS = [
      "desc":"全球推理社区前沿动态 · CoreWeave Particula LSYS 等创新企业 · 开源与商业化路径",
      "cat":"inference","priority":"p1",
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
+    {"dst":"deep-ep","entry":"DeepEP_Final_Analysis_Report.html","visual":"DeepEP",
+     "title":"DeepEP 深度设计分析 (Survey by AI)",
+     "desc":"DeepSeek 开源 DeepEP 库三视角深度设计分析 · MoE 专家并行 AllToAll 通信 / NVLink+RDMA 双域融合 / Low-Latency 内核 / Normal 内核 / 性能基准与竞品对比",
+     "cat":"network","priority":"p0",
+     "tags":["DeepEP","MoE","AllToAll","专家并行","NVLink","RDMA","通信库","DeepSeek"]},
 ]
 
 CATS = {
