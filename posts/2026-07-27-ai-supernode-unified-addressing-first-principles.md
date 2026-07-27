@@ -1,23 +1,105 @@
 ---
 title: "First-Principles Thinking on AI Supernode Unified Addressing — From Hopper to NVL72, and AI Native Memory Fabric"
 date: 2026-07-27
-tags: ["unified-addressing", "nvlink", "hopper", "nvl72", "memory-fabric", "moe", "fusion-operator", "location-transparency", "ai-infra", "first-principles"]
-excerpt: "Unified addressing is not about building a single address space spanning the entire supernode — it is about establishing location-transparent access semantics for the current compute task. Starting from fusion operators, rethinking Hopper's three-layer Fabric architecture."
+tags: ["unified-addressing", "nvlink", "hopper", "nvl72", "memory-fabric", "moe", "fusion-operator", "location-transparency", "address-resolution", "ai-infra", "first-principles"]
+excerpt: "Unified addressing is not a fixed implementation — it is a design philosophy. Location Transparency can be established at any scope (all GPUs or a communication domain) and at any time (boot, library init, or runtime). The current NVL72 global fabric is just one 'luxurious' option among many."
 ---
 
 # First-Principles Thinking on AI Supernode Unified Addressing
 
-## A Mental Shift
+## A Mental Shift: Unified Addressing Is a Philosophy, Not an Implementation
 
-When discussing unified addressing, we traditionally start from CUDA UVA or CPU virtual memory. But for AI supernodes, this misses the point.
+When discussing unified addressing, we traditionally start from CUDA UVA or CPU virtual memory. But for AI supernodes, this misses the point entirely.
 
-Through deep analysis of the Hopper architecture, NVL72 topology, and [DeepEP's addressing design](../deep-ep/deep_dive/addressing_deep_dive.html), I have come to realize that what truly drives unified addressing is not virtual memory — it is ==**the evolution of AI workloads**==.
+Through deep analysis of the Hopper architecture, NVL72 topology, and [DeepEP's addressing design](../deep-ep/deep_dive/addressing_deep_dive.html), I have come to realize that ==**unified addressing is not a fixed implementation — it is a design philosophy.**==
+
+The core insight is deceptively simple:
+
+> ==**Location Transparency does not require a Global Address Space. The scope of address transparency need not equal the scope of the Fabric — it can equal the scope of the Communication Domain.**==
+
+This single insight changes everything about how we think about AI supernode architecture.
 
 ---
 
-## 1. Why Do AI Supernodes Need Unified Addressing?
+## 1. The Core Philosophy: Location Transparency at Any Scope, at Any Time
 
-### 1.1 Fusion Operators Have Changed the Nature of Communication
+### 1.1 What Is the Essence of Unified Addressing?
+
+Strip away the hardware details, and the essence of unified addressing is one thing: ==**enabling a GPU kernel to access remote memory as if it were local.**==
+
+The kernel should express:
+
+```cpp
+float val = load(ptr);
+```
+
+Not:
+
+```cpp
+float val = load(gpu7, hbm2, offset);
+```
+
+This property — that the kernel does not need to know *where* data physically resides — is called ==**Location Transparency**==.
+
+### 1.2 The RDMA Analogy: Address Transparency as a Service
+
+To understand why Location Transparency is a *service* rather than a *given*, consider how RDMA works.
+
+RDMA does not natively possess remote addresses. Before a RDMA Read can execute, the control plane must complete:
+
+1. **Memory Region registration** — pin the buffer and export access keys
+2. **Queue Pair establishment** — create the communication channel
+3. **Address and permission exchange** — share virtual addresses, rkeys, and queue pair numbers between peers
+
+Only after this *address resolution service* has completed can the data plane execute zero-CPU RDMA operations.
+
+==**The key insight: RDMA's address transparency is not inherent — it is established by a control-plane service before communication begins.**==
+
+And critically, this service is established ==**per communication relationship**==, not globally. Each QP connects specific peers; each MR maps specific buffers. The scope of RDMA address transparency is exactly the scope of the communication domain — no more, no less.
+
+### 1.3 The Design Space: When and Where to Build Transparency
+
+If we accept that unified addressing is fundamentally an ==**Address Resolution Service**==, then two design axes emerge:
+
+**Scope axis** — how many GPUs does the transparency cover?
+
+| Scope | Description | Cost |
+|---|---|---|
+| **All GPUs in cluster** | Global Address Space (NVL72 today) | High: page tables, TLB, peer mapping for all |
+| **Communication Domain** | Only GPUs that actually communicate | Medium: proportional to actual need |
+| **Communicator** | GPUs within one NCCL communicator | Low: established at library init |
+| **Instance** | GPUs serving one inference request | Minimal: per-task, released after |
+
+**Time axis** — when is the transparency established?
+
+| When | Characteristics |
+|---|---|
+| **System boot** | Static, always available, wasteful if unused |
+| **Library init** | Per-communicator, moderate overhead |
+| **Instance start** | Per-task, pay-as-you-go |
+| **Runtime (on-demand)** | Most flexible, requires runtime support |
+
+> ==**The current NVL72 approach — establishing Global Address Space at system boot — is just one point in this design space. It is the most 'luxurious' option: maximum convenience, maximum cost.**==
+
+### 1.4 Why Did Hopper Choose the "Luxurious" Option?
+
+This choice stems from HPC's fundamental assumption:
+
+> In traditional HPC, any MPI Rank may communicate with any other Rank. The simplest software model is to establish a Global Address Space for the entire Fabric at once.
+
+This is a classic ==**trade initialization cost for runtime efficiency**== design. Kernels always face unified pointers; no runtime address resolution needed.
+
+For static clusters of dozens of GPUs, this is reasonable. But it comes with hidden costs:
+
+- **Centralized service dependency**: NVL72 requires Fabric Manager and NVLSM as rack-wide control-plane services
+- **Scope mismatch**: Even if a kernel only accesses 4 GPUs, every GPU's GMMU maintains Peer Mapping for all 72
+- **No dynamic adaptation**: Cannot release mappings when communication patterns change
+
+---
+
+## 2. Why Do AI Supernodes Need Location Transparency?
+
+### 2.1 Fusion Operators Have Changed the Nature of Communication
 
 In the past, GPU kernels accessed local HBM, and inter-GPU communication was handled by NCCL and MPI. ==**Compute and communication were two distinct phases.**==
 
@@ -31,7 +113,7 @@ But today's AI algorithms increasingly adopt ==**Fusion Operator**== designs:
 
 **Communication has begun to merge into compute itself.**
 
-### 1.2 What Does a Fusion Operator Want to Express?
+### 2.2 What Does a Fusion Operator Want to Express?
 
 For a fusion operator, what it truly wants to express is:
 
@@ -55,13 +137,7 @@ Fusion Kernel → Suspend → CPU Runtime → Address Lookup → Network → Res
 
 Because this means the GPU must exit its execution flow and let the CPU resolve addresses. This not only adds latency — more importantly, it ==**breaks the GPU pipeline**==, preventing remote memory loads from being issued as continuously as local loads.
 
-### 1.3 First Principles: Location Transparency
-
-Therefore, the real problem unified addressing solves is not "unified addresses" — it is:
-
-> ==**Enabling GPUs to access remote memory as if it were local HBM.**==
-
-In other words, it provides **Location Transparency**. The kernel should not care which GPU data resides on, which HBM stack it belongs to, or how many NVSwitches it traverses.
+### 2.3 The Location Service Model
 
 A unified addressing system essentially adds a layer of ==**Location Service**== between GPU and memory:
 
@@ -87,9 +163,9 @@ This maps to three independent questions:
 
 ---
 
-## 2. How Does Hopper Implement Unified Addressing?
+## 3. How Does Hopper Implement the Location Service?
 
-With the first-principles lens, we can see that NVIDIA did not put unified addressing into NVLink — instead, the system is divided into three layers with entirely distinct responsibilities:
+With the first-principles lens, we can see that NVIDIA did not put the Location Service into NVLink — instead, the system is divided into three layers with entirely distinct responsibilities:
 
 ```
                CUDA Runtime
@@ -109,19 +185,19 @@ Memory Aperture / Peer Mapping
 NVLink / NVSwitch / HBM
 ```
 
-### 2.1 Control Fabric: Manages Topology, Not Memory Pages
+### 3.1 Control Fabric: Manages Topology, Not Memory Pages
 
 The Control Fabric handles GPU Discovery, Topology Discovery, Partition, Routing Programming, and Peer Registration. Fabric Manager and NVLSM maintain the *resource topology* of the entire NVL72 — they know where GPUs are and how switches are connected, but they know nothing about Tensors, KV Caches, or Experts.
 
-### 2.2 Memory Fabric: Establishes Memory Semantics, No Control Logic
+### 3.2 Memory Fabric: The Concrete Manifestation of the Location Service
 
 When a GPU kernel executes `load(ptr)`, the request enters the GMMU, traverses the TLB and Page Table to find the PTE. The PTE records the target Peer GPU and HBM Offset. ==**The Memory Fabric itself has no control logic — it is merely the execution result of the Control Fabric left on the GPU.**==
 
-### 2.3 Transport Fabric: Pure Data Plane
+### 3.3 Transport Fabric: Pure Data Plane
 
 NVLink and NVSwitch see only `(Destination GPU, HBM Offset, Payload)`. They have no knowledge of Virtual Addresses. ==**NVLink's responsibility has always been Transport, not Address Translation.**==
 
-### 2.4 Complete Data Path
+### 3.4 Complete Data Path
 
 ```
    Control Fabric
@@ -139,7 +215,7 @@ NVLink and NVSwitch see only `(Destination GPU, HBM Offset, Payload)`. They have
 
 ---
 
-## 3. Hopper Server vs. NVL72: Two Scales of Addressing
+## 4. Hopper Server vs. NVL72: Two Scales, Same Philosophy
 
 | Dimension | Hopper Server (8 GPU) | NVL72 (72+ GPU) |
 |---|---|---|
@@ -168,35 +244,17 @@ The Control Fabric and Memory Fabric share the same scope — the entire NVL72.
 
 ---
 
-## 4. Why Does Hopper Use Global Addressing?
-
-This stems from a fundamental HPC assumption:
-
-> In traditional HPC, any MPI Rank may communicate with any other Rank. The simplest software model is to establish a Global Address Space for the entire Fabric at once.
-
-This is a classic ==**trade initialization cost for runtime efficiency**== design. Kernels always face unified pointers; no Page Table modifications or Peer Mapping re-establishment is needed at runtime.
-
-For static clusters of dozens of GPUs, this is entirely reasonable.
-
----
-
-## 5. AI Workloads Have Changed This Assumption
+## 5. AI Workloads Have Changed the Assumption
 
 AI workloads no longer follow the "all GPUs may communicate" assumption:
 
 - An Attention Kernel may only involve GPU4~GPU7
 - A MoE Kernel may only access a few Expert GPUs
-- A推理 instance may use only a fraction of NVL72
+- An inference instance may use only a fraction of NVL72
 
 ==**The fundamental communication unit of AI has shifted from the entire Fabric to the Communication Domain.**==
 
-### 5.1 Analogy: RDMA Establishment
-
-RDMA does not natively possess remote addresses. A RDMA Read can execute directly only because the control plane has already completed Memory Region registration, Queue Pair establishment, and address/permission exchange.
-
-NVLink's unified addressing works identically: a GPU can execute `load(ptr)` not because NVLink natively knows remote addresses, but because the system has pre-established an ==**Address Resolution Service**==.
-
-### 5.2 What Is Truly Necessary?
+### 5.1 What Is Truly Necessary?
 
 What is truly necessary is not a Global Address Space spanning the entire NVL72, but:
 
@@ -217,7 +275,7 @@ Address transparency can be established at different moments:
 
 ---
 
-## 6. Hopper's Limitation Today
+## 6. Hopper's Limitation: Fabric Scope Bound to Address Scope
 
 From this perspective, Hopper's real limitation is not in NVLink, nor in NVSwitch — it is in the ==**scope of the Memory Fabric**==.
 
@@ -279,11 +337,11 @@ In the future, unified addressing may evolve from `VA → GPU + Offset` to `AI O
 
 Three core conclusions:
 
-1. **First Principles**: The first principle of unified addressing is ==**Location Transparency**==, not Unified Address. The goal is to let kernels express remote access via `load(ptr)`.
+1. **It is a philosophy, not an implementation**: Unified addressing = Location Transparency. The scope can be all GPUs or a communication domain; the timing can be boot, library init, or runtime. The current NVL72 global fabric is just one "luxurious" option.
 
-2. **Hopper's Soundness and Limitation**: The three-layer Fabric architecture (Control / Memory / Transport) is sound, but the ==**binding of Fabric Scope and Address Scope**== is a legacy constraint.
+2. **Hopper's soundness and limitation**: The three-layer Fabric architecture (Control / Memory / Transport) is sound, but the ==**binding of Fabric Scope and Address Scope**== is a legacy constraint.
 
-3. **Dynamicization Is the Direction**: What is truly indispensable is the ==**Address Resolution Service**==, not the Global Address Space. When to establish it, at what scope, and who maintains it are all freely tradeable design parameters.
+3. **Dynamicization is the direction**: What is truly indispensable is the ==**Address Resolution Service**==, not the Global Address Space. When to establish it, at what scope, and who maintains it are all freely tradeable design parameters.
 
 Hopper chooses to establish a Global Memory Fabric covering the entire NVL72 at system boot — an excellent engineering implementation for HPC workloads. But it is not the only implementation. For the future AI Native Supernode, the more reasonable direction is to dynamically establish the Address Resolution Service driven by the runtime, evolving unified addressing from "static rack-level resource" to "on-demand runtime capability."
 
