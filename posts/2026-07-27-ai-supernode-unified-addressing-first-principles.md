@@ -11,7 +11,7 @@ excerpt: "Unified addressing is not about building a single address space spanni
 
 When discussing unified addressing, we traditionally start from CUDA UVA or CPU virtual memory. But for AI supernodes, this misses the point.
 
-Through deep analysis of the Hopper architecture, NVL72 topology, and [DeepEP's addressing design](deep-ep/deep_dive/addressing_deep_dive.html), I have come to realize that what truly drives unified addressing is not virtual memory — it is ==**the evolution of AI workloads**==.
+Through deep analysis of the Hopper architecture, NVL72 topology, and [DeepEP's addressing design](../deep-ep/deep_dive/addressing_deep_dive.html), I have come to realize that what truly drives unified addressing is not virtual memory — it is ==**the evolution of AI workloads**==.
 
 ---
 
@@ -291,6 +291,6 @@ Hopper chooses to establish a Global Memory Fabric covering the entire NVL72 at 
 
 ## Further Reading
 
-- [DeepEP Addressing Design — Adversarial Analysis](deep-ep/deep_dive/addressing_deep_dive.html) — Four-agent adversarial discussion
-- [DeepEP Comprehensive Analysis Report](deep-ep/DeepEP_Final_Analysis_Report.html) — Three-perspective complete analysis
+- [DeepEP Addressing Design — Adversarial Analysis](../deep-ep/deep_dive/addressing_deep_dive.html) — Four-agent adversarial discussion
+- [DeepEP Comprehensive Analysis Report](../deep-ep/DeepEP_Final_Analysis_Report.html) — Three-perspective complete analysis
 - [HBM / CXL / Memory Market Research](../hbm-cxl/report.html) — Memory hierarchy landscape
