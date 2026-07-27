@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP 架构设计深度分析报告</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --fg: #d7dbe0;
+  --muted: #7d848d;
+  --accent: #4a8fe0;
+  --accent-soft: rgba(74,143,224,.12);
+  --card: #232340;
+  --border: #2e2e50;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.7;
+  padding: 40px 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+h1 { font-size: 1.8rem; color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 12px; margin-bottom: 24px; }
+h2 { font-size: 1.5rem; border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin: 36px 0 16px; }
+h3 { font-size: 1.25rem; border-left: 3px solid var(--accent); padding-left: 12px; margin: 28px 0 12px; }
+h4 { font-size: 1.1rem; color: var(--accent); margin: 20px 0 8px; }
+p { margin: 12px 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+mark {
+  background: linear-gradient(180deg, transparent 60%, var(--accent-soft) 60%);
+  color: var(--fg);
+  padding: 0 2px;
+}
+strong { color: var(--fg); font-weight: 700; }
+.key-num { color: var(--accent); font-size: 1.2em; font-weight: 700; }
+code {
+  background: var(--card);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+pre {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 0.82em;
+  line-height: 1.5;
+  margin: 12px 0;
+}
+pre code { background: none; padding: 0; }
+blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 12px 16px;
+  margin: 16px 0;
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+  font-size: 0.88em;
+  overflow-x: auto;
+  display: block;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  text-align: left;
+}
+th { background: var(--card); color: var(--accent); }
+tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+tr:hover { background: var(--accent-soft); }
+ul, ol { margin: 12px 0 12px 24px; }
+li { margin: 6px 0; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+}
+.card-title {
+  color: var(--accent);
+  font-weight: 700;
+  margin-bottom: 12px;
+  font-size: 1.05rem;
+}
+.toc { background: var(--card); border-radius: 12px; padding: 20px 24px; margin: 24px 0; }
+.toc h3 { border: none; padding: 0; margin: 0 0 12px; }
+.toc ul { list-style: none; margin: 0; }
+.toc li { margin: 4px 0; }
+.toc a { color: var(--fg); }
+.toc a:hover { color: var(--accent); }
+.code-ref { font-size: 0.82em; color: var(--muted); font-family: monospace; }
+@media (max-width: 768px) {
+  body { padding: 24px 16px; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.2rem; }
+  h3 { font-size: 1.05rem; }
+  table { font-size: 0.8em; }
+  pre { font-size: 0.75em; }
+  .card { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<h1>DeepEP 架构设计深度分析报告</h1>
+<p style="color: var(--muted); font-size: 0.9rem;">作者：AI Infra 系统架构师 &amp; 芯片专家 | 日期：2026-07-27 | 版本：V2</p>
+
+<div class="toc">
+<h3>目录</h3>
+<ul>
+<li><a href="#sec1">一、第一性原理分析</a></li>
+<li><a href="#sec2">二、架构设计分析</a></li>
+<li><a href="#sec3">三、代码深度分析</a></li>
+<li><a href="#sec4">四、核心问题回答</a></li>
+<li><a href="#sec5">五、性能分析</a></li>
+<li><a href="#sec6">六、业界方案对比</a></li>
+<li><a href="#appendix">附录</a></li>
+</ul>
+</div>
+
+<!-- ==================== SECTION 1 ==================== -->
+<h2 id="sec1">一、第一性原理分析</h2>
+
+<p>从 MoE 模型训练的通信本质出发，通过严格的数学和系统论推导，我们提炼出 DeepEP 设计的 ==6 个核心第一性原理==：</p>
+
+<h3>原理一：All-to-All 通信的 O(TopK) 放大效应</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>对于 N 个 rank、每个 token 选择 TopK 个 expert 的 MoE 系统，全局 all-to-all 通信量相对于点对点通信的放大系数为：</p>
+<pre><code>Amplification = N × (1 - C(E - E/N, TopK) / C(E, TopK))
+
+其中 E 为总 expert 数，C 为组合数。</code></pre>
+<p>当 gate 均匀分布时，每个 token 期望发送到 <strong>不同 rank 的数量</strong> 趋近于：</p>
+<pre><code>E[distinct_ranks] ≈ N × (1 - (1 - 1/N)^TopK)</code></pre>
+<p>对于 EP256、TopK=8 的场景，放大系数 ≈ $7.48$，意味着每个 token 的数据平均需要被发送到 7.48 个不同 rank。</p>
+</div>
+
+<p><strong>设计推论：</strong>正是因为这种放大效应，dispatch 阶段天然是 ==随机访存模式==——每个 token 的目标 rank 由 gate 决定，无法预测。这一原理直接决定了 DeepEP 必须使用高效的随机写入机制（TMA store + RDMA put）。</p>
+
+<h3>原理二：通信-计算可分离性与 SM 最小化原则</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>GPU 的总计算吞吐量可建模为：</p>
+<pre><code>Effective_GEMM_Throughput = (Total_SMs - Comm_SMs) × GEMM_SM_efficiency</code></pre>
+<p>当通信占用 SM 数从 $24$ 降到 $4\sim6$（DeepEP V2 vs V1），释放的 SM 可用于 GEMM 计算，理论加速比为：</p>
+<pre><code>Speedup = (Total_SMs - 4) / (Total_SMs - 24)
+
+对于 H100 (132 SMs): Speedup ≈ 1.15x</code></pre>
+</div>
+
+<p><strong>设计推论：</strong>==通信库的设计目标不是最大化通信吞吐，而是在满足带宽需求的前提下最小化 SM 占用==。这是 DeepEP 从 V1 到 V2 的核心设计哲学转变。</p>
+
+<h3>原理三：NVLink 与 RDMA 的层级带宽比决定拓扑分层</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>设 NVLink 带宽为 $B_{nvl}$（~900 GB/s 双向），RDMA 带宽为 $B_{rdma}$（~400 Gbps = 50 GB/s 单向），则层级比为：</p>
+<pre><code>Hierarchy_ratio = B_nvl / B_rdma ≈ 18x</code></pre>
+<p>这意味着：跨节点的单个 RDMA 操作延迟 ≈ NVLink 内传输 ~18 个 token 的时间。</p>
+</div>
+
+<p><strong>设计推论：</strong>==必须将通信分为 Scale-up（NVLink）和 Scale-out（RDMA）两个层级==。DeepEP 的 hybrid mode 正是基于此原理——先通过 NVLink 在节点内聚合，再通过 RDMA 跨节点传输，最大化带宽利用。</p>
+
+<h3>原理四：Token 重组的必要性——从随机到顺序的布局转换</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>设 dispatch 后 token 在 buffer 中的位置为随机分布 $P_{random}$，而 GEMM 计算需要 expert-grouped 的顺序布局 $P_{ordered}$。定义布局转换的数据移动量为：</p>
+<pre><code>Reorg_cost = Σ |pos_random(t) - pos_ordered(t)| × data_per_token</code></pre>
+<p>关键洞察：这个转换是 ==不可避免的==，因为 gate 决定的映射是动态的。唯一的选择是——在 dispatch 时直接写入目标布局（write-time reorganization），还是先写入临时 buffer 再拷贝（copy-time reorganization）。</p>
+</div>
+
+<p><strong>设计推论：</strong>DeepEP 选择 write-time reorganization，即 dispatch kernel 直接将 token 写入 expert-ordered 位置（通过 atomic slot allocation），避免额外的全局拷贝。这解释了为什么需要 <code>dispatch_copy_epilogue_impl</code> 来做最终的布局对齐。</p>
+
+<h3>原理五：Combine 阶段的顺序访问特性</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>Combine 是 dispatch 的逆操作。设 dispatch 建立了映射 $M: (rank_i, token_j) \rightarrow expert_k$，则 combine 执行 $M^{-1}$。由于 $M$ 在 dispatch 过程中被记录（<code>src_metadata</code>），combine 可以 ==按顺序遍历接收到的 token==，直接读取源位置并写回目标。</p>
+</div>
+
+<p><strong>设计推论：</strong>与 dispatch 的随机写入不同，combine 是顺序读取 + 顺序写入。这使得 combine 可以使用更简单的 TMA load/store pipeline，不需要复杂的 slot allocation 逻辑。代码证据：<code>combine.cuh:86-237</code> 中的主循环是简单的 <code>for (int i = token_start_idx; i &lt; token_end_idx; ++i)</code>。</p>
+
+<h3>原理六：RDMA 的 CPU 代理开销与 GPU-Initiated 的零开销原理</h3>
+
+<div class="card">
+<div class="card-title">定理</div>
+<p>传统 RDMA（CPU 代理）的每次操作开销为：</p>
+<pre><code>T_cpu_proxy = T_kernel_launch + T_pci_write + T_nic_poll ≈ 2-5 μs</code></pre>
+<p>GPU-Initiated RDMA（GDAKI）的开销为：</p>
+<pre><code>T_gpu_initiated = T_single_instruction ≈ 10-100 ns</code></pre>
+<p>加速比可达 ==10-100x==。</p>
+</div>
+
+<p><设计推论：</strong>这是 DeepEP V2 从 NVSHMEM 切换到 NCCL Gin backend 的根本原因。NVSHMEM 虽然也支持 GPU-initiated，但其 API 抽象层级较高，无法精细控制 QP 共享和 barrier 行为。NCCL Gin 的 GDAKI backend 允许 CUDA kernel 直接通过 <code>gin.put&lt;team_t&gt;()</code> 发起 RDMA 操作，实现真正的零 CPU 开销。</p>
+
+<!-- ==================== SECTION 2 ==================== -->
+<h2 id="sec2">二、架构设计分析</h2>
+
+<h3>2.1 V1 到 V2 的架构演进逻辑</h3>
+
+<table>
+<tr><th>维度</th><th>V1 (NVSHMEM)</th><th>V2 (NCCL Gin)</th><th>演进逻辑</th></tr>
+<tr><td>Backend</td><td>NVSHMEM</td><td>NCCL Gin (GDAKI)</td><td>从独立库切换到 NCCL 内置扩展，复用 communicator</td></tr>
+<tr><td>SM 占用</td><td>24 SMs</td><td>4-6 SMs</td><td>4x 减少，释放给 GEMM</td></tr>
+<tr><td>Buffer 设计</td><td>固定大小</td><td>ElasticBuffer 统一抽象</td><td>支持动态 scale-up/scale-out</td></tr>
+<tr><td>Scale 上限</td><td>EP64</td><td>EP2048</td><td>32x 扩展</td></tr>
+<tr><td>SM 计算</td><td>Auto-tuning</td><td>Analytical model</td><td>消除运行时搜索开销</td></tr>
+<tr><td>Barrier 机制</td><td>NVSHMEM barrier</td><td>TMA store + Gin signal</td><td>更低延迟</td></tr>
+</table>
+
+<p><strong>核心演进驱动力：</strong>V1 使用 NVSHMEM 作为 backend，虽然实现了 GPU-initiated RDMA，但 NVSHMEM 的抽象层级导致无法精细控制 SM 数量和 QP 共享模式。V2 切换至 NCCL Gin backend 后，可以直接在 kernel 内通过 <code>ncclGin</code> 句柄发起 put/signal/flush 操作，实现 ==kernel-level 的通信控制==。</p>
+
+<h3>2.2 ElasticBuffer 统一抽象的设计哲学</h3>
+
+<p>ElasticBuffer 是 V2 的核心设计创新，它将 high-throughput 和 low-latency 两种 EP 模式统一为单一接口：</p>
+
+<div class="card">
+<div class="card-title">设计原则</div>
+<ul>
+<li><strong>统一内存模型：</strong>一个 buffer 同时服务于 dispatch 和 combine，通过不同的 layout 视图访问</li>
+<li><strong>弹性大小：</strong>buffer 大小由 MoE 参数（num_max_tokens, hidden, num_topk, use_fp8）自动计算</li>
+<li><strong>可复用性：</strong>handle-caching 模式允许在 gate 决策不变时跳过 layout 重计算</li>
+<li><strong>多后端支持：</strong>GPU-only、CPU-only、混合 GPU+CPU 后端</li>
+</ul>
+</div>
+
+<p>代码证据（<code>elastic.py:195-226</code>）：ElasticBuffer 类的设计包含了 EP、Engram、PP、AGRS 四种操作的统一缓冲区，通过 <code>_C.ElasticBuffer</code> C++ runtime 管理。</p>
+
+<h3>2.3 Scale-up / Scale-out 分层设计</h3>
+
+<p>DeepEP 将通信拓扑分为两个逻辑层级：</p>
+
+<table>
+<tr><th>层级</th><th>物理介质</th><th>通信原语</th><th>代码路径</th></tr>
+<tr><td>Scale-up</td><td>NVLink (900 GB/s)</td><td>TMA store + LSA</td><td><code>kIsScaleupNVLink=true</code></td></tr>
+<tr><td>Scale-out</td><td>RDMA (400 Gbps)</td><td>IBGDA put</td><td><code>kIsScaleupNVLink=false</code></td></tr>
+</table>
+
+<p>关键代码（<code>dispatch.cuh:371-393</code>）：</p>
+<pre><code>// Issue TMA NVLink stores
+if (dst_ptr != nullptr)
+    ptx::tma_store_1d(dst_ptr, tma_buffer.get_base_ptr(), ...);
+
+// Issue RDMA put
+if (stored_dst_slot_idx >= 0 and dst_ptr == nullptr) {
+    gin.put&lt;team_t&gt;(recv_buffer..., send_buffer_ptr, ..., stored_dst_rank_idx);
+}</code></pre>
+
+<p>这段代码精确体现了分层逻辑：先尝试 NVLink（<code>dst_ptr != nullptr</code>），失败则回退到 RDMA put。</p>
+
+<h3>2.4 Hybrid mode vs Direct mode 的设计权衡</h3>
+
+<table>
+<tr><th>维度</th><th>Direct Mode (scaleout_ranks=1)</th><th>Hybrid Mode (scaleout_ranks&gt;1)</th></tr>
+<tr><td>Warps 分工</td><td>Notify + Dispatch</td><td>Notify + Scaleout + Forward</td></tr>
+<tr><td>通信路径</td><td>直接 NVLink 或 RDMA</td><td>先 NVLink 聚合，再 RDMA 转发</td></tr>
+<tr><td>Kernel</td><td><code>dispatch_impl</code></td><td><code>hybrid_dispatch_impl</code></td></tr>
+<tr><td>适用场景</td><td>单节点或全 NVLink</td><td>多节点大规模 EP</td></tr>
+<tr><td>Forward warps</td><td>无</td><td>将 scale-out 数据转发到 scale-up</td></tr>
+</table>
+
+<p><strong>设计权衡：</strong></p>
+<ul>
+<li><strong>Direct mode</strong> 简单直接，所有 warps 并行处理 token，通过 TMA store 直接写入目标 rank 的接收 buffer</li>
+<li><strong>Hybrid mode</strong> 引入 forward warps，负责将 scale-out 接收到的数据转发到正确的 scale-up rank，实现了 ==通信路径的解耦==</li>
+<li>Hybrid mode 的代价是更复杂的 barrier 机制（需要 scaleup + scaleout 双重 barrier）和额外的 buffer 空间</li>
+</ul>
+
+<!-- ==================== SECTION 3 ==================== -->
+<h2 id="sec3">三、代码深度分析</h2>
+
+<h3>3.1 dispatch.cuh 的核心数据流</h3>
+
+<p><code>dispatch_impl</code> 的 kernel 架构分为两个 warp 角色：</p>
+
+<div class="card">
+<div class="card-title">数据流全景</div>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                    Dispatch Kernel                           │
+├─────────────────────────────────────────────────────────────┤
+│ Notify Warps (4 warps = 128 threads)                        │
+│  1. Atomic count experts/ranks per token (smem)             │
+│  2. Grid-level reduction (workspace)                        │
+│  3. Wait for all SMs, compute prefix sum                    │
+│  4. Exchange counts with peers (RDMA put / NVLink put_value)│
+│  5. Wait for remote counts, write to host workspace         │
+├─────────────────────────────────────────────────────────────┤
+│ Dispatch Warps (N warps × 32 threads)                       │
+│  1. TMA load hidden data from global → smem                 │
+│  2. cp.async load SF (scale factors) from global → smem     │
+│  3. Load top-k indices, deduplicate ranks                   │
+│  4. Allocate destination slot (atomicAdd)                   │
+│  5. TMA store to send buffer (RDMA path)                    │
+│  6. TMA store to recv buffer (NVLink path)                  │
+│  7. Issue RDMA put (for non-NVLink ranks)                   │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+</div>
+
+<p>关键代码段分析：</p>
+
+<p><strong>Expert counting（dispatch.cuh:93-107）：</strong></p>
+<pre><code>const auto global_warp_idx = warp_idx * kNumSMs + sm_idx;
+for (int i = global_warp_idx; i &lt; num_tokens; i += kNumNotifyWarps * kNumSMs) {
+    const auto dst_expert_idx = lane_idx &lt; kNumTopk ?
+        static_cast&lt;int&gt;(__ldg(topk_idx + i * kNumTopk + lane_idx)) : -1;
+    if (dst_expert_idx >= 0)
+        atomicAdd_block(expert_count + dst_expert_idx, 1);
+    // Rank choice should do deduplication here
+    const auto dst_rank_idx = dst_expert_idx >= 0 ? dst_expert_idx / kNumExpertsPerRank : -1;
+    if (ptx::deduplicate(dst_rank_idx, lane_idx) and dst_rank_idx >= 0)
+        atomicAdd_block(rank_count + dst_rank_idx, 1);
+}</code></pre>
+
+<p>这段代码展示了 ==warp-level parallelism== 的精妙设计：每个 warp 处理一组 token，通过 <code>lane_idx</code> 并行处理 TopK 个 expert 选择。<code>deduplicate</code> 确保同一个 rank 只被计数一次（因为一个 token 的多个 expert 可能落在同一 rank）。</p>
+
+<p><strong>Slot allocation（dispatch.cuh:337-351）：</strong></p>
+<pre><code>if (ptx::deduplicate(stored_dst_rank_idx, lane_idx) and stored_dst_rank_idx >= 0)
+    stored_dst_slot_idx = atomicAdd(workspace_layout.get_scaleup_atomic_sender_counter()
+                                   + stored_dst_rank_idx, 1);</code></pre>
+
+<p>这是实现 write-time reorganization 的关键：通过 atomicAdd 为每个 (token, rank) 对分配唯一的接收 slot，使得数据可以直接写入目标位置。</p>
+
+<h3>3.2 TokenLayout 和 BufferLayout 的内存布局设计</h3>
+
+<p><code>layout.cuh</code> 定义了 DeepEP 的内存抽象：</p>
+
+<div class="card">
+<div class="card-title">TokenLayout 结构</div>
+<pre><code>Token Layout (per token):
+┌──────────────┬──────────────┬────────────────────┐
+│ Hidden Data  │  SF Packs    │  Metadata          │
+│ (H × bytes)  │  (SF × 4B)   │  topk_idx + weights│
+│              │              │  + src_token_idx   │
+└──────────────┴──────────────┴────────────────────┘
+     ↓ TMA align    ↓ TMA align     ↓ TMA align
+
+Total = align(H×bytes, 32) + align(SF×4B, 32) + align(metadata, 32) [+ mbarrier]</code></pre>
+</div>
+
+<p>代码证据（<code>layout.cuh:201-208</code>）：</p>
+<pre><code>template &lt;bool kWithMBarrier, typename dtype_t = int&gt;
+__forceinline__ __device__ __host__ dtype_t get_num_bytes() const {
+    const auto num_bytes = math::align(num_hidden_bytes, ptx::kNumTMAAlignBytes) +
+                           math::align(num_sf_bytes, ptx::kNumTMAAlignBytes) +
+                           math::align(num_metadata_bytes, ptx::kNumTMAAlignBytes) +
+                           math::align&lt;int&gt;(kWithMBarrier ? sizeof(ptx::mbarrier) : 0, ptx::kNumTMAAlignBytes);
+    return static_cast&lt;dtype_t&gt;(num_bytes);
+}</code></pre>
+
+<p><strong>设计要点：</strong></p>
+<ul>
+<li>每个 section 都进行 32 字节对齐（<code>kNumTMAAlignBytes</code>），满足 TMA 要求</li>
+<li>Metadata 包含 topk_idx、topk_weights、src_token_global_idx，用于 combine 阶段的逆向路由</li>
+<li><code>BufferLayout</code> 是 <code>TokenLayout</code> 的多维扩展，支持 rank × token 的二维索引</li>
+</ul>
+
+<h3>3.3 Notify warps vs Dispatch warps 的分工</h3>
+
+<table>
+<tr><th>维度</th><th>Notify Warps (4 warps)</th><th>Dispatch Warps (N warps)</th></tr>
+<tr><td>职责</td><td>元数据交换 + slot 分配</td><td>数据传输</td></tr>
+<tr><td>通信对象</td><td>所有 ranks</td><td>目标 rank（由 gate 决定）</td></tr>
+<tr><td>同步</td><td>named_barrier + grid_sync</td><td>__syncwarp + mbarrier</td></tr>
+<tr><td>内存访问</td><td>smem atomic + workspace</td><td>TMA load/store + RDMA put</td></tr>
+<tr><td>QP 使用</td><td>QP 0（notify 专用）</td><td>按 SM 轮流分配</td></tr>
+</table>
+
+<p>代码证据（<code>dispatch.cuh:68-70</code>）：</p>
+<pre><code>const auto [qp_idx, sharing_mode] = comm::get_qp_mode&lt;kNumSMs, kNumQPs, kNumDispatchWarps, ...&gt;(
+    sm_idx, warp_idx - kNumNotifyWarps, warp_idx &lt; kNumNotifyWarps);</code></pre>
+
+<p>notify warps 始终使用 QP 0，而 dispatch warps 根据 <code>sm_idx</code> 和 channel index 轮流使用可用 QPs。</p>
+
+<h3>3.4 TMA (Tensor Memory Accelerator) 的使用方式</h3>
+
+<p>DeepEP 大量使用 Hopper 的 TMA 指令进行异步数据传输：</p>
+
+<table>
+<tr><th>TMA 操作</th><th>代码位置</th><th>用途</th></tr>
+<tr><td><code>tma_load_1d</code></td><td>dispatch.cuh:289</td><td>从 global memory 加载 hidden data 到 smem</td></tr>
+<tr><td><code>tma_store_1d</code></td><td>dispatch.cuh:366,377</td><td>从 smem 写入 global memory（send/recv buffer）</td></tr>
+<tr><td><code>mbarrier_arrive_and_set_tx</code></td><td>dispatch.cuh:357</td><td>通知 TMA 数据已就绪</td></tr>
+<tr><td><code>mbarrier_wait_and_flip_phase</code></td><td>dispatch.cuh:358</td><td>等待 TMA 完成</td></tr>
+<tr><td><code>tma_store_wait</code></td><td>dispatch.cuh:284</td><td>等待所有 outstanding TMA stores 完成</td></tr>
+</table>
+
+<p>TMA 的核心优势是 ==decoupling data movement from compute==。在 dispatch 中，TMA load 将数据从 global → smem 后，warp 可以立即处理 metadata（top-k indices, slot allocation），而不需要等待数据完全就绪。mbarrier 机制确保在使用数据前 TMA 已完成。</p>
+
+<p>代码证据（<code>ptx.cuh:124-136</code>）：</p>
+<pre><code>__forceinline__ __device__ void tma_load_1d(
+    const void* dst_ptr, const void* src_ptr, mbarrier* ptr, const int& num_bytes,
+    const TMACacheHint& hint = TMACacheHint::kEvictFirst) {
+    asm volatile(
+        "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0], [%1], %2, [%3], %4;\n" ::
+        "r"(static_cast&lt;uint32_t&gt;(__cvta_generic_to_shared(dst_ptr))),
+        "l"(src_ptr), "r"(num_bytes),
+        "r"(static_cast&lt;uint32_t&gt;(__cvta_generic_to_shared(ptr))),
+        "l"(hint) : "memory");
+}</code></pre>
+
+<p>注意 <code>L2::cache_hint</code> 使用 <code>kEvictFirst</code>，提示 L2 优先驱逐这些缓存行（因为数据很快会被消费），这是针对 MoE 通信模式的精确优化。</p>
+
+<!-- ==================== SECTION 4 ==================== -->
+<h2 id="sec4">四、核心问题回答</h2>
+
+<h3>4.1 为什么要做 token 重组（reorganization）？</h3>
+
+<p><strong>答案：因为 GEMM 计算需要 expert-grouped 的数据布局，而 dispatch 产生的是 arrival-order 布局。</strong></p>
+
+<p>具体推导：</p>
+<ol>
+<li>MoE 的 FFN 计算本质上是多个独立的 GEMM：每个 expert 对其接收到的所有 token 执行矩阵乘法</li>
+<li>GEMM 的高效实现要求数据按 expert 分组且内存连续（<code>[num_tokens_for_expert, hidden]</code>）</li>
+<li>Dispatch 阶段，token 按照到达顺序写入接收 buffer，布局为 <code>[total_recv_tokens, hidden]</code>，其中属于同一 expert 的 token 是分散的</li>
+<li><strong>因此必须进行重组</strong>：将 arrival-order 转换为 expert-order</li>
+</ol>
+
+<p>DeepEP 的解决方案是 <strong>write-time reorganization</strong>：在 dispatch 时，通过 <code>atomicAdd(psum_num_recv_tokens_per_expert + dst_expert_idx, 1)</code> 直接计算每个 token 在 expert-ordered 布局中的目标位置（<code>dispatch_copy_epilogue.cuh:121</code>）。这比 copy-time reorganization 更高效，因为避免了额外的全局内存读写。</p>
+
+<h3>4.2 为什么 dispatch 必须是随机访存模式？</h3>
+
+<p><strong>答案：因为 token → expert 的映射由 gate 网络动态决定，无法预测。</strong></p>
+
+<p>数学证明：</p>
+<ul>
+<li>设 gate 函数为 $G: \mathbb{R}^H \rightarrow \mathbb{R}^E$，对于每个 token $x_i$，选择 TopK expert：$E_i = \text{TopK}(G(x_i))$</li>
+<li>由于 $G$ 是神经网络，$E_i$ 与 $x_i$ 之间没有简单的空间局部性</li>
+<li>因此，dispatch 时写入目标 rank 的序列是伪随机的</li>
+<li>这意味着无法使用顺序预取（prefetch）优化，必须依赖 TMA 的异步特性来隐藏延迟</li>
+</ul>
+
+<p>代码中的应对策略（<code>dispatch.cuh:278-280</code>）：每个 dispatch warp 以 <code>token_stride = kNumDispatchWarps * kNumSMs</code> 的步长跳跃访问 token，将随机访存分散到多个 warps 并行执行。</p>
+
+<h3>4.3 为什么 combine 可以顺序访问？</h3>
+
+<p><strong>答案：因为 combine 是 dispatch 的逆操作，其访问模式由 dispatch 时记录的 metadata 决定，可以顺序遍历。</strong></p>
+
+<p>关键机制：</p>
+<ol>
+<li>Dispatch 时，每个 token 的源信息（<code>src_token_global_idx</code>）被写入 metadata</li>
+<li>Combine 时，kernel 按顺序遍历接收到的 token（<code>for (int i = token_start_idx; i &lt; token_end_idx; ++i)</code>）</li>
+<li>对于每个 token，从 metadata 读取源 rank 和源 token index</li>
+<li>然后执行 TMA load 从源位置读取数据，TMA store 写回目标位置</li>
+</ol>
+
+<p>代码证据（<code>combine.cuh:86-93</code>）：</p>
+<pre><code>int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, kNumSMs * kNumWarps);
+const int token_start_idx = num_tokens_per_warp * global_warp_idx;
+const int token_end_idx = min(token_start_idx + num_tokens_per_warp, num_reduced_tokens);
+for (int i = token_start_idx; i &lt; token_end_idx; ++ i) {
+    const int src_token_idx = __ldg(src_metadata + i * kMetadataStride) % kNumMaxTokensPerRank;
+    const int src_rank_topk_idx = __ldg(src_metadata + i * kMetadataStride + 1);
+    ...
+}</code></pre>
+
+<p>这种顺序访问模式使得 combine 的内存访问效率远高于 dispatch，也是 combine kernel 可以更简洁的原因。</p>
+
+<!-- ==================== SECTION 5 ==================== -->
+<h2 id="sec5">五、性能分析</h2>
+
+<h3>5.1 SM 数量的理论计算模型</h3>
+
+<p>DeepEP V2 的一个核心创新是 analytical SM count 计算，消除了 auto-tuning 的需要。模型代码位于 <code>elastic.py:728-834</code>：</p>
+
+<div class="card">
+<div class="card-title">SM 计算模型</div>
+<pre><code>关键公式：
+1. 期望 top-k 不同 rank 数：
+   E[ranks] = N × (1 - C(E - E/N, TopK) / C(E, TopK))
+
+2. 瓶颈流量：
+   rdma_traffic = (1/E[topk]) × E[scaleout_topk] × (1 - 1/num_scaleout_ranks)
+   nvlink_traffic = 1 - 1/num_scaleup_ranks
+
+3. SM 数量：
+   num_sms = max(bounded_gbs / bounded_traffic × sm_read / sm_read_gbs,
+                 bounded_gbs / bounded_traffic × sm_write / sm_write_gbs)
+   num_sms = align(max(4, ceil(num_sms × 1.25)), 2)</code></pre>
+</div>
+
+<p>模型假设：</p>
+<ul>
+<li>Per-SM HBM 读带宽：200 GB/s</li>
+<li>Per-SM HBM 写带宽：50 GB/s</li>
+<li>1.25x 安全系数</li>
+<li>结果对齐到偶数，最小 4 个 SM</li>
+</ul>
+
+<h3>5.2 带宽瓶颈分析</h3>
+
+<p>根据 README 的性能数据：</p>
+
+<table>
+<tr><th>Arch</th><th>Topo</th><th>Dispatch BW</th><th>Combine BW</th><th>SMs</th></tr>
+<tr><td>SM90</td><td>EP 8×2</td><td>90 GB/s (RDMA)</td><td>81 GB/s (RDMA)</td><td>12</td></tr>
+<tr><td>SM90</td><td>EP 8×4</td><td>61 GB/s (RDMA)</td><td>61 GB/s (RDMA)</td><td>6</td></tr>
+<tr><td>SM100</td><td>EP 8</td><td>726 GB/s (NVLink)</td><td>740 GB/s (NVLink)</td><td>64</td></tr>
+<tr><td>SM100</td><td>EP 8</td><td>643 GB/s (NVLink)</td><td>675 GB/s (NVLink)</td><td>24</td></tr>
+</table>
+
+<p><strong>分析：</strong></p>
+<ul>
+<li>EP 8×2 (CX7)：90 GB/s 接近 200G RDMA 的理论带宽（~120 GB/s 单向），考虑到协议开销和 local rank 流量，效率约 75%</li>
+<li>EP 8 (NVLink)：726 GB/s 达到 H100 NVLink 总带宽（~900 GB/s）的 80%，这是极高的效率</li>
+<li>V2 vs V2：在等效性能下，SM 数从 24 降到 6（4x 减少），说明 V2 的每 SM 效率提升了 4x</li>
+</ul>
+
+<h3>5.3 与 NVSHMEM 方案对比的优势</h3>
+
+<table>
+<tr><th>维度</th><th>NVSHMEM (V1)</th><th>NCCL Gin (V2)</th><th>优势来源</th></tr>
+<tr><td>Backend 开销</td><td>独立库，需额外初始化</td><td>NCCL 内置，复用 communicator</td><td>减少初始化时间和内存</td></tr>
+<tr><td>QP 管理</td><td>固定模式</td><td>SM 级动态共享</td><td>更灵活的 QP 利用</td></tr>
+<tr><td>Barrier</td><td>NVSHMEM 全局 barrier</td><td>TMA store + Gin signal</td><td>更低延迟</td></tr>
+<tr><td>SM 控制</td><td>粗粒度</td><td>Analytical model</td><td>精确控制 SM 占用</td></tr>
+<tr><td>可扩展性</td><td>EP64</td><td>EP2048</td><td>分层 barrier + forward warps</td></tr>
+</table>
+
+<!-- ==================== SECTION 6 ==================== -->
+<h2 id="sec6">六、业界方案对比</h2>
+
+<h3>6.1 主要 EP 方案概览</h3>
+
+<table>
+<tr><th>方案</th><th>Backend</th><th>SM 占用</th><th>特点</th></tr>
+<tr><td>DeepEP V2</td><td>NCCL Gin (GDAKI)</td><td>4-6</td><td>最低 SM 占用，最高带宽效率</td></tr>
+<tr><td>Megatron-LM EP</td><td>NCCL</td><td>高</td><td>标准实现，通用但开销大</td></tr>
+<tr><td>DeepSpeed-MoE</td><td>NCCL</td><td>中</td><td>ZeRO 集成，适合推理</td></tr>
+<tr><td>Tutel</td><td>NCCL</td><td>中</td><td>微软，自适应路由</td></tr>
+<tr><td>NVSHMEM</td><td>NVSHMEM</td><td>中</td><td>早期 GPU-initiated RDMA</td></tr>
+</table>
+
+<h3>6.2 DeepSeek V3 论文中的 EP 设计</h3>
+
+<p>根据 DeepSeek-V3 Technical Report (arXiv:2412.19437)：</p>
+<ul>
+<li>使用 256 experts + TopK=8 的 MoE 架构</li>
+<li>采用 Device-Limited Routing：每个 token 最多路由到 4 个节点</li>
+<li>分层 all-to-all：先 NVLink 节点内聚合，再 RDMA 跨节点传输</li>
+<li>16-way pipeline parallelism × 64-way expert parallelism</li>
+</ul>
+
+<h3>6.3 NCCL Gin backend 技术细节</h3>
+
+<p>根据搜索结果，NCCL Gin (GPU-Initiated Networking) 提供两种 backend：</p>
+<ul>
+<li><strong>GDAKI (GPUDirect Async Kernel-Initiated)：</strong>GPU 线程直接通过 DOCA GPUNetIO 编程 NIC，零 CPU 开销</li>
+<li><strong>Proxy：</strong>CPU 代理模式，作为 fallback</li>
+</ul>
+
+<p>DeepEP 使用的是 GDAKI 模式，通过 <code>ncclGin</code> 设备端 API（<code>put</code>, <code>put_value</code>, <code>red_add</code>, <code>signal</code>, <code>flush</code>）直接发起 RDMA 操作。</p>
+
+<!-- ==================== APPENDIX ==================== -->
+<h2 id="appendix">附录</h2>
+
+<h3>A.1 访问过的网址列表</h3>
+
+<table>
+<tr><th>URL</th><th>状态</th><th>用途</th></tr>
+<tr><td>https://github.com/deepseek-ai/DeepEP</td><td>✓</td><td>主仓库 README 和代码</td></tr>
+<tr><td>https://arxiv.org/abs/2412.19437</td><td>✓</td><td>DeepSeek-V3 Technical Report</td></tr>
+<tr><td>https://arxiv.org/pdf/2412.19437</td><td>✓</td><td>DeepSeek-V3 论文 PDF</td></tr>
+<tr><td>https://arxiv.org/abs/2501.12948</td><td>✓</td><td>DeepSeek-R1 论文</td></tr>
+<tr><td>https://arxiv.org/html/2511.15076v2</td><td>✓ (搜索引用)</td><td>GPU-Initiated Networking for NCCL</td></tr>
+<tr><td>https://www.emergentmind.com/topics/nccl-gin-gdaki-backend</td><td>✓ (搜索引用)</td><td>NCCL Gin GDAKI 技术分析</td></tr>
+<tr><td>https://developer.nvidia.com/blog/optimizing-communication-for-mixture-of-experts-training/</td><td>✓ (搜索引用)</td><td>NVIDIA MoE 通信优化</td></tr>
+<tr><td>https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html</td><td>✓ (搜索引用)</td><td>NCCL Device API 文档</td></tr>
+</table>
+
+<h3>A.2 关键思考过程</h3>
+
+<div class="card">
+<div class="card-title">分析思路</div>
+<ol>
+<li><strong>从第一性原理出发：</strong>先建立 MoE 通信的数学建模，理解为什么 all-to-all 是必需的</li>
+<li><strong>代码驱动的架构理解：</strong>通过阅读 dispatch.cuh → combine.cuh → layout.cuh 的顺序，理解数据流</li>
+<li><strong>对比分析：</strong>通过 V1 vs V2、Direct vs Hybrid 的对比，理解设计权衡</li>
+<li><strong>性能建模：</strong>从 SM 计算模型和带宽数据反推设计决策</li>
+<li><strong>业界调研：</strong>通过搜索了解 NCCL Gin 的技术背景和 DeepSeek V3 的设计选择</li>
+</ol>
+</div>
+
+<h3>A.3 代码阅读笔记</h3>
+
+<h4>dispatch.cuh 关键行号索引</h4>
+<table>
+<tr><th>行号</th><th>内容</th><th>说明</th></tr>
+<tr><td>17-45</td><td>Template parameters</td><td>kNumSMs, kNumNotifyWarps, kNumDispatchWarps 等编译时常量</td></tr>
+<tr><td>79-258</td><td>Notify warps 逻辑</td><td>Expert counting, reduction, prefix sum</td></tr>
+<tr><td>259-395</td><td>Dispatch warps 逻辑</td><td>TMA load/store, RDMA put</td></tr>
+<tr><td>288-291</td><td>TMA load hidden</td><td>从 global memory 加载 token data</td></tr>
+<tr><td>337-351</td><td>Slot allocation</td><td>atomicAdd 分配目标 slot</td></tr>
+<tr><td>357-358</td><td>mbarrier wait</td><td>等待 TMA load 完成</td></tr>
+<tr><td>371-378</td><td>NVLink store</td><td>TMA store 到远程 NVLink accessible buffer</td></tr>
+<tr><td>382-393</td><td>RDMA put</td><td>对非 NVLink rank 发起 RDMA put</td></tr>
+</table>
+
+<h4>combine.cuh 关键行号索引</h4>
+<table>
+<tr><th>行号</th><th>内容</th><th>说明</th></tr>
+<tr><td>83-86</td><td>Token iteration</td><td>每个 warp 按顺序遍历 token</td></tr>
+<tr><td>88-93</td><td>Metadata 读取</td><td>从 src_metadata 获取源 rank/token</td></tr>
+<tr><td>95-106</td><td>NVLink bypass vs RDMA</td><td>判断是否可以直接 NVLink 访问</td></tr>
+<tr><td>127-143</td><td>No reduce case</td><td>直接 TMA load + TMA store</td></tr>
+<tr><td>144-176</td><td>Local reduction</td><td>多个 expert 输出 reduce 到同一 token</td></tr>
+</table>
+
+<h4>layout.cuh 关键行号索引</h4>
+<table>
+<tr><th>行号</th><th>内容</th><th>说明</th></tr>
+<tr><td>10-177</td><td>WorkspaceLayout</td><td>固定布局的 workspace 设计</td></tr>
+<tr><td>179-249</td><td>TokenLayout</td><td>per-token 内存布局</td></tr>
+<tr><td>251-311</td><td>BufferLayout</td><td>多维 buffer 布局（rank × token）</td></tr>
+</table>
+
+<h3>A.4 关键术语表</h3>
+
+<table>
+<tr><th>术语</th><th>全称</th><th>说明</th></tr>
+<tr><td>EP</td><td>Expert Parallelism</td><td>专家并行，MoE 特有的并行策略</td></tr>
+<tr><td>GDAKI</td><td>GPUDirect Async Kernel-Initiated</td><td>GPU 直接发起 RDMA 通信的技术</td></tr>
+<tr><td>Gin</td><td>GPU-Initiated Networking</td><td>NCCL 的 GPU 发起通信扩展</td></tr>
+<tr><td>TMA</td><td>Tensor Memory Accelerator</td><td>Hopper 引入的异步数据传输单元</td></tr>
+<tr><td>QP</td><td>Queue Pair</td><td>RDMA 通信的队列对</td></tr>
+<tr><td>LSA</td><td>Link State Accelerator</td><td>NVLink 对称内存访问</td></tr>
+<tr><td>IBGDA</td><td>InfiniBand GPU Direct Async</td><td>InfiniBand 上的 GPU 直接 RDMA</td></tr>
+<tr><td>SF</td><td>Scale Factor</td><td>FP8 量化的缩放因子</td></tr>
+</table>
+
+<hr style="border-color: var(--border); margin: 40px 0;">
+<p style="color: var(--muted); font-size: 0.85rem; text-align: center;">
+DeepEP 架构设计深度分析报告 | 2026-07-27 | 基于 DeepEP V2 源码分析
+</p>
+
+</body>
+</html>
