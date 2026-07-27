@@ -76,7 +76,7 @@ tr:hover td{background:rgba(74,143,224,.06)}
 <li><a href="#s_3">3. Context Parallelism：多卡切序列</a></li>
 <li><a href="#s_4">4. MLA：KV Cache 压缩的范式革命</a></li>
 <li><a href="#s_5">5. KV Offload：层级存储</a></li>
-<li><a href="#s_6">6. Prefill-Decode Disaggregation</a></li>
+<li><a href="#s_6">6. P/D Disaggregation + D卡缓冲分析</a></li>
 <li><a href="#s_7">7. Sparse Attention：跳过不相关</a></li>
 <li><a href="#s_8">8. Ascend 的长上下文适配</a></li>
 <li><a href="#s_9">9. 开放难题与物理极限</a></li>
@@ -482,6 +482,170 @@ if request.kv_transfer_params is not None and (
 
 <div class="pbox">
 <b>KV 传输时间估算：</b>1M token × 576 bytes × 60 layers = 34.6 GB。通过 400 Gbps RDMA (Mooncake/Nixl) 传输需要 <b>~692ms</b>。这比 prefill 计算本身（数十秒）小一个量级，因此 disagg 对长 prefill 是净正收益。
+</div>
+
+<h3>6.4 D 卡缓冲内存分配：全流程传输的容量分析</h3>
+
+<p>当 P 节点完成 1M token prefill 后，需要将 KV Cache 全量传输到 D 节点。D 端的缓冲内存分配涉及多个层次：</p>
+
+<div class="srcband">source: vllm/config/kv_transfer.py:33-39 · vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:358-410 · vllm/v1/core/kv_cache_manager.py:340-435</div>
+
+<h4>6.4.1 核心结论：KV Cache 即 Buffer</h4>
+
+<div class="pbox">
+<b>NIXL 方案的设计哲学：KV Cache 本身就是传输缓冲区。</b>D 端在传输开始前就为完整序列分配好 KV Cache 内存，NIXL 通过 RDMA <b>直接写入</b> KV Cache（zero-copy），不需要额外的"传输缓冲区"。
+<pre><code># nixl/base_worker.py:968-998 — 注册 KV Cache 到 NIXL
+total_size = storage.nbytes()           # 整个 KV Cache 的大小
+block_stride = total_size // self.num_blocks
+base_addr = storage.data_ptr()          # KV Cache 的 GPU 内存地址
+
+# 注册整个 KV Cache 为 NIXL 可写区域
+caches_data = [(base_addr, total_size, self.device_id, "")]
+descs = self.nixl_wrapper.get_reg_descs(caches_data, self.nixl_memory_type)
+self.nixl_wrapper.register_memory(descs, backends=self.nixl_backends)</code></pre>
+</div>
+
+<h4>6.4.2 D 端缓冲区分层清单</h4>
+
+<table>
+<tr><th>缓冲区</th><th>大小</th><th>位置</th><th>生命周期</th><th>是否必须</th></tr>
+<tr><td><b>KV Cache (主缓冲)</b></td><td>N × L × d_kv × sizeof(dtype)</td><td>GPU HBM 或 CPU DRAM</td><td>传输 + decode 全周期</td><td>✅ 必须</td></tr>
+<tr><td><b>NIXL Transfer Descriptors</b></td><td>~num_blocks × 64 bytes</td><td>CPU (主机内存)</td><td>握手时分配</td><td>✅ 必须</td></tr>
+<tr><td><b>Host Staging Buffer</b></td><td>= KV Cache 大小 (仅 cpu 模式)</td><td>CPU DRAM</td><td>传输期间</td><td>⚠️ kv_buffer_device=cpu</td></tr>
+<tr><td><b>Mooncake local_buffer</b></td><td>默认 4 GiB</td><td>CPU/GPU</td><td>传输期间</td><td>⚠️ Mooncake 专用</td></tr>
+<tr><td><b>Block Table + Metadata</b></td><td>~num_blocks × 8 bytes</td><td>GPU HBM</td><td>decode 全周期</td><td>✅ 必须</td></tr>
+<tr><td><b>Decode Workspace</b></td><td>batch × heads × dim × 4</td><td>GPU HBM</td><td>decode attention 计算</td><td>✅ 必须</td></tr>
+</table>
+
+<h4>6.4.3 1M token 单请求 D 端缓冲精确计算</h4>
+
+<div class="warn">
+<b>DeepSeek-V3 参数：</b>num_layers=60, kv_lora_rank=512, qk_rope_head_dim=64, dtype=bf16 (2 bytes), block_size=128
+</div>
+
+<pre><code>=== 1. KV Cache (主缓冲) ===
+  tokens_per_block = 128
+  num_blocks = 1,000,000 / 128 = 7,813 blocks
+  kv_bytes_per_token_per_layer = (512 + 64) × 2 = 1,152 bytes
+  kv_bytes_per_block = 128 × 1,152 = 147,456 bytes
+  KV Cache (单 TP rank) = 7,813 × 147,456 = 1.15 GB
+  KV Cache (8 TP ranks, 每 rank) = 1.15 GB (MLA 共享, 不随 TP 膨胀)
+  ★ 单请求 D 端 KV Cache = 1.15 GB (MLA, 8 TP)
+
+=== 2. Block Table ===
+  num_blocks × 8 bytes = 7,813 × 8 = 62.5 KB (可忽略)
+
+=== 3. NIXL Transfer Descriptors ===
+  num_blocks × ~64 bytes = 7,813 × 64 = 500 KB (可忽略)
+
+=== 4. Decode Workspace (per step) ===
+  batch=1, heads=128, dim=128, 4 bytes(fp32 acc) = 1 × 128 × 128 × 4 = 64 KB/层
+
+=== 5. 总 D 端缓冲 (单请求) ===
+  KV Cache: 1.15 GB
+  Block Table + Metadata: ~1 MB
+  Decode Workspace: ~1 MB
+  ★ 总计 ≈ 1.15 GB (KV Cache 占 99.9%)</code></pre>
+
+<h4>6.4.4 多请求并发场景</h4>
+
+<div class="insight">
+<b>关键洞察：D 端需要为每个并发请求预分配完整 KV Cache。</b>因为 vLLM 的调度器在传输开始前就调用 <code>allocate_slots()</code> 为完整序列分配 block（<code>delay_cache_blocks=True</code> 模式），<b>不能按需增量分配</b>。
+<pre><code># scheduler.py:919-931 — 传输前预分配全部 block
+if load_kv_async:
+    # An async load holds its blocks for the whole transfer with
+    # no forward progress and isn't preemptible here. Admit it
+    # only if it fits in (free - other in-flight reservations)
+    reserved_blocks = self._inflight_prefill_reserved_blocks()
+
+new_blocks = self.kv_cache_manager.allocate_slots(
+    request, num_new_tokens,
+    num_external_computed_tokens=num_external_computed_tokens,
+    delay_cache_blocks=load_kv_async,  # ← 延迟缓存标记
+    ...
+)</code></pre>
+</div>
+
+<table>
+<tr><th>并发请求数</th><th>每请求 1M token</th><th>D 端总缓冲 (MLA)</th><th>D 端总缓冲 (MHA 8KV)</th></tr>
+<tr><td>1</td><td>1.15 GB</td><td><b>1.15 GB</b></td><td>~24 GB</td></tr>
+<tr><td>4</td><td>1.15 GB</td><td><b>4.6 GB</b></td><td>~96 GB</td></tr>
+<tr><td>8</td><td>1.15 GB</td><td><b>9.2 GB</b></td><td>~192 GB</td></tr>
+<tr><td>16</td><td>1.15 GB</td><td><b>18.4 GB</b</td><td>~384 GB</td></tr>
+<tr><td>32</td><td>1.15 GB</td><td><b>36.8 GB</b></td><td>H200 141GB 不够</td></tr>
+</table>
+
+<h4>6.4.5 kv_buffer_device 的关键影响</h4>
+
+<div class="warn">
+<b>kv_buffer_device=cpu 的代价翻倍：</b>当配置 <code>kv_buffer_device="cpu"</code> 时（设备内存无法注册 NIXL），需要额外分配等量的 CPU staging buffer：
+<pre><code># nixl/base_worker.py:376-380
+self.host_xfer_buffers: dict[str, torch.Tensor] = {}
+if self.device_type == "cpu":
+    self.use_host_buffer = False
+else:
+    self.use_host_buffer = self.kv_buffer_device == "cpu"  # ← CPU 模式</code></pre>
+<b>1M token 单请求在 cpu 模式：</b>GPU KV Cache 1.15 GB + CPU staging 1.15 GB = <b>2.3 GB</b>。传输流程：RDMA → CPU staging → memcpy → GPU KV Cache。
+</div>
+
+<h4>6.4.6 Mooncake vs NIXL 缓冲对比</h4>
+
+<table>
+<tr><th>维度</th><th>NIXL</th><th>Mooncake</th></tr>
+<tr><td><b>传输缓冲</b></td><td>KV Cache 直写 (zero-copy)</td><td>4 GB local_buffer + KV Cache 直写</td></tr>
+<tr><td><b>额外内存</b></td><td>~0 (仅 descriptors ~500 KB)</td><td>4 GB (local_buffer_size 默认)</td></tr>
+<tr><td><b>写入方式</b></td><td>RDMA WRITE 直接到目标地址</td><td>batch_put 到 KV Cache</td></tr>
+<tr><td><b>批量传输</b></td><td>按 block 逐个 READ</td><td>batch_put_from_multi_buffers (批量)</td></tr>
+<tr><td><b>磁盘 offload</b></td><td>不支持</td><td>支持 (1.28 GB disk staging buffer)</td></tr>
+</table>
+
+<h4>6.4.7 传输时序与缓冲生命周期</h4>
+
+<pre><code>时间轴 ──────────────────────────────────────────────────────►
+
+[P 节点]
+  ┌──────── Prefill 1M token ────────┐
+  │ 计算 KV Cache (34.6 GB)          │
+  │ 写入 P 端 KV Cache               │
+  └──────────────────────────────────┘
+           │
+           │ RDMA WRITE (NIXL) / batch_put (Mooncake)
+           │ 传输量 = 1.15 GB (MLA, 单 TP rank)
+           │ 耗时 = ~23ms (400Gbps RDMA)
+           ▼
+[D 节点]
+  ┌─ allocate_slots ─────────────────┐  ← 预分配 KV Cache (1.15 GB)
+  │ 标记 block 为 "pending load"    │
+  │ delay_cache_blocks = True       │
+  └──────────────────────────────────┘
+           │
+           │ NIXL RDMA WRITE 写入 KV Cache
+           │ (直接写入预分配的 GPU 内存)
+           ▼
+  ┌─ complete_load ──────────────────┐
+  │ 标记 block 为 "cached"          │
+  │ 更新 request.num_computed_tokens │
+  └──────────────────────────────────┘
+           │
+           ▼
+  ┌─ Decode 开始 ────────────────────┐
+  │ 读取 KV Cache 进行 attention     │
+  │ KV Cache 持续占用直到请求结束    │
+  └──────────────────────────────────┘</code></pre>
+
+<h4>6.4.8 结论：D 端缓冲的工程权衡</h4>
+
+<div class="pbox">
+<b>核心公式：</b><code>D 端缓冲 = num_concurrent_requests × seq_len × layers × (d_lora + d_rope) × sizeof(dtype)</code>
+
+<b>关键工程约束：</b>
+<ol>
+<li><b>预分配不可避</b>：传输前必须分配完整 KV Cache（<code>delay_cache_blocks</code>），不能流式接收</li>
+<li><b>并发数 × 序列长度 = 缓冲容量</b>：16 并发 × 1M token = 18.4 GB (MLA)，在 H200 141GB 内可管理</li>
+<li><b>MLA 是必需</b>：MHA 8KV 方案下 1M token 单请求需 24 GB，16 并发需 384 GB — 超出任何单卡</li>
+<li><b>kv_buffer_device=cuda 是默认最优</b>：避免 CPU staging 的 2× 内存和额外 memcpy</li>
+<li><b>reserved_blocks 防死锁</b>：调度器为传输中的请求预留 block，避免已传输数据被抢占</li>
+</ol>
 </div>
 
 <!-- ====================================================================== -->
