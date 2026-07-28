@@ -50,9 +50,9 @@ A more accurate definition:
 
 ---
 
-# 1. Dispatch / Combine: Dynamic Data Layout Transformation
+## 1. Dispatch / Combine: Dynamic Data Layout Transformation
 
-## 1.1 Why Does MoE Need Dispatch?
+### 1.1 Why Does MoE Need Dispatch?
 
 In ordinary Transformers, input naturally maintains Token-major layout. But in MoE, the Router dynamically selects Experts per Token:
 
@@ -80,7 +80,7 @@ Token-major → Destination-major → Expert-major
 
 This is not simple communication — it is a ==**dynamic data layout transformation**==.
 
-## 1.2 Combine: Expert-major Back to Token-major
+### 1.2 Combine: Expert-major Back to Token-major
 
 After Expert computation, output remains Expert-major. The next layer needs Token-major. Combine reverses:
 
@@ -98,13 +98,13 @@ Combine is ==**data layout recovery + semantic recovery**==.
 
 ---
 
-# 2. DeepEP Buffer System: Data Flow Organization Under Different Kernels
+## 2. DeepEP Buffer System: Data Flow Organization Under Different Kernels
 
 DeepEP does not use identical data paths in all scenarios:
 - **Training / Prefill** care about throughput
 - **Decode** cares about latency
 
-## 2.1 Normal Kernel: Throughput-Optimized Complete Pipeline
+### 2.1 Normal Kernel: Throughput-Optimized Complete Pipeline
 
 Data path:
 
@@ -128,7 +128,7 @@ Token is the **scheduling granularity**; Chunk is the **communication granularit
 
 **Expert Buffer**: Final transformation: Destination-major → Expert-major, forming Expert GEMM input.
 
-## 2.2 Low-Latency Kernel: Decode-Oriented Short Path
+### 2.2 Low-Latency Kernel: Decode-Oriented Short Path
 
 Decode: small batch, few Tokens, single-Token latency sensitive. Waiting for Chunk aggregation increases latency.
 
@@ -142,7 +142,7 @@ Goal: minimize ==**end-to-end Token latency**==.
 
 ---
 
-# 3. Normal vs Low-Latency: Two Communication Philosophies
+## 3. Normal vs Low-Latency: Two Communication Philosophies
 
 | | Normal Kernel | Low-Latency Kernel |
 |---|---|---|
@@ -153,7 +153,7 @@ Goal: minimize ==**end-to-end Token latency**==.
 | **Pipeline** | Deep | Shallow |
 | **Communication Path** | NVLink + RDMA coordination | Direct RDMA |
 
-## 3.1 Normal Kernel: Communication Pipelining
+### 3.1 Normal Kernel: Communication Pipelining
 
 In multi-GPU nodes, GPU-NIC topology is not fully symmetric. Communication paths may include:
 
@@ -165,7 +165,7 @@ Forming a three-stage communication pipeline.
 
 ---
 
-# 4. Warp Specialization: Pipelined Execution Inside the Communication Kernel
+## 4. Warp Specialization: Pipelined Execution Inside the Communication Kernel
 
 Warp Specialization in DeepEP is *not* about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for **parallelizing different stages within the communication Kernel**.
 
@@ -181,7 +181,7 @@ Forming: `Send → Forward → Receive`
 
 ---
 
-# 5. FIFO: From Synchronous to Streaming Pipeline
+## 5. FIFO: From Synchronous to Streaming Pipeline
 
 Without FIFO: before the previous stage completes, the next stage must wait:
 
@@ -203,11 +203,11 @@ Each stage only cares about its own write/read. No need to wait for the entire B
 
 ---
 
-# 6. Metadata: How Dynamic Routing Becomes Contiguous Access
+## 6. Metadata: How Dynamic Routing Becomes Contiguous Access
 
 Two analytical abstractions. Note: **Layout Metadata / Identity Metadata are not official DeepEP source code terms — they are conceptual models proposed for understanding MoE Runtimes.**
 
-## 6.1 Layout Metadata: Where Should Data Go?
+### 6.1 Layout Metadata: Where Should Data Go?
 
 Core question: **Where?**
 
@@ -222,7 +222,7 @@ Then: `dst = prefix[expert]++` completes contiguous writes.
 
 Solves: ==**dynamic mapping → contiguous addresses**==.
 
-## 6.2 Identity Metadata: Who Is This Data?
+### 6.2 Identity Metadata: Who Is This Data?
 
 Core question: **Who?**
 
@@ -240,25 +240,25 @@ Token17 = 0.73 × Expert2 + 0.27 × Expert7
 
 ---
 
-# 7. Key Details in MoE Runtime
+## 7. Key Details in MoE Runtime
 
-## 7.1 Does Sort Exist?
+### 7.1 Does Sort Exist?
 
 Yes, but not traditional sorting. Core process: `Count → Prefix Sum → Scatter`
 
 Essentially **Counting Sort / Bucketization**. Goal: produce contiguous layout, not sort by size.
 
-## 7.2 Why Must Top-K Information Be Preserved?
+### 7.2 Why Must Top-K Information Be Preserved?
 
 MoE is Top-K Experts per Token. Combine must know: which Experts, corresponding weights, ordering. Top-K slot information must be preserved.
 
-## 7.3 Why Is Memory Reorganization Unavoidable?
+### 7.3 Why Is Memory Reorganization Unavoidable?
 
 Three stages are inherently different: Communication (Destination-major), Compute (Expert-major), Model (Token-major). Rearrangement is a **necessary transformation** produced by MoE architecture. The optimization direction is not to eliminate it, but to ==**make data rearrangement, communication, and computation as pipelined as possible**==.
 
 ---
 
-# 8. From DeepEP to Mega MoE: MoE Runtime Evolution
+## 8. From DeepEP to Mega MoE: MoE Runtime Evolution
 
 DeepEP solves **Communication + Data Movement**. System trends are further fusing **Communication + Compute**.
 
@@ -274,7 +274,7 @@ Distinction:
 
 ---
 
-# 9. Summary: DeepEP's True System Significance
+## 9. Summary: DeepEP's True System Significance
 
 > **How to transform dynamic sparse Token-Expert dataflows into continuous dataflows that GPU hardware prefers.**
 
