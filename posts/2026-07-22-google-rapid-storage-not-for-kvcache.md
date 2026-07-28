@@ -223,4 +223,4 @@ Google's Lustre solution delivers ==75%== throughput improvement today at 50K co
 
 ---
 
-*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) for more AI infrastructure insights*
+*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) & [LinkedIn](https://www.linkedin.com/in/yanfei-wang-5081b4126/) for more AI infrastructure insights*
