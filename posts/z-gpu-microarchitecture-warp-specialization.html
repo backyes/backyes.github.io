@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Understanding GPU Microarchitecture from a Workload Perspective (2): Why Warp Specialization · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>
+.article-layout{display:flex;gap:32px;max-width:1160px;margin:0 auto;padding:0 32px}
+.toc-sidebar{flex:0 0 220px;position:sticky;top:0;align-self:flex-start;padding:40px 0;max-height:100vh;overflow-y:auto}
+.toc{font-size:.82rem}
+.toc-title{font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;font-size:.75rem}
+.toc ul{list-style:none;padding:0;margin:0;border-left:2px solid var(--border-soft)}
+.toc li{margin:0}
+.toc a{display:block;padding:6px 0 6px 14px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;margin-left:-2px;transition:all .15s}
+.toc a:hover{color:var(--fg);border-left-color:var(--accent)}
+.toc a.toc-h2{font-weight:500}
+.toc a.toc-h3{font-size:.78rem;padding-left:24px;color:var(--muted-2)}
+.toc a.toc-h3:hover{color:var(--muted)}
+.article{flex:1;max-width:960px;padding:40px 0 80px;min-width:0}
+.article h1{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px}
+.article .meta{color:var(--muted-2);font-size:.85rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.article-body{font-family:var(--font-serif);font-size:1.1rem;line-height:1.8;color:var(--fg-2)}
+.article-body h2{font-size:1.5rem;font-weight:700;margin:2em 0 .6em;padding-bottom:.4em;border-bottom:2px solid var(--accent);color:var(--fg)}
+.article-body h3{font-size:1.25rem;font-weight:600;margin:1.5em 0 .5em;padding-left:10px;border-left:3px solid var(--accent);color:var(--fg2)}
+.article-body p{margin:0 0 1.2em}
+.article-body strong{color:var(--fg);font-weight:600}
+.article-body mark{background:linear-gradient(180deg,transparent 60%,var(--accent-soft) 60%);padding:0 3px;color:var(--fg);font-weight:600}
+.article-body .key-callout{border-left:4px solid var(--accent);background:var(--callout);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}
+.article-body .key-callout p{margin:0 0 .5em}
+.article-body .key-callout p:last-child{margin:0}
+.article-body .key-num{color:var(--accent);font-weight:700;font-size:1.1em}
+.article-body .hl-blue{background:rgba(74,143,224,.12);border-left:3px solid var(--accent);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
+.article-body .hl-amber{background:rgba(210,153,34,.12);border-left:3px solid #d29922;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
+.article-body .hl-green{background:rgba(63,185,80,.12);border-left:3px solid #3fb950;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
+.article-body .hl-blue p,.article-body .hl-amber p,.article-body .hl-green p{margin:0}
+.article-body table{border-collapse:separate;border-spacing:0;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.article-body th{background:linear-gradient(180deg,rgba(74,143,224,.08),rgba(74,143,224,.04));font-weight:600;padding:10px 12px;border-bottom:2px solid rgba(74,143,224,.25);text-align:left;font-size:.85em;text-transform:uppercase;letter-spacing:.03em;color:var(--fg)}
+.article-body td{padding:9px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top;line-height:1.5}
+.article-body tr:last-child td{border-bottom:none}
+.article-body tr:nth-child(even) td{background:rgba(24,27,32,.2)}
+.article-body tr:hover td{background:rgba(74,143,224,.06)}
+.article-body thead th{position:sticky;top:0}
+.article-body blockquote{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}
+.article-body blockquote p{margin:0}
+.article-body code{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:'JetBrains Mono',monospace}
+.article-body pre code{background:none;border:none;padding:0}
+.article-body a{color:var(--accent);text-decoration:none}
+.article-body a:hover{text-decoration:underline}
+.article-body hr{border:none;border-top:1px solid var(--border-soft);margin:2em 0}
+.back{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}
+@media(max-width:900px){
+  .toc-sidebar{display:none}
+  .article-layout{padding:0 16px}
+}
+@media(max-width:768px){
+  .article{padding:24px 0 60px}
+  .article-body h2{font-size:1.3rem}
+  .article-body h3{font-size:1.1rem}
+  .article-body table{font-size:.8rem}
+  .article-body th,.article-body td{padding:6px 8px}
+}
+</style>
+</head>
+<body>
+<nav class="nav"><div class="nav-inner">
+  <a href="../" class="nav-brand"><span class="dot"></span>backyes</a>
+  <ul class="nav-links">
+    <li><a href="../#survey">Survey by AI</a></li>
+    <li><a href="../posts.html" class="active">Posts</a></li>
+    <li><a href="../tags.html">Tags</a></li>
+  </ul>
+</div></nav>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#the-core-idea" class="toc-h2">The Core Idea</a></li>
+<li><a href="#1-traditional-cuda-all-warps-do-the-same-thing" class="toc-h2">1. Traditional CUDA: All Warps Do the Same Thing</a></li>
+<li><a href="#2-warp-specialization-different-warps-become-pipel" class="toc-h2">2. Warp Specialization: Different Warps Become Pipeline Stages</a></li>
+<li><a href="#3-how-to-implement-in-cuda" class="toc-h2">3. How to Implement in CUDA?</a></li>
+<li><a href="#4-why-doesnt-this-lose-performance-like-normal-bra" class="toc-h2">4. Why Doesn't This Lose Performance Like Normal Branching?</a></li>
+<li><a href="#5-why-does-deepep-need-warp-specialization" class="toc-h2">5. Why Does DeepEP Need Warp Specialization?</a></li>
+<li><a href="#6-it-resembles-cpu-pipeline" class="toc-h2">6. It Resembles CPU Pipeline</a></li>
+<li><a href="#7-whats-the-cost" class="toc-h2">7. What's the Cost?</a></li>
+<li><a href="#8-the-accurate-mental-model-for-deepep" class="toc-h2">8. The Accurate Mental Model for DeepEP</a></li></ul></div>
+  </aside>
+  <article class="article">
+    <a href="../posts.html" class="back">← 返回 Posts</a>
+    <h1>Understanding GPU Microarchitecture from a Workload Perspective (2): Why Warp Specialization</h1>
+    <div class="meta"><span>📅 2026-07-28</span><div><span class="ptag">GPU</span><span class="ptag">Microarchitecture</span><span class="ptag">Warp-Specialization</span><span class="ptag">DeepEP</span><span class="ptag">FlashAttention</span><span class="ptag">CUTLASS</span><span class="ptag">Pipeline</span><span class="ptag">SIMT</span><span class="ptag">Dataflow</span><span class="ptag">MoE</span><span class="ptag">Hopper</span></div></div>
+    <div class="article-body">
+<h2 id="the-core-idea">The Core Idea</h2>
+<blockquote><p><strong>Don't make all threads in a Warp do the same work. Instead, assign different Warps to different tasks, forming a pipeline.</strong></p></blockquote>
+<p>Traditional CUDA programming emphasizes:</p>
+<blockquote><p>Launch many identical Blocks; every Warp executes the same type of computation.</p></blockquote>
+<p>Warp Specialization changes this:</p>
+<blockquote><p>Within a single Block, different Warps are assigned different <strong>roles</strong>; they collaborate to complete a more complex dataflow task.</p></blockquote>
+<p>This pattern appears extensively in DeepEP, FlashAttention-3, and CUTLASS Hopper Pipelines.</p>
+<hr>
+<h2 id="1-traditional-cuda-all-warps-do-the-same-thing">1. Traditional CUDA: All Warps Do the Same Thing</h2>
+<p>Consider a matrix multiply:</p>
+<pre><code>Block<br>├── Warp0: GEMM tile 0<br>├── Warp1: GEMM tile 1<br>├── Warp2: GEMM tile 2<br>└── Warp3: GEMM tile 3</code></pre>
+<p>Each Warp executes the same sequence:</p>
+<pre><code>Load → Compute → Store</code></pre>
+<p>All Warp code is essentially identical. This aligns with CUDA's original design:</p>
+<pre><code>Single Program Multiple Data (SPMD)</code></pre>
+<p>One program, many data.</p>
+<hr>
+<h2 id="2-warp-specialization-different-warps-become-pipel">2. Warp Specialization: Different Warps Become Pipeline Stages</h2>
+<p>Suppose a Block processes a data chunk. Traditionally:</p>
+<pre><code>Warp0: Load → Compute → Store<br>Warp1: Load → Compute → Store<br>Warp2: Load → Compute → Store</code></pre>
+<p>The problem: Load and Store block Compute. The three stages cannot overlap:</p>
+<pre><code>Load ────<br>          Compute ────<br>                      Store</code></pre>
+<p>With Warp Specialization:</p>
+<pre><code>Warp0: Load<br>Warp1:        Compute<br>Warp2:                  Store</code></pre>
+<p>Now across time:</p>
+<pre><code>Time →<br><br>Chunk A: [Warp0: Load] [Warp1: Compute] [Warp2: Store]<br>Chunk B:               [Warp0: Load] [Warp1: Compute] [Warp2: Store]</code></pre>
+<p>A pipeline forms.</p>
+<hr>
+<h2 id="3-how-to-implement-in-cuda">3. How to Implement in CUDA?</h2>
+<p>The key insight:</p>
+<p><strong>All Warps execute the same Kernel, but select different paths based on Warp ID.</strong></p>
+<pre><code>__global__ void kernel() {<br>    int warp_id = threadIdx.x / 32;<br><br>    while (true) {<br>        if (warp_id == 0) {<br>            producer();<br>        } else if (warp_id == 1) {<br>            compute();<br>        } else if (warp_id == 2) {<br>            consumer();<br>        }<br>    }<br>}</code></pre>
+<p>Suppose a Block has 128 threads = 4 Warps:</p>
+<pre><code>Warp0 → producer()<br>Warp1 → compute()<br>Warp2 → consumer()<br>Warp3 → scheduler()</code></pre>
+<p>Although the Kernel code is identical, each Warp sees a different <code>warp_id></code> and therefore executes different code.</p>
+<hr>
+<h2 id="4-why-doesnt-this-lose-performance-like-normal-bra">4. Why Doesn't This Lose Performance Like Normal Branching?</h2>
+<p>A common misconception:</p>
+<pre><code>if (thread_id % 2)</code></pre>
+<p>creates <strong>Warp Divergence</strong> — threads within a Warp take different paths, so the GPU must execute both paths sequentially.</p>
+<p>But Warp Specialization uses:</p>
+<pre><code>if (warp_id == 0)</code></pre>
+<p>Note: <code>warp_id></code> is identical for all 32 threads within a Warp. Warp0's 32 threads all have <code>warp_id = 0></code> → all enter <code>producer()></code>. Warp1's 32 threads all have <code>warp_id = 1></code> → all enter <code>compute()></code>.</p>
+<p><mark><strong>No intra-Warp divergence. This is Warp-level divergence-free.</strong></mark></p>
+<hr>
+<h2 id="5-why-does-deepep-need-warp-specialization">5. Why Does DeepEP Need Warp Specialization?</h2>
+<p>Consider MoE Dispatch. A token moving from one GPU to an Expert GPU requires:</p>
+<pre><code>Routing → Pack → NVLink/RDMA Send → Receive → Unpack → GEMM</code></pre>
+<p>These stages are fundamentally different in nature.</p>
+<p><strong>GEMM</strong> is perfectly suited for GPU: Tensor Core matrix operations. 32 threads provide value.</p>
+<p><strong>RDMA Doorbell</strong> — notifying the NIC that a send descriptor is ready — is essentially writing a 64-bit register. 32 threads doing this together is meaningless.</p>
+<p><strong>CQ Poll</strong> — checking the Completion Queue — is control logic, not computation.</p>
+<p>If all Warps execute both GEMM and communication control, the result is highly inefficient. DeepEP-style designs instead form:</p>
+<pre><code>Block<br>├── Warp0: Communication status check<br>├── Warp1: Buffer management<br>├── Warp2: NVLink/RDMA control<br>└── Warp3+: Compute</code></pre>
+<p>Different Warps do different things.</p>
+<hr>
+<h2 id="6-it-resembles-cpu-pipeline">6. It Resembles CPU Pipeline</h2>
+<p>A CPU pipeline:</p>
+<pre><code>Fetch → Decode → Execute → Writeback</code></pre>
+<p>Different hardware stages process different instructions simultaneously.</p>
+<p>Warp Specialization achieves the same at the Warp level:</p>
+<pre><code>Warp0: Fetch Token<br>Warp1: Prepare<br>Warp2: Move<br>Warp3: Compute</code></pre>
+<p>Different Warps process different Chunks simultaneously.</p>
+<p>GPU is evolving from a <mark><strong>SIMT compute machine</strong></mark> toward a <mark><strong>Streaming Dataflow Machine</strong></mark>.</p>
+<hr>
+<h2 id="7-whats-the-cost">7. What's the Cost?</h2>
+<p>A critical question: doesn't this waste Warps?</p>
+<p>Yes. A Warp is the minimum scheduling unit. A Doorbell operation might need only one thread (<code>lane0: write MMIO></code>), but the GPU still schedules the entire Warp (<code>lane0~31></code>). 31 lanes may sit idle.</p>
+<p>But system-wide, the gain is larger. Because it avoids:</p>
+<pre><code>Communication waiting → blocking → Tensor Core idle</code></pre>
+<p>In exchange for:</p>
+<table><thead><tr><th>Sacrifice</th><th>Gain</th></tr></thead><tbody>
+<tr><td>Local SIMD efficiency</td><td>Global pipeline efficiency</td></tr>
+<tr><td>Per-Warp utilization</td><td>System throughput</td></tr>
+</tbody></table>
+<p><mark><strong>It trades local SIMD efficiency for global pipeline efficiency.</strong></mark></p>
+<hr>
+<h2 id="8-the-accurate-mental-model-for-deepep">8. The Accurate Mental Model for DeepEP</h2>
+<p>Combining our previous discussions, the accurate hierarchy is:</p>
+<pre><code>GPU<br> +-- CTA (Block) Role Specialization<br> +-- Warp Specialization<br> +-- Thread SIMD execution</code></pre>
+<table><thead><tr><th>Layer</th><th>Decides</th></tr></thead><tbody>
+<tr><td><strong>Block</strong></td><td>What service this CTA provides: Routing? Forward? Combine?</td></tr>
+<tr><td><strong>Warp</strong></td><td>How the pipeline unfolds within this CTA: Load? Pack? Send? Compute?</td></tr>
+<tr><td><strong>Thread</strong></td><td>Specific execution: memory access, arithmetic, atomic operations</td></tr>
+</tbody></table>
+<p>==<strong>Warp Specialization's essence is not simply "making different Warps do different things" — it is:</strong></p>
+<blockquote><p><strong>Splitting a serial data processing flow into multiple stages, stationing different Warps at different stages, processing different data chunks simultaneously, transforming the GPU from a batch-synchronous compute model into a continuous streaming processing model.</strong>==</p></blockquote>
+<p>This is precisely why DeepEP can overlap MoE Dispatch/Combine communication with Expert GEMM. It optimizes not the FLOPS of any single Kernel, but the <mark><strong>flow efficiency of Tokens through the entire system</strong></mark>.</p>
+<hr>
+<p><em>Analysis based on DeepEP paper, FlashAttention-3, CUTLASS Hopper Pipeline documentation, and CUDA Programming Guide. Views are my own.</em></p>
+<hr>
+<p><em>© 2026 backyes · Created by backyes</em></p>
+    </div>
+  </article>
+</div>
+<footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved · edit by backyes.github.io</p></div></footer>
+</body>
+</html>
