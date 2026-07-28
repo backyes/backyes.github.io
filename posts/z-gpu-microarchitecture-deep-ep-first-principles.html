@@ -81,11 +81,6 @@
 <li><a href="#expert-gemm-wants-expert-major" class="toc-h3">Expert GEMM Wants Expert-major</a></li>
 <li><a href="#12-combine-expert-major-back-to-token-major" class="toc-h2">1.2 Combine: Expert-major Back to Token-major</a></li>
 <li><a href="#21-normal-kernel-throughput-optimized-complete-pip" class="toc-h2">2.1 Normal Kernel: Throughput-Optimized Complete Pipeline</a></li>
-<li><a href="#token-buffer" class="toc-h3">Token Buffer</a></li>
-<li><a href="#dispatch-buffer" class="toc-h3">Dispatch Buffer</a></li>
-<li><a href="#chunk-buffer" class="toc-h3">Chunk Buffer</a></li>
-<li><a href="#receive-buffer" class="toc-h3">Receive Buffer</a></li>
-<li><a href="#expert-buffer" class="toc-h3">Expert Buffer</a></li>
 <li><a href="#22-low-latency-kernel-decode-oriented-short-path" class="toc-h2">2.2 Low-Latency Kernel: Decode-Oriented Short Path</a></li>
 <li><a href="#31-normal-kernel-communication-pipelining" class="toc-h2">3.1 Normal Kernel: Communication Pipelining</a></li>
 <li><a href="#61-layout-metadata-where-should-data-go" class="toc-h2">6.1 Layout Metadata: Where Should Data Go?</a></li>
@@ -97,7 +92,7 @@
   <article class="article">
     <a href="../posts.html" class="back">← 返回 Posts</a>
     <h1>Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles</h1>
-    <div class="meta"><span>📅 2026-07-28</span><div><span class="ptag">GPU</span><span class="ptag">DeepEP</span><span class="ptag">MoE</span><span class="ptag">Data-Movement</span><span class="ptag">Dataflow</span><span class="ptag">All-to-All</span><span class="ptag">Expert-Parallelism</span><span class="ptag">Warp-Specialization</span><span class="ptag">Buffer-System</span><span class="ptag">NVLink</span><span class="ptag">RDMA</span></div></div>
+    <div class="meta"><span>📅 2026-07-28</span><div><span class="ptag">GPU</span><span class="ptag">DeepEP</span><span class="ptag">MoE</span><span class="ptag">Data-Movement</span><span class="ptag">Dataflow</span><span class="ptag">All-to-All</span><span class="ptag">Expert-Parallelism</span><span class="ptag">Warp-Specialization</span><span class="ptag">Buffer-System</span><span class="ptag">NVLink</span><span class="ptag">RDMA</span><span class="ptag">FIFO</span><span class="ptag">Metadata</span></div></div>
     <div class="article-body">
 <h2 id="introduction-re-understanding-deepep">Introduction: Re-understanding DeepEP</h2>
 <p>In many descriptions, DeepEP is simply characterized as:</p>
@@ -106,96 +101,63 @@
 <p>From a first-principles perspective, MoE's real challenge is not "how to send data from GPU A to GPU B."</p>
 <p>The truly difficult problem is:</p>
 <blockquote><p><strong>How does the dynamic sparse Token-Expert mapping produced by the Router get transformed into data layouts that both GPU communication hardware and Tensor Core compute hardware can process efficiently?</strong></p></blockquote>
-<p>MoE's core tension can be expressed as:</p>
+<p>MoE's core tension:</p>
 <pre><code>Dynamic sparse Token-Expert data flow<br>              ↓<br>Continuous regular GPU Tensor data flow</code></pre>
-<p>There is a structural gap between the two.</p>
 <p>The Router outputs <code>Token → Expert></code>, but:</p>
 <ul>
 <li>The network wants <strong>Destination-major</strong></li>
 <li>Expert GEMM wants <strong>Expert-major</strong></li>
 <li>The next Transformer layer still wants <strong>Token-major</strong></li>
 </ul>
-<p>Therefore, every MoE Layer must perform a dynamic data layout transformation.</p>
-<hr>
-<p>From this perspective:</p>
+<p>Every MoE Layer must perform a dynamic data layout transformation.</p>
 <p><strong>DeepEP is not primarily a complete MoE Runtime — it is a Runtime specialized in solving MoE Expert Parallelism data movement problems.</strong></p>
-<p>It handles:</p>
-<ul>
-<li>Token Dispatch</li>
-<li>Expert Routing data organization</li>
-<li>Inter-GPU communication</li>
-<li>Data rearrangement</li>
-<li>Combine recovery</li>
-</ul>
 <p>It connects:</p>
 <pre><code>Router → DeepEP → Expert Buffer → Expert GEMM</code></pre>
-<p>Where Expert GEMM is typically handled by DeepGEMM, CUTLASS, or custom CUDA kernels.</p>
 <p>A more accurate definition:</p>
 <blockquote><p><strong>DeepEP is a MoE-oriented Data Movement Runtime that transforms dynamic sparse Token flows into continuous data flows that Expert computation can consume, through data layout transformation, communication pipelining, and asynchronous scheduling.</strong></p></blockquote>
 <hr>
 <h1 id="1-dispatch-combine-dynamic-data-layout-transformat">1. Dispatch / Combine: Dynamic Data Layout Transformation</h1>
 <h2 id="11-why-does-moe-need-dispatch">1.1 Why Does MoE Need Dispatch?</h2>
-<p>In ordinary Transformers, the input naturally maintains Token-major layout:</p>
-<pre><code>T0, T1, T2, T3, ...</code></pre>
-<p>Attention and MLP both compute following this layout.</p>
-<p>But in MoE, the Router dynamically selects Experts per Token based on semantics:</p>
+<p>In ordinary Transformers, input naturally maintains Token-major layout. But in MoE, the Router dynamically selects Experts per Token:</p>
 <pre><code>T0 → E2, E7<br>T1 → E1, E5<br>T2 → E7, E3</code></pre>
-<p>This produces a dynamic sparse <code>Token → Expert></code> mapping. The problem: different GPU modules need different layouts.</p>
+<p>GPU modules need different layouts.</p>
 <h3 id="communication-phase-wants-destination-major">Communication Phase Wants Destination-major</h3>
-<p>GPU communication asks: <em>which GPU should this data go to?</em></p>
-<pre><code>GPU0: T0 → GPU1, T1 → GPU3, T2 → GPU1</code></pre>
-<p>Communication needs:</p>
-<pre><code>GPU1: T0, T2<br>GPU3: T1</code></pre>
-<p>This forms <strong>Destination-major</strong> layout — contiguous sends.</p>
+<p>GPU communication asks: <em>which GPU should this data go to?</em> Communication needs data organized by destination for contiguous sends.</p>
 <h3 id="expert-gemm-wants-expert-major">Expert GEMM Wants Expert-major</h3>
-<p>After the destination GPU receives data, Expert GEMM does not want source-GPU ordering. It wants:</p>
-<pre><code>Expert2: T0, T20<br>Expert3: T2, T30</code></pre>
-<p>This forms <strong>Expert-major</strong> layout — a continuous <code>[M, K]></code> matrix for Tensor Core.</p>
-<hr>
-<p>Therefore, Dispatch actually performs:</p>
+<p>Expert GEMM wants data organized by Expert — a continuous <code>[M, K]></code> matrix for Tensor Core.</p>
+<p>Therefore, Dispatch performs:</p>
 <pre><code>Token-major → Destination-major → Expert-major</code></pre>
-<p>This is not simple communication. It is a <mark><strong>dynamic data layout transformation process</strong></mark>.</p>
+<p>This is not simple communication — it is a <mark><strong>dynamic data layout transformation</strong></mark>.</p>
 <h2 id="12-combine-expert-major-back-to-token-major">1.2 Combine: Expert-major Back to Token-major</h2>
-<p>After Expert computation, the output remains Expert-major:</p>
-<pre><code>Expert2 Output: T0, T20<br>Expert3 Output: T2, T30</code></pre>
-<p>But the model's next layer needs Token-major. Combine must reverse:</p>
+<p>After Expert computation, output remains Expert-major. The next layer needs Token-major. Combine reverses:</p>
 <pre><code>Expert-major → Destination-major → Token-major</code></pre>
-<p>While also recovering Router semantics:</p>
-<pre><code>T0: Expert2 weight=0.73, Expert7 weight=0.27<br>Output(T0) = 0.73 × Expert2(T0) + 0.27 × Expert7(T0)</code></pre>
-<p>Combine is not merely the inverse of communication. It is <mark><strong>data layout recovery + semantic recovery</strong></mark>.</p>
+<p>While recovering Router semantics:</p>
+<pre><code>Output(T0) = 0.73 × Expert2(T0) + 0.27 × Expert7(T0)</code></pre>
+<p>Combine is <mark><strong>data layout recovery + semantic recovery</strong></mark>.</p>
 <hr>
 <h1 id="2-deepep-buffer-system-data-flow-organization-unde">2. DeepEP Buffer System: Data Flow Organization Under Different Kernels</h1>
-<p>DeepEP does not use identical data paths in all scenarios. MoE workloads differ significantly:</p>
+<p>DeepEP does not use identical data paths in all scenarios:</p>
 <ul>
 <li><strong>Training / Prefill</strong> care about throughput</li>
 <li><strong>Decode</strong> cares about latency</li>
 </ul>
-<p>Therefore, Normal Kernel and Low-Latency Kernel employ different dataflow designs.</p>
 <h2 id="21-normal-kernel-throughput-optimized-complete-pip">2.1 Normal Kernel: Throughput-Optimized Complete Pipeline</h2>
-<p>Normal Kernel targets large-batch inference, Prefill, and Training. Goal: maximize communication throughput and hide communication overhead.</p>
-<p>Typical data path:</p>
+<p>Data path:</p>
 <pre><code>Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink / RDMA Pipeline → Receive Buffer → Expert Buffer</code></pre>
-<h3 id="token-buffer">Token Buffer</h3>
-<p>Stores Hidden States after Router output. Layout: <strong>Token-major</strong>.</p>
-<h3 id="dispatch-buffer">Dispatch Buffer</h3>
-<p>Completes the first layout transformation: <strong>Token-major → Destination-major</strong>. Purpose: make communication data contiguous.</p>
-<h3 id="chunk-buffer">Chunk Buffer</h3>
-<p>Chunk is critically important in Normal Kernel. The network is unsuitable for single-Token sends — each Token triggering RDMA individually produces small packets, high startup overhead, and low bandwidth utilization. Therefore, Tokens are first aggregated:</p>
+<p><strong>Token Buffer</strong>: Stores Router output. Layout: Token-major.</p>
+<p><strong>Dispatch Buffer</strong>: First layout transformation: Token-major → Destination-major.</p>
+<p><strong>Chunk Buffer</strong>: Critically important. The network is unsuitable for single-Token sends — produces small packets, high startup overhead, low bandwidth utilization. Tokens are aggregated:</p>
 <pre><code>Token Stream → Chunk → Network Transfer</code></pre>
-<p>Here, Token is the <strong>scheduling granularity</strong>; Chunk is the <strong>communication granularity</strong>.</p>
-<h3 id="receive-buffer">Receive Buffer</h3>
-<p>The destination GPU receives Chunks from multiple GPUs. Still in communication layout.</p>
-<h3 id="expert-buffer">Expert Buffer</h3>
-<p>Completes the final transformation: <strong>Destination-major → Expert-major</strong>, forming Expert GEMM input.</p>
-<hr>
+<p>Token is the <strong>scheduling granularity</strong>; Chunk is the <strong>communication granularity</strong>.</p>
+<p><strong>Receive Buffer</strong>: Destination GPU receives Chunks from multiple GPUs.</p>
+<p><strong>Expert Buffer</strong>: Final transformation: Destination-major → Expert-major, forming Expert GEMM input.</p>
 <h2 id="22-low-latency-kernel-decode-oriented-short-path">2.2 Low-Latency Kernel: Decode-Oriented Short Path</h2>
-<p>Decode characteristics: small batch, few Tokens, single-Token latency sensitive. Throughput is not the primary concern. Waiting for Chunk aggregation反而 increases queuing time, buffer latency, and pipeline depth.</p>
-<p>Therefore, Low-Latency Kernel reduces intermediate layers:</p>
+<p>Decode: small batch, few Tokens, single-Token latency sensitive. Waiting for Chunk aggregation increases latency.</p>
+<p>Low-Latency Kernel reduces intermediate layers:</p>
 <pre><code>Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer</code></pre>
-<p>Compared to Normal Kernel: reduced Chunk aggregation, forwarding, and intermediate buffering. Goal: minimize <mark><strong>end-to-end Token latency</strong></mark>.</p>
+<p>Goal: minimize <mark><strong>end-to-end Token latency</strong></mark>.</p>
 <hr>
 <h1 id="3-normal-vs-low-latency-two-communication-philosop">3. Normal vs Low-Latency: Two Communication Philosophies</h1>
-<p>DeepEP's two kernels embody two system optimization directions.</p>
 <table><thead><tr><th></th><th>Normal Kernel</th><th>Low-Latency Kernel</th></tr></thead><tbody>
 <tr><td><strong>Primary Scenario</strong></td><td>Training / Prefill</td><td>Decode</td></tr>
 <tr><td><strong>Goal</strong></td><td>Maximize throughput</td><td>Minimize latency</td></tr>
@@ -205,22 +167,15 @@
 <tr><td><strong>Communication Path</strong></td><td>NVLink + RDMA coordination</td><td>Direct RDMA</td></tr>
 </tbody></table>
 <h2 id="31-normal-kernel-communication-pipelining">3.1 Normal Kernel: Communication Pipelining</h2>
-<p>In multi-GPU nodes, GPU-NIC topology is not fully symmetric. Some GPUs are closer to the NIC; others require GPU-to-GPU forwarding. Therefore, communication paths may include:</p>
+<p>In multi-GPU nodes, GPU-NIC topology is not fully symmetric. Communication paths may include:</p>
 <pre><code>IB Sending → IB-to-NVLink Forwarding → NVLink Receiving</code></pre>
 <p>Forming a three-stage communication pipeline.</p>
 <hr>
 <h1 id="4-warp-specialization-pipelined-execution-inside-t">4. Warp Specialization: Pipelined Execution Inside the Communication Kernel</h1>
-<p>A clarification: Warp Specialization in DeepEP is <em>not</em> about:</p>
-<ul>
-<li>GPU role assignment</li>
-<li>SMs dedicated to compute or communication</li>
-<li>Warps executing Expert GEMM</li>
-</ul>
-<p>It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
-<p>For example, in Normal Kernel, different Warp Groups can handle:</p>
+<p>Warp Specialization in DeepEP is <em>not</em> about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
+<p>Different Warp Groups handle:</p>
 <pre><code>Warp Group A: IB Sending<br>Warp Group B: IB-NVLink Forwarding<br>Warp Group C: NVLink Receiving</code></pre>
-<p>Forming:</p>
-<pre><code>Send → Forward → Receive</code></pre>
+<p>Forming: <code>Send → Forward → Receive></code></p>
 <hr>
 <h1 id="5-fifo-from-synchronous-to-streaming-pipeline">5. FIFO: From Synchronous to Streaming Pipeline</h1>
 <p>Without FIFO: before the previous stage completes, the next stage must wait:</p>
@@ -236,57 +191,42 @@
 <h2 id="61-layout-metadata-where-should-data-go">6.1 Layout Metadata: Where Should Data Go?</h2>
 <p>Core question: <strong>Where?</strong></p>
 <p>Describes data layout. Typical information: count, prefix sum, offset.</p>
-<pre><code>Expert2: 3 tokens<br>Expert3: 5 tokens<br><br>Prefix: Expert2 offset=0, Expert3 offset=3</code></pre>
+<pre><code>Expert2: 3 tokens → offset=0<br>Expert3: 5 tokens → offset=3</code></pre>
 <p>Then: <code>dst = prefix[expert]++></code> completes contiguous writes.</p>
 <p>Solves: <mark><strong>dynamic mapping → contiguous addresses</strong></mark>.</p>
 <h2 id="62-identity-metadata-who-is-this-data">6.2 Identity Metadata: Who Is This Data?</h2>
 <p>Core question: <strong>Who?</strong></p>
 <p>Describes Token identity. Includes: token id, expert id, gate weight, top-k slot.</p>
 <pre><code>Position 100 → Token17 → Expert2 → weight=0.73</code></pre>
-<p>During Combine, recover:</p>
+<p>During Combine:</p>
 <pre><code>Token17 = 0.73 × Expert2 + 0.27 × Expert7</code></pre>
 <hr>
 <h1 id="7-key-details-in-moe-runtime">7. Key Details in MoE Runtime</h1>
 <h2 id="71-does-sort-exist">7.1 Does Sort Exist?</h2>
-<p>Yes, but not traditional sorting. Core process:</p>
-<pre><code>Count → Prefix Sum → Scatter</code></pre>
-<p>Essentially <strong>Counting Sort / Bucketization</strong>. Goal: not to sort by size, but to produce contiguous layout.</p>
+<p>Yes, but not traditional sorting. Core process: <code>Count → Prefix Sum → Scatter></code></p>
+<p>Essentially <strong>Counting Sort / Bucketization</strong>. Goal: produce contiguous layout, not sort by size.</p>
 <h2 id="72-why-must-top-k-information-be-preserved">7.2 Why Must Top-K Information Be Preserved?</h2>
-<p>Because MoE is not one Token to one Expert — it's Top-K Experts:</p>
-<pre><code>T0: Expert2 weight=0.73, Expert7 weight=0.27</code></pre>
-<p>Combine must know: which Experts, corresponding weights, ordering. Therefore, Top-K slot information must be preserved.</p>
+<p>MoE is Top-K Experts per Token. Combine must know: which Experts, corresponding weights, ordering. Top-K slot information must be preserved.</p>
 <h2 id="73-why-is-memory-reorganization-unavoidable">7.3 Why Is Memory Reorganization Unavoidable?</h2>
-<p>Because the three stages are inherently different:</p>
-<ul>
-<li>Communication: <strong>Destination-major</strong></li>
-<li>Compute: <strong>Expert-major</strong></li>
-<li>Model: <strong>Token-major</strong></li>
-</ul>
-<p>Rearrangement is not an implementation defect — it is a <strong>necessary transformation</strong> produced by MoE architecture itself. The optimization direction is not to eliminate it, but to <mark><strong>make data rearrangement, communication, and computation as pipelined as possible</strong></mark>.</p>
+<p>Three stages are inherently different: Communication (Destination-major), Compute (Expert-major), Model (Token-major). Rearrangement is a <strong>necessary transformation</strong> produced by MoE architecture. The optimization direction is not to eliminate it, but to <mark><strong>make data rearrangement, communication, and computation as pipelined as possible</strong></mark>.</p>
 <hr>
 <h1 id="8-from-deepep-to-mega-moe-moe-runtime-evolution">8. From DeepEP to Mega MoE: MoE Runtime Evolution</h1>
-<p>DeepEP solves <strong>Communication + Data Movement</strong>. But system trends are further fusing <strong>Communication + Compute</strong>.</p>
-<p>This direction is not future speculation — in DeepGEMM, Mega MoE Kernel has already demonstrated a new execution pattern targeting Blackwell SM100 and specific MoE workloads, further fusing:</p>
+<p>DeepEP solves <strong>Communication + Data Movement</strong>. System trends are further fusing <strong>Communication + Compute</strong>.</p>
+<p>In DeepGEMM, Mega MoE Kernel targets Blackwell SM100, fusing:</p>
 <pre><code>Token Routing → Dispatch → Linear1 → Activation → Linear2 → Combine</code></pre>
-<p>into an integrated execution flow.</p>
 <p>Distinction:</p>
 <ul>
 <li><strong>DeepEP</strong>: MoE Data Movement Runtime</li>
 <li><strong>Mega MoE</strong>: Communication + Compute Fusion Runtime</li>
 </ul>
-<p>The former solves how data moves efficiently; the latter further solves how data movement and computation can be co-scheduled.</p>
 <hr>
 <h1 id="9-summary-deepeps-true-system-significance">9. Summary: DeepEP's True System Significance</h1>
-<p>DeepEP's value is not just improving All-to-All performance. It solves:</p>
 <blockquote><p><strong>How to transform dynamic sparse Token-Expert dataflows into continuous dataflows that GPU hardware prefers.</strong></p></blockquote>
 <p>Core mechanisms: Dispatch / Combine, Data Layout Transformation, Buffer Pipeline, Chunk Streaming, FIFO Stage Decoupling, Warp Specialization, Metadata-driven Mapping.</p>
-<p>Final abstraction:</p>
 <pre><code>Router → Token-Expert Stream → DeepEP (Data Movement Runtime) → Expert Buffer → Expert GEMM → Combine</code></pre>
-<p>Further evolution:</p>
-<pre><code>DeepEP + DeepGEMM + Fusion Kernel → Unified MoE Dataflow Runtime</code></pre>
-<p><mark><strong>DeepEP's important significance is that it represents MoE systems' evolution from "communication optimization" to "dataflow execution."</strong></mark></p>
-<p>It does not simply replace NCCL — it solves a more fundamental problem:</p>
-<blockquote><p><strong>How to make dynamic sparse AI workloads ultimately flow into the continuous compute streams that GPUs excel at processing.</strong></p></blockquote>
+<p>Further evolution: <code>DeepEP + DeepGEMM + Fusion Kernel → Unified MoE Dataflow Runtime></code></p>
+<p><mark><strong>DeepEP represents MoE systems' evolution from "communication optimization" to "dataflow execution."</strong></mark></p>
+<p>It solves a fundamental problem: <strong>How to make dynamic sparse AI workloads ultimately flow into the continuous compute streams that GPUs excel at processing.</strong></p>
 <hr>
 <p><em>Analysis based on DeepEP paper and source code, CUTLASS documentation, and NVIDIA NVLink/RDMA architecture. Views are my own.</em></p>
 <hr>
