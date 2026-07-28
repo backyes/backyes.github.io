@@ -86,17 +86,27 @@
 <li><a href="#22-low-latency-kernel-decode-oriented-short-path" class="toc-h3">2.2 Low-Latency Kernel: Decode-Oriented Short Path</a></li>
 <li><a href="#3-normal-vs-low-latency-two-communication-philosop" class="toc-h2">3. Normal vs Low-Latency: Two Communication Philosophies</a></li>
 <li><a href="#31-normal-kernel-communication-pipelining" class="toc-h3">3.1 Normal Kernel: Communication Pipelining</a></li>
-<li><a href="#4-warp-specialization-pipelined-execution-inside-t" class="toc-h2">4. Warp Specialization: Pipelined Execution Inside the Communication Kernel</a></li>
-<li><a href="#5-fifo-from-synchronous-to-streaming-pipeline" class="toc-h2">5. FIFO: From Synchronous to Streaming Pipeline</a></li>
-<li><a href="#6-metadata-how-dynamic-routing-becomes-contiguous-" class="toc-h2">6. Metadata: How Dynamic Routing Becomes Contiguous Access</a></li>
+<li><a href="#4-intra-node-inter-node-coordination-nvlink-scale-" class="toc-h2">4. Intra-node / Inter-node Coordination: NVLink Scale-up + RDMA Scale-out</a></li>
+<li><a href="#41-moe-expert-parallels-real-communication-topolog" class="toc-h3">4.1 MoE Expert Parallel's Real Communication Topology</a></li>
+<li><a href="#42-first-principles-dont-treat-nvlink-and-rdma-as-" class="toc-h3">4.2 First Principles: Don't Treat NVLink and RDMA as Separate Networks</a></li>
+<li><a href="#43-normal-kernels-three-stage-communication-pipeli" class="toc-h3">4.3 Normal Kernel's Three-Stage Communication Pipeline</a></li>
+<li><a href="#44-deepep-normal-kernels-role-division" class="toc-h3">4.4 DeepEP Normal Kernel's Role Division</a></li>
+<li><a href="#45-why-this-intrainter-node-coordination" class="toc-h3">4.5 Why This Intra/Inter-node Coordination?</a></li>
+<li><a href="#46-impact-on-sm-resource-allocation" class="toc-h3">4.6 Impact on SM Resource Allocation</a></li>
+<li><a href="#47-how-to-avoid-forwarding-gpu-overload" class="toc-h3">4.7 How to Avoid Forwarding GPU Overload?</a></li>
+<li><a href="#48-why-low-latency-kernel-bypasses-forwarding" class="toc-h3">4.8 Why Low-Latency Kernel Bypasses Forwarding?</a></li>
+<li><a href="#49-updated-complete-abstraction" class="toc-h3">4.9 Updated Complete Abstraction</a></li>
+<li><a href="#5-warp-specialization-pipelined-execution-inside-t" class="toc-h2">5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</a></li>
+<li><a href="#6-fifo-from-synchronous-to-streaming-pipeline" class="toc-h2">6. FIFO: From Synchronous to Streaming Pipeline</a></li>
+<li><a href="#7-metadata-how-dynamic-routing-becomes-contiguous-" class="toc-h2">7. Metadata: How Dynamic Routing Becomes Contiguous Access</a></li>
 <li><a href="#61-layout-metadata-where-should-data-go" class="toc-h3">6.1 Layout Metadata: Where Should Data Go?</a></li>
 <li><a href="#62-identity-metadata-who-is-this-data" class="toc-h3">6.2 Identity Metadata: Who Is This Data?</a></li>
-<li><a href="#7-key-details-in-moe-runtime" class="toc-h2">7. Key Details in MoE Runtime</a></li>
+<li><a href="#8-key-details-in-moe-runtime" class="toc-h2">8. Key Details in MoE Runtime</a></li>
 <li><a href="#71-does-sort-exist" class="toc-h3">7.1 Does Sort Exist?</a></li>
 <li><a href="#72-why-must-top-k-information-be-preserved" class="toc-h3">7.2 Why Must Top-K Information Be Preserved?</a></li>
 <li><a href="#73-why-is-memory-reorganization-unavoidable" class="toc-h3">7.3 Why Is Memory Reorganization Unavoidable?</a></li>
-<li><a href="#8-from-deepep-to-mega-moe-moe-runtime-evolution" class="toc-h2">8. From DeepEP to Mega MoE: MoE Runtime Evolution</a></li>
-<li><a href="#9-summary-deepeps-true-system-significance" class="toc-h2">9. Summary: DeepEP's True System Significance</a></li></ul></div>
+<li><a href="#9-from-deepep-to-mega-moe-moe-runtime-evolution" class="toc-h2">9. From DeepEP to Mega MoE: MoE Runtime Evolution</a></li>
+<li><a href="#10-summary-deepeps-true-system-significance" class="toc-h2">10. Summary: DeepEP's True System Significance</a></li></ul></div>
   </aside>
   <article class="article">
     <a href="../posts.html" class="back">← 返回 Posts</a>
@@ -182,14 +192,65 @@
 <pre><code>IB Sending → IB-to-NVLink Forwarding → NVLink Receiving</code></pre>
 <p>Forming a three-stage communication pipeline.</p>
 <hr>
-<h2 id="4-warp-specialization-pipelined-execution-inside-t">4. Warp Specialization: Pipelined Execution Inside the Communication Kernel</h2>
+<h2 id="4-intra-node-inter-node-coordination-nvlink-scale-">4. Intra-node / Inter-node Coordination: NVLink Scale-up + RDMA Scale-out</h2>
+<h3 id="41-moe-expert-parallels-real-communication-topolog">4.1 MoE Expert Parallel's Real Communication Topology</h3>
+<p>In multi-node MoE, an Expert is not simply distributed across one network plane. For example, 2 nodes × 8 GPUs = 16 GPUs total. After the Router produces <code>Token → Expert></code>, a Token may:</p>
+<ul>
+<li>Stay on the local node</li>
+<li>Go to another GPU on the same node</li>
+<li>Go to a remote node GPU</li>
+</ul>
+<p>Therefore, a single Dispatch actually contains two types of communication:</p>
+<pre><code>             Token<br>               |<br>       +-------+-------+<br>       |               |<br>       v               v<br> Intra-node       Inter-node<br>    NVLink           RDMA<br>       |               |<br>   GPU-GPU      GPU-NIC-GPU</code></pre>
+<p>These two communication domains have fundamentally different physical characteristics.</p>
+<h3 id="42-first-principles-dont-treat-nvlink-and-rdma-as-">4.2 First Principles: Don't Treat NVLink and RDMA as Separate Networks</h3>
+<p>Traditional design tends to view:</p>
+<pre><code>GPU → PCIe → NIC → Network → NIC → PCIe → GPU</code></pre>
+<p>As if RDMA is "external GPU communication." But in AI Supercomputers, a GPU cluster is essentially:</p>
+<pre><code>GPU Memory Fabric + Network Fabric</code></pre>
+<p>DeepEP's core idea is not "first NVLink, then RDMA." Instead:</p>
+<blockquote><p><strong>Based on Token destination, combine NVLink domain and RDMA domain into a continuous data flow path.</strong></p></blockquote>
+<h3 id="43-normal-kernels-three-stage-communication-pipeli">4.3 Normal Kernel's Three-Stage Communication Pipeline</h3>
+<p>Taking a cross-node Token as example: GPU0 (Node0) produces T0 → Expert located on GPU10 (Node1).</p>
+<p>In multi-GPU nodes, GPUs and NICs are not one-to-one bound:</p>
+<pre><code>Node0<br>          NIC0<br>           |<br>GPU0 GPU1 GPU2 GPU3<br><br>          NIC1<br>           |<br>GPU4 GPU5 GPU6 GPU7</code></pre>
+<p>GPU0 to NIC1 may need: <code>GPU0 → NVLink → GPU4 → PCIe → NIC1></code></p>
+<p>Therefore communication is not simply GPU → NIC, but: <code>GPU → NVLink domain → NIC → RDMA → NVLink domain → GPU></code></p>
+<h3 id="44-deepep-normal-kernels-role-division">4.4 DeepEP Normal Kernel's Role Division</h3>
+<p>Normal Kernel internally is not simply Send / Receive. More accurately, three communication roles:</p>
+<pre><code>Source GPU<br>    |<br>    v<br>IB Sending Warp<br>    |<br>    v<br>RDMA Network<br>    |<br>    v<br>IB-to-NVLink Forwarding<br>    |<br>    v<br>NVLink Receiving</code></pre>
+<p><strong>IB Sending</strong>: GPU memory → NIC. Reads from Dispatch Buffer, organizes RDMA packets, pushes to NIC.</p>
+<p><strong>IB-to-NVLink Forwarding</strong>: A critical DeepEP design often overlooked. It solves NIC-GPU topology mismatch. For example, if target GPU is GPU10 but RDMA data arrives at GPU8 first, GPU8 acts as a communication relay: <code>Receive from NIC → Forward through NVLink → Target GPU></code>. This is GPU participating in network forwarding.</p>
+<p><strong>NVLink Receiving</strong>: Target GPU receives from NVLink, writes to Receive Buffer.</p>
+<h3 id="45-why-this-intrainter-node-coordination">4.5 Why This Intra/Inter-node Coordination?</h3>
+<p>If separated:</p>
+<ul>
+<li><strong>Plan A</strong>: GPU only computes, NIC handles communication. All traffic goes through PCIe — bottleneck: PCIe bandwidth, NIC count, topology imbalance.</li>
+<li><strong>Plan B</strong>: Each GPU directly bound to NIC. Reality: too expensive (8 GPUs need 8 NICs).</li>
+</ul>
+<p>DeepEP adopts: <strong>GPU as communication participant</strong>, utilizing <code>NVLink + RDMA + GPU SM></code> to form a <mark><strong>GPU-centric communication fabric</strong></mark>.</p>
+<h3 id="46-impact-on-sm-resource-allocation">4.6 Impact on SM Resource Allocation</h3>
+<p>Does certain GPU bear more pressure? Yes. But DeepEP does not use fixed GPU roles — it uses <strong>dynamic communication task assignment</strong>.</p>
+<p>For example, GPU0 (closest to NIC) may handle more IB Sending; GPU3 may handle more NVLink Forwarding. But this is not static assignment — Runtime dynamically arranges based on Token distribution, Expert placement, and NIC topology.</p>
+<h3 id="47-how-to-avoid-forwarding-gpu-overload">4.7 How to Avoid Forwarding GPU Overload?</h3>
+<p><strong>Multi-Channel</strong>: Not one communication queue, but multiple channels, each corresponding to a set of Warps + Buffer.</p>
+<p><strong>Dynamic Warp Allocation</strong>: When communication load changes (e.g., many Tokens Node0 → Node1), forwarding stage adds Warps. SM allocation is not fixed.</p>
+<p><strong>Chunk Streaming</strong>: Does not wait for entire Batch. Chunks flow through, reducing instantaneous pressure.</p>
+<h3 id="48-why-low-latency-kernel-bypasses-forwarding">4.8 Why Low-Latency Kernel Bypasses Forwarding?</h3>
+<p>Related to Decode characteristics: few Tokens per request. If going through <code>GPU → NVLink Forward → NIC → RDMA></code>, each hop adds latency. Low Latency Kernel prefers <code>GPU → Direct RDMA → GPU></code>, sacrificing some throughput for lower latency.</p>
+<h3 id="49-updated-complete-abstraction">4.9 Updated Complete Abstraction</h3>
+<pre><code>Router<br> |<br>Token-Expert Mapping<br> |<br>Dispatch<br> |<br>Layout Transformation<br>        |<br>        +----------------+<br>        |                |<br>        v                v<br> Intra-node          Inter-node<br>    NVLink              RDMA<br>        |                |<br>        +-------+--------+<br>                |<br>          Expert Buffer<br>                |<br>          Expert GEMM<br>                |<br>             Combine</code></pre>
+<blockquote><p><strong>DeepEP's key innovation is not just optimizing All-to-All, but fusing intra-node NVLink Scale-up Fabric and inter-node RDMA Scale-out Fabric into a unified dataflow channel under GPU-centric cluster architecture.</strong></p></blockquote>
+<blockquote><p>It does not simply view GPUs as compute nodes and NICs as network exits, but lets GPU SMs, NVLink, NICs, and RDMA all participate in Token dataflow scheduling.</p></blockquote>
+<hr>
+<h2 id="5-warp-specialization-pipelined-execution-inside-t">5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</h2>
 <p>Warp Specialization in DeepEP is <em>not</em> about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
 <img src="assets/three_stage_pipeline.png" alt="Three-Stage Communication Pipeline" style="max-width:100%;display:block;margin:1.5em auto">
 <p>Different Warp Groups handle:</p>
 <pre><code>Warp Group A: IB Sending<br>Warp Group B: IB-NVLink Forwarding<br>Warp Group C: NVLink Receiving</code></pre>
 <p>Forming: <code>Send → Forward → Receive></code></p>
 <hr>
-<h2 id="5-fifo-from-synchronous-to-streaming-pipeline">5. FIFO: From Synchronous to Streaming Pipeline</h2>
+<h2 id="6-fifo-from-synchronous-to-streaming-pipeline">6. FIFO: From Synchronous to Streaming Pipeline</h2>
 <img src="assets/fifo_pipeline.png" alt="FIFO Pipeline Comparison" style="max-width:100%;display:block;margin:1.5em auto">
 <p>Without FIFO: before the previous stage completes, the next stage must wait:</p>
 <pre><code>Send → Barrier → Forward → Barrier → Receive</code></pre>
@@ -199,7 +260,7 @@
 <p>Each stage only cares about its own write/read. No need to wait for the entire Batch.</p>
 <p><mark><strong>FIFO's essence: transforms the communication pipeline from synchronous execution to streaming execution.</strong></mark></p>
 <hr>
-<h2 id="6-metadata-how-dynamic-routing-becomes-contiguous-">6. Metadata: How Dynamic Routing Becomes Contiguous Access</h2>
+<h2 id="7-metadata-how-dynamic-routing-becomes-contiguous-">7. Metadata: How Dynamic Routing Becomes Contiguous Access</h2>
 <img src="assets/metadata_routing.png" alt="Metadata-Driven Dynamic Routing" style="max-width:100%;display:block;margin:1.5em auto">
 <p>Two analytical abstractions. Note: <strong>Layout Metadata / Identity Metadata are not official DeepEP source code terms — they are conceptual models proposed for understanding MoE Runtimes.</strong></p>
 <h3 id="61-layout-metadata-where-should-data-go">6.1 Layout Metadata: Where Should Data Go?</h3>
@@ -215,7 +276,7 @@
 <p>During Combine:</p>
 <pre><code>Token17 = 0.73 × Expert2 + 0.27 × Expert7</code></pre>
 <hr>
-<h2 id="7-key-details-in-moe-runtime">7. Key Details in MoE Runtime</h2>
+<h2 id="8-key-details-in-moe-runtime">8. Key Details in MoE Runtime</h2>
 <h3 id="71-does-sort-exist">7.1 Does Sort Exist?</h3>
 <p>Yes, but not traditional sorting. Core process: <code>Count → Prefix Sum → Scatter></code></p>
 <p>Essentially <strong>Counting Sort / Bucketization</strong>. Goal: produce contiguous layout, not sort by size.</p>
@@ -224,7 +285,7 @@
 <h3 id="73-why-is-memory-reorganization-unavoidable">7.3 Why Is Memory Reorganization Unavoidable?</h3>
 <p>Three stages are inherently different: Communication (Destination-major), Compute (Expert-major), Model (Token-major). Rearrangement is a <strong>necessary transformation</strong> produced by MoE architecture. The optimization direction is not to eliminate it, but to <mark><strong>make data rearrangement, communication, and computation as pipelined as possible</strong></mark>.</p>
 <hr>
-<h2 id="8-from-deepep-to-mega-moe-moe-runtime-evolution">8. From DeepEP to Mega MoE: MoE Runtime Evolution</h2>
+<h2 id="9-from-deepep-to-mega-moe-moe-runtime-evolution">9. From DeepEP to Mega MoE: MoE Runtime Evolution</h2>
 <p>DeepEP solves <strong>Communication + Data Movement</strong>. System trends are further fusing <strong>Communication + Compute</strong>.</p>
 <p>In DeepGEMM, Mega MoE Kernel targets Blackwell SM100, fusing:</p>
 <pre><code>Token Routing → Dispatch → Linear1 → Activation → Linear2 → Combine</code></pre>
@@ -234,7 +295,7 @@
 <li><strong>Mega MoE</strong>: Communication + Compute Fusion Runtime</li>
 </ul>
 <hr>
-<h2 id="9-summary-deepeps-true-system-significance">9. Summary: DeepEP's True System Significance</h2>
+<h2 id="10-summary-deepeps-true-system-significance">10. Summary: DeepEP's True System Significance</h2>
 <blockquote><p><strong>How to transform dynamic sparse Token-Expert dataflows into continuous dataflows that GPU hardware prefers.</strong></p></blockquote>
 <p>Core mechanisms: Dispatch / Combine, Data Layout Transformation, Buffer Pipeline, Chunk Streaming, FIFO Stage Decoupling, Warp Specialization, Metadata-driven Mapping.</p>
 <pre><code>Router → Token-Expert Stream → DeepEP (Data Movement Runtime) → Expert Buffer → Expert GEMM → Combine</code></pre>
