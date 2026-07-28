@@ -21,15 +21,7 @@ The truly difficult problem is:
 
 > **How does the dynamic sparse Token-Expert mapping produced by the Router get transformed into data layouts that both GPU communication hardware and Tensor Core compute hardware can process efficiently?**
 
-MoE's core tension:
-
 ![MoE Data Layout Transformation](assets/moe_layout_transformation.png)
-
-```
-Dynamic sparse Token-Expert data flow
-              ↓
-Continuous regular GPU Tensor data flow
-```
 
 The Router outputs `Token → Expert`, but:
 - The network wants **Destination-major**
