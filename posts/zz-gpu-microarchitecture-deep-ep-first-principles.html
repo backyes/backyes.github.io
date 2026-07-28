@@ -87,15 +87,9 @@
 <li><a href="#3-normal-vs-low-latency-two-communication-philosop" class="toc-h2">3. Normal vs Low-Latency: Two Communication Philosophies</a></li>
 <li><a href="#31-normal-kernel-communication-pipelining" class="toc-h3">3.1 Normal Kernel: Communication Pipelining</a></li>
 <li><a href="#4-intra-node-inter-node-coordination-nvlink-scale-" class="toc-h2">4. Intra-node / Inter-node Coordination: NVLink Scale-up + RDMA Scale-out</a></li>
-<li><a href="#41-moe-expert-parallels-real-communication-topolog" class="toc-h3">4.1 MoE Expert Parallel's Real Communication Topology</a></li>
-<li><a href="#42-first-principles-dont-treat-nvlink-and-rdma-as-" class="toc-h3">4.2 First Principles: Don't Treat NVLink and RDMA as Separate Networks</a></li>
-<li><a href="#43-normal-kernels-three-stage-communication-pipeli" class="toc-h3">4.3 Normal Kernel's Three-Stage Communication Pipeline</a></li>
-<li><a href="#44-deepep-normal-kernels-role-division" class="toc-h3">4.4 DeepEP Normal Kernel's Role Division</a></li>
-<li><a href="#45-why-this-intrainter-node-coordination" class="toc-h3">4.5 Why This Intra/Inter-node Coordination?</a></li>
-<li><a href="#46-impact-on-sm-resource-allocation" class="toc-h3">4.6 Impact on SM Resource Allocation</a></li>
-<li><a href="#47-how-to-avoid-forwarding-gpu-overload" class="toc-h3">4.7 How to Avoid Forwarding GPU Overload?</a></li>
-<li><a href="#48-why-low-latency-kernel-bypasses-forwarding" class="toc-h3">4.8 Why Low-Latency Kernel Bypasses Forwarding?</a></li>
-<li><a href="#49-updated-complete-abstraction" class="toc-h3">4.9 Updated Complete Abstraction</a></li>
+<li><a href="#41-topology-first-principles" class="toc-h3">4.1 Topology & First Principles</a></li>
+<li><a href="#42-three-stage-pipeline-role-division" class="toc-h3">4.2 Three-Stage Pipeline & Role Division</a></li>
+<li><a href="#43-dynamic-scheduling-evolution" class="toc-h3">4.3 Dynamic Scheduling & Evolution</a></li>
 <li><a href="#5-warp-specialization-pipelined-execution-inside-t" class="toc-h2">5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</a></li>
 <li><a href="#6-fifo-from-synchronous-to-streaming-pipeline" class="toc-h2">6. FIFO: From Synchronous to Streaming Pipeline</a></li>
 <li><a href="#7-metadata-how-dynamic-routing-becomes-contiguous-" class="toc-h2">7. Metadata: How Dynamic Routing Becomes Contiguous Access</a></li>
@@ -193,55 +187,29 @@
 <p>Forming a three-stage communication pipeline.</p>
 <hr>
 <h2 id="4-intra-node-inter-node-coordination-nvlink-scale-">4. Intra-node / Inter-node Coordination: NVLink Scale-up + RDMA Scale-out</h2>
-<h3 id="41-moe-expert-parallels-real-communication-topolog">4.1 MoE Expert Parallel's Real Communication Topology</h3>
-<p>In multi-node MoE, an Expert is not simply distributed across one network plane. For example, 2 nodes × 8 GPUs = 16 GPUs total. After the Router produces <code>Token → Expert></code>, a Token may:</p>
-<ul>
-<li>Stay on the local node</li>
-<li>Go to another GPU on the same node</li>
-<li>Go to a remote node GPU</li>
-</ul>
-<p>Therefore, a single Dispatch actually contains two types of communication:</p>
+<h3 id="41-topology-first-principles">4.1 Topology & First Principles</h3>
+<p>In multi-node MoE (e.g., 2 nodes × 8 GPUs = 16 GPUs), a Token may stay local, go to another GPU on the same node, or go to a remote node. A single Dispatch contains two communication domains:</p>
 <pre><code>             Token<br>               |<br>       +-------+-------+<br>       |               |<br>       v               v<br> Intra-node       Inter-node<br>    NVLink           RDMA<br>       |               |<br>   GPU-GPU      GPU-NIC-GPU</code></pre>
-<p>These two communication domains have fundamentally different physical characteristics.</p>
-<h3 id="42-first-principles-dont-treat-nvlink-and-rdma-as-">4.2 First Principles: Don't Treat NVLink and RDMA as Separate Networks</h3>
-<p>Traditional design tends to view:</p>
-<pre><code>GPU → PCIe → NIC → Network → NIC → PCIe → GPU</code></pre>
-<p>As if RDMA is "external GPU communication." But in AI Supercomputers, a GPU cluster is essentially:</p>
-<pre><code>GPU Memory Fabric + Network Fabric</code></pre>
-<p>DeepEP's core idea is not "first NVLink, then RDMA." Instead:</p>
-<blockquote><p><strong>Based on Token destination, combine NVLink domain and RDMA domain into a continuous data flow path.</strong></p></blockquote>
-<h3 id="43-normal-kernels-three-stage-communication-pipeli">4.3 Normal Kernel's Three-Stage Communication Pipeline</h3>
-<p>Taking a cross-node Token as example: GPU0 (Node0) produces T0 → Expert located on GPU10 (Node1).</p>
-<p>In multi-GPU nodes, GPUs and NICs are not one-to-one bound:</p>
-<pre><code>Node0<br>          NIC0<br>           |<br>GPU0 GPU1 GPU2 GPU3<br><br>          NIC1<br>           |<br>GPU4 GPU5 GPU6 GPU7</code></pre>
-<p>GPU0 to NIC1 may need: <code>GPU0 → NVLink → GPU4 → PCIe → NIC1></code></p>
-<p>Therefore communication is not simply GPU → NIC, but: <code>GPU → NVLink domain → NIC → RDMA → NVLink domain → GPU></code></p>
-<h3 id="44-deepep-normal-kernels-role-division">4.4 DeepEP Normal Kernel's Role Division</h3>
-<p>Normal Kernel internally is not simply Send / Receive. More accurately, three communication roles:</p>
-<pre><code>Source GPU<br>    |<br>    v<br>IB Sending Warp<br>    |<br>    v<br>RDMA Network<br>    |<br>    v<br>IB-to-NVLink Forwarding<br>    |<br>    v<br>NVLink Receiving</code></pre>
-<p><strong>IB Sending</strong>: GPU memory → NIC. Reads from Dispatch Buffer, organizes RDMA packets, pushes to NIC.</p>
-<p><strong>IB-to-NVLink Forwarding</strong>: A critical DeepEP design often overlooked. It solves NIC-GPU topology mismatch. For example, if target GPU is GPU10 but RDMA data arrives at GPU8 first, GPU8 acts as a communication relay: <code>Receive from NIC → Forward through NVLink → Target GPU></code>. This is GPU participating in network forwarding.</p>
-<p><strong>NVLink Receiving</strong>: Target GPU receives from NVLink, writes to Receive Buffer.</p>
-<h3 id="45-why-this-intrainter-node-coordination">4.5 Why This Intra/Inter-node Coordination?</h3>
-<p>If separated:</p>
+<p>Traditional design views <code>GPU → PCIe → NIC → Network></code> as external communication. But in AI Supercomputers, the cluster is <code>GPU Memory Fabric + Network Fabric></code>. DeepEP's core idea: <mark><strong>based on Token destination, fuse NVLink and RDMA into a continuous dataflow path — not "first NVLink, then RDMA."</strong></mark></p>
+<h3 id="42-three-stage-pipeline-role-division">4.2 Three-Stage Pipeline & Role Division</h3>
+<p>In multi-GPU nodes, GPUs and NICs are not one-to-one bound. GPU0 to NIC1 may need <code>GPU0 → NVLink → GPU4 → PCIe → NIC1></code>. Communication becomes: <code>GPU → NVLink domain → NIC → RDMA → NVLink domain → GPU></code>.</p>
+<p>Normal Kernel divides into three roles:</p>
+<pre><code>Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</code></pre>
 <ul>
-<li><strong>Plan A</strong>: GPU only computes, NIC handles communication. All traffic goes through PCIe — bottleneck: PCIe bandwidth, NIC count, topology imbalance.</li>
-<li><strong>Plan B</strong>: Each GPU directly bound to NIC. Reality: too expensive (8 GPUs need 8 NICs).</li>
+<li><strong>IB Sending</strong>: GPU memory → NIC (reads Dispatch Buffer, organizes RDMA packets)</li>
+<li><strong>IB-to-NVLink Forwarding</strong>: Solves NIC-GPU topology mismatch. GPU acts as communication relay: <code>Receive from NIC → Forward through NVLink → Target GPU></code></li>
+<li><strong>NVLink Receiving</strong>: Target GPU receives from NVLink, writes to Receive Buffer</li>
 </ul>
-<p>DeepEP adopts: <strong>GPU as communication participant</strong>, utilizing <code>NVLink + RDMA + GPU SM></code> to form a <mark><strong>GPU-centric communication fabric</strong></mark>.</p>
-<h3 id="46-impact-on-sm-resource-allocation">4.6 Impact on SM Resource Allocation</h3>
-<p>Does certain GPU bear more pressure? Yes. But DeepEP does not use fixed GPU roles — it uses <strong>dynamic communication task assignment</strong>.</p>
-<p>For example, GPU0 (closest to NIC) may handle more IB Sending; GPU3 may handle more NVLink Forwarding. But this is not static assignment — Runtime dynamically arranges based on Token distribution, Expert placement, and NIC topology.</p>
-<h3 id="47-how-to-avoid-forwarding-gpu-overload">4.7 How to Avoid Forwarding GPU Overload?</h3>
-<p><strong>Multi-Channel</strong>: Not one communication queue, but multiple channels, each corresponding to a set of Warps + Buffer.</p>
-<p><strong>Dynamic Warp Allocation</strong>: When communication load changes (e.g., many Tokens Node0 → Node1), forwarding stage adds Warps. SM allocation is not fixed.</p>
-<p><strong>Chunk Streaming</strong>: Does not wait for entire Batch. Chunks flow through, reducing instantaneous pressure.</p>
-<h3 id="48-why-low-latency-kernel-bypasses-forwarding">4.8 Why Low-Latency Kernel Bypasses Forwarding?</h3>
-<p>Related to Decode characteristics: few Tokens per request. If going through <code>GPU → NVLink Forward → NIC → RDMA></code>, each hop adds latency. Low Latency Kernel prefers <code>GPU → Direct RDMA → GPU></code>, sacrificing some throughput for lower latency.</p>
-<h3 id="49-updated-complete-abstraction">4.9 Updated Complete Abstraction</h3>
-<pre><code>Router<br> |<br>Token-Expert Mapping<br> |<br>Dispatch<br> |<br>Layout Transformation<br>        |<br>        +----------------+<br>        |                |<br>        v                v<br> Intra-node          Inter-node<br>    NVLink              RDMA<br>        |                |<br>        +-------+--------+<br>                |<br>          Expert Buffer<br>                |<br>          Expert GEMM<br>                |<br>             Combine</code></pre>
-<blockquote><p><strong>DeepEP's key innovation is not just optimizing All-to-All, but fusing intra-node NVLink Scale-up Fabric and inter-node RDMA Scale-out Fabric into a unified dataflow channel under GPU-centric cluster architecture.</strong></p></blockquote>
-<blockquote><p>It does not simply view GPUs as compute nodes and NICs as network exits, but lets GPU SMs, NVLink, NICs, and RDMA all participate in Token dataflow scheduling.</p></blockquote>
+<p>If separated (GPU only computes, NIC handles communication), all traffic goes through PCIe — a bottleneck. DeepEP adopts <mark><strong>GPU-centric communication fabric</strong></mark>: <code>NVLink + RDMA + GPU SM></code> together form the data path.</p>
+<h3 id="43-dynamic-scheduling-evolution">4.3 Dynamic Scheduling & Evolution</h3>
+<p>Does certain GPU bear more pressure? Yes — but DeepEP uses <strong>dynamic communication task assignment</strong>, not fixed roles. Runtime arranges based on Token distribution, Expert placement, and NIC topology. Three mechanisms prevent overload:</p>
+<ul>
+<li><strong>Multi-Channel</strong>: Multiple communication channels, each with its own Warps + Buffer</li>
+<li><strong>Dynamic Warp Allocation</strong>: Forwarding stage adds/removes Warps based on load</li>
+<li><strong>Chunk Streaming</strong>: Chunks flow through without waiting for entire Batch</li>
+</ul>
+<p><strong>Why Low-Latency Kernel bypasses Forwarding?</strong> Decode has few Tokens per request. Each hop (<code>GPU → NVLink Forward → NIC → RDMA></code>) adds latency. Low Latency prefers <code>GPU → Direct RDMA → GPU></code>.</p>
+<blockquote><p><strong>DeepEP's key innovation is not just optimizing All-to-All, but fusing intra-node NVLink Scale-up Fabric and inter-node RDMA Scale-out Fabric into a unified dataflow channel — letting GPU SMs, NVLink, NICs, and RDMA all participate in Token dataflow scheduling.</strong></p></blockquote>
 <hr>
 <h2 id="5-warp-specialization-pipelined-execution-inside-t">5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</h2>
 <p>Warp Specialization in DeepEP is <em>not</em> about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
