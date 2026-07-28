@@ -189,7 +189,7 @@ The question is never "do we need an address service." We always do. The questio
 
 ---
 
-*© 2026 backyes · Follow me on [Zhihu](https://www.zhihu.com/people/nono-nono-66) & [LinkedIn](https://www.linkedin.com/in/yanfei-wang-5081b4126/) for more AI infrastructure insights*
+*© 2026 backyes · Created by backyes*
 
 ### References
 
