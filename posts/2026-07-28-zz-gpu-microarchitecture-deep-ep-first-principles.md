@@ -23,6 +23,8 @@ The truly difficult problem is:
 
 MoE's core tension:
 
+![MoE Data Layout Transformation](assets/moe_layout_transformation.png)
+
 ```
 Dynamic sparse Token-Expert data flow
               ↓
@@ -106,6 +108,8 @@ DeepEP does not use identical data paths in all scenarios:
 
 ### 2.1 Normal Kernel: Throughput-Optimized Complete Pipeline
 
+![DeepEP Normal and Low-Latency Kernel Pipeline](assets/deep_ep_pipeline.png)
+
 Data path:
 
 ```
@@ -169,6 +173,8 @@ Forming a three-stage communication pipeline.
 
 Warp Specialization in DeepEP is *not* about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for **parallelizing different stages within the communication Kernel**.
 
+![Three-Stage Communication Pipeline](assets/three_stage_pipeline.png)
+
 Different Warp Groups handle:
 
 ```
@@ -182,6 +188,8 @@ Forming: `Send → Forward → Receive`
 ---
 
 ## 5. FIFO: From Synchronous to Streaming Pipeline
+
+![FIFO Pipeline Comparison](assets/fifo_pipeline.png)
 
 Without FIFO: before the previous stage completes, the next stage must wait:
 
@@ -204,6 +212,8 @@ Each stage only cares about its own write/read. No need to wait for the entire B
 ---
 
 ## 6. Metadata: How Dynamic Routing Becomes Contiguous Access
+
+![Metadata-Driven Dynamic Routing](assets/metadata_routing.png)
 
 Two analytical abstractions. Note: **Layout Metadata / Identity Metadata are not official DeepEP source code terms — they are conceptual models proposed for understanding MoE Runtimes.**
 
