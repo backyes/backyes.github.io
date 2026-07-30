@@ -118,7 +118,7 @@ REPORTS = [
      "tags":["DeepEP","MoE","AllToAll","专家并行","NVLink","RDMA","通信库","DeepSeek"]},
     {"dst":"deepepv2","entry":"html/index.html","visual":"DGEMM",
      "title":"DeepGEMM & DeepEP 三向对比 (Survey by AI)",
-     "desc":"25 篇三向对比分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比10篇 + Legacy/NVShmem 2篇）· 博客理论 ⇌ DeepEP源码 ⇌ DeepGEMM源码 · 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传 / 数据布局 5层→4层→3层",
+     "desc":"36 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比10篇 + DeepEP独立分析11篇 + Legacy/NVShmem 2篇）· 博客理论 ⇌ DeepEP源码 ⇌ DeepGEMM源码 · 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传 / 数据布局 5层→4层→3层",
      "cat":"chip","priority":"p0",
      "tags":["DeepGEMM","DeepEP","MoE","Mega MoE","SymmBuffer","Warp Specialization","NVLink","RDMA","对称内存","博客验证","三向对比"]},
 ]

@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP Normal vs Low-Latency 双模式深度分析：从 Blog 第一性原理到代码实现</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: #efefef;
+  --text: #37352f;
+  --text-secondary: #6b7280;
+  --text-muted: #9b9a97;
+  --border: #e9e9e7;
+  --accent: #2383e2;
+  --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3;
+  --code-text: #eb5757;
+  --blockquote-border: #e9e9e7;
+  --table-border: #e9e9e7;
+  --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --bg-secondary: #202020;
+    --bg-hover: #2f2f2f;
+    --text: #e8e8e5;
+    --text-secondary: #9b9a97;
+    --text-muted: #6b7280;
+    --border: #373737;
+    --accent: #529cca;
+    --accent-bg: #252525;
+    --code-bg: #2f2f2f;
+    --code-text: #ff7b72;
+    --blockquote-border: #373737;
+    --table-border: #373737;
+    --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--bg);
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px 100px;
+}
+h1 {
+  font-size: 2.2em;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.5em 0 0.5em;
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: 1.6em;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.8em 0 0.4em;
+}
+h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.5em 0 0.3em;
+}
+h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote {
+  border-left: 3px solid var(--blockquote-border);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 4px 4px 0;
+}
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+pre code {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  font-size: inherit;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { 
+  background: var(--bg); 
+  border: 1px solid var(--border); 
+  border-radius: 6px; 
+  padding: 20px; 
+  margin: 1.2em 0; 
+  overflow-x: auto;
+  text-align: center;
+}
+.toc { 
+  background: var(--bg-secondary); 
+  border-radius: 6px; 
+  padding: 16px 20px; 
+  margin: 1.5em 0; 
+}
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.toc a:hover { color: var(--accent); }
+.nav { 
+  display: flex; 
+  justify-content: space-between; 
+  margin-top: 3em; 
+  padding-top: 1.5em; 
+  border-top: 1px solid var(--border); 
+  font-size: 0.9em;
+}
+.nav a { color: var(--text-secondary); }
+.nav a:hover { color: var(--accent); }
+@media (max-width: 768px) {
+  .container { padding: 30px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  pre { padding: 12px 14px; font-size: 0.8em; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="deepep-normal-vs-low-latency-双模式深度分析-从-blog-第一性原理到代码实现" id="deepep-normal-vs-low-latency-blog">DeepEP Normal vs Low-Latency 双模式深度分析：从 Blog 第一性原理到代码实现</hh1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+分析目标: 以 Blog "First Principles" 章节 3 的理论描述为准绳，逐行对照 DeepEP V1 (Legacy) 与 V2 (Elastic) 的实际代码实现，评估理论描述与工程实现的对应关系，并重点分析 V2 的"统一化"如何重构两种模式的边界。</p>
+</blockquote>
+<hr />
+<hh2 id="1-blog-理论-两种通信哲学的经典描述" id="1-blog">1. Blog 理论：两种通信哲学的经典描述</hh2>
+<blockquote>
+<p>来源: <code>/tmp/deep_ep_blog_text.txt</code> 第 3 节 "Normal vs Low-Latency: Two Communication Philosophies"</p>
+</blockquote>
+<hh3 id="1-1-原文引用与对比表" id="11">1.1 原文引用与对比表</hh3>
+<p>Blog 对两种模式的经典描述如下：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal Kernel</th>
+<th>Low-Latency Kernel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>主场景</strong></td>
+<td>Training / Prefill</td>
+<td>Decode</td>
+</tr>
+<tr>
+<td><strong>优化目标</strong></td>
+<td>最大化吞吐 (Maximize throughput)</td>
+<td>最小化延迟 (Minimize latency)</td>
+</tr>
+<tr>
+<td><strong>核心矛盾</strong></td>
+<td>带宽 (Bandwidth)</td>
+<td>延迟 (Latency)</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>关键 (Critical)</td>
+<td>减少 (Reduced)</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>深 (Deep pipeline)</td>
+<td>浅 (Shallow pipeline)</td>
+</tr>
+<tr>
+<td><strong>通信路径</strong></td>
+<td>NVLink + RDMA 协调 (coordination)</td>
+<td>Direct RDMA</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="1-2-normal-kernel-通信流水线-communication-pipelining" id="12-normal-kernel-communication-pipelining">1.2 Normal Kernel: 通信流水线 (Communication Pipelining)</hh3>
+<p>Blog 原文：</p>
+<blockquote>
+<p>"In multi-GPU nodes, GPUs and NICs are not one-to-one bound. GPU0 to NIC1 may need <strong>GPU0 → NVLink → GPU4 → PCIe → NIC1</strong>. Communication becomes: <strong>Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</strong>."</p>
+<p>"Normal Kernel divides into three roles: <strong>Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</strong>."</p>
+</blockquote>
+<p>核心要点：<br />
+- <strong>三阶段流水线</strong>: IB Sending → IB-to-NVLink Forwarding → NVLink Receiving<br />
+- <strong>Chunk 聚合</strong>: Token 流 → Chunk → 网络传输（Token 是调度粒度，Chunk 是通信粒度）<br />
+- <strong>Forwarding 角色</strong>: 解决 NIC-GPU 拓扑不对称问题</p>
+<hh3 id="1-3-low-latency-kernel-短路径-short-path" id="13-low-latency-kernel-short-path">1.3 Low-Latency Kernel: 短路径 (Short Path)</hh3>
+<p>Blog 原文：</p>
+<blockquote>
+<p>"Decode: small batch, few Tokens, single-Token latency sensitive. Waiting for Chunk aggregation increases latency. Low-Latency Kernel reduces intermediate layers: <strong>Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer</strong>."</p>
+</blockquote>
+<p>核心要点：<br />
+- <strong>旁路 Forwarding</strong>: 跳过 NVLink 中继<br />
+- <strong>浅流水线</strong>: 减少 Stage 以降低单 Token 延迟<br />
+- <strong>Chunk 减少</strong>: 不等待 Token 聚合</p>
+<hr />
+<hh2 id="2-deepep-v1-legacy-normal-模式-internode-cu" id="2-deepep-v1-legacy-normal-internodecu">2. DeepEP V1 (Legacy) Normal 模式: <code>internode.cu</code></hh2>
+<hh3 id="2-1-架构总览" id="21">2.1 架构总览</hh3>
+<p>V1 Normal 模式采用<strong>物理分离</strong>的双文件设计：</p>
+<div class="highlight"><pre><span></span><code>deep_ep/buffers/legacy.py
+  └── Buffer(low_latency_mode=False)
+        ├── notify_dispatch&lt;kLowLatencyMode=false&gt;   ──┐
+        ├── dispatch&lt;kLowLatencyMode=false&gt;            ├── internode.cu
+        ├── cached_notify&lt;kLowLatencyMode=false&gt;       │
+        └── combine&lt;kLowLatencyMode=false&gt;             ──┘
+        └── (intranode.cu: NVLink only 路径)
+</code></pre></div>
+
+<p><strong>模式选择 API：</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_ep/buffers/legacy.py:37-93</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Buffer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+                 <span class="n">group</span><span class="p">,</span>
+                 <span class="n">num_nvl_bytes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">num_rdma_bytes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">low_latency_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>  <span class="c1"># ← False = Normal 模式</span>
+                 <span class="n">num_qps_per_rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span><span class="p">,</span>
+                 <span class="n">allow_nvlink_for_low_latency_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                 <span class="o">...</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">low_latency_mode</span> <span class="o">=</span> <span class="n">low_latency_mode</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">runtime</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">Buffer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">group_size</span><span class="p">,</span>
+                                 <span class="n">num_nvl_bytes</span><span class="p">,</span> <span class="n">num_rdma_bytes</span><span class="p">,</span>
+                                 <span class="n">low_latency_mode</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>  <span class="c1"># 传入 C++ 运行时</span>
+</code></pre></div>
+
+<hh3 id="2-2-dispatch-kernel-5-warp-角色与三阶段流水线" id="22-dispatch-kernel-5-warp">2.2 Dispatch Kernel: 5 Warp 角色与三阶段流水线</hh3>
+<p><code>internode.cu</code> 的 dispatch kernel 是 Normal 模式最核心、最复杂的实现，拥有 <strong>5 种 Warp 角色</strong>，形成完整的三阶段流水线。</p>
+<hh4 id="1-warp-角色枚举" id="1-warp">(1) Warp 角色枚举</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:487</span>
+<span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">WarpRole</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">kRDMASender</span><span class="p">,</span><span class="w">              </span><span class="c1">// RDMA 发送者：从源 GPU 读取 Dispatch Buffer，写入 RDMA send buffer</span>
+<span class="w">    </span><span class="n">kRDMASenderCoordinator</span><span class="p">,</span><span class="w">   </span><span class="c1">// RDMA 发送协调者：轮询 RDMA tail，按 Chunk 发起 put_nbi</span>
+<span class="w">    </span><span class="n">kRDMAAndNVLForwarder</span><span class="p">,</span><span class="w">     </span><span class="c1">// RDMA+NVL 转发者：从 RDMA buffer 读取，通过 NVLink 转发到目标 GPU</span>
+<span class="w">    </span><span class="n">kForwarderCoordinator</span><span class="p">,</span><span class="w">    </span><span class="c1">// 转发协调者：收集各 Forwarder 的 head 最小值，更新远端 RDMA head</span>
+<span class="w">    </span><span class="n">kNVLReceivers</span><span class="w">             </span><span class="c1">// NVLink 接收者：从 NVL 读取，写入 recv_x（最终 Receive Buffer）</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hh4 id="2-warp-角色分配逻辑" id="2-warp">(2) Warp 角色分配逻辑</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:499-516</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_sms</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">channel_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_id</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">is_forwarder</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_id</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">  </span><span class="c1">// 偶数 SM 是 Forwarder，奇数 SM 是 Sender/Receiver</span>
+
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">role_meta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="o">=</span><span class="p">]()</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">pair</span><span class="o">&lt;</span><span class="n">WarpRole</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">is_forwarder</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMAAndNVLForwarder</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">channel_id</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kForwarderCoordinator</span><span class="p">,</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASender</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASenderCoordinator</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kNVLReceivers</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">channel_id</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>关键设计：</strong><br />
+- <code>num_sms / 2</code> 个 channel，每个 channel 由 2 个 SM 服务（1 个 Forwarder + 1 个 Sender/Receiver）<br />
+- Forwarder SM 中的 warp 0-7 是 <code>kRDMAAndNVLForwarder</code>（每个负责一个目标 NVL rank）<br />
+- Sender/Receiver SM 中的 warp 0-6 是 <code>kRDMASender</code>，warp 7 是 <code>kRDMASenderCoordinator</code>，其余是 <code>kNVLReceivers</code></p>
+<hh4 id="3-三阶段流水线-mermaid-图" id="3-mermaid">(3) 三阶段流水线 Mermaid 图</hh4>
+<div class="highlight"><pre><span></span><code>flowchart TB
+    subgraph Stage1[&quot;Stage 1: IB Sending (kRDMASender)&quot;]
+        S1[&quot;读取 Dispatch Buffer&lt;br/&gt;写入 RDMA send buffer&lt;br/&gt;(SymBuffer)&quot;]
+        SC[&quot;kRDMASenderCoordinator&lt;br/&gt;轮询 tail, 按 Chunk 发起 put_nbi&quot;]
+    end
+
+    subgraph Stage2[&quot;Stage 2: IB-to-NVLink Forwarding (kRDMAAndNVLForwarder)&quot;]
+        F1[&quot;等待 RDMA meta 到达&lt;br/&gt;(rdma_channel_meta)&quot;]
+        F2[&quot;轮询 src_rdma_rank&lt;br/&gt;从 RDMA buffer 读取 Token&quot;]
+        F3[&quot;TMA load → mbarrier_wait&lt;br/&gt;TMA store → NVL buffer&quot;]
+        FC[&quot;kForwarderCoordinator&lt;br/&gt;收集 min_head, 更新远端 head&quot;]
+    end
+
+    subgraph Stage3[&quot;Stage 3: NVLink Receiving (kNVLReceivers)&quot;]
+        R1[&quot;等待 NVL channel prefix&lt;br/&gt;(nvl_channel_prefix_start/end)&quot;]
+        R2[&quot;从 NVL buffer 读取 Token&lt;br/&gt;TMA load + TMA store&quot;]
+        R3[&quot;写入 recv_x&lt;br/&gt;(最终 Receive Buffer)&quot;]
+    end
+
+    Stage1 --&gt;|&quot;nvshmemi_ibgda_put_nbi_warp&quot;| Stage2
+    Stage2 --&gt;|&quot;st_release_sys_global(nvl_channel_tail)&quot;| Stage3
+</code></pre></div>
+
+<hh4 id="4-chunk-聚合机制-normal-模式核心" id="4-chunk-normal">(4) Chunk 聚合机制（Normal 模式核心）</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:527-529</span>
+<span class="c1">// RDMA symmetric layout: Chunk 是通信粒度</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">rdma_channel_data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SymBuffer</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">rdma_buffer_ptr</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_max_rdma_chunked_recv_tokens</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← Chunk 大小</span>
+<span class="w">    </span><span class="n">kNumRDMARanks</span><span class="p">,</span><span class="w"> </span><span class="n">channel_id</span><span class="p">,</span><span class="w"> </span><span class="n">num_channels</span><span class="p">);</span>
+</code></pre></div>
+
+<p>Coordinator 按 Chunk 粒度发送，而非单 Token：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:809-817</span>
+<span class="c1">// 等待 Sender 完成一定数量的 Token 写入</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">num_tokens_processed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">processed_tail</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">synced_last_issued_tail</span><span class="p">;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">num_tokens_processed</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">synced_num_tokens_to_send</span>
+<span class="w">    </span><span class="k">and</span><span class="w"> </span><span class="n">num_tokens_processed</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_max_rdma_chunked_send_tokens</span><span class="p">)</span>
+<span class="w">    </span><span class="k">continue</span><span class="p">;</span><span class="w">  </span><span class="c1">// 未达到 Chunk 阈值，继续等待</span>
+
+<span class="c1">// 按 Chunk 粒度发送</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">num_tokens_to_issue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">min</span><span class="p">(</span><span class="n">num_tokens_processed</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_rdma_chunked_send_tokens</span><span class="p">);</span>
+<span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+</code></pre></div>
+
+<hh4 id="5-forwarding-详细机制" id="5-forwarding">(5) Forwarding 详细机制</hh4>
+<p>Forwarding 是 Normal 模式最独特的部分——解决 NIC-GPU 拓扑不对称问题：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:909-1013</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_role</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMAAndNVLForwarder</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 等待 RDMA meta 到达（包含各 NVL rank 的 token 数前缀和）</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">meta_0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">(</span><span class="n">rdma_channel_meta</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">lane_id</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_nvl_rank</span><span class="p">);</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">meta_1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">(</span><span class="n">rdma_channel_meta</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">lane_id</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_nvl_rank</span><span class="p">);</span>
+<span class="w">        </span><span class="c1">// meta_0, meta_1 &lt; 0 表示数据已到达（编码为 -value - 1）</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">meta_0</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_1</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_2</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_3</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">int</span><span class="w"> </span><span class="n">start_sum</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">-</span><span class="n">meta_0</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">end_sum</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">-</span><span class="n">meta_1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">            </span><span class="c1">// 通知 NVL ranks</span>
+<span class="w">            </span><span class="n">st_relaxed_sys_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_start</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="n">start_sum</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="n">st_relaxed_sys_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_end</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="n">end_sum</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 2. 轮询 src_rdma_rank（round-robin），从 RDMA buffer 读取 Token</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">__any_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">num_tokens_to_recv_from_rdma</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 找到下一个有数据的 src_rdma_rank</span>
+<span class="w">        </span><span class="n">src_rdma_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">src_rdma_rank</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumRDMARanks</span><span class="p">;</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">__shfl_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">num_tokens_to_recv_from_rdma</span><span class="p">,</span><span class="w"> </span><span class="n">src_rdma_rank</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">lane_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">src_rdma_rank</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">cached_rdma_channel_head</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">cached_rdma_channel_tail</span><span class="p">)</span>
+<span class="w">                </span><span class="n">cached_rdma_channel_tail</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_acquire_sys_global</span><span class="p">(</span><span class="n">rdma_channel_tail</span><span class="p">.</span><span class="n">buffer</span><span class="p">(</span><span class="n">src_rdma_rank</span><span class="p">));</span>
+<span class="w">            </span><span class="p">...</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="w">        </span><span class="c1">// 3. 遍历每个 Token，通过 TMA 转发到 NVL buffer</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_rdma_head</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">src_rdma_tail</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">rdma_slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">num_max_rdma_chunked_recv_tokens</span><span class="p">;</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">shifted</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rdma_channel_data</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">src_rdma_rank</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">rdma_slot_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">;</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">src_meta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">SourceMeta</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">shifted</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">hidden_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">scale_bytes</span><span class="p">));</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">is_in_dst_nvl_rank</span><span class="p">)</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+
+<span class="w">            </span><span class="c1">// TMA load from RDMA buffer, TMA store to NVL buffer</span>
+<span class="w">            </span><span class="kt">int</span><span class="w"> </span><span class="n">dst_slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">cached_nvl_channel_tail</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">num_max_nvl_chunked_recv_tokens</span><span class="p">;</span>
+<span class="w">            </span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">shifted</span><span class="p">,</span><span class="w"> </span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">            </span><span class="n">mbarrier_arrive_and_expect_tx</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">);</span>
+<span class="w">            </span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">tma_phase</span><span class="p">);</span>
+<span class="w">            </span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">dst_shifted</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="2-3-combine-kernel-4-warp-角色与反向流水线" id="23-combine-kernel-4-warp">2.3 Combine Kernel: 4 Warp 角色与反向流水线</hh3>
+<p>Combine 是 Dispatch 的反向操作，同样有复杂的 Warp 角色：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:1746</span>
+<span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">WarpRole</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">kNVLSender</span><span class="p">,</span><span class="w"> </span><span class="n">kNVLAndRDMAForwarder</span><span class="p">,</span><span class="w"> </span><span class="n">kRDMAReceiver</span><span class="p">,</span><span class="w"> </span><span class="n">kCoordinator</span><span class="w"> </span><span class="p">};</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kNVLSender</code></td>
+<td>从本地 x 读取，通过 NVL 发送到 Forwarder</td>
+</tr>
+<tr>
+<td><code>kNVLAndRDMAForwarder</code></td>
+<td>从 NVL 接收，通过 RDMA 发送到目标 GPU</td>
+</tr>
+<tr>
+<td><code>kRDMAReceiver</code></td>
+<td>从 RDMA 接收，写入本地 buffer</td>
+</tr>
+<tr>
+<td><code>kCoordinator</code></td>
+<td>协调 RDMA 接收进度</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="2-4-klowlatencymode-模板参数的编译期分支" id="24-klowlatencymode">2.4 <code>kLowLatencyMode</code> 模板参数的编译期分支</hh3>
+<p>同一个 <code>internode.cu</code> 文件通过 <code>kLowLatencyMode</code> 模板参数同时服务于两种模式：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu:87-95</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">translate_dst_rdma_rank</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">dst_rdma_rank</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Low-Latency: 每个 GPU 独立 RDMA rank (dst_rdma_rank * 8 + nvl_rank)</span>
+<span class="w">    </span><span class="c1">// Normal: 同一 node 的 GPU 共享 RDMA rank (dst_rdma_rank)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">kLowLatencyMode</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="p">(</span><span class="n">dst_rdma_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">dst_rdma_rank</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">nvshmem_sync_with_same_gpu_idx</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">nvshmem_team_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">rdma_team</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Low-Latency: 仅同步 RDMA team（减少同步开销）</span>
+<span class="w">    </span><span class="c1">// Normal: 全局同步</span>
+<span class="w">    </span><span class="n">kLowLatencyMode</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="kt">void</span><span class="p">(</span><span class="n">nvshmem_sync</span><span class="p">(</span><span class="n">rdma_team</span><span class="p">))</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">nvshmem_sync_all</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键差异：</strong><br />
+- Normal 模式：<code>nvshmem_sync_all()</code> — 全局 barrier<br />
+- Low-Latency 模式：<code>nvshmem_sync(rdma_team)</code> — 仅 RDMA team 同步</p>
+<hr />
+<hh2 id="3-deepep-v1-legacy-low-latency-模式-internode_ll-cu" id="3-deepep-v1-legacy-low-latency-internode_llcu">3. DeepEP V1 (Legacy) Low-Latency 模式: <code>internode_ll.cu</code></hh2>
+<hh3 id="3-1-架构总览" id="31">3.1 架构总览</hh3>
+<p>Low-Latency 模式使用<strong>完全独立的 kernel 文件</strong> <code>internode_ll.cu</code>：</p>
+<div class="highlight"><pre><span></span><code>deep_ep/buffers/legacy.py
+  └── Buffer(low_latency_mode=True)
+        └── internode_ll.cu
+              ├── clean_low_latency_buffer
+              ├── dispatch (发送+接收一体化)
+              ├── combine  (发送+接收一体化)
+              ├── query_mask_buffer / update_mask_buffer / clean_mask_buffer
+</code></pre></div>
+
+<hh3 id="3-2-核心差异-无-warp-角色分离" id="32-warp">3.2 核心差异：无 Warp 角色分离</hh3>
+<p>与 Normal 的 5 种 Warp 角色不同，Low-Latency 模式<strong>几乎没有 Warp 角色分离</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode_ll.cu:128-155</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kUseFP8</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">kUseUE8M0</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kHidden</span><span class="o">&gt;</span>
+<span class="n">__global__</span><span class="w"> </span><span class="n">__launch_bounds__</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">dispatch</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">sm_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">thread_id</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_lane_id</span><span class="p">();</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">warp_group_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">num_warps_per_group</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">sub_warp_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">num_warps_per_group</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">responsible_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_id</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_warp_groups</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">warp_group_id</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 只有 2 种 Warp 角色:</span>
+<span class="w">    </span><span class="c1">// 1. warp_id &lt; num_warps - 1: FP8 cast + IBGDA send</span>
+<span class="w">    </span><span class="c1">// 2. warp_id == num_warps - 1: 读取 topk_idx, 统计 per-expert 计数</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_warps</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 发送阶段</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">num_warps</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 计数阶段</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="3-3-单-token-直接发送-无-chunk-聚合" id="33-token-chunk">3.3 单 Token 直接发送（无 Chunk 聚合）</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode_ll.cu:202-278</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_id</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">num_sms</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">x_int4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">int4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">hidden_bf16_int4</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">rdma_x_src_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">rdma_x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// FP8 cast（如果启用）</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">thread_id</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">hidden_bf16_int4</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">num_threads</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">int4_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">x_int4</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kUseFP8</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="c1">// 计算 local amax, scale</span>
+<span class="w">            </span><span class="n">calculate_fp8_scales</span><span class="p">(</span><span class="n">amax</span><span class="p">,</span><span class="w"> </span><span class="n">scale</span><span class="p">,</span><span class="w"> </span><span class="n">scale_inv</span><span class="p">,</span><span class="w"> </span><span class="n">round_scale</span><span class="p">);</span>
+<span class="w">            </span><span class="c1">// Cast into send buffer</span>
+<span class="w">            </span><span class="n">rdma_x_vec</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">int2_value</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="p">(</span><span class="s">&quot;bar.sync 1, %0;&quot;</span><span class="w"> </span><span class="o">::</span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="n">num_threads</span><span class="p">));</span>
+
+<span class="w">    </span><span class="c1">// 直接通过 IBGDA 发送，无 Forwarding，无 Chunk 聚合</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lane_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">atomic_counter_per_expert</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">        </span><span class="n">slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__shfl_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">slot_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">num_local_experts</span><span class="p">;</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_recv_x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">...;</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_p2p_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nvshmemi_get_p2p_ptr</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">is_rank_masked</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span><span class="n">mask_buffer_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_p2p_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">            </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="c1">// P2P 直接写入</span>
+<span class="w">                </span><span class="n">UNROLLED_WARP_COPY</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="n">num_int4_per_msg</span><span class="p">,</span><span class="w"> </span><span class="n">dst_int4_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_int4_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">,</span><span class="w"> </span><span class="n">st_na_global</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="3-4-接收端-按-expert-组织" id="34-expert">3.4 接收端：按 Expert 组织</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode_ll.cu:362-370</span>
+<span class="c1">// 接收端按 Expert 组织，而非按 Rank（与 Normal 不同）</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">rdma_recv_x_uint8</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">rdma_recv_x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span>
+<span class="w">    </span><span class="n">local_expert_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_ranks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_max_dispatch_tokens_per_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="w"> </span><span class="o">+</span>
+<span class="w">    </span><span class="n">src_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_max_dispatch_tokens_per_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">recv_x_int4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="n">int4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">packed_recv_x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span>
+<span class="w">    </span><span class="n">local_expert_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_ranks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_max_dispatch_tokens_per_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">;</span>
+</code></pre></div>
+
+<hh3 id="3-5-超时与-mask-机制-低延迟场景独有" id="35-mask">3.5 超时与 Mask 机制（低延迟场景独有）</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode_ll.cu:383-408</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sub_warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">lane_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">start_time</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clock64</span><span class="p">();</span>
+<span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">wait_recv_cost</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">is_rank_masked</span><span class="p">(</span><span class="n">mask_buffer_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_rank</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 等待 Token 到达，带超时检测</span>
+<span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="p">((</span><span class="n">num_recv_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_acquire_sys_global</span><span class="p">(</span><span class="n">rdma_recv_count</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">...))</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">               </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">(</span><span class="n">wait_recv_cost</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clock64</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_time</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">LEGACY_NUM_TIMEOUT_CYCLES</span><span class="p">)</span>
+<span class="w">            </span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// 超时则 mask 该 rank（低延迟场景的容错机制）</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wait_recv_cost</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">LEGACY_NUM_TIMEOUT_CYCLES</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;Warning: DeepEP timeout for dispatch receive, rank %d, ...&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">mask_buffer_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="n">trap</span><span class="p">();</span>
+<span class="w">        </span><span class="n">atomicExch</span><span class="p">(</span><span class="n">mask_buffer_ptr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">src_rank</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="3-6-v1-双内核对比总结" id="36-v1">3.6 V1 双内核对比总结</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal (<code>internode.cu</code>)</th>
+<th>Low-Latency (<code>internode_ll.cu</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp 角色</strong></td>
+<td>5 种 (Sender/Coordinator/Forwarder/Coord/Receiver)</td>
+<td>2 种 (发送 warp + 计数 warp)</td>
+</tr>
+<tr>
+<td><strong>通信粒度</strong></td>
+<td>Chunk (多 Token 聚合)</td>
+<td>单 Token</td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>有 (GPU 作为 NVLink 中继)</td>
+<td>无 (Direct RDMA)</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td><code>nvshmem_sync_all()</code> + barrier_block</td>
+<td><code>nvshmem_sync(rdma_team)</code> + atomic</td>
+</tr>
+<tr>
+<td><strong>Buffer 结构</strong></td>
+<td>双 Buffer (NVL + RDMA)</td>
+<td>单 RDMA Buffer</td>
+</tr>
+<tr>
+<td><strong>消息格式</strong></td>
+<td>Token + SourceMeta + Scales</td>
+<td>Token + Scales (更紧凑)</td>
+</tr>
+<tr>
+<td><strong>错误处理</strong></td>
+<td>无</td>
+<td>Mask buffer + 超时检测</td>
+</tr>
+<tr>
+<td><strong>SM 使用</strong></td>
+<td>固定 20 (默认)</td>
+<td>动态 (num_sms)</td>
+</tr>
+<tr>
+<td><strong>接收端组织</strong></td>
+<td>按 Rank</td>
+<td>按 Expert</td>
+</tr>
+<tr>
+<td><strong>Kernel 结构</strong></td>
+<td>发送/接收分离</td>
+<td>发送+接收一体化 (phases)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="4-deepep-v2-elastic-统一化-elasticbuffer-如何重构两种模式" id="4-deepep-v2-elastic-elasticbuffer">4. DeepEP V2 (Elastic) 统一化：ElasticBuffer 如何重构两种模式</hh2>
+<hh3 id="4-1-架构总览" id="41">4.1 架构总览</hh3>
+<p>V2 通过 <strong>JIT 编译 + 模板参数</strong> 实现逻辑统一：</p>
+<div class="highlight"><pre><span></span><code>deep_ep/buffers/elastic.py
+  └── ElasticBuffer
+        ├── dispatch_impl&lt;kIsScaleupNVLink=false&gt;  → hybrid_dispatch.cuh (多节点 = Normal 等价)
+        ├── dispatch_impl&lt;kIsScaleupNVLink=true&gt;   → dispatch.cuh (单节点 NVLink only = Low-Latency 等价)
+        └── (num_scaleout_ranks == 1 时自动选择 direct)
+</code></pre></div>
+
+<hh3 id="4-2-统一机制-模板参数-kisscaleupnvlink" id="42-kisscaleupnvlink">4.2 统一机制：模板参数 <code>kIsScaleupNVLink</code></hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/elastic/dispatch.hpp:53-78</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">generate_impl</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Args</span><span class="o">&amp;</span><span class="w"> </span><span class="n">args</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">header_name</span><span class="p">,</span><span class="w"> </span><span class="n">func_name</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">num_scaleout_ranks</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 单节点模式 (类似 Low-Latency 场景)</span>
+<span class="w">        </span><span class="n">header_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;dispatch&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="n">func_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;dispatch_impl&lt;{}, {}, ...&gt;&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">is_scaleup_nvlink</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← true = NVLink only</span>
+<span class="w">            </span><span class="p">...);</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 跨节点模式 (类似 Normal 场景)</span>
+<span class="w">        </span><span class="n">header_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hybrid_dispatch&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="n">func_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;hybrid_dispatch_impl&lt;{}, {}, ...&gt;&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">num_scaleout_warps</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">num_forward_warps</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← 有 forwarding warps</span>
+<span class="w">            </span><span class="p">...);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键模板参数：</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/dispatch.cuh:17-30</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kIsScaleupNVLink</span><span class="p">,</span><span class="w">      </span><span class="c1">// ← 核心模式开关</span>
+<span class="w">          </span><span class="kt">bool</span><span class="w"> </span><span class="n">kDoCPUSync</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">bool</span><span class="w"> </span><span class="n">kReuseSlotIndices</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumNotifyWarps</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumSFPacks</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumMaxTokensPerRank</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumExperts</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kExpertAlignment</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">,</span>
+<span class="w">          </span><span class="p">...</span><span class="o">&gt;</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">dispatch_impl</span><span class="p">(...)</span>
+</code></pre></div>
+
+<hh3 id="4-3-normal-等价-hybrid_dispatch_impl-scaleout-gt-1" id="43-normal-hybrid_dispatch_impl-scaleout-1">4.3 Normal 等价：<code>hybrid_dispatch_impl</code> (scaleout &gt; 1)</hh3>
+<p>当 <code>num_scaleout_ranks &gt; 1</code> 时，V2 使用 <code>hybrid_dispatch_impl</code>，对应 Blog 的 Normal 模式：</p>
+<hh4 id="1-三阶段-warp-角色" id="1-warp_1">(1) 三阶段 Warp 角色</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:14-32</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="p">...,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumScaleoutWarps</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumForwardWarps</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← Forward warps</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumScaleoutRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumScaleupRanks</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="o">&gt;</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">hybrid_dispatch_impl</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Warp 角色:</span>
+<span class="w">    </span><span class="c1">// 1. Notify warps: 元数据交换</span>
+<span class="w">    </span><span class="c1">// 2. Scaleout warps: RDMA 发送</span>
+<span class="w">    </span><span class="c1">// 3. Forward warps: NVLink 转发 ← 对应 Normal 的 Forwarding</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh4 id="2-forwarding-机制" id="2-forwarding">(2) Forwarding 机制</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:88-97</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">scaleup_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">BufferLayout</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">token_layout</span><span class="p">,</span><span class="w"> </span><span class="n">kNumScaleupRanks</span><span class="p">,</span><span class="w"> </span><span class="n">kNumScaleoutRanks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumMaxTokensPerRank</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="p">);</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">scaleout_send_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">BufferLayout</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">token_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">kNumMaxTokensPerRank</span><span class="p">,</span><span class="w"> </span><span class="n">scaleup_buffer</span><span class="p">.</span><span class="n">get_buffer_end_ptr</span><span class="p">());</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">scaleout_recv_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">BufferLayout</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">token_layout</span><span class="p">,</span><span class="w"> </span><span class="n">kNumScaleoutRanks</span><span class="p">,</span><span class="w"> </span><span class="n">kNumChannels</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumMaxTokensPerChannel</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+</code></pre></div>
+
+<p><strong>与 V1 Normal 的对应关系：</strong><br />
+- <code>scaleout_send_buffer</code> → V1 的 RDMA send buffer<br />
+- <code>scaleup_buffer</code> → V1 的 NVLink receive buffer<br />
+- <code>Forward warps</code> → V1 的 <code>kRDMAAndNVLForwarder</code></p>
+<hh4 id="3-chunk-机制" id="3-chunk">(3) Chunk 机制</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:24-27</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">kNumChannelsPerSM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumScaleoutWarps</span><span class="p">,</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">kNumChannels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumScaleoutWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">kNumMaxTokensPerChannel</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">constexpr_ceil_div</span><span class="p">(</span><span class="n">kNumMaxTokensPerRank</span><span class="p">,</span><span class="w"> </span><span class="n">kNumChannels</span><span class="p">),</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">kScaleoutUpdateInterval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span><span class="w">           </span><span class="c1">// ← Chunk 更新间隔</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">kNumSlotsPerForwardChunk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kScaleoutUpdateInterval</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← Chunk 大小</span>
+</code></pre></div>
+
+<hh3 id="4-4-low-latency-等价-dispatch_impl-scaleout-1" id="44-low-latency-dispatch_impl-scaleout-1">4.4 Low-Latency 等价：<code>dispatch_impl</code> (scaleout = 1)</hh3>
+<p>当 <code>num_scaleout_ranks == 1</code> 时，V2 使用 <code>dispatch_impl</code>，对应 Blog 的 Low-Latency 模式：</p>
+<hh4 id="1-无-forwarding" id="1-forwarding">(1) 无 Forwarding</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/dispatch.cuh:362-393</span>
+<span class="c1">// Issue TMA NVLink stores (直接写入，无转发)</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span>
+<span class="w">    </span><span class="n">gin</span><span class="p">.</span><span class="n">get_sym_ptr</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">recv_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">:</span>
+<span class="w">    </span><span class="nb">nullptr</span><span class="p">;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">());</span>
+
+<span class="c1">// Issue RDMA put (仅对非 NVLink 可达的 rank)</span>
+<span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">kIsScaleupNVLink</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">gin</span><span class="p">.</span><span class="n">put</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">recv_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">                        </span><span class="n">send_buffer_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(),</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键差异：</strong><br />
+- <code>kIsScaleupNVLink = true</code>: 纯 NVLink，无 RDMA<br />
+- <code>kIsScaleupNVLink = false</code>: NVLink + RDMA，但<strong>无 Forwarding warps</strong></p>
+<hh4 id="2-单-token-粒度" id="2-token">(2) 单 Token 粒度</hh4>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/dispatch.cuh:278-292</span>
+<span class="c1">// 每个 Token 独立处理，无 Chunk 聚合</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">token_start</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dispatch_warp_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">token_stride</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">token_start</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">token_stride</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Issue data TMA (单 Token)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_hidden_ptr</span><span class="p">(),</span>
+<span class="w">                         </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">token_i64_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">),</span>
+<span class="w">                         </span><span class="n">mbarrier_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="4-5-v2-统一化的本质" id="45-v2">4.5 V2 统一化的本质</hh3>
+<p>V2 的统一不是"消灭"两种模式，而是通过以下机制让两种模式共享同一套代码骨架：</p>
+<table>
+<thead>
+<tr>
+<th>统一机制</th>
+<th>具体实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>JIT 编译</strong></td>
+<td>模板参数在编译期确定，运行时零开销</td>
+</tr>
+<tr>
+<td><strong>模板参数 <code>kIsScaleupNVLink</code></strong></td>
+<td>控制是否走 NVLink 路径</td>
+</tr>
+<tr>
+<td><strong><code>num_scaleout_ranks</code> 判断</strong></td>
+<td>决定使用 <code>dispatch_impl</code> 还是 <code>hybrid_dispatch_impl</code></td>
+</tr>
+<tr>
+<td><strong>带宽模型</strong></td>
+<td><code>get_theoretical_num_sms</code> 自动决策 SM 数量</td>
+</tr>
+<tr>
+<td><strong>Buffer 统一</strong></td>
+<td>ElasticBuffer 统一内存管理，不再分离 NVL/RDMA Buffer</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="5-sm-数量计算-get_theoretical_num_sms-带宽模型" id="5-sm-get_theoretical_num_sms">5. SM 数量计算：<code>get_theoretical_num_sms</code> 带宽模型</hh2>
+<hh3 id="5-1-核心算法" id="51">5.1 核心算法</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_ep/buffers/elastic.py:729-834</span>
+<span class="nd">@weak_lru</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_theoretical_num_sms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                            <span class="n">num_scaleout_topk</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                            <span class="n">rdma_gbs</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">nvlink_gbs</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                            <span class="n">sm_read_gbs</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">200</span><span class="p">,</span> <span class="n">sm_write_gbs</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">50</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    基于带宽模型估算 dispatch/combine kernel 的最优 SM 数量。</span>
+<span class="sd">    假设 balanced gate distribution。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># 1. 获取带宽</span>
+    <span class="k">if</span> <span class="n">rdma_gbs</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_rdma_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">rdma_gbs</span> <span class="o">=</span> <span class="n">get_rdma_gbs</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">nvlink_gbs</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">nvlink_gbs</span> <span class="o">=</span> <span class="n">get_nvlink_gbs</span><span class="p">()</span>
+
+    <span class="c1"># 2. 计算期望 top-k scale-out/scale-up ranks</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_expected_topk</span><span class="p">(</span><span class="n">num_groups</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">num_groups</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span> <span class="o">-</span> <span class="n">num_experts</span> <span class="o">//</span> <span class="n">num_groups</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">)</span>
+                                <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">))</span>
+
+    <span class="n">num_expected_scaleout_topk</span> <span class="o">=</span> <span class="n">get_expected_topk</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="n">num_expected_topk</span> <span class="o">=</span> <span class="n">get_expected_topk</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span><span class="p">)</span>
+
+    <span class="c1"># 3. 计算各类型流量</span>
+    <span class="n">sm_read</span><span class="p">,</span> <span class="n">sm_write</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+    <span class="n">rdma_traffic</span><span class="p">,</span> <span class="n">nvlink_traffic</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+
+    <span class="n">sm_read</span> <span class="o">+=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span>  <span class="c1"># 读取 tokens</span>
+
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="c1"># Hybrid 模式 (Normal 等价)</span>
+        <span class="n">sm_write</span> <span class="o">+=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span>
+        <span class="n">sm_write</span> <span class="o">+=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">num_expected_scaleout_topk</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span><span class="p">)</span>
+        <span class="n">rdma_traffic</span> <span class="o">+=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">num_expected_scaleout_topk</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="mi">1</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span><span class="p">))</span>
+        <span class="n">sm_read</span> <span class="o">+=</span> <span class="n">num_expected_scaleout_topk</span> <span class="o">/</span> <span class="n">num_expected_topk</span>  <span class="c1"># Forward warps</span>
+        <span class="n">sm_write</span> <span class="o">+=</span> <span class="mi">1</span>  <span class="c1"># Issue scaleup</span>
+        <span class="n">nvlink_traffic</span> <span class="o">+=</span> <span class="mi">1</span> <span class="o">-</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleup_ranks</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Direct 模式 (Low-Latency 等价)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_rdma_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">sm_write</span> <span class="o">+=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span>
+        <span class="n">sm_write</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span>
+        <span class="n">nvlink_traffic</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="mi">1</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span><span class="p">)</span>
+        <span class="n">rdma_traffic</span> <span class="o">+=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span>
+
+    <span class="c1"># 4. 找到瓶颈</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="p">(</span><span class="n">rdma_traffic</span> <span class="o">/</span> <span class="n">rdma_gbs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">nvlink_traffic</span> <span class="o">/</span> <span class="n">nvlink_gbs</span><span class="p">):</span>
+        <span class="n">bounded_traffic</span><span class="p">,</span> <span class="n">bounded_gbs</span> <span class="o">=</span> <span class="n">rdma_traffic</span><span class="p">,</span> <span class="n">rdma_gbs</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">bounded_traffic</span><span class="p">,</span> <span class="n">bounded_gbs</span> <span class="o">=</span> <span class="n">nvlink_traffic</span><span class="p">,</span> <span class="n">nvlink_gbs</span>
+
+    <span class="c1"># 5. 计算 SM 数量</span>
+    <span class="n">num_device_sms</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_properties</span><span class="p">(</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">multi_processor_count</span>
+    <span class="n">num_sms</span> <span class="o">=</span> <span class="n">num_device_sms</span>  <span class="c1"># 无流量时默认全部 SM</span>
+    <span class="k">if</span> <span class="n">bounded_traffic</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">num_sms</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="n">bounded_gbs</span> <span class="o">/</span> <span class="n">bounded_traffic</span> <span class="o">*</span> <span class="n">sm_read</span> <span class="o">/</span> <span class="n">sm_read_gbs</span><span class="p">,</span>
+            <span class="n">bounded_gbs</span> <span class="o">/</span> <span class="n">bounded_traffic</span> <span class="o">*</span> <span class="n">sm_write</span> <span class="o">/</span> <span class="n">sm_write_gbs</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="n">num_sms</span> <span class="o">=</span> <span class="n">align</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">num_sms</span> <span class="o">*</span> <span class="mf">1.25</span><span class="p">)),</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">num_sms</span> <span class="o">=</span> <span class="n">num_sms</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefer_overlap_with_compute</span> <span class="k">else</span> <span class="nb">max</span><span class="p">(</span><span class="n">num_sms</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>
+    <span class="n">num_sms</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">num_sms</span><span class="p">,</span> <span class="n">num_device_sms</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">num_sms</span>
+</code></pre></div>
+
+<hh3 id="5-2-算法核心思想" id="52">5.2 算法核心思想</hh3>
+<p>该算法的核心是<strong>带宽平衡模型</strong>：</p>
+<div class="highlight"><pre><span></span><code>所需 SM 数 = 瓶颈带宽 / 单 Token 流量 × 每 SM 读写需求 / 每 SM 带宽能力
+</code></pre></div>
+
+<p>关键参数：<br />
+- <code>sm_read_gbs = 200</code>: 每 SM HBM 读取带宽 (GB/s)<br />
+- <code>sm_write_gbs = 50</code>: 每 SM HBM 写入带宽 (GB/s)<br />
+- <code>rdma_gbs</code>: RDMA 物理带宽 (如 90 GB/s)<br />
+- <code>nvlink_gbs</code>: NVLink 物理带宽 (如 726 GB/s)</p>
+<hh3 id="5-3-与-v1-的对比" id="53-v1">5.3 与 V1 的对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 (Legacy)</th>
+<th>V2 (Elastic)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SM 决策</strong></td>
+<td>手动配置 / auto-tuning</td>
+<td>解析模型自动计算</td>
+</tr>
+<tr>
+<td><strong>参数</strong></td>
+<td><code>num_sms=20</code> 固定</td>
+<td><code>get_theoretical_num_sms</code> 动态</td>
+</tr>
+<tr>
+<td><strong>调优</strong></td>
+<td>需要 bench 搜索最优</td>
+<td>无需调优</td>
+</tr>
+<tr>
+<td><strong>典型值</strong></td>
+<td>20 (Normal), 动态 (LL)</td>
+<td>6-64 (取决于拓扑)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="6-性能数据-从-readme-到实测" id="6-readme">6. 性能数据：从 README 到实测</hh2>
+<hh3 id="6-1-v2-性能数据-readme" id="61-v2-readme">6.1 V2 性能数据 (README)</hh3>
+<blockquote>
+<p>来源: <code>/Users/backyes/work/claude_workspace/deepgemm_research/DeepEP/README.md</code> 第 41-59 行</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>Arch</th>
+<th>NIC type</th>
+<th>Topo</th>
+<th>Dispatch Bottleneck Bandwidth</th>
+<th>Combine Bottleneck Bandwidth</th>
+<th>#SMs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8 x 2</td>
+<td><strong>90 GB/s (RDMA)</strong></td>
+<td>81 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8 x 4</td>
+<td>61 GB/s (RDMA)</td>
+<td>61 GB/s (RDMA)</td>
+<td>6</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>CX7</td>
+<td>EP 8 x 2</td>
+<td><strong>90 GB/s (RDMA)</strong></td>
+<td>91 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td><strong>726 GB/s (NVLink)</strong></td>
+<td>740 GB/s (NVLink)</td>
+<td>64 (Max perf)</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td>643 GB/s (NVLink)</td>
+<td>675 GB/s (NVLink)</td>
+<td>24 (Min #SM)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键观察：</strong><br />
+- <strong>RDMA 带宽</strong>: 90 GB/s (接近 CX7 单端口理论带宽 ~100 GB/s)<br />
+- <strong>NVLink 带宽</strong>: 726 GB/s (接近 H100 NVLink 理论带宽 ~900 GB/s)<br />
+- <strong>SM 效率</strong>: V2 用 12 SM 达到 90 GB/s RDMA，而 V1 需要 20 SM</p>
+<hh3 id="6-2-v2-相对-v1-的提升" id="62-v2-v1">6.2 V2 相对 V1 的提升</hh3>
+<p>README 原文：</p>
+<blockquote>
+<p>"Comparing with V1, <strong>V2 achieves up to 1.3x peak performance, while saving up to 4x SM count</strong>."</p>
+<p>"For V3-like legacy training, SM usage reduced from 24 to 4 - 6 while maintaining equivalent or better performance"</p>
+</blockquote>
+<hr />
+<hh2 id="7-代码证据-模式选择与-kernel-差异" id="7-kernel">7. 代码证据：模式选择与 Kernel 差异</hh2>
+<hh3 id="7-1-v1-模式选择的代码证据" id="71-v1">7.1 V1 模式选择的代码证据</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># tests/legacy/test_internode.py:324-330 (Normal 模式测试)</span>
+<span class="n">num_sms</span> <span class="o">=</span> <span class="mi">24</span>
+<span class="n">num_qps_per_rank</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">num_sms</span><span class="p">,</span> <span class="n">ll_num_experts</span> <span class="o">//</span> <span class="n">num_ranks</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">test_ll_compatibility</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span>
+<span class="n">buffer</span> <span class="o">=</span> <span class="n">deep_ep</span><span class="o">.</span><span class="n">Buffer</span><span class="p">(</span><span class="n">group</span><span class="p">,</span>
+                        <span class="n">num_nvl_bytes</span><span class="o">=</span><span class="n">nvl_buffer_size</span><span class="p">,</span>
+                        <span class="n">num_rdma_bytes</span><span class="o">=</span><span class="n">rdma_buffer_size</span><span class="p">,</span>
+                        <span class="n">low_latency_mode</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">test_ll_compatibility</span><span class="p">,</span>  <span class="c1"># ← False = Normal</span>
+                        <span class="n">num_qps_per_rank</span><span class="o">=</span><span class="n">num_qps_per_rank</span><span class="p">,</span>
+                        <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># tests/legacy/test_low_latency.py:263-270 (Low-Latency 模式测试)</span>
+<span class="n">buffer</span> <span class="o">=</span> <span class="n">deep_ep</span><span class="o">.</span><span class="n">Buffer</span><span class="p">(</span><span class="n">group</span><span class="p">,</span>
+                        <span class="n">num_rdma_bytes</span><span class="o">=</span><span class="n">num_rdma_bytes</span><span class="p">,</span>
+                        <span class="n">low_latency_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># ← True = Low-Latency</span>
+                        <span class="n">num_qps_per_rank</span><span class="o">=</span><span class="n">num_experts</span> <span class="o">//</span> <span class="n">num_ranks</span><span class="p">,</span>
+                        <span class="n">allow_nvlink_for_low_latency_mode</span><span class="o">=</span><span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">disable_nvlink</span><span class="p">,</span>
+                        <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+
+<hh3 id="7-2-v2-模式选择的代码证据" id="72-v2">7.2 V2 模式选择的代码证据</hh3>
+<p>V2 <strong>没有显式的 <code>low_latency_mode</code> 参数</strong>，而是通过拓扑自动推断：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># README.md:148-162</span>
+<span class="n">_buffer</span> <span class="o">=</span> <span class="n">ElasticBuffer</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">,</span>
+    <span class="n">num_max_tokens_per_rank</span><span class="o">=</span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span>
+    <span class="n">hidden</span><span class="o">=</span><span class="n">hidden</span><span class="p">,</span>
+    <span class="n">num_topk</span><span class="o">=</span><span class="n">num_topk</span><span class="p">,</span>
+    <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="n">use_fp8_dispatch</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># V2 analytically calculates the optimal SM count — no more auto-tuning needed</span>
+<span class="n">_num_comm_sms</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">get_theoretical_num_sms</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">)</span>
+</code></pre></div>
+
+<p>V2 内部通过 <code>num_scaleout_ranks</code> 自动选择 kernel：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/elastic/dispatch.hpp:53-78</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">num_scaleout_ranks</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">header_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;dispatch&quot;</span><span class="p">;</span><span class="w">          </span><span class="c1">// ← 单节点，类似 Low-Latency</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">header_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hybrid_dispatch&quot;</span><span class="p">;</span><span class="w">   </span><span class="c1">// ← 多节点，类似 Normal</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="7-3-v1-与-v2-的-api-对比" id="73-v1-v2-api">7.3 V1 与 V2 的 API 对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 (Legacy)</th>
+<th>V2 (Elastic)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer 类</strong></td>
+<td><code>deep_ep.Buffer</code></td>
+<td><code>deep_ep.ElasticBuffer</code></td>
+</tr>
+<tr>
+<td><strong>模式参数</strong></td>
+<td><code>low_latency_mode=True/False</code></td>
+<td>无（自动推断）</td>
+</tr>
+<tr>
+<td><strong>Buffer 大小</strong></td>
+<td>手动指定 <code>num_nvl_bytes</code>, <code>num_rdma_bytes</code></td>
+<td>自动通过 MoE settings 计算</td>
+</tr>
+<tr>
+<td><strong>SM 数量</strong></td>
+<td>手动指定 <code>num_sms</code></td>
+<td>自动通过 <code>get_theoretical_num_sms</code></td>
+</tr>
+<tr>
+<td><strong>后端</strong></td>
+<td>NVSHMEM (IBGDA)</td>
+<td>NCCL Gin</td>
+</tr>
+<tr>
+<td><strong>Dispatch API</strong></td>
+<td><code>buffer.dispatch(...)</code>, <code>buffer.low_latency_dispatch(...)</code></td>
+<td>统一 <code>buffer.dispatch(...)</code></td>
+</tr>
+<tr>
+<td><strong>Combine API</strong></td>
+<td><code>buffer.combine(...)</code>, <code>buffer.low_latency_combine(...)</code></td>
+<td>统一 <code>buffer.combine(...)</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="8-准确性评估-blog-描述在-v2-时代的适用性" id="8-blog-v2">8. 准确性评估：Blog 描述在 V2 时代的适用性</hh2>
+<hh3 id="8-1-blog-描述的准确度-对-v1" id="81-blog-v1">8.1 Blog 描述的准确度（对 V1）</hh3>
+<p>Blog 对 V1 的描述<strong>高度准确</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Blog 描述</th>
+<th>V1 代码证据</th>
+<th>匹配度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"三阶段流水线: IB Sending → Forwarding → NVLink Receiving"</td>
+<td><code>internode.cu</code> 的 5 Warp 角色</td>
+<td>精确</td>
+</tr>
+<tr>
+<td>"Chunk 是通信粒度"</td>
+<td><code>num_max_rdma_chunked_send_tokens</code>, <code>num_max_rdma_chunked_recv_tokens</code></td>
+<td>精确</td>
+</tr>
+<tr>
+<td>"Forwarding 解决 NIC-GPU 拓扑不对称"</td>
+<td><code>kRDMAAndNVLForwarder</code> 角色</td>
+<td>精确</td>
+</tr>
+<tr>
+<td>"Low-Latency 旁路 Forwarding"</td>
+<td><code>internode_ll.cu</code> 无 Forwarding 角色</td>
+<td>精确</td>
+</tr>
+<tr>
+<td>"Low-Latency Chunk 减少"</td>
+<td><code>internode_ll.cu</code> 单 Token 直接发送</td>
+<td>精确</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="8-2-blog-描述在-v2-时代的适用性" id="82-blog-v2">8.2 Blog 描述在 V2 时代的适用性</hh3>
+<p>Blog 的描述在 V2 时代<strong>仍然具有指导意义，但需要重新解读</strong>：</p>
+<hh4 id="1-仍然有效的核心概念" id="1">(1) 仍然有效的核心概念</hh4>
+<table>
+<thead>
+<tr>
+<th>核心概念</th>
+<th>V2 对应</th>
+<th>有效性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Forwarding 的必要性</strong></td>
+<td><code>hybrid_dispatch_impl</code> 的 <code>kNumForwardWarps</code></td>
+<td>仍然成立</td>
+</tr>
+<tr>
+<td><strong>Chunk 聚合对吞吐的增益</strong></td>
+<td><code>kScaleoutUpdateInterval</code>, <code>kNumSlotsPerForwardChunk</code></td>
+<td>仍然成立</td>
+</tr>
+<tr>
+<td><strong>单 Token 发送对延迟的优势</strong></td>
+<td><code>dispatch_impl</code> 的 Token-by-Token 处理</td>
+<td>仍然成立</td>
+</tr>
+<tr>
+<td><strong>NVLink + RDMA 协同</strong></td>
+<td><code>hybrid_dispatch_impl</code> 的 scaleout + scaleup buffer</td>
+<td>仍然成立</td>
+</tr>
+</tbody>
+</table>
+<hh4 id="2-需要更新的认知" id="2">(2) 需要更新的认知</hh4>
+<table>
+<thead>
+<tr>
+<th>旧认知 (Blog/V1)</th>
+<th>V2 现实</th>
+<th>差异</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"两种模式是独立的 kernel"</td>
+<td>V2 是同一套 JIT 代码，模板参数分化</td>
+<td>从"物理分离"到"逻辑统一"</td>
+</tr>
+<tr>
+<td>"Low-Latency 不需要 Chunk"</td>
+<td>V2 的 direct mode 仍可能有内部 buffering</td>
+<td>Chunk 粒度更灵活</td>
+</tr>
+<tr>
+<td>"Normal 用 NVSHMEM，Low-Latency 也用 NVSHMEM"</td>
+<td>V2 统一使用 NCCL Gin 后端</td>
+<td>后端统一</td>
+</tr>
+<tr>
+<td>"SM 数量固定/手动调优"</td>
+<td>V2 通过带宽模型自动计算</td>
+<td>自动化</td>
+</tr>
+<tr>
+<td>"Low-Latency 仅用于 Decode"</td>
+<td>V2 的 direct mode 也可用于训练 (单节点 EP)</td>
+<td>场景扩展</td>
+</tr>
+</tbody>
+</table>
+<hh4 id="3-v2-统一化带来的范式转变" id="3-v2">(3) V2 统一化带来的范式转变</hh4>
+<div class="highlight"><pre><span></span><code>flowchart LR
+    subgraph V1[&quot;V1: 物理分离&quot;]
+        V1N[&quot;Normal Kernel&lt;br/&gt;(internode.cu)&quot;]
+        V1L[&quot;Low-Latency Kernel&lt;br/&gt;(internode_ll.cu)&quot;]
+        V1N ---|&quot;完全独立代码&quot;| V1L
+    end
+
+    subgraph V2[&quot;V2: 逻辑统一&quot;]
+        V2J[&quot;JIT 代码生成&lt;br/&gt;(dispatch.hpp)&quot;]
+        V2N[&quot;hybrid_dispatch_impl&lt;br/&gt;(scaleout &gt; 1)&quot;]
+        V2L[&quot;dispatch_impl&lt;br/&gt;(scaleout = 1)&quot;]
+        V2J --&gt;|&quot;kIsScaleupNVLink=false&quot;| V2N
+        V2J --&gt;|&quot;kIsScaleupNVLink=true&quot;| V2L
+    end
+
+    V1 --&gt;|&quot;统一化&quot;| V2
+</code></pre></div>
+
+<p><strong>核心转变：</strong><br />
+- V1: <strong>运行时二选一</strong> — <code>low_latency_mode</code> 参数决定使用哪套 kernel<br />
+- V2: <strong>编译期自动分化</strong> — <code>num_scaleout_ranks</code> 和 <code>kIsScaleupNVLink</code> 模板参数在 JIT 编译时确定</p>
+<hh3 id="8-3-最终评估结论" id="83">8.3 最终评估结论</hh3>
+<table>
+<thead>
+<tr>
+<th>评估维度</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Blog 对 V1 的描述</strong></td>
+<td>精确，可直接对照代码验证</td>
+</tr>
+<tr>
+<td><strong>Blog 的核心概念</strong></td>
+<td>仍然有效，Forwarding/Chunk/流水线 仍是设计核心</td>
+</tr>
+<tr>
+<td><strong>Blog 的"两模式"框架</strong></td>
+<td>在 V2 中演化为"同一套代码的两种编译路径"</td>
+</tr>
+<tr>
+<td><strong>V2 的统一化意义</strong></td>
+<td>从"用户选择模式"到"系统自动适配拓扑"</td>
+</tr>
+<tr>
+<td><strong>性能影响</strong></td>
+<td>V2 用更少 SM 达到更高带宽，但核心通信哲学未变</td>
+</tr>
+</tbody>
+</table>
+<p><strong>总结：</strong> Blog 对 Normal vs Low-Latency 的描述是 DeepEP 设计的<strong>第一性原理</strong>，V2 的实现并未推翻这一框架，而是通过 JIT 编译和带宽模型将其<strong>工程化、自动化、统一化</strong>。理解 Blog 的理论框架是理解 V2 代码的关键入口。</p>
+<hr />
+<hh2 id="附录-a-关键常量定义" id="a">附录 A: 关键常量定义</hh2>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/compiled.cuh:5-18</span>
+<span class="cp">#define LEGACY_NUM_MAX_NVL_PEERS 8</span>
+<span class="cp">#define LEGACY_NUM_MAX_RDMA_PEERS 20</span>
+<span class="cp">#define LEGACY_NUM_WORKSPACE_BYTES (32 * 1024 * 1024)</span>
+<span class="cp">#define LEGACY_NUM_MAX_LOCAL_EXPERTS 1024</span>
+<span class="cp">#define LEGACY_NUM_BUFFER_ALIGNMENT_BYTES 128</span>
+<span class="cp">#define LEGACY_LOW_LATENCY_SEND_PHASE 1</span>
+<span class="cp">#define LEGACY_LOW_LATENCY_RECV_PHASE 2</span>
+<span class="cp">#define LEGACY_FINISHED_SUM_TAG 1024</span>
+<span class="cp">#define LEGACY_NUM_WAIT_NANOSECONDS 500</span>
+<span class="cp">#define LEGACY_NUM_CPU_TIMEOUT_SECS 100</span>
+<span class="cp">#define LEGACY_NUM_TIMEOUT_CYCLES 200000000000ull  </span><span class="c1">// 200G cycles ~= 100s</span>
+</code></pre></div>
+
+<hh2 id="附录-b-文件路径索引" id="b">附录 B: 文件路径索引</hh2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>V1 Normal/Low-Latency internode kernel (双模板)</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>V1 Low-Latency 独立 kernel</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/intranode.cu</code></td>
+<td>V1 NVLink only kernel</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/api.cuh</code></td>
+<td>V1 API 声明</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/compiled.cuh</code></td>
+<td>V1 常量定义</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>V2 JIT 代码生成</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>V2 direct dispatch kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>V2 hybrid dispatch kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>V2 ElasticBuffer Python 接口</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td>V1 Buffer Python 接口</td>
+</tr>
+<tr>
+<td><code>tests/legacy/test_internode.py</code></td>
+<td>V1 Normal 测试</td>
+</tr>
+<tr>
+<td><code>tests/legacy/test_low_latency.py</code></td>
+<td>V1 Low-Latency 测试</td>
+</tr>
+<tr>
+<td><code>README.md</code></td>
+<td>性能数据</td>
+</tr>
+</tbody>
+</table>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>
