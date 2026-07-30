@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08_test_01_api_reference — DeepEP 测试目标 API 参考</title>
+<style>
+:root { --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef; --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97; --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe; --tag-bg: #f7f6f3; --tag-text: #6b7280; }
+@media (prefers-color-scheme: dark) { :root { --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f; --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280; --border: #373737; --accent: #529cca; --accent-bg: #252525; --tag-bg: #2f2f2f; --tag-text: #9b9a97; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 15px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 40px 40px 80px; }
+h1 { font-size: 1.8em; font-weight: 700; margin: 1em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.35em; font-weight: 600; margin: 1.8em 0 0.6em; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+h3 { font-size: 1.1em; font-weight: 600; margin: 1.4em 0 0.4em; }
+h4 { font-size: 1em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.6em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+ul, ol { margin: 0.6em 0; padding-left: 1.8em; }
+li { margin: 0.3em 0; }
+code { font-family: "SF Mono", Menlo, monospace; font-size: 0.88em; background: var(--bg-secondary); padding: 2px 6px; border-radius: 3px; }
+pre { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 1em 0; background: var(--accent-bg); color: var(--text-secondary); }
+table { border-collapse: collapse; width: 100%%; margin: 1em 0; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-secondary); font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+@media (max-width: 768px) { .container { padding: 20px; } }
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1>DeepEP 测试目标 API 系统性参考</h1>
+<blockquote>
+<p><strong>定位</strong>：本文以"被测 API"为中心，系统描述 DeepEP 测试程序验证的所有关键 API —— 签名、语义、参数约束、测试覆盖方式。
+<strong>配套文档</strong>：<a href="08_test_00_overview.md">测试体系总览</a> | <a href="08_test_infrastructure_analysis.md">测试基础设施</a> | <a href="08_test_ep_analysis.md">主EP测试</a></p>
+</blockquote>
+<hr />
+<h2>1. API 体系全景</h2>
+<p>DeepEP 测试覆盖两大 Buffer 类 + 一组工具函数，构成完整的 API 测试矩阵：</p>
+<div class="mermaid">flowchart TB
+    subgraph B2["V2: ElasticBuffer (elastic.py)"]
+        direction TB
+        B2A["dispatch() / combine()"]
+        B2B["barrier()"]
+        B2C["engram_write() / engram_fetch()"]
+        B2D["all_gather() / reduce_scatter()"]
+        B2E["pp_send() / pp_recv()"]
+        B2F["get_theoretical_num_sms() / get_theoretical_num_qps()"]
+    end
+
+    subgraph B1["V1: Buffer (legacy.py)"]
+        direction TB
+        B1A["dispatch() / combine()"]
+        B1B["low_latency_dispatch() / low_latency_combine()"]
+        B1C["get_dispatch_config() / get_combine_config()"]
+    end
+
+    subgraph U["工具函数 (utils/)"]
+        U1["refs.dispatch / refs.combine"]
+        U2["math.per_token_cast_to_fp8 / per_token_cast_back"]
+        U3["gate.get_unbalanced_scores"]
+        U4["testing.bench_kineto / flush_l2_cache"]
+        U5["envs.init_dist / init_seed"]
+    end
+
+    B2 --> U
+    B1 --> U</div>
+
+<hr />
+<h2>2. V2 ElasticBuffer API 详解</h2>
+<h3>2.1 <code>dispatch()</code> — Token 分发</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:855-1044</code></p>
+<p><strong>函数签名</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dispatch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+             <span class="n">x</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]],</span>
+             <span class="n">topk_idx</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">topk_weights</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">cumulative_local_expert_recv_stats</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">num_experts</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">num_max_tokens_per_rank</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">expert_alignment</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">num_qps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+             <span class="n">previous_event</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">EventHandle</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">previous_event_before_epilogue</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">EventHandle</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">async_with_compute_stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+             <span class="n">allocate_on_comm_stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+             <span class="n">handle</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">EPHandle</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">do_handle_copy</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+             <span class="n">do_cpu_sync</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">do_expand</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+             <span class="n">do_zero_padding</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+             <span class="n">use_tma_aligned_col_major_sf</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]],</span>
+                        <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+                        <span class="n">EPHandle</span><span class="p">,</span> <span class="n">EventOverlap</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：将本地 token 根据 <code>topk_idx</code> 选择分发到对应 expert 所在的 rank，支持 NVLink（节点内）和 RDMA（跨节点）两种传输路径。</p>
+<p><strong>参数矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>语义</th>
+<th>测试覆盖方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x</code></td>
+<td>Tensor 或 (Tensor, Tensor)</td>
+<td>—</td>
+<td>输入 token [num_tokens, hidden]，FP8 模式下为 (fp8_tensor, scales)</td>
+<td><code>use_fp8_dispatch</code> ∈ {0, 1}</td>
+</tr>
+<tr>
+<td><code>topk_idx</code></td>
+<td>int64 Tensor [T, K]</td>
+<td>None</td>
+<td>每个 token 选择的 expert 索引，-1 表示未选择</td>
+<td>由 <code>gate.get_unbalanced_scores</code> 生成</td>
+</tr>
+<tr>
+<td><code>topk_weights</code></td>
+<td>float Tensor [T, K]</td>
+<td>None</td>
+<td>expert 权重</td>
+<td><code>num_bias</code> ∈ {0, 1, 2}</td>
+</tr>
+<tr>
+<td><code>num_experts</code></td>
+<td>int</td>
+<td>None</td>
+<td>全局 expert 数</td>
+<td>从 <code>args.num_experts</code> 传入</td>
+</tr>
+<tr>
+<td><code>expert_alignment</code></td>
+<td>int</td>
+<td>None</td>
+<td>每个 expert 接收 token 数对齐粒度</td>
+<td>∈ {1, 128}</td>
+</tr>
+<tr>
+<td><code>num_sms</code></td>
+<td>int</td>
+<td>0</td>
+<td>SM 数（0=自动）</td>
+<td>自动推导 <code>get_theoretical_num_sms()</code></td>
+</tr>
+<tr>
+<td><code>num_qps</code></td>
+<td>int</td>
+<td>0</td>
+<td>RDMA QP 数（0=自动）</td>
+<td>自动推导 <code>get_theoretical_num_qps()</code></td>
+</tr>
+<tr>
+<td><code>previous_event</code></td>
+<td>EventHandle</td>
+<td>None</td>
+<td>等待的前置事件（流水线模式）</td>
+<td><code>with_previous_event</code> ∈ {0, 1}</td>
+</tr>
+<tr>
+<td><code>async_with_compute_stream</code></td>
+<td>bool</td>
+<td>False</td>
+<td>异步执行，compute stream 不等待</td>
+<td><code>async_with_compute_stream</code> ∈ {0, 1}</td>
+</tr>
+<tr>
+<td><code>allocate_on_comm_stream</code></td>
+<td>bool</td>
+<td>False</td>
+<td>在 comm stream 上分配张量</td>
+<td><code>allocate_on_comm_stream</code> ∈ {0, 1}</td>
+</tr>
+<tr>
+<td><code>handle</code></td>
+<td>EPHandle</td>
+<td>None</td>
+<td>缓存的通信 handle（复用 layout）</td>
+<td><code>do_handle_copy</code> ∈ {0, 1}</td>
+</tr>
+<tr>
+<td><code>do_expand</code></td>
+<td>bool</td>
+<td>False</td>
+<td>使用 expand 布局（每个 expert 一个 slot）</td>
+<td>expand 模式测试</td>
+</tr>
+<tr>
+<td><code>do_zero_padding</code></td>
+<td>bool</td>
+<td>False</td>
+<td>对 expand 布局的对齐间隙填零</td>
+<td>expand + alignment 组合</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回值</strong>：
+| 返回值 | 类型 | 说明 |
+|--------|------|------|
+| <code>recv_x</code> | Tensor 或 (Tensor, Tensor) | 接收到的 token（类型与输入一致） |
+| <code>recv_topk_idx</code> | int64 Tensor | 接收到的 expert 索引 |
+| <code>recv_topk_weights</code> | float Tensor | 接收到的 expert 权重 |
+| <code>handle</code> | EPHandle | 通信 handle（用于 combine） |
+| <code>event</code> | EventOverlap | 事件句柄（async 模式下有效） |</p>
+<p><strong>测试覆盖</strong>：<code>test_ep.py</code> 通过 <code>enumerate_ep_modes()</code> 生成 <strong>192~288 种参数组合</strong>，覆盖上表所有维度。</p>
+<hr />
+<h3>2.2 <code>combine()</code> — Token 聚合</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:1046-1107</code></p>
+<p><strong>函数签名</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">combine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+            <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+            <span class="n">handle</span><span class="p">:</span> <span class="n">EPHandle</span><span class="p">,</span>
+            <span class="n">topk_weights</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">bias</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">num_qps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="n">previous_event</span><span class="p">:</span> <span class="n">EventHandle</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">previous_event_before_epilogue</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">EventHandle</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">async_with_compute_stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+            <span class="n">allocate_on_comm_stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+           <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">EventOverlap</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：将经过 expert 计算的 token 按 <code>handle</code> 记录的原始路由信息聚合回源 rank，执行加权归约（weighted reduction）。</p>
+<p><strong>参数矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>语义</th>
+<th>测试覆盖方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x</code></td>
+<td>BF16 Tensor [T, hidden]</td>
+<td>—</td>
+<td>要发送的 token</td>
+<td>dispatch 的输出</td>
+</tr>
+<tr>
+<td><code>handle</code></td>
+<td>EPHandle</td>
+<td>—</td>
+<td>dispatch 返回的通信 handle</td>
+<td>自动传递</td>
+</tr>
+<tr>
+<td><code>topk_weights</code></td>
+<td>float Tensor</td>
+<td>None</td>
+<td>归约权重</td>
+<td>与 dispatch 共享</td>
+</tr>
+<tr>
+<td><code>bias</code></td>
+<td>Tensor 或 (Tensor, Tensor)</td>
+<td>None</td>
+<td>输出偏置（0/1/2 个）</td>
+<td><code>num_bias</code> ∈ {0, 1, 2}</td>
+</tr>
+<tr>
+<td><code>num_sms</code></td>
+<td>int</td>
+<td>0</td>
+<td>SM 数（0=复用 dispatch 的）</td>
+<td>自动推导</td>
+</tr>
+<tr>
+<td><code>num_qps</code></td>
+<td>int</td>
+<td>0</td>
+<td>QP 数</td>
+<td>自动推导</td>
+</tr>
+<tr>
+<td><code>previous_event</code></td>
+<td>EventHandle</td>
+<td>None</td>
+<td>前置事件</td>
+<td>流水线模式</td>
+</tr>
+<tr>
+<td><code>async_with_compute_stream</code></td>
+<td>bool</td>
+<td>False</td>
+<td>异步执行</td>
+<td>∈ {0, 1}</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回值</strong>：
+| 返回值 | 类型 | 说明 |
+|--------|------|------|
+| <code>combined_x</code> | BF16 Tensor [T, hidden] | 聚合后的 token |
+| <code>combined_topk_weights</code> | float Tensor | 聚合后的权重 |
+| <code>event</code> | EventOverlap | 事件句柄 |</p>
+<p><strong>测试覆盖</strong>：<code>test_ep.py</code> 测试两种 combine 模式：
+- <strong>normal combine</strong>：标准归约
+- <strong>reduced combine</strong>：<code>allow_multiple_reduction</code> 模式下的多级归约</p>
+<hr />
+<h3>2.3 <code>barrier()</code> — GPU 级同步</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:497-508</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">barrier</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">use_comm_stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">with_cpu_sync</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">sequential</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+<p><strong>参数矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>use_comm_stream</code></td>
+<td>bool</td>
+<td>True</td>
+<td>使用 comm stream（否则用 compute stream）</td>
+</tr>
+<tr>
+<td><code>with_cpu_sync</code></td>
+<td>bool</td>
+<td>False</td>
+<td>是否额外调用 <code>cudaDeviceSynchronize</code></td>
+</tr>
+<tr>
+<td><code>sequential</code></td>
+<td>bool</td>
+<td>True</td>
+<td>串行模式（单 SM，更安全）vs 并行模式（多 SM）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>底层实现路径</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="nx">buffer</span><span class="p">.</span><span class="nx">barrier</span><span class="p">()</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">barrier</span><span class="p">()</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">launch_barrier</span><span class="p">()</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">barrier_impl</span><span class="p">&lt;</span><span class="nx">kSequential</span><span class="p">&gt;</span>
+</code></pre></div>
+
+<p><strong>测试覆盖</strong>：<code>test_barrier.py</code> 测量 1000 次连续调用的平均延迟（微秒级）。</p>
+<hr />
+<h3>2.4 <code>engram_write()</code> / <code>engram_fetch()</code> — RDMA 远端内存访问</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:569-604</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">engram_write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">storage</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">sf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">engram_fetch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_qps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">use_tma_aligned_col_major_sf</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：Engram 是 DeepEP 的<strong>远端内存访问原语</strong>，通过 NCCL Gin（GPU-initiated RDMA）直接读写远端 GPU 的存储窗口。</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>方向</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>engram_write(storage, sf)</code></td>
+<td>本地 → Window</td>
+<td>将本地数据注册到 NCCL window，供远端读取</td>
+</tr>
+<tr>
+<td><code>engram_fetch(indices)()</code></td>
+<td>远端 → 本地</td>
+<td>异步发起 RDMA get，返回 callable <code>hook</code>；调用 <code>hook()</code> 阻塞等待完成</td>
+</tr>
+</tbody>
+</table>
+<p><strong>参数详解</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>storage</code></td>
+<td>BF16/FP8 Tensor [num_entries, hidden]</td>
+<td>要注册的存储数据</td>
+</tr>
+<tr>
+<td><code>sf</code></td>
+<td>float/int Tensor [num_entries, num_sf_packs]</td>
+<td>FP8 scaling factors（FP8 模式必须提供）</td>
+</tr>
+<tr>
+<td><code>indices</code></td>
+<td>int Tensor [num_tokens, num_entries_per_token]</td>
+<td>要获取的 entry 索引</td>
+</tr>
+<tr>
+<td><code>num_qps</code></td>
+<td>int</td>
+<td>QP 数（0=全部）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>测试覆盖</strong>：<code>test_engram.py</code> 验证正确性 + 带宽测量。</p>
+<hr />
+<h3>2.5 <code>all_gather()</code> / <code>reduce_scatter()</code> — 集合通信</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:706-726</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">all_gather</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]])</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：在 AGRS session 内执行 All-Gather，通过 NVLink symmetric memory 将每个 rank 的数据广播到所有 rank。</p>
+<p><strong>使用模式</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 单 tensor 模式</span>
+<span class="n">gathered</span><span class="p">,</span> <span class="n">handle</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">all_gather</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>  <span class="c1"># gathered 多一维 num_ranks</span>
+
+<span class="c1"># Batched 模式</span>
+<span class="o">*</span><span class="n">gathered_tensors</span><span class="p">,</span> <span class="n">handle</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">all_gather</span><span class="p">([</span><span class="n">t1</span><span class="p">,</span> <span class="n">t2</span><span class="p">,</span> <span class="n">t3</span><span class="p">])</span>
+
+<span class="c1"># 等待完成</span>
+<span class="n">handle</span><span class="p">()</span>
+</code></pre></div>
+
+<p><strong>配套 API</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>create_agrs_session()</code> / <code>destroy_agrs_session()</code></td>
+<td>session 生命周期管理</td>
+</tr>
+<tr>
+<td><code>agrs_get_inplace_tensor(shapes, dtype)</code></td>
+<td>获取 in-place 张量（零拷贝）</td>
+</tr>
+<tr>
+<td><code>agrs_set_config(max_bytes, max_ags)</code></td>
+<td>session 参数配置</td>
+</tr>
+</tbody>
+</table>
+<p><strong>测试覆盖</strong>：<code>test_agrs.py</code> 使用 Stress Test 范式，随机操作序列验证正确性。</p>
+<hr />
+<h3>2.6 <code>pp_send()</code> / <code>pp_recv()</code> — Pipeline Parallel 通信</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:616-636</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pp_send</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">dst_rank_idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">pp_recv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">src_rank_idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：在 PP ring 中向相邻 rank 发送/接收张量（仅支持 prev/next rank）。</p>
+<p><strong>测试覆盖</strong>：<code>test_pp.py</code> 测量 send/recv 延迟。</p>
+<hr />
+<h3>2.7 <code>get_theoretical_num_sms()</code> / <code>get_theoretical_num_qps()</code> — 自动资源计算</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/elastic.py:728-853</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_theoretical_num_sms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_theoretical_num_qps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：基于带宽建模自动推导最优 SM 数和 QP 数。</p>
+<p><strong>SM 计算模型</strong>：</p>
+<div class="mermaid">flowchart LR
+    A["输入: num_experts, num_topk"] --> B["计算 expected_topk<br/>(超几何分布)"]
+    B --> C["估算 RDMA/NVLink 流量"]
+    C --> D["瓶颈分析<br/>max(rdma_traffic/rdma_gbs,<br/>nvlink_traffic/nvlink_gbs)"]
+    D --> E["SM = max(sm_read/read_gbs,<br/>sm_write/write_gbs) × 1.25"]
+    E --> F["对齐到偶数, 至少 4"]</div>
+
+<p><strong>QP 计算规则</strong>：
+| 模式 | QP 数 |
+|------|-------|
+| Direct | <code>min(num_sms, 9)</code> |
+| Hybrid | <code>num_sms * 16 + 1</code> |</p>
+<hr />
+<h2>3. V1 Buffer API 详解</h2>
+<h3>3.1 <code>Buffer.dispatch()</code> — V1 Token 分发</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/legacy.py:322-405</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dispatch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">handle</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+             <span class="n">num_tokens_per_rank</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">num_tokens_per_rdma_rank</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+             <span class="n">is_token_in_rank</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">num_tokens_per_expert</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+             <span class="n">topk_idx</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">topk_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+             <span class="n">expert_alignment</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_worst_tokens</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+             <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">previous_event</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+             <span class="n">async_finish</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">allocate_on_comm_stream</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> \
+            <span class="n">Tuple</span><span class="p">[</span><span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> 
+                  <span class="n">num_recv_tokens_per_expert_list</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>与 V2 的关键差异</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 (Buffer)</th>
+<th>V2 (ElasticBuffer)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>路由计算</td>
+<td>需手动提供 <code>num_tokens_per_rank</code>, <code>is_token_in_rank</code></td>
+<td>自动从 <code>topk_idx</code> 推导</td>
+</tr>
+<tr>
+<td>配置</td>
+<td>需手动创建 <code>Config</code> 对象</td>
+<td>自动推导 SM/QP</td>
+</tr>
+<tr>
+<td>返回值</td>
+<td>包含 <code>num_recv_tokens_per_expert_list</code></td>
+<td>通过 <code>handle</code> 间接获取</td>
+</tr>
+<tr>
+<td>内部路径</td>
+<td>自动分发到 <code>internode_dispatch</code> 或 <code>intranode_dispatch</code></td>
+<td>统一路径</td>
+</tr>
+</tbody>
+</table>
+<p><strong>测试覆盖</strong>：<code>test_internode.py</code>（跨节点）、<code>test_intranode.py</code>（节点内）。</p>
+<hr />
+<h3>3.2 <code>Buffer.combine()</code> — V1 Token 聚合</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/legacy.py:408-470</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">combine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">topk_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">previous_event</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">async_finish</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">allocate_on_comm_stream</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> \
+            <span class="n">Tuple</span><span class="p">[</span><span class="n">combined_x</span><span class="p">,</span> <span class="n">combined_topk_weights</span><span class="p">,</span> <span class="n">event</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>注意</strong>：V1 combine 是<strong>无权重归约</strong>（纯加法），topk_weights 仅用于返回。</p>
+<hr />
+<h3>3.3 <code>Buffer.low_latency_dispatch()</code> — 低延迟分发</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/legacy.py:553-621</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">low_latency_dispatch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span>
+                         <span class="n">num_max_dispatch_tokens_per_rank</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span>
+                         <span class="n">cumulative_local_expert_recv_stats</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                         <span class="n">dispatch_wait_recv_cost_stats</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                         <span class="n">use_fp8</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">round_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">use_ue8m0</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                         <span class="n">async_finish</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_recv_hook</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> \
+            <span class="n">Tuple</span><span class="p">[</span><span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_count</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">hook</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>核心语义</strong>：使用 IBGDA（GPU-initiated RDMA）实现低延迟 dispatch，<strong>不经过 NVLink</strong>，直接通过 RDMA 网络传输。</p>
+<p><strong>关键参数</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>num_max_dispatch_tokens_per_rank</code></td>
+<td>int</td>
+<td>每 rank 最大 token 数（所有 rank 必须相同）</td>
+</tr>
+<tr>
+<td><code>use_fp8</code></td>
+<td>bool</td>
+<td>FP8 模式（默认开启）</td>
+</tr>
+<tr>
+<td><code>round_scale</code></td>
+<td>bool</td>
+<td>将 scale 取整为 2 的幂</td>
+</tr>
+<tr>
+<td><code>use_ue8m0</code></td>
+<td>bool</td>
+<td>使用 UE8M0 scale 格式</td>
+</tr>
+<tr>
+<td><code>return_recv_hook</code></td>
+<td>bool</td>
+<td>返回 hook 而非等待完成（支持流水线）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>测试覆盖</strong>：<code>test_low_latency.py</code>。</p>
+<hr />
+<h3>3.4 <code>Buffer.low_latency_combine()</code> — 低延迟聚合</h3>
+<p><strong>源码位置</strong>：<code>deep_ep/buffers/legacy.py:624-670</code></p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">low_latency_combine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span>
+                        <span class="n">use_logfmt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">zero_copy</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                        <span class="n">async_finish</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_recv_hook</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                        <span class="n">out</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">combine_wait_recv_cost_stats</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> \
+            <span class="n">Tuple</span><span class="p">[</span><span class="n">combined_x</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">hook</span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>与 normal combine 的关键差异</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal Combine</th>
+<th>Low-Latency Combine</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>归约方式</td>
+<td>无权重（纯加法）</td>
+<td><strong>带权重</strong>（weighted reduction）</td>
+</tr>
+<tr>
+<td>传输路径</td>
+<td>NVLink + RDMA 三阶段</td>
+<td>直接 RDMA（IBGDA）</td>
+</tr>
+<tr>
+<td>额外功能</td>
+<td>—</td>
+<td><code>use_logfmt</code>（10-bit 对数格式）、<code>zero_copy</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. 工具函数 API</h2>
+<h3>4.1 <code>refs.py</code> — PyTorch 参考实现</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>语义</th>
+<th>对应 Kernel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dispatch()</code></td>
+<td><code>(x, topk_idx, topk_weights, num_experts, num_tokens_per_rank, expert_alignment) → (recv_x, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list)</code></td>
+<td>完整的 dispatch 参考实现</td>
+<td><code>dispatch_impl</code></td>
+</tr>
+<tr>
+<td><code>generate_pre_combine_data()</code></td>
+<td><code>(src_token_global_idx, topk_idx, topk_weights, num_experts) → (pre_x, pre_topk_idx, pre_topk_weights)</code></td>
+<td>为 combine 准备参考数据</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>ordered_accumulate()</code></td>
+<td><code>(data, initial_value) → accumulated</code></td>
+<td>有序累加（保证 bitwise 确定性）</td>
+<td>combine 中的 reduction</td>
+</tr>
+<tr>
+<td><code>combine()</code></td>
+<td><code>(y, topk_idx, topk_weights, num_experts, initial_value) → combined</code></td>
+<td>完整的 combine 参考实现</td>
+<td><code>combine_impl</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>设计要点</strong>：
+- 使用 <code>ordered_accumulate</code> 保证累加顺序确定性，与 kernel 计算路径一致
+- 不使用 <code>torch.scatter_add</code>（非确定性），而是手动实现有序累加</p>
+<hr />
+<h3>4.2 <code>math.py</code> — FP8 编解码与数值工具</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>per_token_cast_to_fp8(x) → (x_fp8, scales)</code></td>
+<td>BF16 → FP8 E4M3，per-token 量化</td>
+<td></td>
+</tr>
+<tr>
+<td><code>per_token_cast_back(x_fp8, scales) → x</code></td>
+<td>FP8 → BF16 反量化</td>
+<td></td>
+</tr>
+<tr>
+<td><code>calc_diff(x, y) → float</code></td>
+<td>计算两个张量的相对差异</td>
+<td></td>
+</tr>
+<tr>
+<td><code>align(x, y) → int</code></td>
+<td>将 x 向上对齐到 y 的倍数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ceil_div(x, y) → int</code></td>
+<td>向上取整除法</td>
+<td></td>
+</tr>
+<tr>
+<td><code>count_bytes(*tensors) → int</code></td>
+<td>计算张量总字节数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>hash_tensor(t) → int</code></td>
+<td>张量内容哈希（用于调试）</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>FP8 量化语义</strong>（测试关键）：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># per_token_cast_to_fp8: 每行独立量化</span>
+<span class="n">scales</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">fp8_max</span>  <span class="c1"># per-token scale</span>
+<span class="n">x_fp8</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">/</span> <span class="n">scales</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">float8_e4m3fn</span><span class="p">)</span>
+
+<span class="c1"># per_token_cast_back: 反量化</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">x_fp8</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">*</span> <span class="n">scales</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+
+<hr />
+<h3>4.3 <code>gate.py</code> — MoE 非均衡负载生成</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_unbalanced_scores(ratio, precise) → scores</code></td>
+<td>生成非均衡 MoE 路由分数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_precise_unbalanced_scores(ratio)</code></td>
+<td>精确控制 token 分布</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_random_unbalanced_scores(ratio)</code></td>
+<td>随机逼近目标倾斜比</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>ratio</code> 参数语义</strong>：
+- <code>ratio = 0</code>：完全均匀分布
+- <code>ratio = 1</code>：极端倾斜（所有 token 选择同一 expert）
+- 中间值：通过二分搜索 factor 逼近</p>
+<hr />
+<h3>4.4 <code>testing.py</code> — Benchmark 工具</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bench(fn, name, ...) → float</code></td>
+<td>简单计时（中位数）</td>
+<td></td>
+</tr>
+<tr>
+<td><code>bench_kineto(fn, name, ...) → float</code></td>
+<td>Kineto profiler 集成</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush_l2_cache(enabled)</code></td>
+<td>L2 Cache 刷新（256MB zero）</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>bench_kineto</code> 关键参数</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>barrier_comm_profiling</code></td>
+<td>每次迭代前 sleep + barrier（消除 CPU 启动偏斜）</td>
+</tr>
+<tr>
+<td><code>flush_l2</code></td>
+<td>每次迭代前刷新 L2</td>
+</tr>
+<tr>
+<td><code>barrier</code></td>
+<td>用于同步的 barrier 函数</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3>4.5 <code>envs.py</code> — 分布式初始化</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>init_dist(local_rank, num_local_ranks, seed) → (rank, world_size, group)</code></td>
+<td>NCCL 进程组初始化</td>
+<td></td>
+</tr>
+<tr>
+<td><code>init_seed(seed)</code></td>
+<td>设置全局随机种子</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dist_print(*args)</code></td>
+<td>仅 rank 0 打印</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>5. API 测试覆盖矩阵</h2>
+<h3>5.1 按 API 维度</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>测试文件</th>
+<th>覆盖方式</th>
+<th>验证标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ElasticBuffer.dispatch()</code></td>
+<td>test_ep.py</td>
+<td>192~288 参数组合</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>ElasticBuffer.combine()</code></td>
+<td>test_ep.py</td>
+<td>normal + reduced</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>ElasticBuffer.barrier()</code></td>
+<td>test_barrier.py</td>
+<td>1000 次延迟测量</td>
+<td>无错误</td>
+</tr>
+<tr>
+<td><code>ElasticBuffer.engram_write/fetch()</code></td>
+<td>test_engram.py</td>
+<td>正确性 + 带宽</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>ElasticBuffer.all_gather()</code></td>
+<td>test_agrs.py</td>
+<td>Stress test 随机序列</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>ElasticBuffer.pp_send/recv()</code></td>
+<td>test_pp.py</td>
+<td>延迟基准</td>
+<td>无错误</td>
+</tr>
+<tr>
+<td><code>Buffer.dispatch()</code> (internode)</td>
+<td>test_internode.py</td>
+<td>跨节点场景</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>Buffer.dispatch()</code> (intranode)</td>
+<td>test_intranode.py</td>
+<td>节点内场景</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>Buffer.low_latency_dispatch()</code></td>
+<td>test_low_latency.py</td>
+<td>IBGDA 模式</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>Buffer.low_latency_combine()</code></td>
+<td>test_low_latency.py</td>
+<td>带权重归约</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>get_theoretical_num_sms()</code></td>
+<td>test_ep.py</td>
+<td>自动推导值使用</td>
+<td>隐式验证</td>
+</tr>
+<tr>
+<td><code>per_token_cast_to_fp8/back()</code></td>
+<td>test_ep.py</td>
+<td>FP8 dispatch 模式</td>
+<td>bitwise identical</td>
+</tr>
+<tr>
+<td><code>get_unbalanced_scores()</code></td>
+<td>test_gate.py</td>
+<td>统计分布验证</td>
+<td>分布符合预期</td>
+</tr>
+</tbody>
+</table>
+<h3>5.2 按测试类型维度</h3>
+<table>
+<thead>
+<tr>
+<th>测试类型</th>
+<th>覆盖的 API</th>
+<th>验证方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>正确性验证</strong></td>
+<td>dispatch, combine, all_gather, engram</td>
+<td>与 refs.py 参考实现 bitwise compare</td>
+</tr>
+<tr>
+<td><strong>性能基准</strong></td>
+<td>barrier, dispatch, combine, pp_send/recv</td>
+<td>bench_kineto 测量延迟/带宽</td>
+</tr>
+<tr>
+<td><strong>压力测试</strong></td>
+<td>dispatch, barrier</td>
+<td><code>do_pressure_test</code> 无限循环</td>
+</tr>
+<tr>
+<td><strong>统计验证</strong></td>
+<td>get_unbalanced_scores</td>
+<td>分布形状验证</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>6. API 演化路径（V1 → V2）</h2>
+<div class="mermaid">flowchart TD
+    subgraph V1["V1: Buffer (legacy.py)"]
+        A1["dispatch()"] 
+        A2["combine()"]
+        A3["low_latency_dispatch()"]
+        A4["low_latency_combine()"]
+    end
+
+    subgraph V2["V2: ElasticBuffer (elastic.py)"]
+        B1["dispatch()"]
+        B2["combine()"]
+        B3["engram_write/fetch()"]
+        B4["all_gather/reduce_scatter()"]
+        B5["pp_send/recv()"]
+    end
+
+    A1 -->|"统一 + 自动化"| B1
+    A2 -->|"统一 + 自动化"| B2
+    A3 -->|"抽象为 Engram 原语"| B3
+    A4 -->|"不再需要（统一路径）"| B2</div>
+
+<p><strong>关键演化</strong>：
+1. <strong>三种模式 → 统一路径</strong>：V1 需要 internode/intranode/low_latency 三套路径，V2 统一为一套 dispatch/combine
+2. <strong>手动配置 → 自动推导</strong>：V1 需手动指定 Config（SM 数、chunk 大小），V2 通过 <code>get_theoretical_num_sms/qps()</code> 自动推导
+3. <strong>低延迟模式 → Engram 原语</strong>：V1 的 low_latency 模式在 V2 中抽象为更通用的 Engram RDMA 原语
+4. <strong>新增能力</strong>：V2 新增 AGRS（all_gather/reduce_scatter）和 PP（pipeline parallel）支持</p>
+<hr />
+<h2>7. 测试入口与 API 调用关系</h2>
+<div class="mermaid">flowchart LR
+    subgraph Entry["测试入口"]
+        E1["test_ep.py"]
+        E2["test_agrs.py"]
+        E3["test_pp.py"]
+        E4["test_barrier.py"]
+        E5["test_engram.py"]
+        E6["test_gate.py"]
+        E7["test_internode.py"]
+        E8["test_intranode.py"]
+        E9["test_low_latency.py"]
+    end
+
+    subgraph API["被测 API"]
+        A_Elastic["ElasticBuffer<br/>dispatch/combine/barrier<br/>engram/agrs/pp"]
+        A_Legacy["Buffer<br/>dispatch/combine<br/>low_latency_*"]
+    end
+
+    subgraph Infra["基础设施"]
+        I_Ref["refs.py<br/>参考实现"]
+        I_Math["math.py<br/>FP8 编解码"]
+        I_Gate["gate.py<br/>负载生成"]
+        I_Test["testing.py<br/>benchmark"]
+    end
+
+    E1 --> A_Elastic
+    E2 --> A_Elastic
+    E3 --> A_Elastic
+    E4 --> A_Elastic
+    E5 --> A_Elastic
+    E6 --> I_Gate
+    E7 --> A_Legacy
+    E8 --> A_Legacy
+    E9 --> A_Legacy
+
+    A_Elastic --> Infra
+    A_Legacy --> Infra</div>
+
+<hr />
+<h2>8. 快速查找：我想测什么？</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>应关注的 API</th>
+<th>对应测试文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>新增 expert 路由算法</td>
+<td><code>dispatch()</code> 的 <code>topk_idx</code> 处理</td>
+<td>test_ep.py</td>
+</tr>
+<tr>
+<td>修改 FP8 量化逻辑</td>
+<td><code>math.per_token_cast_to_fp8/back()</code></td>
+<td>test_ep.py (FP8 模式)</td>
+</tr>
+<tr>
+<td>调整 SM 分配策略</td>
+<td><code>get_theoretical_num_sms()</code></td>
+<td>test_ep.py (隐式)</td>
+</tr>
+<tr>
+<td>修改 combine 归约逻辑</td>
+<td><code>combine()</code> + <code>refs.combine()</code></td>
+<td>test_ep.py</td>
+</tr>
+<tr>
+<td>新增 RDMA 传输路径</td>
+<td><code>engram_write/fetch()</code></td>
+<td>test_engram.py</td>
+</tr>
+<tr>
+<td>修改 barrier 同步</td>
+<td><code>barrier()</code></td>
+<td>test_barrier.py</td>
+</tr>
+<tr>
+<td>调整 MoE 负载模型</td>
+<td><code>gate.get_unbalanced_scores()</code></td>
+<td>test_gate.py</td>
+</tr>
+<tr>
+<td>性能回归检测</td>
+<td><code>testing.bench_kineto()</code></td>
+<td>所有 test 文件</td>
+</tr>
+</tbody>
+</table>
+</div>
+</body>
+</html>
