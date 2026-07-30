@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIFO Pipeline 深度对比分析：博客理论 ↔ DeepEP 源码 ↔ DeepGEMM Mega MoE 源码</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: #efefef;
+  --text: #37352f;
+  --text-secondary: #6b7280;
+  --text-muted: #9b9a97;
+  --border: #e9e9e7;
+  --accent: #2383e2;
+  --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3;
+  --code-text: #eb5757;
+  --blockquote-border: #e9e9e7;
+  --table-border: #e9e9e7;
+  --table-header-bg: #f7f6f3;
+  --h1-size: 2.2em;
+  --h2-size: 1.6em;
+  --h3-size: 1.25em;
+  --line-height: 1.7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --bg-secondary: #202020;
+    --bg-hover: #2f2f2f;
+    --text: #e8e8e5;
+    --text-secondary: #9b9a97;
+    --text-muted: #6b7280;
+    --border: #373737;
+    --accent: #529cca;
+    --accent-bg: #252525;
+    --code-bg: #2f2f2f;
+    --code-text: #ff7b72;
+    --blockquote-border: #373737;
+    --table-border: #373737;
+    --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  font-size: 16px;
+  line-height: var(--line-height);
+  color: var(--text);
+  background: var(--bg);
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px 100px;
+}
+h1 {
+  font-size: var(--h1-size);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.5em 0 0.5em;
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: var(--h2-size);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.8em 0 0.4em;
+  letter-spacing: -0.01em;
+}
+h3 {
+  font-size: var(--h3-size);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.5em 0 0.3em;
+}
+h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote {
+  border-left: 3px solid var(--blockquote-border);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 4px 4px 0;
+}
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+pre code {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  font-size: inherit;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+img { max-width: 100%; border-radius: 4px; }
+.mermaid { 
+  background: var(--bg); 
+  border: 1px solid var(--border); 
+  border-radius: 6px; 
+  padding: 20px; 
+  margin: 1.2em 0; 
+  overflow-x: auto;
+  text-align: center;
+}
+.toc { 
+  background: var(--bg-secondary); 
+  border-radius: 6px; 
+  padding: 16px 20px; 
+  margin: 1.5em 0; 
+}
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.toc a:hover { color: var(--accent); }
+.nav { 
+  display: flex; 
+  justify-content: space-between; 
+  margin-top: 3em; 
+  padding-top: 1.5em; 
+  border-top: 1px solid var(--border); 
+  font-size: 0.9em;
+}
+.nav a { color: var(--text-secondary); }
+.nav a:hover { color: var(--accent); }
+@media (max-width: 768px) {
+  .container { padding: 30px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.4em; }
+  pre { padding: 12px 14px; font-size: 0.8em; }
+  table { font-size: 0.85em; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ 
+  startOnLoad: true, 
+  theme: 'default',
+  securityLevel: 'loose',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+});
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="fifo-pipeline-深度对比分析-博客理论-deepep-源码-deepgemm-mega-moe-源码" id="fifo-pipeline-deepep-deepgemm-mega-moe">FIFO Pipeline 深度对比分析：博客理论 ↔ DeepEP 源码 ↔ DeepGEMM Mega MoE 源码</hh1>
+<blockquote>
+<p><strong>分析目标</strong>：探究博客"FIFO: From Synchronous to Streaming Pipeline"概念在 DeepEP 和 DeepGEMM 两个代码库中的实际同步机制实现。</p>
+<p><strong>核心问题</strong>：<br />
+1. DeepEP 是否使用了 FIFO？其同步原语是什么？<br />
+2. DeepGEMM Mega MoE 的同步机制是什么？<br />
+3. 两者的同步模式有何本质差异？<br />
+4. FIFO 概念如何与 Warp Spec、Chunk Streaming、Normal vs Low-Latency 关联？</p>
+</blockquote>
+<hr />
+<hh2 id="1-tl-dr" id="1-tldr">1. TL;DR</hh2>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeepEP 是否使用 FIFO？</td>
+<td><strong>否</strong>——使用 <strong>NCCL Barrier + mbarrier</strong> 的同步模式，无显式 FIFO 队列</td>
+</tr>
+<tr>
+<td>DeepGEMM 是否使用 FIFO？</td>
+<td><strong>是，但形式不同</strong>——使用 <strong>mbarrier + double-buffering</strong> 实现等效 FIFO 语义</td>
+</tr>
+<tr>
+<td>两者同步原语差异？</td>
+<td>DeepEP: <code>this_grid().sync()</code> + NCCL signal/wait；DeepGEMM: <code>atomic_add_rel</code> + <code>ld_acq</code> 自旋</td>
+</tr>
+<tr>
+<td>FIFO 本质？</td>
+<td>两者都实现了<strong>流式执行</strong>，但同步机制完全不同</td>
+</tr>
+<tr>
+<td>博客理论是否准确？</td>
+<td><strong>部分准确</strong>——博客描述的 FIFO 模型更贴近 DeepGEMM 的实现，而非 DeepEP</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="2-博客核心概念回顾-fifo-的流式本质" id="2-fifo">2. 博客核心概念回顾：FIFO 的流式本质</hh2>
+<p>博客 Section 6 描述了 FIFO 的核心思想：</p>
+<hh3 id="2-1-博客原文描述" id="21">2.1 博客原文描述</hh3>
+<div class="highlight"><pre><span></span><code>无 FIFO（同步）:
+Send → Barrier → Forward → Barrier → Receive
+      ↑ 必须等前一阶段全部完成
+
+有 FIFO（流式）:
+Send → FIFO → Forward → FIFO → Receive
+      ↑ 每个阶段只关心自己的读写，无需等待整个 Batch
+</code></pre></div>
+
+<p><strong>FIFO 的本质</strong>：将通信 pipeline 从同步执行转变为流式执行（streaming execution）。</p>
+<hh3 id="2-2-博客的关键断言" id="22">2.2 博客的关键断言</hh3>
+<table>
+<thead>
+<tr>
+<th>博客断言</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"无需等待整个 Batch"</td>
+<td>Chunk 粒度流式处理</td>
+</tr>
+<tr>
+<td>"每个阶段只关心自己的读写"</td>
+<td>Stage 解耦</td>
+</tr>
+<tr>
+<td>"FIFO 队列"</td>
+<td>显式或隐式的生产者-消费者缓冲</td>
+</tr>
+<tr>
+<td>"同步→流式"</td>
+<td>Barrier → FIFO 的转变</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="3-deepep-实现分析-nccl-based-同步模式" id="3-deepep-nccl-based">3. DeepEP 实现分析：NCCL-Based 同步模式</hh2>
+<hh3 id="3-1-deepep-的同步原语全景" id="31-deepep">3.1 DeepEP 的同步原语全景</hh3>
+<p>DeepEP <strong>没有使用显式 FIFO 队列</strong>，而是采用 <strong>NCCL Barrier + mbarrier</strong> 的混合同步模式：</p>
+<div class="mermaid">graph TB
+    subgraph "DeepEP 同步原语"
+        direction TB
+
+        subgraph "全局同步 (NCCL)"
+            A1["gpu_barrier<br/>this_grid().sync()<br/>+ NCCL signal/wait"]
+            A2["nvlink_barrier_wo_local_sync<br/>red_add_rel_sys<br/>+ ld_acq_sys 自旋"]
+        end
+
+        subgraph "数据流同步 (mbarrier)"
+            B1["mbarrier_arrive_and_set_tx<br/>TMA load 完成信号"]
+            B2["mbarrier_wait_and_flip_phase<br/>Consumer 等待"]
+            B3["cp_async_mbarrier_arrive<br/>cp.async 完成信号"]
+        end
+
+        subgraph "Warp 内同步"
+            C1["named_barrier<br/>bar.sync"]
+            C2["__syncwarp()<br/>Warp 内线程同步"]
+        end
+
+        subgraph "原子操作"
+            D1["atomicAdd_block<br/>SM 内共享内存计数"]
+            D2["atomicAdd<br/>全局内存计数"]
+        end
+    end
+</div>
+
+<hh3 id="3-2-gpu_barrier-deepep-的核心同步机制" id="32-gpu_barrierdeepep">3.2 gpu_barrier：DeepEP 的核心同步机制</hh3>
+<p>DeepEP 的 <code>gpu_barrier</code> 是整个同步体系的基石：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/common/comm.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kIsScaleupNVLink</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumScaleoutRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumScaleupRanks</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kDeviceBarrierTag</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">bool</span><span class="w"> </span><span class="n">kFlushStores</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">kSyncAtStart</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">kSyncAtEnd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="o">&gt;</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">gpu_barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">handle</span><span class="o">::</span><span class="n">NCCLGin</span><span class="o">&amp;</span><span class="w"> </span><span class="n">gin</span><span class="p">,</span>
+<span class="w">                                            </span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">WorkspaceLayout</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                                            </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">scaleup_rank_idx</span><span class="p">,</span>
+<span class="w">                                            </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span>
+<span class="w">                                            </span><span class="kt">bool</span><span class="w"> </span><span class="n">do_scaleout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">do_scaleup</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. TMA store 刷新（确保数据全局可见）</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kFlushStores</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_commit</span><span class="p">();</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_wait</span><span class="p">();</span>
+<span class="w">        </span><span class="n">__syncwarp</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 2. 所有 SM 到达同步点</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kSyncAtStart</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">cooperative_groups</span><span class="o">::</span><span class="n">this_grid</span><span class="p">().</span><span class="n">sync</span><span class="p">();</span><span class="w">  </span><span class="c1">// ← 全局 SM 同步</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. 跨 rank 同步（scaleup/scaleout）</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">do_scaleup</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">do_scaleout</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">scaleup_barrier_wo_local_sync</span><span class="o">&lt;</span><span class="p">...</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// NVLink barrier</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">scaleout_barrier_wo_local_sync</span><span class="o">&lt;</span><span class="p">...</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// RDMA barrier</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 4. 所有 SM 再次同步</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kSyncAtEnd</span><span class="p">)</span>
+<span class="w">        </span><span class="n">cooperative_groups</span><span class="o">::</span><span class="n">this_grid</span><span class="p">().</span><span class="n">sync</span><span class="p">();</span><span class="w">  </span><span class="c1">// ← 全局 SM 同步</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键特征</strong>：<br />
+- 使用 <code>cooperative_groups::this_grid().sync()</code> 实现 SM 间同步<br />
+- 跨 rank 同步使用 NCCL 的 <code>signal/wait</code> 机制<br />
+- <strong>这是一个全局 Barrier，不是 FIFO！</strong></p>
+<hh3 id="3-3-mbarrier-deepep-的数据流同步" id="33-mbarrierdeepep">3.3 mbarrier：DeepEP 的数据流同步</hh3>
+<p>DeepEP 使用 <code>mbarrier</code> 实现 TMA load/store 的 producer-consumer 协议：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/common/ptx.cuh</span>
+
+<span class="c1">// mbarrier 初始化</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">mbarrier_init_with_fence</span><span class="p">(</span><span class="n">mbarrier</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">arrive_count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="p">(</span><span class="s">&quot;mbarrier.init.shared::cta.b64 [%1], %0;&quot;</span><span class="w"> </span><span class="o">::</span>
+<span class="w">                 </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="n">arrive_count</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">__cvta_generic_to_shared</span><span class="p">(</span><span class="n">ptr</span><span class="p">))));</span>
+<span class="w">    </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="p">(</span><span class="s">&quot;fence.mbarrier_init.release.cluster;&quot;</span><span class="w"> </span><span class="o">::</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// arrive + expect_tx（生产者：数据加载完成）</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">mbarrier_arrive_and_set_tx</span><span class="p">(</span><span class="n">mbarrier</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="p">(</span><span class="s">&quot;mbarrier.arrive.expect_tx.shared::cta.b64 _, [%1], %0; </span><span class="se">\n\t</span><span class="s">&quot;</span><span class="w"> </span><span class="o">::</span>
+<span class="w">                 </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">__cvta_generic_to_shared</span><span class="p">(</span><span class="n">ptr</span><span class="p">))));</span>
+<span class="p">}</span>
+
+<span class="c1">// wait + phase flip（消费者：等待数据就绪）</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">mbarrier_wait_and_flip_phase</span><span class="p">(</span><span class="n">mbarrier</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">arrival_phase</span><span class="o">&amp;</span><span class="w"> </span><span class="n">phase</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="p">(</span>
+<span class="w">        </span><span class="s">&quot;{</span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;.reg .pred       P1; </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;LAB_WAIT: </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2; </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;@P1 bra DONE; </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;bra     LAB_WAIT; </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;DONE: </span><span class="se">\n\t</span><span class="s">&quot;</span>
+<span class="w">        </span><span class="s">&quot;}&quot;</span><span class="w"> </span><span class="o">::</span>
+<span class="w">        </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">__cvta_generic_to_shared</span><span class="p">(</span><span class="n">ptr</span><span class="p">))),</span>
+<span class="w">        </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="n">phase</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;r&quot;</span><span class="p">(</span><span class="mh">0x989680</span><span class="p">));</span>
+<span class="w">    </span><span class="n">phase</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="3-4-dispatch-中的同步模式" id="34-dispatch">3.4 Dispatch 中的同步模式</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_ep/include/deep_ep/impls/dispatch.cuh</span>
+
+<span class="c1">// 1. 初始 barrier：确保所有 rank 就绪</span>
+<span class="n">comm</span><span class="o">::</span><span class="n">gpu_barrier</span><span class="o">&lt;</span><span class="n">kIsScaleupNVLink</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span>
+<span class="w">                  </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">,</span><span class="w"> </span><span class="n">comm</span><span class="o">::</span><span class="n">kDispatchTag0</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">gin</span><span class="p">,</span><span class="w"> </span><span class="n">workspace_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">);</span>
+
+<span class="c1">// 2. 主循环：per-token 处理</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">token_start</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">token_stride</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// TMA load token 数据</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_hidden_ptr</span><span class="p">(),</span><span class="w"> </span><span class="p">...,</span><span class="w"> </span><span class="n">mbarrier_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 等待 TMA load 完成</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">mbarrier_arrive_and_set_tx</span><span class="p">(</span><span class="n">mbarrier_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">);</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">mbarrier_wait_and_flip_phase</span><span class="p">(</span><span class="n">mbarrier_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">phase</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// TMA store 到远程/本地</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_commit</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="c1">// 3. 最终 barrier：确保所有数据到达</span>
+<span class="n">comm</span><span class="o">::</span><span class="n">gpu_barrier</span><span class="o">&lt;</span><span class="n">kIsScaleupNVLink</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span>
+<span class="w">                  </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">,</span><span class="w"> </span><span class="n">comm</span><span class="o">::</span><span class="n">kDispatchTag1</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">gin</span><span class="p">,</span><span class="w"> </span><span class="n">workspace_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="3-5-deepep-的同步模式总结" id="35-deepep">3.5 DeepEP 的同步模式总结</hh3>
+<table>
+<thead>
+<tr>
+<th>同步原语</th>
+<th>用途</th>
+<th>粒度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gpu_barrier</code></td>
+<td>全局 SM + 跨 rank 同步</td>
+<td>所有 SM</td>
+</tr>
+<tr>
+<td><code>mbarrier</code></td>
+<td>TMA load/store producer-consumer</td>
+<td>per-warp</td>
+</tr>
+<tr>
+<td><code>named_barrier</code></td>
+<td>Warp group 内同步</td>
+<td>Warp group</td>
+</tr>
+<tr>
+<td><code>__syncwarp</code></td>
+<td>Warp 内线程同步</td>
+<td>Warp</td>
+</tr>
+<tr>
+<td><code>atomicAdd</code></td>
+<td>元数据计数</td>
+<td>全局/共享内存</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键结论</strong>：DeepEP 使用 <strong>Barrier 主导</strong> 的同步模式，mbarrier 仅用于 TMA 内部的数据就绪检测，<strong>不构成 FIFO 队列</strong>。</p>
+<hr />
+<hh2 id="4-deepgemm-mega-moe-实现分析-mbarrier-based-流式模式" id="4-deepgemm-mega-moe-mbarrier-based">4. DeepGEMM Mega MoE 实现分析：mbarrier-Based 流式模式</hh2>
+<hh3 id="4-1-deepgemm-的同步原语全景" id="41-deepgemm">4.1 DeepGEMM 的同步原语全景</hh3>
+<p>DeepGEMM 使用 <strong>mbarrier + double-buffering</strong> 实现等效 FIFO 语义：</p>
+<div class="mermaid">graph TB
+    subgraph "DeepGEMM 同步原语"
+        direction TB
+
+        subgraph "全局同步 (barrier.cuh)"
+            A1["grid_sync<br/>atomic_add_rel + ld_acq 自旋"]
+            A2["nvlink_barrier<br/>red_add_rel_sys + ld_acq_sys 自旋"]
+        end
+
+        subgraph "数据流 FIFO (mbarrier)"
+            B1["full_barriers[]<br/>TMA load 完成信号<br/>arrive_and_expect_tx / wait"]
+            B2["empty_barriers[]<br/>Consumer 释放信号<br/>arrive / wait"]
+            B3["tmem_full_barriers[]<br/>TMEM 累积完成"]
+            B4["tmem_empty_barriers[]<br/>TMEM 可重用"]
+            B5["combine_barriers[]<br/>Combine double-buffering"]
+            B6["dispatch_barriers[]<br/>Dispatch pull mbarrier"]
+        end
+
+        subgraph "细粒度依赖 (原子计数)"
+            C1["l1_full_count[]<br/>per-block token 到达计数<br/>red_add_rel + ld_acq 自旋"]
+            C2["l2_full_count[]<br/>per-n_block L1 output 就绪<br/>red_add_rel + ld_acq 自旋"]
+            C3["l1_empty_count[]<br/>per-block L1 可重用<br/>red_add + ld_acq 自旋"]
+            C4["l2_empty_count[]<br/>per-block L2 可重用<br/>red_add + ld_acq 自旋"]
+        end
+
+        subgraph "Warp 内同步"
+            D1["__syncwarp()<br/>Warp 内线程同步"]
+            D2["ptx::sync_aligned()<br/>SM 内 mbarrier 同步"]
+        end
+    end
+</div>
+
+<hh3 id="4-2-grid_sync-sm-间全局同步" id="42-grid_syncsm">4.2 grid_sync：SM 间全局同步</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/comm/barrier.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">sync_scope_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">grid_sync</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="n">sync_scope_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kFinishSumTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x80000000u</span><span class="p">;</span>
+<span class="w">    </span><span class="n">sync_scope</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">count_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_grid_sync_count_ptr</span><span class="o">&lt;</span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">old_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">atomic_add_rel</span><span class="p">(</span>
+<span class="w">            </span><span class="n">count_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="p">(</span><span class="n">kFinishSumTag</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">))</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">new_value</span><span class="p">;</span>
+<span class="w">        </span><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">new_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq</span><span class="p">(</span><span class="n">count_ptr</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(((</span><span class="n">new_value</span><span class="w"> </span><span class="o">^</span><span class="w"> </span><span class="n">old_value</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">kFinishSumTag</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">sync_scope</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>与 DeepEP 的对比</strong>：<br />
+- DeepEP 使用 <code>cooperative_groups::this_grid().sync()</code>（硬件支持的 grid sync）<br />
+- DeepGEMM 使用 <code>atomic_add_rel</code> + <code>ld_acq</code> 自旋（软件实现的 grid sync）<br />
+- 两者功能相同，但 DeepGEMM 的实现更灵活（支持多 index、超时检测）</p>
+<hh3 id="4-3-nvlink_barrier-跨-rank-同步" id="43-nvlink_barrier-rank">4.3 nvlink_barrier：跨 Rank 同步</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/comm/barrier.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kTag</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">sync_scope_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">nvlink_barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">SymBuffer</span><span class="o">&lt;</span><span class="n">kNumRanks</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="n">sync_scope_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_prologue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_epilogue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. Grid sync before NVLink signaling</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_prologue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. NVLink cross-rank barrier, only SM 0 participates</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="o">*</span><span class="w"> </span><span class="n">counter_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_nvl_barrier_counter_ptr</span><span class="p">();</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">counter_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">signal_phase</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="o">*</span><span class="w"> </span><span class="n">signal_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_nvl_barrier_signal_ptr</span><span class="p">(</span><span class="n">signal_phase</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// Send signals to remote ranks</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">)</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="n">sync_scope</span><span class="p">();</span>
+
+<span class="w">        </span><span class="c1">// Update status and wait arrival</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add</span><span class="p">(</span><span class="n">counter_ptr</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">kNumRanks</span><span class="p">);</span>
+<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq_sys</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* spin */</span><span class="w"> </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. Grid sync after NVLink completion</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_epilogue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="4-4-mbarrier-based-producer-consumer-等效-fifo" id="44-mbarrier-based-producer-consumer-fifo">4.4 mbarrier-based Producer-Consumer（等效 FIFO）</hh3>
+<p>DeepGEMM 的核心创新是使用 <strong>mbarrier + double-buffering</strong> 实现 FIFO 语义：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</span>
+
+<span class="c1">// Barrier 定义</span>
+<span class="k">using</span><span class="w"> </span><span class="n">Barrier</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cutlass</span><span class="o">::</span><span class="n">arch</span><span class="o">::</span><span class="n">ClusterTransactionBarrier</span><span class="p">;</span>
+
+<span class="c1">// 核心 barrier 数组</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">full_barriers</span><span class="p">[</span><span class="n">kNumStages</span><span class="p">];</span><span class="w">      </span><span class="c1">// TMA load 完成信号</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">empty_barriers</span><span class="p">[</span><span class="n">kNumStages</span><span class="p">];</span><span class="w">     </span><span class="c1">// Consumer 释放信号</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">tmem_full_barriers</span><span class="p">[</span><span class="n">kNumEpilogueStages</span><span class="p">];</span><span class="w">  </span><span class="c1">// TMEM 累积完成</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">tmem_empty_barriers</span><span class="p">[</span><span class="n">kNumEpilogueStages</span><span class="p">];</span><span class="w"> </span><span class="c1">// TMEM 可重用</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">combine_barriers</span><span class="p">[</span><span class="n">kNumEpilogueWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">];</span><span class="w"> </span><span class="c1">// Combine double-buffering</span>
+<span class="n">Barrier</span><span class="w"> </span><span class="n">dispatch_barriers</span><span class="p">[</span><span class="n">kNumDispatchWarps</span><span class="p">];</span><span class="w">   </span><span class="c1">// Dispatch pull mbarrier</span>
+</code></pre></div>
+
+<p><strong>Producer-Consumer 协议</strong>：</p>
+<div class="mermaid">sequenceDiagram
+    participant P as Producer (TMA Load Warp)
+    participant B as full_barrier / empty_barrier
+    participant C as Consumer (MMA Issue Warp)
+
+    P->>B: arrive_and_expect_tx(size)<br/>TMA 加载完成
+    C->>B: wait(phase)<br/>等待数据就绪
+    C->>C: 消费数据（执行 UMMA）
+    C->>B: arrive(0)<br/>释放 buffer
+    P->>B: wait(phase ^ 1)<br/>等待 buffer 可重用
+    P->>P: 加载下一批数据
+</div>
+
+<p><strong>关键代码</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Producer (TMA Load Warp): 加载数据并 signal</span>
+<span class="n">shared_storage</span><span class="p">.</span><span class="n">full_barriers</span><span class="p">[</span><span class="n">stage_idx</span><span class="p">].</span><span class="n">arrive_and_expect_tx</span><span class="p">(</span>
+<span class="w">    </span><span class="k">sizeof</span><span class="p">(</span><span class="n">SharedStorage</span><span class="o">::</span><span class="n">smem_a</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">SharedStorage</span><span class="o">::</span><span class="n">smem_sfa</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">);</span>
+
+<span class="c1">// Consumer (MMA Issue Warp): 等待数据就绪</span>
+<span class="n">shared_storage</span><span class="p">.</span><span class="n">full_barriers</span><span class="p">[</span><span class="n">stage_idx</span><span class="p">].</span><span class="n">wait</span><span class="p">(</span><span class="n">phase</span><span class="p">);</span>
+
+<span class="c1">// Consumer 完成后释放 buffer</span>
+<span class="n">shared_storage</span><span class="p">.</span><span class="n">empty_barriers</span><span class="p">[</span><span class="n">stage_idx</span><span class="p">].</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0u</span><span class="p">);</span>
+
+<span class="c1">// Producer 等待 buffer 可重用</span>
+<span class="n">shared_storage</span><span class="p">.</span><span class="n">empty_barriers</span><span class="p">[</span><span class="n">stage_idx</span><span class="p">].</span><span class="n">wait</span><span class="p">(</span><span class="n">phase</span><span class="w"> </span><span class="o">^</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="4-5-细粒度依赖-原子计数实现流式" id="45">4.5 细粒度依赖：原子计数实现流式</hh3>
+<p>DeepGEMM 使用 <strong>原子计数</strong> 实现 per-block 粒度的流式处理：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Dispatch Warp: 每完成一个 token 的 pull，增加 arrival count</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel</span><span class="p">(</span>
+<span class="w">    </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_l1_full_count_ptr</span><span class="p">(</span><span class="n">pool_block_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumRingBlocks</span><span class="p">),</span><span class="w"> </span>
+<span class="w">    </span><span class="n">is_last_token</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">BLOCK_M</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">token_idx_in_expert</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">BLOCK_M</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1u</span>
+<span class="p">);</span>
+
+<span class="c1">// TMA Load Warp (Linear1): 等待整个 block 的 token 全部到达</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">task_info</span><span class="p">.</span><span class="n">block_phase</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">sched</span><span class="o">::</span><span class="n">BlockPhase</span><span class="o">::</span><span class="n">Linear1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_l1_full_count_ptr</span><span class="p">(</span><span class="n">block_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_expected_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">BLOCK_M</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">pool_block_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumRingBlocks</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">num_expected_tokens</span><span class="p">);</span><span class="w">  </span><span class="c1">// 自旋等待</span>
+<span class="p">}</span>
+
+<span class="c1">// Linear2: 等待所需的 L1 output 全部就绪</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">task_info</span><span class="p">.</span><span class="n">block_phase</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">sched</span><span class="o">::</span><span class="n">BlockPhase</span><span class="o">::</span><span class="n">Linear2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_l2_full_count_ptr</span><span class="p">(</span><span class="n">block_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_expected_blocks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">L2_SHAPE_K</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_N</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">pool_block_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumRingBlocks</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">num_expected_blocks</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="4-6-deepgemm-的同步模式总结" id="46-deepgemm">4.6 DeepGEMM 的同步模式总结</hh3>
+<table>
+<thead>
+<tr>
+<th>同步原语</th>
+<th>用途</th>
+<th>粒度</th>
+<th>类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grid_sync</code></td>
+<td>SM 间 Grid 同步</td>
+<td>所有 SM</td>
+<td>Barrier</td>
+</tr>
+<tr>
+<td><code>nvlink_barrier</code></td>
+<td>跨 Rank NVLink 同步</td>
+<td>所有 Rank</td>
+<td>Barrier</td>
+</tr>
+<tr>
+<td><code>full_barriers</code></td>
+<td>TMA load 完成信号</td>
+<td>per-stage</td>
+<td>FIFO (mbarrier)</td>
+</tr>
+<tr>
+<td><code>empty_barriers</code></td>
+<td>Consumer 释放信号</td>
+<td>per-stage</td>
+<td>FIFO (mbarrier)</td>
+</tr>
+<tr>
+<td><code>tmem_full/empty</code></td>
+<td>TMEM 累积/释放</td>
+<td>per-stage</td>
+<td>FIFO (mbarrier)</td>
+</tr>
+<tr>
+<td><code>l1_full_count</code></td>
+<td>Token 到达计数</td>
+<td>per-block</td>
+<td>原子计数</td>
+</tr>
+<tr>
+<td><code>l2_full_count</code></td>
+<td>L1 output 就绪</td>
+<td>per-n_block</td>
+<td>原子计数</td>
+</tr>
+<tr>
+<td><code>l1_empty_count</code></td>
+<td>L1 可重用</td>
+<td>per-block</td>
+<td>原子计数</td>
+</tr>
+<tr>
+<td><code>l2_empty_count</code></td>
+<td>L2 可重用</td>
+<td>per-block</td>
+<td>原子计数</td>
+</tr>
+<tr>
+<td><code>__syncwarp</code></td>
+<td>Warp 内同步</td>
+<td>warp</td>
+<td>Warp sync</td>
+</tr>
+<tr>
+<td><code>ptx::sync_aligned</code></td>
+<td>SM 内跨 warp 同步</td>
+<td>SM 内</td>
+<td>mbarrier</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键结论</strong>：DeepGEMM 使用 <strong>mbarrier + double-buffering</strong> 实现了与 FIFO 完全等效的流式语义，同时使用原子计数实现细粒度依赖。</p>
+<hr />
+<hh2 id="5-对比分析-deepep-vs-deepgemm" id="5-deepep-vs-deepgemm">5. 对比分析：DeepEP vs DeepGEMM</hh2>
+<hh3 id="5-1-同步机制对比" id="51">5.1 同步机制对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>全局 SM 同步</strong></td>
+<td><code>this_grid().sync()</code></td>
+<td><code>atomic_add_rel</code> + <code>ld_acq</code> 自旋</td>
+</tr>
+<tr>
+<td><strong>跨 Rank 同步</strong></td>
+<td>NCCL signal/wait</td>
+<td><code>red_add_rel_sys</code> + <code>ld_acq_sys</code> 自旋</td>
+</tr>
+<tr>
+<td><strong>数据流同步</strong></td>
+<td>mbarrier（TMA 内部）</td>
+<td>mbarrier + double-buffering（FIFO）</td>
+</tr>
+<tr>
+<td><strong>细粒度依赖</strong></td>
+<td>无</td>
+<td>原子计数（l1/l2 count）</td>
+</tr>
+<tr>
+<td><strong>FIFO 形式</strong></td>
+<td>无显式 FIFO</td>
+<td>隐式 mbarrier + shared memory</td>
+</tr>
+<tr>
+<td><strong>Buffer 层级</strong></td>
+<td>多层（Token→Dispatch→Chunk→Receive→Expert）</td>
+<td>少层（L1 Pool + L2）</td>
+</tr>
+<tr>
+<td><strong>通信粒度</strong></td>
+<td>Chunk（多 token 聚合）</td>
+<td>Per-Token（单 token 粒度）</td>
+</tr>
+<tr>
+<td><strong>跨节点通信</strong></td>
+<td>RDMA（显式）</td>
+<td>NVLink（Symmetric Memory 隐式）</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-2-同步原语实现对比" id="52">5.2 同步原语实现对比</hh3>
+<table>
+<thead>
+<tr>
+<th>原语</th>
+<th>DeepEP 实现</th>
+<th>DeepGEMM 实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Grid Sync</strong></td>
+<td><code>cooperative_groups::this_grid().sync()</code></td>
+<td><code>atomic_add_rel</code> + <code>ld_acq</code> 自旋</td>
+</tr>
+<tr>
+<td><strong>NVLink Barrier</strong></td>
+<td><code>red_add_rel_sys</code> + <code>ld_acq_sys</code> 自旋</td>
+<td><code>red_add_rel_sys</code> + <code>ld_acq_sys</code> 自旋</td>
+</tr>
+<tr>
+<td><strong>mbarrier arrive</strong></td>
+<td><code>mbarrier.arrive.expect_tx.shared::cta.b64</code></td>
+<td><code>ClusterTransactionBarrier.arrive_and_expect_tx</code></td>
+</tr>
+<tr>
+<td><strong>mbarrier wait</strong></td>
+<td><code>mbarrier.try_wait.parity.shared::cta.b64</code></td>
+<td><code>ClusterTransactionBarrier.wait</code></td>
+</tr>
+<tr>
+<td><strong>原子操作</strong></td>
+<td><code>atomicAdd_block</code>, <code>atomicAdd</code></td>
+<td><code>ptx::atomic_add_rel</code>, <code>ptx::red_add_rel</code></td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-3-时序图对比" id="53">5.3 时序图对比</hh3>
+<p><strong>DeepEP 的同步模式（Barrier 主导）</strong>：</p>
+<div class="mermaid">sequenceDiagram
+    participant S as Source GPU
+    participant N as Network
+    participant R as Remote GPU
+
+    S->>S: Dispatch (per-token TMA load/store)
+    S->>S: gpu_barrier (this_grid().sync + NCCL signal)
+    N->>N: RDMA transfer
+    R->>R: gpu_barrier (this_grid().sync + NCCL wait)
+    R->>R: Expert GEMM
+    R->>R: gpu_barrier (this_grid().sync + NCCL signal)
+    N->>N: RDMA transfer
+    S->>S: gpu_barrier (this_grid().sync + NCCL wait)
+    S->>S: Combine (per-token reduce)
+</div>
+
+<p><strong>DeepGEMM 的流式模式（FIFO 主导）</strong>：</p>
+<div class="mermaid">sequenceDiagram
+    participant D as Dispatch Warp
+    participant L1 as L1 Token Buffer
+    participant G1 as Linear1 GEMM
+    participant L2 as L2 Acts Buffer
+    participant G2 as Linear2 GEMM
+    participant C as Combine Warp
+
+    D->>L1: pull token + red_add_rel l1_full_count
+    L1->>G1: TMA Load Warp 等待 l1_full_count
+    G1->>G1: UMMA (full_barrier/empty_barrier)
+    G1->>L2: TMA Store + red_add_rel l2_full_count
+    L2->>G2: TMA Load Warp 等待 l2_full_count
+    G2->>G2: UMMA (full_barrier/empty_barrier)
+    G2->>C: NVLink 写入 combine_token_buffer
+    C->>C: Top-K Reduce
+</div>
+
+<hh3 id="5-4-fifo-语义对比" id="54-fifo">5.4 FIFO 语义对比</hh3>
+<table>
+<thead>
+<tr>
+<th>DeepEP（无显式 FIFO）</th>
+<th>DeepGEMM（等效 FIFO）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chunk Buffer（显式队列）</td>
+<td>smem_a/smem_b/smem_cd（shared memory buffer）</td>
+</tr>
+<tr>
+<td>写入 Chunk Buffer</td>
+<td><code>full_barriers[i].arrive_and_expect_tx()</code></td>
+</tr>
+<tr>
+<td>从 Chunk Buffer 读取</td>
+<td><code>full_barriers[i].wait(phase)</code></td>
+</tr>
+<tr>
+<td>Chunk Buffer 空位可用</td>
+<td><code>empty_barriers[i].arrive()</code> + <code>wait(phase ^ 1)</code></td>
+</tr>
+<tr>
+<td>Chunk 粒度</td>
+<td>BLOCK 粒度（BLOCK_M × BLOCK_K）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="6-跨引用分析-fifo-与其他概念的关系" id="6-fifo">6. 跨引用分析：FIFO 与其他概念的关系</hh2>
+<hh3 id="6-1-fifo-与-warp-specialization-agent-3" id="61-fifo-warp-specializationagent-3">6.1 FIFO 与 Warp Specialization（Agent 3）</hh3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp Specialization</strong></td>
+<td>将不同阶段分配给不同 Warp 角色</td>
+</tr>
+<tr>
+<td><strong>FIFO</strong></td>
+<td>实现 Warp 角色之间的数据传递</td>
+</tr>
+<tr>
+<td><strong>协同</strong></td>
+<td>Warp Spec 是"角色分离"，FIFO 是"角色间通信"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DeepEP 中的体现</strong>：<br />
+- Notify Warps：元数据通知<br />
+- Dispatch Warps：数据搬运<br />
+- 两者通过 <code>gpu_barrier</code> 同步（<strong>不是 FIFO</strong>）</p>
+<p><strong>DeepGEMM 中的体现</strong>：<br />
+- Dispatch Warps：Token 路由 + NVLink Pull<br />
+- TMA Load Warps：数据加载<br />
+- MMA Issue Warp：矩阵乘法<br />
+- Epilogue Warps：后处理 + Combine<br />
+- 各角色通过 <code>full_barriers/empty_barriers</code> 解耦（<strong>FIFO 语义</strong>）</p>
+<hh3 id="6-2-fifo-与-chunk-streaming-agent-9" id="62-fifo-chunk-streamingagent-9">6.2 FIFO 与 Chunk Streaming（Agent 9）</hh3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Chunk Streaming</strong></td>
+<td>数据以 Chunk 粒度流过 pipeline</td>
+</tr>
+<tr>
+<td><strong>FIFO</strong></td>
+<td>Chunk Streaming 的底层实现机制</td>
+</tr>
+<tr>
+<td><strong>区别</strong></td>
+<td>Chunk Streaming 强调"粒度"，FIFO 强调"解耦"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DeepEP 的 Chunk Streaming</strong>：<br />
+- Token 聚合为 Chunk 后通信<br />
+- Chunk Buffer 作为显式 FIFO 队列<br />
+- 但同步仍依赖 <code>gpu_barrier</code></p>
+<p><strong>DeepGEMM 的 Chunk Streaming</strong>：<br />
+- Per-Token 粒度（更细粒度）<br />
+- mbarrier + double-buffering 实现流式<br />
+- 无需等待整个 Batch</p>
+<hh3 id="6-3-fifo-与-normal-vs-low-latency-agent-7" id="63-fifo-normal-vs-low-latencyagent-7">6.3 FIFO 与 Normal vs Low-Latency（Agent 7）</hh3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>DeepEP Normal</th>
+<th>DeepEP Low-Latency</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>关键</td>
+<td>减少</td>
+<td>Per-Token</td>
+</tr>
+<tr>
+<td><strong>Pipeline</strong></td>
+<td>深</td>
+<td>浅</td>
+<td>深（融合 kernel）</td>
+</tr>
+<tr>
+<td><strong>FIFO 形式</strong></td>
+<td>Chunk Buffer</td>
+<td>无</td>
+<td>mbarrier + smem</td>
+</tr>
+<tr>
+<td><strong>同步</strong></td>
+<td>Barrier 主导</td>
+<td>Barrier 主导</td>
+<td>FIFO 主导</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键洞察</strong>：<br />
+- DeepEP 的 Normal/Low-Latency 都使用 <strong>Barrier 主导</strong> 的同步<br />
+- DeepGEMM 通过 <strong>FIFO 主导</strong> 的同步实现了 Normal 模式的流式处理<br />
+- DeepGEMM 没有 Low-Latency 模式，因为它通过 per-token 粒度天然实现了低延迟</p>
+<hr />
+<hh2 id="7-核心结论" id="7">7. 核心结论</hh2>
+<hh3 id="7-1-博客理论的准确性评估" id="71">7.1 博客理论的准确性评估</hh3>
+<table>
+<thead>
+<tr>
+<th>博客断言</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+<th>评估</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Send → FIFO → Forward"</td>
+<td>❌ 无 FIFO</td>
+<td>✅ mbarrier FIFO</td>
+<td>部分准确</td>
+</tr>
+<tr>
+<td>"无需等待整个 Batch"</td>
+<td>❌ Barrier 等待</td>
+<td>✅ per-token 流式</td>
+<td>部分准确</td>
+</tr>
+<tr>
+<td>"每个阶段只关心自己的读写"</td>
+<td>❌ Barrier 同步</td>
+<td>✅ mbarrier 解耦</td>
+<td>部分准确</td>
+</tr>
+<tr>
+<td>"FIFO 本质：同步→流式"</td>
+<td>❌ 仍为同步</td>
+<td>✅ 流式</td>
+<td>部分准确</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：博客描述的 FIFO 模型更贴近 <strong>DeepGEMM</strong> 的实现，而非 DeepEP。DeepEP 使用的是 <strong>Barrier 主导</strong> 的同步模式，而非 FIFO。</p>
+<hh3 id="7-2-同步机制的本质差异" id="72">7.2 同步机制的本质差异</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>同步范式</strong></td>
+<td>Barrier（全局同步）</td>
+<td>FIFO（局部解耦）</td>
+</tr>
+<tr>
+<td><strong>数据流</strong></td>
+<td>显式拷贝 + Barrier</td>
+<td>零拷贝 + mbarrier</td>
+</tr>
+<tr>
+<td><strong>粒度</strong></td>
+<td>Chunk（粗粒度）</td>
+<td>Per-Token（细粒度）</td>
+</tr>
+<tr>
+<td><strong>延迟</strong></td>
+<td>高（Barrier 等待）</td>
+<td>低（流式处理）</td>
+</tr>
+<tr>
+<td><strong>吞吐</strong></td>
+<td>高（Chunk 聚合）</td>
+<td>高（细粒度流水线）</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="7-3-设计哲学对比" id="73">7.3 设计哲学对比</hh3>
+<p><strong>DeepEP 的设计哲学</strong>：<br />
+- <strong>通信与计算分离</strong>：Dispatch/Combine 是独立 kernel<br />
+- <strong>Chunk 聚合</strong>：减少通信次数，提高带宽利用率<br />
+- <strong>Barrier 同步</strong>：简单可靠，但引入全局等待</p>
+<p><strong>DeepGEMM 的设计哲学</strong>：<br />
+- <strong>通信与计算融合</strong>：单个 kernel 完成所有操作<br />
+- <strong>Per-Token 粒度</strong>：最小化延迟<br />
+- <strong>FIFO 解耦</strong>：各阶段独立运行，无需全局同步</p>
+<hh3 id="7-4-同步原语选择的原因" id="74">7.4 同步原语选择的原因</hh3>
+<table>
+<thead>
+<tr>
+<th>因素</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>硬件代际</strong></td>
+<td>SM90（Hopper）</td>
+<td>SM100（Blackwell）</td>
+</tr>
+<tr>
+<td><strong>通信硬件</strong></td>
+<td>NCCL + RDMA</td>
+<td>NVLink + Symmetric Memory</td>
+</tr>
+<tr>
+<td><strong>Kernel 模式</strong></td>
+<td>多 kernel 协作</td>
+<td>单 kernel 融合</td>
+</tr>
+<tr>
+<td><strong>同步需求</strong></td>
+<td>跨 kernel barrier</td>
+<td>跨 stage FIFO</td>
+</tr>
+<tr>
+<td><strong>mbarrier 用途</strong></td>
+<td>TMA 内部同步</td>
+<td>FIFO 实现</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="8-完整-pipeline-数据流图" id="8-pipeline">8. 完整 Pipeline 数据流图</hh2>
+<hh3 id="8-1-deepep-的-barrier-主导-pipeline" id="81-deepep-barrier-pipeline">8.1 DeepEP 的 Barrier 主导 Pipeline</hh3>
+<div class="mermaid">graph TB
+    subgraph "DeepEP Normal Kernel"
+        direction TB
+
+        subgraph "Phase 1: Notify"
+            N1["Notify Warps<br/>元数据交换"]
+            N2["gpu_barrier<br/>全局同步"]
+            N1 --> N2
+        end
+
+        subgraph "Phase 2: Dispatch"
+            D1["Dispatch Warps<br/>per-token TMA load/store"]
+            D2["gpu_barrier<br/>全局同步"]
+            D1 --> D2
+        end
+
+        subgraph "Phase 3: Expert GEMM"
+            E1["外部 GEMM kernel<br/>（不在 DeepEP 内）"]
+            E2["隐式同步<br/>（kernel 边界）"]
+            E1 --> E2
+        end
+
+        subgraph "Phase 4: Combine"
+            C1["Combine Warps<br/>per-token reduce"]
+            C2["gpu_barrier<br/>全局同步"]
+            C1 --> C2
+        end
+
+        N2 --> D1
+        D2 --> E1
+        E2 --> C1
+    end
+
+    style N2 fill:#ffcdd2
+    style D2 fill:#ffcdd2
+    style E2 fill:#ffcdd2
+    style C2 fill:#ffcdd2
+</div>
+
+<hh3 id="8-2-deepgemm-的-fifo-主导-pipeline" id="82-deepgemm-fifo-pipeline">8.2 DeepGEMM 的 FIFO 主导 Pipeline</hh3>
+<div class="mermaid">graph TB
+    subgraph "DeepGEMM Mega MoE (Single Kernel)"
+        direction TB
+
+        subgraph "Phase 1: Dispatch"
+            D1["Dispatch Warps<br/>Token 路由 + NVLink Pull"]
+            D2["grid_sync<br/>SM 间同步"]
+            D3["nvlink_barrier<br/>跨 rank 同步"]
+            D4["pull token<br/>+ red_add_rel l1_full_count"]
+            D1 --> D2 --> D3 --> D4
+        end
+
+        subgraph "Phase 2: Linear1 GEMM"
+            L1A["TMA Load Warp (A)<br/>等待 l1_full_count"]
+            L1B["TMA Load Warp (B)<br/>加载 weight"]
+            L1C["MMA Issue Warp<br/>full_barrier/empty_barrier"]
+            L1A --> L1C
+            L1B --> L1C
+        end
+
+        subgraph "Phase 3: L1 Epilogue"
+            E1["TMEM Load<br/>SwiGLU + FP8 Cast"]
+            E2["TMA Store<br/>写入 l2_acts"]
+            E3["red_add_rel<br/>l2_full_count"]
+            E1 --> E2 --> E3
+        end
+
+        subgraph "Phase 4: Linear2 GEMM"
+            L2A["TMA Load Warp (A)<br/>等待 l2_full_count"]
+            L2B["TMA Load Warp (B)<br/>加载 l2_weights"]
+            L2C["MMA Issue Warp<br/>full_barrier/empty_barrier"]
+            L2A --> L2C
+            L2B --> L2C
+        end
+
+        subgraph "Phase 5: L2 Epilogue + Combine"
+            C1["TMEM Load<br/>BF16 Output"]
+            C2["NVLink 写入<br/>combine_token_buffer"]
+            C3["nvlink_barrier<br/>跨 rank 同步"]
+            C4["Top-K Reduce<br/>累加"]
+            C1 --> C2 --> C3 --> C4
+        end
+
+        D4 -->|"l1_full_count<br/>per-block"| L1A
+        E3 -->|"l2_full_count<br/>per-n_block"| L2A
+        C2 -->|"隐式就绪"| C4
+    end
+
+    style D2 fill:#c8e6c9
+    style D3 fill:#c8e6c9
+    style L1C fill:#bbdefb
+    style L2C fill:#bbdefb
+    style C3 fill:#c8e6c9
+</div>
+
+<hr />
+<hh2 id="9-关键代码索引" id="9">9. 关键代码索引</hh2>
+<hh3 id="9-1-deepep-关键代码" id="91-deepep">9.1 DeepEP 关键代码</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>208-264</td>
+<td><code>gpu_barrier</code> 实现</td>
+</tr>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>88-129</td>
+<td><code>nvlink_barrier_wo_local_sync</code></td>
+</tr>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>131-181</td>
+<td><code>gin_barrier_wo_local_sync</code></td>
+</tr>
+<tr>
+<td><code>ptx.cuh</code></td>
+<td>56-90</td>
+<td><code>mbarrier</code> 初始化、arrive、wait</td>
+</tr>
+<tr>
+<td><code>ptx.cuh</code></td>
+<td>124-148</td>
+<td>TMA load/store</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>73-76</td>
+<td>初始 barrier</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>270-394</td>
+<td>Dispatch 主循环（mbarrier 使用）</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>397-400</td>
+<td>最终 barrier</td>
+</tr>
+<tr>
+<td><code>combine.cuh</code></td>
+<td>77-80</td>
+<td>初始 barrier</td>
+</tr>
+<tr>
+<td><code>combine.cuh</code></td>
+<td>239-242</td>
+<td>最终 barrier</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="9-2-deepgemm-关键代码" id="92-deepgemm">9.2 DeepGEMM 关键代码</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td>21-44</td>
+<td><code>grid_sync</code> 实现</td>
+</tr>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td>46-89</td>
+<td><code>nvlink_barrier</code> 实现</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>79-80</td>
+<td>Barrier 类型定义</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>196-203</td>
+<td>Barrier 数组定义</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>237-268</td>
+<td>Barrier 初始化</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>692-704</td>
+<td>l1/l2_full_count 等待</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>706-733</td>
+<td>TMA Load Warp (Tokens)</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>757-792</td>
+<td>TMA Load Warp (Weights)</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>859-911</td>
+<td>MMA Issue Warp</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>987-1191</td>
+<td>L1 Epilogue</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1192-1305</td>
+<td>L2 Epilogue + Combine</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="10-参考" id="10">10. 参考</hh2>
+<ul>
+<li>博客原文：<code>/tmp/deep_ep_blog_text.txt</code> Section 6</li>
+<li>DeepEP 源码：<code>/Users/backyes/work/claude_workspace/deepgemm_research/deep_ep/</code></li>
+<li>DeepGEMM 源码：<code>/Users/backyes/work/claude_workspace/deepgemm_research/DeepGEMM/</code></li>
+<li>前置分析：<code>docs/05_04_fifo_pipeline.md</code></li>
+<li>CUTLASS ClusterTransactionBarrier 文档</li>
+<li>NVIDIA SM90 / SM100 架构手册</li>
+</ul>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>

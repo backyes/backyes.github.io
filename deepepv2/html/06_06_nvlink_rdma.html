@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>06_06: NVLink Scale-up + RDMA Scale-out — DeepEP 三阶段流水线 vs DeepGEMM 对称内存</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: #efefef;
+  --text: #37352f;
+  --text-secondary: #6b7280;
+  --text-muted: #9b9a97;
+  --border: #e9e9e7;
+  --accent: #2383e2;
+  --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3;
+  --code-text: #eb5757;
+  --blockquote-border: #e9e9e7;
+  --table-border: #e9e9e7;
+  --table-header-bg: #f7f6f3;
+  --h1-size: 2.2em;
+  --h2-size: 1.6em;
+  --h3-size: 1.25em;
+  --line-height: 1.7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --bg-secondary: #202020;
+    --bg-hover: #2f2f2f;
+    --text: #e8e8e5;
+    --text-secondary: #9b9a97;
+    --text-muted: #6b7280;
+    --border: #373737;
+    --accent: #529cca;
+    --accent-bg: #252525;
+    --code-bg: #2f2f2f;
+    --code-text: #ff7b72;
+    --blockquote-border: #373737;
+    --table-border: #373737;
+    --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  font-size: 16px;
+  line-height: var(--line-height);
+  color: var(--text);
+  background: var(--bg);
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px 100px;
+}
+h1 {
+  font-size: var(--h1-size);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.5em 0 0.5em;
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: var(--h2-size);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.8em 0 0.4em;
+  letter-spacing: -0.01em;
+}
+h3 {
+  font-size: var(--h3-size);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.5em 0 0.3em;
+}
+h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote {
+  border-left: 3px solid var(--blockquote-border);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 4px 4px 0;
+}
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+pre code {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  font-size: inherit;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+img { max-width: 100%; border-radius: 4px; }
+.mermaid { 
+  background: var(--bg); 
+  border: 1px solid var(--border); 
+  border-radius: 6px; 
+  padding: 20px; 
+  margin: 1.2em 0; 
+  overflow-x: auto;
+  text-align: center;
+}
+.toc { 
+  background: var(--bg-secondary); 
+  border-radius: 6px; 
+  padding: 16px 20px; 
+  margin: 1.5em 0; 
+}
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.toc a:hover { color: var(--accent); }
+.nav { 
+  display: flex; 
+  justify-content: space-between; 
+  margin-top: 3em; 
+  padding-top: 1.5em; 
+  border-top: 1px solid var(--border); 
+  font-size: 0.9em;
+}
+.nav a { color: var(--text-secondary); }
+.nav a:hover { color: var(--accent); }
+@media (max-width: 768px) {
+  .container { padding: 30px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.4em; }
+  pre { padding: 12px 14px; font-size: 0.8em; }
+  table { font-size: 0.85em; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ 
+  startOnLoad: true, 
+  theme: 'default',
+  securityLevel: 'loose',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+});
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="06_06-nvlink-scale-up-rdma-scale-out-deepep-三阶段流水线-vs-deepgemm-对称内存" id="06_06-nvlink-scale-up-rdma-scale-out-deepep-vs-deepgemm">06_06: NVLink Scale-up + RDMA Scale-out — DeepEP 三阶段流水线 vs DeepGEMM 对称内存</hh1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+源材料: DeepEP 博客 Section 4 + DeepEP 源码 (legacy internode/internode_ll/intranode) + DeepGEMM Mega MoE 源码 (SM100 FP8/FP4)<br />
+三向对比: <strong>博客理论</strong> ↔ <strong>DeepEP 源码</strong> ↔ <strong>DeepGEMM Mega MoE 源码</strong></p>
+</blockquote>
+<hr />
+<hh2 id="1-核心问题" id="1">1. 核心问题</hh2>
+<p>DeepEP 博客 Section 4 描述了多节点 MoE 的 <strong>Intra-node NVLink + Inter-node RDMA</strong> 协调问题：<br />
+- Token 可能留在本地、同节点另一 GPU、或远端节点<br />
+- 单 Dispatch 包含两个通信域：Intra-node (NVLink) + Inter-node (RDMA)<br />
+- 三阶段流水线：Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</p>
+<p><strong>DeepGEMM Mega MoE 用 Symmetric Memory 重新解决了同一个问题，但架构完全不同。</strong></p>
+<hr />
+<hh2 id="2-博客声明-三阶段流水线" id="2">2. 博客声明: 三阶段流水线</hh2>
+<hh3 id="2-1-博客原文引用" id="21">2.1 博客原文引用</hh3>
+<blockquote>
+<p><strong>4.2 Three-Stage Pipeline &amp; Role Division</strong></p>
+<p>In multi-GPU nodes, GPUs and NICs are not one-to-one bound. GPU0 to NIC1 may need <code>GPU0 → NVLink → GPU4 → PCIe → NIC1</code>. Communication becomes:<br />
+<code>GPU → NVLink domain → NIC → RDMA → NVLink domain → GPU</code>.</p>
+<p>Normal Kernel divides into three roles:<br />
+<strong>Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</strong></p>
+<ul>
+<li><strong>IB Sending</strong>: GPU memory → NIC (reads Dispatch Buffer, organizes RDMA packets)</li>
+<li><strong>IB-to-NVLink Forwarding</strong>: Solves NIC-GPU topology mismatch. GPU acts as communication relay: <code>Receive from NIC → Forward through NVLink → Target GPU</code></li>
+<li><strong>NVLink Receiving</strong>: Target GPU receives from NVLink, writes to Receive Buffer</li>
+</ul>
+</blockquote>
+<hh3 id="2-2-博客核心声明总结" id="22">2.2 博客核心声明总结</hh3>
+<table>
+<thead>
+<tr>
+<th>博客声明</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU-NIC 拓扑不对称</td>
+<td>GPU0 发送到 NIC1 需要经过另一 GPU 中继</td>
+</tr>
+<tr>
+<td>三阶段流水线</td>
+<td>IB Sending → RDMA → Forwarding → NVLink Receiving</td>
+</tr>
+<tr>
+<td>GPU-centric fabric</td>
+<td>NVLink + RDMA + GPU SM 共同构成数据路径</td>
+</tr>
+<tr>
+<td>动态调度</td>
+<td>Multi-Channel, Dynamic Warp Allocation, Chunk Streaming</td>
+</tr>
+<tr>
+<td>Low-Latency 绕过 Forwarding</td>
+<td>GPU → Direct RDMA → GPU</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="3-deepep-实现-三阶段流水线的代码验证" id="3-deepep">3. DeepEP 实现: 三阶段流水线的代码验证</hh2>
+<hh3 id="3-1-warprole-枚举-三阶段的直接证据" id="31-warprole">3.1 WarpRole 枚举 — 三阶段的直接证据</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 487</span>
+<span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">WarpRole</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">kRDMASender</span><span class="p">,</span><span class="w">              </span><span class="c1">// IB Sending 阶段</span>
+<span class="w">    </span><span class="n">kRDMASenderCoordinator</span><span class="p">,</span><span class="w">   </span><span class="c1">// RDMA 发送协调</span>
+<span class="w">    </span><span class="n">kRDMAAndNVLForwarder</span><span class="p">,</span><span class="w">     </span><span class="c1">// IB-to-NVLink Forwarding 阶段</span>
+<span class="w">    </span><span class="n">kForwarderCoordinator</span><span class="p">,</span><span class="w">    </span><span class="c1">// Forwarder 协调</span>
+<span class="w">    </span><span class="n">kNVLReceivers</span><span class="w">             </span><span class="c1">// NVLink Receiving 阶段</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>代码直接对应博客三阶段</strong>:<br />
+- <code>kRDMASender</code> = IB Sending (GPU → NIC)<br />
+- <code>kRDMAAndNVLForwarder</code> = IB-to-NVLink Forwarding (NIC → NVLink 中继)<br />
+- <code>kNVLReceivers</code> = NVLink Receiving (NVLink → GPU)</p>
+<hh3 id="3-2-角色分配逻辑" id="32">3.2 角色分配逻辑</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 499-514</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">role_meta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="o">=</span><span class="p">]()</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">pair</span><span class="o">&lt;</span><span class="n">WarpRole</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">is_forwarder</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMAAndNVLForwarder</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">channel_id</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kForwarderCoordinator</span><span class="p">,</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASender</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASenderCoordinator</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kNVLReceivers</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">channel_id</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">kNumDispatchRDMASenderWarps</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}();</span>
+</code></pre></div>
+
+<p><strong>关键设计</strong>: <code>is_forwarder = sm_id % 2 == 0</code> — 偶数 SM 做 Forwarder，奇数 SM 做 Sender/Receiver。</p>
+<hh3 id="3-3-stage-1-ib-sending-krdmasender" id="33-stage-1-ib-sending-krdmasender">3.3 Stage 1: IB Sending (kRDMASender)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 587-757</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_role</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASender</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 获取 token 任务范围</span>
+<span class="w">    </span><span class="n">get_channel_task_range</span><span class="p">(</span><span class="n">num_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">num_channels</span><span class="p">,</span><span class="w"> </span><span class="n">channel_id</span><span class="p">,</span><span class="w"> </span><span class="n">token_start_idx</span><span class="p">,</span><span class="w"> </span><span class="n">token_end_idx</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 遍历 token 并拷贝到 symmetric send buffer</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">token_start_idx</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">token_end_idx</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">token_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 读取 RDMA rank 存在性</span>
+<span class="w">        </span><span class="c1">// 拷贝 x, x_scales, source meta, topk_idx, topk_weights 到 send buffer</span>
+<span class="w">        </span><span class="n">UNROLLED_WARP_COPY</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">,</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">,</span><span class="w"> </span><span class="n">st_broadcast</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 释放事务槽 (流控)</span>
+<span class="w">        </span><span class="n">acquire_lock</span><span class="p">(</span><span class="n">rdma_send_channel_lock</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">);</span>
+<span class="w">        </span><span class="c1">// ... 窗口管理 ...</span>
+<span class="w">        </span><span class="n">release_lock</span><span class="p">(</span><span class="n">rdma_send_channel_lock</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>IB Sending 核心操作</strong>:<br />
+1. 读取 Dispatch Buffer (源 token)<br />
+2. 写入 Symmetric RDMA Buffer (GPU 显存中的 RDMA 可访问区域)<br />
+3. 不直接操作 NIC，由 Coordinator 发起实际 RDMA</p>
+<hh3 id="3-4-stage-1-5-rdma-sender-coordinator-发起实际-rdma" id="34-stage-15-rdma-sender-coordinator-rdma">3.4 Stage 1.5: RDMA Sender Coordinator — 发起实际 RDMA</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 758-848</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_role</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMASenderCoordinator</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 迭代所有 RDMA ranks</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">__any_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">num_tokens_to_send</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRDMARanks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="c1">// 实际发起 RDMA send</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_rdma_rank</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">rdma_rank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">                    </span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">,</span>
+<span class="w">                    </span><span class="n">translate_dst_rdma_rank</span><span class="o">&lt;</span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_rdma_rank</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">),</span>
+<span class="w">                    </span><span class="n">channel_id</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="c1">// 更新 tail</span>
+<span class="w">            </span><span class="n">nvshmemi_ibgda_amo_nonfetch_add</span><span class="p">(</span><span class="n">rdma_channel_tail</span><span class="p">.</span><span class="n">buffer</span><span class="p">(</span><span class="n">rdma_rank</span><span class="p">),</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键 API</strong>: <code>nvshmemi_ibgda_put_nbi_warp</code> — IBGDA (InfiniBand GPU Direct Async) 的 non-blocking put 操作。</p>
+<hh3 id="3-5-stage-2-ib-to-nvlink-forwarding-krdmaandnvlforwarder" id="35-stage-2-ib-to-nvlink-forwarding-krdmaandnvlforwarder">3.5 Stage 2: IB-to-NVLink Forwarding (kRDMAAndNVLForwarder)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 849-1013</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_role</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">WarpRole</span><span class="o">::</span><span class="n">kRDMAAndNVLForwarder</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_nvl_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">target_rank</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 1. 等待 RDMA meta 数据到达</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">meta_0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">(</span><span class="n">rdma_channel_meta</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">lane_id</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_nvl_rank</span><span class="p">);</span>
+<span class="w">        </span><span class="c1">// ... 等待 4 个 meta 字段就绪 ...</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">meta_0</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_1</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_2</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">meta_3</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="c1">// 通知 NVL ranks</span>
+<span class="w">            </span><span class="n">st_relaxed_sys_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_start</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="n">start_sum</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="n">st_relaxed_sys_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_end</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="n">end_sum</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 2. 从 RDMA buffer 转发 token 到 NVL</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">__any_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">num_tokens_to_recv_from_rdma</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 轮询源 RDMA rank</span>
+<span class="w">        </span><span class="n">src_rdma_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">src_rdma_rank</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumRDMARanks</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 遍历 RDMA buffer 中的 token</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_rdma_head</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">src_rdma_tail</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">shifted</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rdma_channel_data</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">src_rdma_rank</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">rdma_slot_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">;</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">src_meta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">SourceMeta</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">shifted</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">hidden_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">scale_bytes</span><span class="p">));</span>
+
+<span class="w">            </span><span class="c1">// 检查是否属于目标 NVL rank</span>
+<span class="w">            </span><span class="kt">bool</span><span class="w"> </span><span class="n">is_in_dst_nvl_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_meta</span><span class="p">.</span><span class="n">is_token_in_nvl_rank</span><span class="p">(</span><span class="n">dst_nvl_rank</span><span class="p">);</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">is_in_dst_nvl_rank</span><span class="p">)</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+
+<span class="w">            </span><span class="c1">// TMA load from RDMA buffer, TMA store to NVL buffer</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">shifted</span><span class="p">,</span><span class="w"> </span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">                </span><span class="n">mbarrier_arrive_and_expect_tx</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">tma_phase</span><span class="p">);</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">elect_one_sync</span><span class="p">())</span>
+<span class="w">                </span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">dst_shifted</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Forwarding 核心操作</strong>:<br />
+1. 等待 RDMA 数据到达 (GPU 显存中的 RDMA buffer)<br />
+2. 读取 SourceMeta 判断目标 NVL rank<br />
+3. TMA load from RDMA buffer → TMA store to NVLink buffer<br />
+4. <strong>GPU 作为通信中继</strong> — 这正是博客描述的 "IB-to-NVLink Forwarding"</p>
+<hh3 id="3-6-stage-3-nvlink-receiving-knvlreceivers" id="36-stage-3-nvlink-receiving-knvlreceivers">3.6 Stage 3: NVLink Receiving (kNVLReceivers)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 1061-1196</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// NVL consumers</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">src_nvl_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">target_rank</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 1. 等待 NVL channel prefix 数据</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">lane_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRDMARanks</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">start_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_start</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">);</span>
+<span class="w">        </span><span class="n">end_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">(</span><span class="n">nvl_channel_prefix_end</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_id</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">start_offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">end_offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">start_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">-</span><span class="n">start_offset</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">end_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">-</span><span class="n">end_offset</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">            </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 2. 从 NVL buffer 读取 token</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">num_tokens_to_recv</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 等待数据到达</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cached_channel_head_idx</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">cached_channel_tail_idx</span><span class="p">)</span>
+<span class="w">            </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="n">cached_channel_tail_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld_acquire_sys_global</span><span class="p">(</span><span class="n">nvl_channel_tail</span><span class="p">.</span><span class="n">buffer</span><span class="p">());</span>
+
+<span class="w">        </span><span class="c1">// 拷贝数据</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">chunk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">chunk_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_recv_tokens</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">chunk_idx</span><span class="p">,</span><span class="w"> </span><span class="o">--</span><span class="n">num_tokens_to_recv</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="n">shifted</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nvl_channel_x</span><span class="p">.</span><span class="n">buffer</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx_in_buffer</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_bytes_per_token</span><span class="p">;</span>
+
+<span class="w">            </span><span class="c1">// TMA load from NVL buffer, TMA store to recv_x</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">shifted</span><span class="p">,</span><span class="w"> </span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">tma_load_bytes</span><span class="p">);</span>
+<span class="w">                </span><span class="n">mbarrier_arrive_and_expect_tx</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">tma_load_bytes</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">tma_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">tma_phase</span><span class="p">);</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">,</span><span class="w"> </span><span class="n">recv_x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">recv_token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">,</span><span class="w"> </span><span class="n">hidden_bytes</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>NVLink Receiving 核心操作</strong>:<br />
+1. 等待 Forwarder 写入 NVL buffer<br />
+2. TMA load from NVLink buffer<br />
+3. TMA store 到目标 recv_x (最终输出)</p>
+<hh3 id="3-7-combine-阶段-反向三阶段" id="37-combine">3.7 Combine 阶段: 反向三阶段</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu, line 1746</span>
+<span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">WarpRole</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">kNVLSender</span><span class="p">,</span><span class="w"> </span><span class="n">kNVLAndRDMAForwarder</span><span class="p">,</span><span class="w"> </span><span class="n">kRDMAReceiver</span><span class="p">,</span><span class="w"> </span><span class="n">kCoordinator</span><span class="w"> </span><span class="p">};</span>
+</code></pre></div>
+
+<p><strong>Combine 是 Dispatch 的反向</strong>:<br />
+- <code>kNVLSender</code> = NVLink 发送方 (原 Target GPU 变为 Source)<br />
+- <code>kNVLAndRDMAForwarder</code> = NVL-RDMA 转发 (原 Forwarder 角色反转)<br />
+- <code>kRDMAReceiver</code> = RDMA 接收方 (原 Source GPU 变为 Target)</p>
+<hr />
+<hh2 id="4-deepgemm-实现-symmetric-memory-消除三阶段" id="4-deepgemm-symmetric-memory">4. DeepGEMM 实现: Symmetric Memory 消除三阶段</hh2>
+<hh3 id="4-1-symbuffer-结构-跨-rank-地址映射" id="41-symbuffer-rank">4.1 SymBuffer 结构 — 跨 rank 地址映射</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumMaxRanks</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">SymBuffer</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">base</span><span class="p">;</span><span class="w">                    </span><span class="c1">// 本地 buffer 基地址</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">kNumMaxRanks</span><span class="p">];</span><span class="w">   </span><span class="c1">// 各 rank 相对于本 rank 的偏移</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">;</span><span class="w">               </span><span class="c1">// 当前 rank 编号</span>
+
+<span class="w">    </span><span class="c1">// 关键: 将本地指针映射为可远程访问的指针</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">ptr_t</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="n">ptr_t</span><span class="w"> </span><span class="n">map</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">ptr_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span>
+
+<span class="w">        </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">mapped_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">);</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">ptr_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mapped_ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong><code>map(ptr, dst_rank_idx)</code> 是 Mega MoE 跨 rank 访问的核心原语</strong>:<br />
+- 输入: 本地 buffer 中的指针 + 目标 rank<br />
+- 输出: 可在目标 rank 上执行 TMA load/store 的远程虚拟地址<br />
+- 底层: 利用 NVLink/RDMA 的 <strong>统一虚拟地址空间 (UVA)</strong></p>
+<hh3 id="4-2-dispatch-阶段-直接远程拉取-无-forwarding" id="42-dispatch-forwarding">4.2 Dispatch 阶段: 直接远程拉取 (无 Forwarding)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh, line 533-556</span>
+
+<span class="c1">// 1. 读取源 token-topk 索引 (由远端 dispatch 通过 NVLink 写入)</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">src_token_topk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">workspace</span><span class="p">.</span><span class="n">get_src_token_topk_idx_ptr</span><span class="p">(</span>
+<span class="w">    </span><span class="n">current_expert_idx</span><span class="p">,</span><span class="w"> </span><span class="n">current_rank_in_expert_idx</span><span class="p">,</span><span class="w"> </span><span class="n">token_idx_in_rank</span><span class="p">);</span>
+
+<span class="c1">// 2. 通过 sym_buffer.map 计算远程地址</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span>
+<span class="w">    </span><span class="n">buffer</span><span class="p">.</span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">current_rank_in_expert_idx</span><span class="p">);</span><span class="w">  </span><span class="c1">// ← 远程 rank 地址</span>
+
+<span class="c1">// 3. TMA load token 从远端 rank 到本地 smem</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cute</span><span class="o">::</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumChunks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">            </span><span class="n">pull_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">            </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">src_base_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">),</span>
+<span class="w">            </span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span>
+<span class="w">        </span><span class="p">);</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">mbarrier_arrive_and_set_tx</span><span class="p">(</span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键差异</strong>: Mega MoE 的 Dispatch Warp <strong>直接</strong>通过 <code>sym_buffer.map</code> 计算远程地址，然后 TMA load — <strong>无需 Forwarding GPU 中继</strong>。</p>
+<hh3 id="4-3-combine-阶段-直接远程写回-无-forwarding" id="43-combine-forwarding">4.3 Combine 阶段: 直接远程写回 (无 Forwarding)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh, line 1293-1299</span>
+
+<span class="c1">// 从 shared memory 读取</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">packed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_shared</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">smem_ptr</span><span class="p">));</span>
+
+<span class="c1">// 写入远端 combine buffer</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">combine_token_buffer</span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">dst_topk_idx</span><span class="p">)</span>
+<span class="w">                       </span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">dst_token_idx</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">dst_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">n_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">float4</span><span class="p">));</span>
+
+<span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">packed</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← 远程 NVLink/RDMA 写</span>
+</code></pre></div>
+
+<p><strong>关键差异</strong>: Mega MoE 的 Epilogue Warp <strong>直接</strong>通过 <code>sym_buffer.map</code> 写回远程 combine buffer — <strong>无需 Forwarding GPU 中继</strong>。</p>
+<hh3 id="4-4-跨-rank-同步-nvlink-barrier" id="44-rank-nvlink-barrier">4.4 跨 rank 同步: NVLink Barrier</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/comm/barrier.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">nvlink_barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">SymBuffer</span><span class="o">&lt;</span><span class="n">kNumRanks</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. Grid sync (节点内所有 SM 同步)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_prologue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. NVLink 跨 rank barrier (仅 SM 0 参与)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 发送信号到远端 rank</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">)</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 等待所有 rank 到达</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add</span><span class="p">(</span><span class="n">counter_ptr</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq_sys</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* spin */</span><span class="w"> </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. Grid sync (确保所有 SM 看到 barrier 完成)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_epilogue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键机制</strong>: <code>sym_buffer.map(signal_ptr, thread_idx)</code> — 直接写远程 rank 的信号量，无需 Forwarding。</p>
+<hr />
+<hh2 id="5-核心对比-deepep-vs-deepgemm" id="5-deepep-vs-deepgemm">5. 核心对比: DeepEP vs DeepGEMM</hh2>
+<hh3 id="5-1-通信路径对比" id="51">5.1 通信路径对比</hh3>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Source → NIC</strong></td>
+<td><code>kRDMASender</code> Warp 写 Symmetric Buffer + Coordinator 发起 <code>ibgda_put_nbi</code></td>
+<td><strong>无</strong> — SM 直接 TMA load/store</td>
+</tr>
+<tr>
+<td><strong>NIC → Network</strong></td>
+<td>RDMA 网络传输</td>
+<td>RDMA 网络传输 (底层自动)</td>
+</tr>
+<tr>
+<td><strong>NIC → Forward GPU</strong></td>
+<td><code>kRDMAAndNVLForwarder</code> Warp TMA 中继</td>
+<td><strong>无</strong> — 直接远程访问</td>
+</tr>
+<tr>
+<td><strong>Forward GPU → Target GPU</strong></td>
+<td>NVLink 直写</td>
+<td><strong>无</strong> — 直接远程访问</td>
+</tr>
+<tr>
+<td><strong>Target GPU 接收</strong></td>
+<td><code>kNVLReceivers</code> Warp TMA 读取</td>
+<td>Dispatch Warp 直接 TMA load</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-2-通信语义对比" id="52">5.2 通信语义对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信模型</strong></td>
+<td>推送 + 转发 (Push + Forward)</td>
+<td>拉取 + 直接远程访问 (Pull + Direct Access)</td>
+</tr>
+<tr>
+<td><strong>RDMA 语义</strong></td>
+<td>消息传递 (ibgda_put_nbi)</td>
+<td>load/store (TMA)</td>
+</tr>
+<tr>
+<td><strong>地址空间</strong></td>
+<td>对称 buffer (SymBuffer)</td>
+<td>统一虚拟地址 (UVA + SymBuffer.map)</td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>显式 GPU 中继</td>
+<td><strong>消除</strong> — TMA 直接跨 rank</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td>FIFO (生产者-消费者)</td>
+<td>mbarrier (TMA 完成通知)</td>
+</tr>
+<tr>
+<td><strong>角色分工</strong></td>
+<td>IB Sender / Forwarder / NVL Receiver</td>
+<td>Dispatch Warps / MMA Warps / Epilogue Warps</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-3-数据组织对比" id="53">5.3 数据组织对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>发送缓冲</strong></td>
+<td>Chunk Buffer (RDMA Symmetric Buffer)</td>
+<td>input_token_buffer (Symmetric Memory)</td>
+</tr>
+<tr>
+<td><strong>接收缓冲</strong></td>
+<td>Receive Buffer (NVL Buffer)</td>
+<td>l1_token_buffer (本地 Ring Buffer)</td>
+</tr>
+<tr>
+<td><strong>Combine 缓冲</strong></td>
+<td>Dispatch Buffer (反向)</td>
+<td>combine_token_buffer (Symmetric Memory)</td>
+</tr>
+<tr>
+<td><strong>流控</strong></td>
+<td>FIFO head/tail + 窗口管理</td>
+<td>mbarrier + full_count/empty_count</td>
+</tr>
+<tr>
+<td><strong>路由信息</strong></td>
+<td>SourceMeta (per-token)</td>
+<td>src_token_topk_idx (per-token)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-4-mermaid-流水线对比图" id="54-mermaid">5.4 Mermaid 流水线对比图</hh3>
+<div class="mermaid">graph TB
+    subgraph DeepEP["DeepEP: 三阶段推送 + 转发"]
+        S[Source GPU<br/>kRDMASender] -->|写 Symmetric Buffer| SB[Symmetric RDMA Buffer]
+        SB -->|ibgda_put_nbi| NIC[NIC / RDMA]
+        NIC -->|RDMA 网络| NET[RDMA Network]
+        NET -->|接收| FWD[Forwarding GPU<br/>kRDMAAndNVLForwarder]
+        FWD -->|TMA load + TMA store| NVL[NVL Buffer]
+        NVL -->|NVLink| RECV[Target GPU<br/>kNVLReceivers]
+        RECV -->|TMA store| T[Receive Buffer]
+    end
+
+    subgraph MegaMoE["Mega MoE: 对称内存直接访问"]
+        D[Dispatch Warp] -->|sym_buffer.map + TMA load| LB[Local L1 Buffer]
+        LB -->|直接远程访问| R[Remote input_token_buffer]
+        L[Epilogue Warp] -->|sym_buffer.map + TMA store| C[Remote combine_token_buffer]
+    end
+</div>
+
+<hh3 id="5-5-完整数据流对比-sequence-diagram" id="55-sequence-diagram">5.5 完整数据流对比 (Sequence Diagram)</hh3>
+<div class="mermaid">sequenceDiagram
+    participant S as Source GPU (DeepEP)
+    participant NIC as NIC (IB)
+    participant NET as RDMA Network
+    participant FWD as Forwarding GPU
+    participant T as Target GPU
+
+    S->>S: kRDMASender 写 Symmetric Buffer
+    S->>NIC: Coordinator 发起 ibgda_put_nbi
+    NIC->>NET: RDMA 发送
+    NET->>FWD: 接收 (可能非目标 GPU)
+    FWD->>FWD: kRDMAAndNVLForwarder TMA 中继
+    FWD->>T: NVLink 直写到 NVL Buffer
+    T->>T: kNVLReceivers TMA 读取
+</div>
+
+<div class="mermaid">sequenceDiagram
+    participant D as Dispatch Warp (Mega MoE)
+    participant TMA as TMA Engine
+    participant R as Remote Rank Buffer
+    participant L as Local L1 Buffer
+    participant E as Epilogue Warp
+    participant C as Combine Buffer
+
+    D->>D: 计算远程 rank + slot
+    D->>TMA: 发起 TMA Load (sym_buffer.map)
+    TMA->>R: NVLink/RDMA 直接读取
+    R->>L: 写入本地 L1 buffer
+    Note over L: mbarrier 同步
+    L->>E: MMA + SwiGLU + Epilogue
+    E->>C: TMA Store 写回远程 (sym_buffer.map)
+    Note over C: Combine 归约
+</div>
+
+<hr />
+<hh2 id="6-为什么-mega-moe-能消除三阶段" id="6-mega-moe">6. 为什么 Mega MoE 能消除三阶段?</hh2>
+<hh3 id="6-1-根本原因-symmetric-memory-tma-提供-load-store-语义的远程访问" id="61-symmetric-memory-tma-loadstore">6.1 根本原因: Symmetric Memory + TMA 提供 load/store 语义的远程访问</hh3>
+<table>
+<thead>
+<tr>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RDMA 是 <strong>消息传递</strong> 语义</td>
+<td>Symmetric Memory 是 <strong>load/store</strong> 语义</td>
+</tr>
+<tr>
+<td>需要显式 Send/Recv 操作</td>
+<td>直接 <code>map(ptr, rank)</code> 后 TMA load/store</td>
+</tr>
+<tr>
+<td>NIC 是独立参与者</td>
+<td>TMA 集成在 GPU SM 中</td>
+</tr>
+<tr>
+<td>需要 Forwarding 解决拓扑问题</td>
+<td>UVA 统一地址空间消除拓扑差异</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="6-2-技术演进链" id="62">6.2 技术演进链</hh3>
+<div class="highlight"><pre><span></span><code>DeepEP (2025)                          Mega MoE (2026)
+─────────────────────────────────────────────────────────────────
+IBGDA (GPU Direct Async)         →     Symmetric Memory (PyTorch)
+显式 RDMA put_nbi                →     TMA load/store (硬件自动选择 NVLink/RDMA)
+GPU SM 发起 RDMA                 →     TMA 硬件引擎发起传输
+对称 buffer (手动管理偏移)        →     SymBuffer.map (统一地址空间)
+三阶段 (Send→Forward→Receive)    →    单阶段 (直接远程访问)
+</code></pre></div>
+
+<hh3 id="6-3-对称内存-vs-显式-rdma-的权衡" id="63-vs-rdma">6.3 对称内存 vs 显式 RDMA 的权衡</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>显式 RDMA (DeepEP)</th>
+<th>对称内存 (Mega MoE)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>控制粒度</td>
+<td>精确 (可优化每个 packet)</td>
+<td>较粗 (依赖 TMA/NCCL)</td>
+</tr>
+<tr>
+<td>灵活性</td>
+<td>高 (可自定义 protocol)</td>
+<td>较低 (受限于 SymMem API)</td>
+</tr>
+<tr>
+<td>实现复杂度</td>
+<td>高 (三阶段 + FIFO + Warp 特化)</td>
+<td>低 (统一 load/store)</td>
+</tr>
+<tr>
+<td>性能上限</td>
+<td>高 (可极致优化)</td>
+<td>高 (TMA 硬件加速)</td>
+</tr>
+<tr>
+<td>通用性</td>
+<td>仅 MoE All-to-All</td>
+<td>通用分布式共享内存</td>
+</tr>
+<tr>
+<td>拓扑感知</td>
+<td>需要显式 Forwarding</td>
+<td>UVA 自动处理</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="7-跨引用-与其他-agent-分析的关联" id="7-agent">7. 跨引用: 与其他 Agent 分析的关联</hh2>
+<hh3 id="7-1-与-warp-specialization-agent-3-的关系" id="71-warp-specialization-agent-3">7.1 与 Warp Specialization (Agent 3) 的关系</hh3>
+<p><strong>DeepEP 的 Warp 特化直接对应三阶段流水线</strong>:<br />
+- Warp Group A: <code>kRDMASender</code> = IB Sending<br />
+- Warp Group B: <code>kRDMAAndNVLForwarder</code> = Forwarding<br />
+- Warp Group C: <code>kNVLReceivers</code> = NVLink Receiving</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// DeepEP: 5 种 Warp 角色</span>
+<span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">WarpRole</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">kRDMASender</span><span class="p">,</span><span class="w">              </span><span class="c1">// Stage 1: IB Sending</span>
+<span class="w">    </span><span class="n">kRDMASenderCoordinator</span><span class="p">,</span><span class="w">   </span><span class="c1">// Stage 1.5: RDMA 协调</span>
+<span class="w">    </span><span class="n">kRDMAAndNVLForwarder</span><span class="p">,</span><span class="w">     </span><span class="c1">// Stage 2: Forwarding</span>
+<span class="w">    </span><span class="n">kForwarderCoordinator</span><span class="p">,</span><span class="w">    </span><span class="c1">// Stage 2.5: Forwarder 协调</span>
+<span class="w">    </span><span class="n">kNVLReceivers</span><span class="w">             </span><span class="c1">// Stage 3: NVLink Receiving</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>Mega MoE 的 Warp 特化与通信无关</strong>:<br />
+- Dispatch Warps: 计算远程地址 + TMA load (通信)<br />
+- MMA Warps: GEMM 计算 (计算)<br />
+- Epilogue Warps: TMA store 写回 (通信)</p>
+<p><strong>关键差异</strong>: DeepEP 的 Warp 特化是 <strong>通信阶段特化</strong>，Mega MoE 的 Warp 特化是 <strong>通信-计算特化</strong>。</p>
+<hh3 id="7-2-与-normal-vs-low-latency-agent-7-的关系" id="72-normal-vs-low-latency-agent-7">7.2 与 Normal vs Low-Latency (Agent 7) 的关系</hh3>
+<p><strong>DeepEP Low-Latency 模式绕过 Forwarding</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode_ll.cu, line 253-278</span>
+<span class="c1">// Issue IBGDA sends (直接 RDMA, 无 Forwarding)</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">num_local_experts</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_recv_x</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">...;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_p2p_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nvshmemi_get_p2p_ptr</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_p2p_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 跨节点: 直接 RDMA (无 Forwarding)</span>
+<span class="w">        </span><span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes_per_msg</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 同节点: 直接 P2P 写 (无 Forwarding)</span>
+<span class="w">        </span><span class="n">UNROLLED_WARP_COPY</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="n">num_int4_per_msg</span><span class="p">,</span><span class="w"> </span><span class="n">dst_int4_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_int4_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">,</span><span class="w"> </span><span class="n">st_na_global</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Low-Latency 模式的核心优化</strong>:<br />
+- 跳过 Forwarding 阶段 (GPU → Direct RDMA → GPU)<br />
+- 每个 token 独立发送 (不聚合 Chunk)<br />
+- 减少端到端延迟</p>
+<p><strong>Mega MoE 天然无 Forwarding</strong>:<br />
+- 无论 Intra-node 还是 Inter-node，都是 <code>sym_buffer.map</code> + TMA load/store<br />
+- 不需要区分 Normal/Low-Latency 的通信路径</p>
+<hh3 id="7-3-与-intra-node-inter-node-的关系" id="73-intra-node-inter-node">7.3 与 Intra-node / Inter-node 的关系</hh3>
+<p><strong>DeepEP 显式区分 Intra/Inter-node</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu</span>
+<span class="c1">// Inter-node: RDMA 网络</span>
+<span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="c1">// csrc/kernels/legacy/intranode.cu</span>
+<span class="c1">// Intra-node: NVLink 直写</span>
+<span class="n">barrier_block</span><span class="o">&lt;</span><span class="n">kNumRanks</span><span class="o">&gt;</span><span class="p">(</span><span class="n">barrier_signal_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Mega MoE 不区分 Intra/Inter-node</strong>:<br />
+- <code>sym_buffer.map(ptr, dst_rank_idx)</code> 统一处理<br />
+- 底层自动选择 NVLink (同节点) 或 RDMA (跨节点)</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Mega MoE: 同一段代码，不同 dst_rank_idx → 不同底层传输</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span>
+<span class="w">    </span><span class="n">buffer</span><span class="p">.</span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">current_rank_in_expert_idx</span><span class="p">);</span><span class="w">  </span><span class="c1">// 同节点 → NVLink, 跨节点 → RDMA</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="8-gpu-centric-communication-fabric-的演进" id="8-gpu-centric-communication-fabric">8. GPU-Centric Communication Fabric 的演进</hh2>
+<hh3 id="8-1-deepep-的-gpu-centric-fabric" id="81-deepep-gpu-centric-fabric">8.1 DeepEP 的 GPU-Centric Fabric</hh3>
+<div class="highlight"><pre><span></span><code>NVLink + RDMA + GPU SM → 共同构成数据路径
+</code></pre></div>
+
+<ul>
+<li>GPU SM 发起通信 (不是 NIC 独立处理)</li>
+<li>GPU 作为 Forwarding 中继</li>
+<li>SM + NIC + NVLink 紧密耦合</li>
+</ul>
+<hh3 id="8-2-mega-moe-的演进-sm-tma-symbuffer" id="82-mega-moe-sm-tma-symbuffer">8.2 Mega MoE 的演进: SM + TMA + SymBuffer</hh3>
+<div class="highlight"><pre><span></span><code>Symmetric Memory + TMA + GPU SM → 统一数据路径
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1">// Mega MoE 的通信由以下三者协作:</span>
+<span class="c1">// 1. Dispatch Warps (GPU SM): 计算远程地址, 发起 TMA</span>
+<span class="c1">// 2. TMA (Tensor Memory Accelerator): 执行实际数据传输</span>
+<span class="c1">// 3. SymBuffer.map(): 提供远程地址映射</span>
+
+<span class="c1">// 关键代码: SM 直接发起远程 TMA load</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">    </span><span class="n">local_smem_ptr</span><span class="p">,</span>
+<span class="w">    </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">remote_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">),</span><span class="w">  </span><span class="c1">// SM 计算远程地址</span>
+<span class="w">    </span><span class="n">mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>变化</strong>:<br />
+- <strong>不再需要 GPU 作为 Forwarding 中继</strong> — TMA 直接处理跨 rank 传输<br />
+- <strong>不再需要显式 FIFO</strong> — mbarrier 提供更细粒度的生产者-消费者同步<br />
+- <strong>通信与计算更深度融合</strong> — Dispatch Warps 同时做 token routing + 远程拉取</p>
+<hr />
+<hh2 id="9-代码结构映射表" id="9">9. 代码结构映射表</hh2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>DeepEP 实现</th>
+<th>Mega MoE 实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>跨 rank 发送</td>
+<td><code>kRDMASender</code> + <code>ibgda_put_nbi</code></td>
+<td><code>sym_buffer.map</code> + TMA store</td>
+</tr>
+<tr>
+<td>跨 rank 接收</td>
+<td><code>kNVLReceivers</code> TMA load</td>
+<td><code>sym_buffer.map</code> + TMA load</td>
+</tr>
+<tr>
+<td>转发</td>
+<td><code>kRDMAAndNVLForwarder</code> TMA 中继</td>
+<td><strong>消除</strong> (直接远程访问)</td>
+</tr>
+<tr>
+<td>流控</td>
+<td>FIFO head/tail + 窗口管理</td>
+<td>mbarrier + full_count/empty_count</td>
+</tr>
+<tr>
+<td>同步</td>
+<td>Barrier + 信号</td>
+<td>nvlink_barrier + grid_sync</td>
+</tr>
+<tr>
+<td>缓冲</td>
+<td>Chunk Buffer + Receive Buffer</td>
+<td>Symmetric Buffer (Token Pool)</td>
+</tr>
+<tr>
+<td>路由</td>
+<td>Router → Dispatch Buffer</td>
+<td>Router → topk_idx → sym_buffer</td>
+</tr>
+<tr>
+<td>Intra-node</td>
+<td>intranode.cu (NVLink)</td>
+<td>sym_buffer.map (自动 NVLink)</td>
+</tr>
+<tr>
+<td>Inter-node</td>
+<td>internode.cu (RDMA)</td>
+<td>sym_buffer.map (自动 RDMA)</td>
+</tr>
+<tr>
+<td>Low-Latency</td>
+<td>internode_ll.cu (绕过 Forwarding)</td>
+<td>天然无 Forwarding</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="10-总结" id="10">10. 总结</hh2>
+<hh3 id="10-1-mega-moe-对-deepep-的继承" id="101-mega-moe-deepep">10.1 Mega MoE 对 DeepEP 的继承</hh3>
+<ol>
+<li><strong>GPU-Centric 通信</strong>: SM 发起通信 (不是 NIC offload)</li>
+<li><strong>NVLink + RDMA 统一</strong>: 不区分 intra/inter-node</li>
+<li><strong>Warp 特化</strong>: Dispatch / MMA / Epilogue 分离</li>
+<li><strong>异步流水线</strong>: 通信与计算重叠</li>
+</ol>
+<hh3 id="10-2-mega-moe-对-deepep-的革新" id="102-mega-moe-deepep">10.2 Mega MoE 对 DeepEP 的革新</hh3>
+<ol>
+<li><strong>Symmetric Memory 替代显式 RDMA</strong>: 用 load/store 语义替代消息传递</li>
+<li><strong>消除三阶段</strong>: 直接远程访问，无需 Forwarding</li>
+<li><strong>TMA 替代手动 Copy</strong>: 硬件加速远程 load/store</li>
+<li><strong>mbarrier 替代 FIFO</strong>: 更细粒度的生产者-消费者同步</li>
+<li><strong>Pull 模型替代 Push 模型</strong>: 消费方主动拉取，而非生产方推送</li>
+</ol>
+<hh3 id="10-3-一句话总结" id="103">10.3 一句话总结</hh3>
+<blockquote>
+<p><strong>DeepEP 是 "通信运行时" — 显式管理 NVLink + RDMA 三阶段流水线。Mega MoE 是 "融合运行时" — 通过 Symmetric Memory 将通信隐式融入 GEMM 计算，用 TMA load/store 替代显式 Send/Forward/Receive。</strong></p>
+</blockquote>
+<hr />
+<hh2 id="附录-a-关键源码位置" id="a">附录 A: 关键源码位置</hh2>
+<hh3 id="deepep-源码" id="deepep">DeepEP 源码</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+<th>行号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>WarpRole</code> 枚举 (三阶段证据)</td>
+<td>487</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>角色分配逻辑</td>
+<td>499-514</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>kRDMASender</code> (IB Sending)</td>
+<td>587-757</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>kRDMASenderCoordinator</code> (RDMA 发起)</td>
+<td>758-848</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>kRDMAAndNVLForwarder</code> (Forwarding)</td>
+<td>849-1013</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>kNVLReceivers</code> (NVLink Receiving)</td>
+<td>1061-1196</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>Combine WarpRole (反向三阶段)</td>
+<td>1746</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>Low-Latency 绕过 Forwarding</td>
+<td>253-278</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/intranode.cu</code></td>
+<td>Intra-node NVLink 通信</td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/ibgda_device.cuh</code></td>
+<td>IBGDA (RDMA) 底层 API</td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td><code>get_qp_mode</code>, NVLink 检测</td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/handle.cuh</code></td>
+<td>NCCL Gin handle, <code>is_nvlink_accessible</code></td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>NVLink/RDMA 检测</td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/envs.py</code></td>
+<td><code>get_nvlink_gbs</code>, <code>get_rdma_gbs</code></td>
+<td>全文</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="deepgemm-源码" id="deepgemm">DeepGEMM 源码</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+<th>行号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td><code>SymBuffer::map()</code> — 跨 rank 地址映射</td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/comm/barrier.cuh</code></td>
+<td><code>nvlink_barrier</code>, <code>grid_sync</code></td>
+<td>全文</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td><code>MegaMoEBuffer</code> 结构, combine_token_buffer</td>
+<td>330-445</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>Dispatch TMA load (直接远程访问)</td>
+<td>533-556</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>Epilogue TMA store (直接远程写回)</td>
+<td>1293-1299</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>Combine 归约 + 写回</td>
+<td>1300+</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="附录-b-关键-api-对比" id="b-api">附录 B: 关键 API 对比</hh2>
+<hh3 id="deepep-rdma-api" id="deepep-rdma-api">DeepEP RDMA API</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// IBGDA (InfiniBand GPU Direct Async)</span>
+<span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">,</span>
+<span class="w">    </span><span class="n">dst_rdma_rank</span><span class="p">,</span><span class="w"> </span><span class="n">channel_id</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="n">slot_idx</span><span class="p">);</span>
+
+<span class="c1">// NVLink barrier</span>
+<span class="n">barrier_block</span><span class="o">&lt;</span><span class="n">kNumRanks</span><span class="o">&gt;</span><span class="p">(</span><span class="n">barrier_signal_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">);</span>
+
+<span class="c1">// NVLink P2P 访问</span>
+<span class="n">st_release_sys_global</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">dst_p2p_ptr</span><span class="p">),</span><span class="w"> </span><span class="n">cnt</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="deepgemm-symmetric-memory-api" id="deepgemm-symmetric-memory-api">DeepGEMM Symmetric Memory API</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// SymBuffer 地址映射</span>
+<span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">);</span>
+
+<span class="c1">// TMA load/store (硬件自动选择 NVLink/RDMA)</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+
+<span class="c1">// NVLink barrier (跨 rank 同步)</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">value</span><span class="p">);</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="附录-c-三阶段流水线的完整-mermaid-图" id="c-mermaid">附录 C: 三阶段流水线的完整 Mermaid 图</hh2>
+<div class="mermaid">graph LR
+    subgraph Stage1["Stage 1: IB Sending"]
+        S1[Source GPU SM] -->|写 Dispatch Buffer| SB[Symmetric RDMA Buffer]
+        SB -->|ibgda_put_nbi_warp| NIC1[NIC]
+    end
+
+    subgraph Stage2["Stage 2: RDMA Network"]
+        NIC1 -->|RDMA 网络| NIC2[Remote NIC]
+    end
+
+    subgraph Stage3["Stage 3: IB-to-NVLink Forwarding"]
+        NIC2 -->|接收| FWD[Forwarding GPU SM]
+        FWD -->|TMA load from RDMA Buffer| TMA1[TMA Engine]
+        TMA1 -->|TMA store to NVL Buffer| NVL[NVLink Buffer]
+    end
+
+    subgraph Stage4["Stage 4: NVLink Receiving"]
+        NVL -->|NVLink| RECV[Target GPU SM]
+        RECV -->|TMA load| TMA2[TMA Engine]
+        TMA2 -->|TMA store| RB[Receive Buffer]
+    end
+
+    Stage1 --> Stage2 --> Stage3 --> Stage4
+</div>
+
+<hr />
+<hh2 id="附录-d-mega-moe-直接远程访问的-mermaid-图" id="d-mega-moe-mermaid">附录 D: Mega MoE 直接远程访问的 Mermaid 图</hh2>
+<div class="mermaid">graph LR
+    subgraph Pull["Dispatch: 直接远程拉取"]
+        D[Dispatch Warp] -->|sym_buffer.map| ADDR[地址计算]
+        ADDR -->|TMA load| TMA1[TMA Engine]
+        TMA1 -->|NVLink/RDMA| R1[Remote input_token_buffer]
+        R1 -->|数据| L1[l1_token_buffer]
+    end
+
+    subgraph Compute["计算"]
+        L1 -->|MMA| GEMM[GEMM + SwiGLU]
+    end
+
+    subgraph Push["Combine: 直接远程写回"]
+        GEMM -->|Epilogue| E[Epilogue Warp]
+        E -->|sym_buffer.map| ADDR2[地址计算]
+        ADDR2 -->|TMA store| TMA2[TMA Engine]
+        TMA2 -->|NVLink/RDMA| C[Remote combine_token_buffer]
+    end
+
+    Pull --> Compute --> Push
+</div>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>

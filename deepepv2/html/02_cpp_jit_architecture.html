@@ -1,0 +1,1730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepGEMM C++ 核心架构与 JIT 编译引擎深度分析</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: #efefef;
+  --text: #37352f;
+  --text-secondary: #6b7280;
+  --text-muted: #9b9a97;
+  --border: #e9e9e7;
+  --accent: #2383e2;
+  --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3;
+  --code-text: #eb5757;
+  --blockquote-border: #e9e9e7;
+  --table-border: #e9e9e7;
+  --table-header-bg: #f7f6f3;
+  --h1-size: 2.2em;
+  --h2-size: 1.6em;
+  --h3-size: 1.25em;
+  --line-height: 1.7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --bg-secondary: #202020;
+    --bg-hover: #2f2f2f;
+    --text: #e8e8e5;
+    --text-secondary: #9b9a97;
+    --text-muted: #6b7280;
+    --border: #373737;
+    --accent: #529cca;
+    --accent-bg: #252525;
+    --code-bg: #2f2f2f;
+    --code-text: #ff7b72;
+    --blockquote-border: #373737;
+    --table-border: #373737;
+    --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  font-size: 16px;
+  line-height: var(--line-height);
+  color: var(--text);
+  background: var(--bg);
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px 100px;
+}
+h1 {
+  font-size: var(--h1-size);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.5em 0 0.5em;
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: var(--h2-size);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.8em 0 0.4em;
+  letter-spacing: -0.01em;
+}
+h3 {
+  font-size: var(--h3-size);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.5em 0 0.3em;
+}
+h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote {
+  border-left: 3px solid var(--blockquote-border);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 4px 4px 0;
+}
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+pre code {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  font-size: inherit;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+img { max-width: 100%; border-radius: 4px; }
+.mermaid { 
+  background: var(--bg); 
+  border: 1px solid var(--border); 
+  border-radius: 6px; 
+  padding: 20px; 
+  margin: 1.2em 0; 
+  overflow-x: auto;
+  text-align: center;
+}
+.toc { 
+  background: var(--bg-secondary); 
+  border-radius: 6px; 
+  padding: 16px 20px; 
+  margin: 1.5em 0; 
+}
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.toc a:hover { color: var(--accent); }
+.nav { 
+  display: flex; 
+  justify-content: space-between; 
+  margin-top: 3em; 
+  padding-top: 1.5em; 
+  border-top: 1px solid var(--border); 
+  font-size: 0.9em;
+}
+.nav a { color: var(--text-secondary); }
+.nav a:hover { color: var(--accent); }
+@media (max-width: 768px) {
+  .container { padding: 30px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.4em; }
+  pre { padding: 12px 14px; font-size: 0.8em; }
+  table { font-size: 0.85em; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ 
+  startOnLoad: true, 
+  theme: 'default',
+  securityLevel: 'loose',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+});
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="deepgemm-c-核心架构与-jit-编译引擎深度分析" id="deepgemm-c-jit">DeepGEMM C++ 核心架构与 JIT 编译引擎深度分析</hh1>
+<blockquote>
+<p>分析日期：2026-07-30<br />
+代码库：<code>/Users/backyes/work/triton/DeepGEMM</code><br />
+目标受众：AI 系统研究人员、编译器工程师、芯片体系结构研究者</p>
+</blockquote>
+<hr />
+<hh2 id="目录" id="_1">目录</hh2>
+<ol>
+<li><a href="#1-总体架构概览">总体架构概览</a></li>
+<li><a href="#2-c-api-层架构">C++ API 层架构</a><br />
+   - 2.1 <a href="#21-pybind11-入口与模块注册">pybind11 入口与模块注册</a><br />
+   - 2.2 <a href="#22-register_apis-模式">register_apis 模式</a><br />
+   - 2.3 <a href="#23-各-api-模块详解">各 API 模块详解</a></li>
+<li><a href="#3-jit-编译管线">JIT 编译管线</a><br />
+   - 3.1 <a href="#31-完整生命周期">完整生命周期</a><br />
+   - 3.2 <a href="#32-编译器抽象层">编译器抽象层</a><br />
+   - 3.3 <a href="#33-nvcc-编译器实现">NVCC 编译器实现</a><br />
+   - 3.4 <a href="#34-nvrtc-编译器实现">NVRTC 编译器实现</a><br />
+   - 3.5 <a href="#35-include-parser-与依赖追踪">Include Parser 与依赖追踪</a></li>
+<li><a href="#4kernel-caching-机制">Kernel Caching 机制</a><br />
+   - 4.1 <a href="#41-cache-key-设计">Cache Key 设计</a><br />
+   - 4.2 <a href="#42-cache-目录管理">Cache 目录管理</a><br />
+   - 4.3 <a href="#43-运行时-cache">运行时 Cache</a></li>
+<li><a href="#5kernel-runtime-与-launch">Kernel Runtime 与 Launch</a><br />
+   - 5.1 <a href="#51-kernelruntime-加载">KernelRuntime 加载</a><br />
+   - 5.2 <a href="#52-launchruntime-模板">LaunchRuntime 模板</a><br />
+   - 5.3 <a href="#53-tma-descriptor-构建">TMA Descriptor 构建</a><br />
+   - 5.4 <a href="#54-kernel-launch-流程">Kernel Launch 流程</a></li>
+<li><a href="#6device-runtime">Device Runtime</a><br />
+   - 6.1 <a href="#61-cuda-设备管理">CUDA 设备管理</a><br />
+   - 6.2 <a href="#62-cublslt-集成">cuBLASLt 集成</a><br />
+   - 6.3 <a href="#63-架构检测与-arch-字符串">架构检测与 arch 字符串</a></li>
+<li><a href="#7handle-管理与-cuda-driver-抽象">Handle 管理与 CUDA Driver 抽象</a></li>
+<li><a href="#8utility-层">Utility 层</a><br />
+   - 8.1 <a href="#81-compatibilityhpp">compatibility.hpp</a><br />
+   - 8.2 <a href="#82-exceptionhpp">exception.hpp</a><br />
+   - 8.3 <a href="#83-formathpp">format.hpp</a><br />
+   - 8.4 <a href="#84-hashhpp">hash.hpp</a><br />
+   - 8.5 <a href="#85-lyouthpp">layout.hpp</a><br />
+   - 8.6 <a href="#86-lazy_inithpp">lazy_init.hpp</a><br />
+   - 8.7 <a href="#87-mathhpp">math.hpp</a><br />
+   - 8.8 <a href="#88-systemhpp">system.hpp</a></li>
+<li><a href="#9heuristics-与自动调优">Heuristics 与自动调优</a></li>
+<li><a href="#10-错误处理体系">错误处理体系</a></li>
+<li><a href="#11-内存管理">内存管理</a></li>
+<li><a href="#12-关键设计洞察与架构评价">关键设计洞察与架构评价</a></li>
+</ol>
+<hr />
+<hh2 id="1-总体架构概览" id="1">1. 总体架构概览</hh2>
+<p>DeepGEMM 的 C++ 层是一个精心设计的 <strong>JIT (Just-In-Time) 编译框架</strong>，其核心设计哲学是：</p>
+<blockquote>
+<p><strong>将 GEMM kernel 的编译延迟到运行时，通过模板实例化生成针对具体问题规模（problem size）优化的 CUDA kernel，同时通过多层缓存机制避免重复编译。</strong></p>
+</blockquote>
+<p>整个 C++ 架构可以分为以下层次：</p>
+<div class="mermaid">graph TB
+    subgraph "Python Layer"
+        PY[deep_gemm/__init__.py]
+    end
+
+    subgraph "C++ API Layer (csrc/apis/)"
+        GEMM[gemm.hpp]
+        ATTN[attention.hpp]
+        MEGA[mega.hpp]
+        EINSUM[einsum.hpp]
+        HC[hyperconnection.hpp]
+        LAYOUT[layout.hpp]
+        RUNTIME[runtime.hpp]
+    end
+
+    subgraph "JIT Kernel Implementations (csrc/jit_kernels/impls/)"
+        K_SM90[sm90_fp8_gemm_1d1d.hpp]
+        K_SM100[sm100_fp8_fp4_gemm_1d1d.hpp]
+        K_SM90_BF16[sm90_bf16_gemm.hpp]
+        K_SM100_BF16[sm100_bf16_gemm.hpp]
+        K_OTHERS[...]
+    end
+
+    subgraph "JIT Engine (csrc/jit/)"
+        COMP[compiler.hpp<br/>NVCC/NVRTC]
+        CACHE[cache.hpp]
+        KRUN[kernel_runtime.hpp]
+        DEV[device_runtime.hpp]
+        HANDLE[handle.hpp]
+        INCPAR[include_parser.hpp]
+    end
+
+    subgraph "Heuristics (csrc/jit_kernels/heuristics/)"
+        H_COMMON[common.hpp]
+        H_SM90[sm90.hpp]
+        H_SM100[sm100.hpp]
+        H_CONFIG[config.hpp]
+        H_RUNTIME[runtime.hpp]
+    end
+
+    subgraph "Utils (csrc/utils/)"
+        UTILS[exception/format/hash/layout/<br/>lazy_init/math/system/compatibility]
+    end
+
+    subgraph "CUDA Infrastructure"
+        NVCC[NVCC Compiler]
+        NVRTC[NVRTC Runtime Compiler]
+        CUDA_DRV[CUDA Driver API]
+        CUDA_RT[CUDA Runtime API]
+        CUBLASLT[cuBLASLt]
+    end
+
+    PY --> GEMM & ATTN & MEGA & EINSUM & HC & LAYOUT & RUNTIME
+    GEMM & ATTN --> K_SM90 & K_SM100 & K_SM90_BF16 & K_SM100_BF16 & K_OTHERS
+    K_SM90 & K_SM100 --> COMP
+    K_SM90 & K_SM100 --> H_COMMON & H_SM90 & H_SM100
+    COMP --> CACHE & KRUN
+    KRUN --> DEV & HANDLE
+    COMP --> INCPAR
+    DEV --> HANDLE
+    COMP --> NVCC & NVRTC
+    KRUN --> CUDA_DRV & CUDA_RT
+    DEV --> CUBLASLT
+    COMP & KRUN & DEV --> UTILS
+</div>
+
+<p><strong>关键模块职责一览：</strong></p>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>文件</th>
+<th>核心职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python API</td>
+<td><code>python_api.cpp</code></td>
+<td>pybind11 模块入口，注册所有 C++ API</td>
+</tr>
+<tr>
+<td>GEMM API</td>
+<td><code>apis/gemm.hpp</code></td>
+<td>FP8/BF16 GEMM 的 4 种矩阵布局 (nt/nn/tn/tt)</td>
+</tr>
+<tr>
+<td>Attention API</td>
+<td><code>apis/attention.hpp</code></td>
+<td>MQA logits 计算、paged KV cache</td>
+</tr>
+<tr>
+<td>Mega API</td>
+<td><code>apis/mega.hpp</code></td>
+<td>MoE 对称通信 + 计算融合</td>
+</tr>
+<tr>
+<td>Einsum API</td>
+<td><code>apis/einsum.hpp</code></td>
+<td>爱因斯坦求和约定 kernel</td>
+</tr>
+<tr>
+<td>HyperConnection</td>
+<td><code>apis/hyperconnection.hpp</code></td>
+<td>TF32 HC prenorm GEMM</td>
+</tr>
+<tr>
+<td>Layout API</td>
+<td><code>apis/layout.hpp</code></td>
+<td>Scaling factor 布局变换</td>
+</tr>
+<tr>
+<td>Runtime API</td>
+<td><code>apis/runtime.hpp</code></td>
+<td>SM 数量、PDL、编译维度控制</td>
+</tr>
+<tr>
+<td>JIT Compiler</td>
+<td><code>jit/compiler.hpp</code></td>
+<td>NVCC/NVRTC 抽象、编译、缓存</td>
+</tr>
+<tr>
+<td>Kernel Cache</td>
+<td><code>jit/cache.hpp</code></td>
+<td>内存中的 KernelRuntime 缓存</td>
+</tr>
+<tr>
+<td>Kernel Runtime</td>
+<td><code>jit/kernel_runtime.hpp</code></td>
+<td>CUBIN 加载、kernel launch</td>
+</tr>
+<tr>
+<td>Device Runtime</td>
+<td><code>jit/device_runtime.hpp</code></td>
+<td>设备属性、cuBLASLt handle</td>
+</tr>
+<tr>
+<td>Handle</td>
+<td><code>jit/handle.hpp</code></td>
+<td>CUDA Driver API 懒加载封装</td>
+</tr>
+<tr>
+<td>Include Parser</td>
+<td><code>jit/include_parser.hpp</code></td>
+<td>头文件依赖解析与 hash</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="2-c-api-层架构" id="2-c-api">2. C++ API 层架构</hh2>
+<hh3 id="2-1-pybind11-入口与模块注册" id="21-pybind11">2.1 pybind11 入口与模块注册</hh3>
+<p><code>csrc/python_api.cpp</code> 是整个 C++ 扩展的入口点，极其精简：</p>
+<div class="highlight"><pre><span></span><code><span class="n">PYBIND11_MODULE</span><span class="p">(</span><span class="n">TORCH_EXTENSION_NAME</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">doc</span><span class="p">()</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;DeepGEMM C++ library&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">attention</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">einsum</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">hyperconnection</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">gemm</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">layout</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">mega</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">deep_gemm</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">register_apis</span><span class="p">(</span><span class="n">m</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>设计要点：</strong><br />
+- 使用 <code>TORCH_EXTENSION_NAME</code> 宏（由 <code>torch.utils.cpp_extension</code> 注入），确保与 PyTorch 的 <code>setuptools</code> 构建系统兼容<br />
+- 每个 API 模块是<strong>自注册</strong>的：只需实现 <code>register_apis(pybind11::module_&amp;)</code> 函数<br />
+- 注册顺序无关，因为 pybind11 模块内部是符号表</p>
+<hh3 id="2-2-register_apis-模式" id="22-register_apis">2.2 register_apis 模式</hh3>
+<p>所有 API 模块遵循统一的注册模式：</p>
+<div class="highlight"><pre><span></span><code><span class="k">namespace</span><span class="w"> </span><span class="nn">deep_gemm</span><span class="o">::</span><span class="nn">xxx</span><span class="w"> </span><span class="p">{</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">register_apis</span><span class="p">(</span><span class="n">pybind11</span><span class="o">::</span><span class="n">module_</span><span class="o">&amp;</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="cp">#if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;function_name&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">function_impl</span><span class="p">,</span>
+<span class="w">          </span><span class="n">py</span><span class="o">::</span><span class="n">arg</span><span class="p">(</span><span class="s">&quot;arg1&quot;</span><span class="p">),</span><span class="w"> </span><span class="n">py</span><span class="o">::</span><span class="n">arg</span><span class="p">(</span><span class="s">&quot;arg2&quot;</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">default_value</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="cp">#endif</span>
+<span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键设计特征：</strong></p>
+<ol>
+<li><strong>条件编译守卫</strong>：<code>#if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE</code> 确保在不兼容的 CUDA/PyTorch 版本下优雅降级</li>
+<li><strong>static 函数</strong>：所有实现函数都是 <code>static</code>，避免符号冲突</li>
+<li><strong>默认参数</strong>：通过 <code>py::arg(...) = default_value</code> 实现 Python 侧可选参数</li>
+<li><strong>别名机制</strong>：如 <code>m.attr("fp8_gemm_nt") = m.attr("fp8_fp4_gemm_nt")</code> 实现向后兼容</li>
+</ol>
+<hh3 id="2-3-各-api-模块详解" id="23-api">2.3 各 API 模块详解</hh3>
+<hh4 id="2-3-1-gemm-hpp-核心-gemm-api" id="231-gemmhpp-gemm-api">2.3.1 gemm.hpp — 核心 GEMM API</hh4>
+<p>这是最复杂的 API 模块，提供 <strong>4 种矩阵布局 × 3 种精度类型 = 12+ 个变体</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>布局</th>
+<th>FP8/FP4</th>
+<th>BF16</th>
+<th>cuBLASLt</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NT (default)</td>
+<td><code>fp8_fp4_gemm_nt</code></td>
+<td><code>bf16_gemm_nt</code></td>
+<td><code>cublaslt_gemm_nt</code></td>
+</tr>
+<tr>
+<td>NN</td>
+<td><code>fp8_fp4_gemm_nn</code></td>
+<td><code>bf16_gemm_nn</code></td>
+<td><code>cublaslt_gemm_nn</code></td>
+</tr>
+<tr>
+<td>TN</td>
+<td><code>fp8_fp4_gemm_tn</code></td>
+<td><code>bf16_gemm_tn</code></td>
+<td><code>cublaslt_gemm_tn</code></td>
+</tr>
+<tr>
+<td>TT</td>
+<td><code>fp8_fp4_gemm_tt</code></td>
+<td><code>bf16_gemm_tt</code></td>
+<td><code>cublaslt_gemm_tt</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>架构分派逻辑：</strong></p>
+<div class="highlight"><pre><span></span><code>flowchart TD
+    A[fp8_fp4_gemm_nt] --&gt; B{arch_major}
+    B --&gt;|9| C[sm90_fp8_gemm_1d1d&lt;br/&gt;sm90_fp8_gemm_1d2d]
+    B --&gt;|10| D[sm100_fp8_fp4_gemm_1d1d]
+
+    A2[bf16_gemm_nt] --&gt; E{arch_major}
+    E --&gt;|9| F[sm90_bf16_gemm]
+    E --&gt;|10| G[sm100_bf16_gemm]
+
+    A3[m_grouped_fp8_fp4_gemm_nt_contiguous] --&gt; H{arch_major}
+    H --&gt;|9| I[sm90_m_grouped_fp8_gemm_contiguous_1d2d]
+    H --&gt;|10| J[sm100_m_grouped_fp8_fp4_gemm_contiguous_1d1d]
+</code></pre></div>
+
+<p><strong>核心数据流：</strong></p>
+<div class="highlight"><pre><span></span><code>Python Tensor → early_return 检查 → layout::transform_sf_pair_into_required_layout 
+→ check_ab_fp8_fp4 (形状校验) → device_runtime-&gt;get_arch_major() 
+→ 分派到具体 sm90/sm100 实现
+</code></pre></div>
+
+<p><strong><code>early_return</code> 优化</strong>：处理空问题（m=0 或 n=0）和 k=0 的退化情况，避免不必要的 kernel launch。</p>
+<hh4 id="2-3-2-attention-hpp-mqa-logits-api" id="232-attentionhpp-mqa-logits-api">2.3.2 attention.hpp — MQA Logits API</hh4>
+<p>提供两种 MQA (Multi-Query Attention) logits 计算模式：</p>
+<ol>
+<li><strong>连续 KV 模式</strong> (<code>fp8_fp4_mqa_logits</code>)：KV 在内存中连续存储</li>
+<li><strong>Paged KV Cache 模式</strong> (<code>fp8_fp4_paged_mqa_logits</code>)：KV 分块存储，通过 block_table 索引</li>
+</ol>
+<p><strong>关键设计：</strong><br />
+- 支持 FP4 和 FP8 两种精度，通过 <code>q_sf.has_value()</code> 区分<br />
+- 使用 <code>torch::from_blob</code> 从 fused KV cache 中零拷贝派生子张量<br />
+- 调度元数据 (<code>schedule_metadata</code>) 用于负载均衡</p>
+<hh4 id="2-3-3-mega-hpp-moe-融合-api" id="233-megahpp-moe-api">2.3.3 mega.hpp — MoE 融合 API</hh4>
+<p>Mega MoE 是 DeepGEMM 针对 Mixture-of-Experts 的创新设计：</p>
+<div class="highlight"><pre><span></span><code><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">fp8_fp4_mega_moe</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">y</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">l1_weights_</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">l2_weights_</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">,</span><span class="w">  </span><span class="c1">// 对称通信 buffer</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">sym_buffer_ptrs</span><span class="p">,</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<p><strong>核心特性：</strong><br />
+- 使用对称 buffer (<code>sym_buffer</code>) 实现 all-to-all 通信与 GEMM 计算的 overlap<br />
+- <code>get_symm_buffer_size_for_mega_moe</code> 计算 buffer 布局，返回 <code>slice_input_buffers</code> lambda<br />
+- 仅支持 SM100 (Blackwell) 和 SwiGLU activation</p>
+<hh4 id="2-3-4-einsum-hpp-爱因斯坦求和" id="234-einsumhpp">2.3.4 einsum.hpp — 爱因斯坦求和</hh4>
+<p>目前支持硬编码的表达式：<br />
+- <code>"bmk,bnk-&gt;mn"</code> — batched GEMM<br />
+- <code>"bhr,hdr-&gt;bhd"</code> — attention 中的 QK^T<br />
+- <code>"bhd,hdr-&gt;bhr"</code> — attention 中的 weighted sum</p>
+<p><strong>FP8 Einsum</strong> 通过 <code>permute</code> 将任意维度映射到 <code>(batch, m, n, k)</code> 后复用 FP8 BMM。</p>
+<hh4 id="2-3-5-hyperconnection-hpp-tf32-hc-prenorm-gemm" id="235-hyperconnectionhpp-tf32-hc-prenorm-gemm">2.3.5 hyperconnection.hpp — TF32 HC Prenorm GEMM</hh4>
+<p>为 HyperConnection 架构设计的特殊 GEMM：<br />
+- A: BF16, B: FP32, D: FP32<br />
+- 额外输入 <code>sqr_sum</code> 用于 pre-normalization<br />
+- 支持 <code>num_splits</code> 维度</p>
+<hh4 id="2-3-6-layout-hpp-scaling-factor-布局变换" id="236-layouthpp-scaling-factor">2.3.6 layout.hpp — Scaling Factor 布局变换</hh4>
+<p>这是 JIT kernel 正确运行的前置步骤，将用户提供的 scaling factor 转换为 TMA 硬件要求的布局：</p>
+<div class="highlight"><pre><span></span><code><span class="k">static</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">transform_sf_into_required_layout</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sf</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">mn</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">k</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">variant</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="kt">int</span><span class="p">,</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="kt">int</span><span class="o">&gt;&gt;&amp;</span><span class="w"> </span><span class="n">recipe</span><span class="p">,</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<p><strong>支持的变换路径：</strong></p>
+<table>
+<thead>
+<tr>
+<th>输入类型</th>
+<th>架构</th>
+<th>变换</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FP32, gran_mn=1, gran_k=128</td>
+<td>SM90</td>
+<td>→ MN-major TMA-aligned</td>
+</tr>
+<tr>
+<td>FP32, gran_mn=128, gran_k=128</td>
+<td>SM90</td>
+<td>仅校验</td>
+</tr>
+<tr>
+<td>FP32, gran_k=32/128</td>
+<td>SM100</td>
+<td>→ INT8 UE8M0 packed, MN-major TMA-aligned</td>
+</tr>
+<tr>
+<td>INT8, gran_mn=1, gran_k=32/128</td>
+<td>SM100</td>
+<td>校验 TMA alignment</td>
+</tr>
+</tbody>
+</table>
+<hh4 id="2-3-7-runtime-hpp-运行时配置" id="237-runtimehpp">2.3.7 runtime.hpp — 运行时配置</hh4>
+<p>提供对 JIT 引擎和 heuristics 的运行时控制：</p>
+<div class="highlight"><pre><span></span><code><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;init&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">library_root_path</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                 </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">cuda_home_path_by_python</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Compiler</span><span class="o">::</span><span class="n">prepare_init</span><span class="p">(</span><span class="n">library_root_path</span><span class="p">,</span><span class="w"> </span><span class="n">cuda_home_path_by_python</span><span class="p">);</span>
+<span class="w">    </span><span class="n">KernelRuntime</span><span class="o">::</span><span class="n">prepare_init</span><span class="p">(</span><span class="n">cuda_home_path_by_python</span><span class="p">);</span>
+<span class="w">    </span><span class="n">IncludeParser</span><span class="o">::</span><span class="n">prepare_init</span><span class="p">(</span><span class="n">library_root_path</span><span class="p">);</span>
+<span class="p">});</span>
+</code></pre></div>
+
+<p><strong>可配置参数：</strong><br />
+- <code>set_num_sms</code> / <code>get_num_sms</code>：控制使用的 SM 数量<br />
+- <code>set_tc_util</code> / <code>get_tc_util</code>：Tensor Core 利用率 (0-100)<br />
+- <code>set_pdl</code> / <code>get_pdl</code>：Programmatic Dependent Launch<br />
+- <code>set_ignore_compile_dims</code>：忽略编译维度（调试用）<br />
+- <code>set_block_size_multiple_of</code>：block size 对齐约束</p>
+<hr />
+<hh2 id="3-jit-编译管线" id="3-jit">3. JIT 编译管线</hh2>
+<hh3 id="3-1-完整生命周期" id="31">3.1 完整生命周期</hh3>
+<p>DeepGEMM 的 JIT 编译是一个精心设计的 <strong>5 阶段管线</strong>：</p>
+<div class="mermaid">sequenceDiagram
+    participant PY as Python
+    participant API as C++ API (apis/)
+    participant KI as Kernel Impl (jit_kernels/impls/)
+    participant COMP as Compiler
+    participant CACHE as KernelRuntimeCache
+    participant FS as File System
+    participant CUDA as CUDA Driver
+
+    PY->>API: fp8_fp4_gemm_nt(a, b, d, ...)
+    API->>API: early_return 检查
+    API->>API: layout::transform_sf_pair_into_required_layout
+    API->>KI: sm90_fp8_gemm_1d1d(a, sfa, b, sfb, ...)
+
+    KI->>KI: 构造 GemmDesc
+    KI->>KI: get_best_config<SM90ArchSpec>(desc)
+    KI->>KI: make_tma_a_desc / make_tma_b_desc / ...
+    KI->>KI: LaunchRuntime::generate(args)
+    Note over KI: 生成 C++ 代码字符串
+
+    KI->>COMP: compiler->build("sm90_fp8_gemm_1d1d", code)
+
+    COMP->>COMP: 计算 kernel_signature hash
+    COMP->>CACHE: kernel_runtime_cache->get(dir_path)
+
+    alt Cache Hit
+        CACHE-->>COMP: 返回缓存的 KernelRuntime
+    else Cache Miss
+        COMP->>FS: 创建临时目录
+        COMP->>FS: 写入 kernel.cu
+        COMP->>CUDA: NVCC/NVRTC 编译
+        CUDA-->>FS: 生成 kernel.cubin
+        COMP->>FS: 可选：cuobjdump 反汇编
+        COMP->>FS: fsync_dir + atomic rename
+        COMP->>CACHE: 创建新 KernelRuntime
+        CACHE->>CUDA: load_kernel(cubin_path)
+        CUDA-->>CACHE: KernelHandle
+    end
+
+    COMP-->>KI: 返回 KernelRuntime
+    KI->>KI: LaunchRuntime::launch(runtime, args)
+    KI->>CUDA: launch_kernel(kernel, config, args...)
+    CUDA-->>PY: 执行完成
+</div>
+
+<hh3 id="3-2-编译器抽象层" id="32">3.2 编译器抽象层</hh3>
+<p><code>Compiler</code> 类是 JIT 编译的核心抽象：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Compiler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">signature</span><span class="p">,</span><span class="w"> </span><span class="n">flags</span><span class="p">;</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="w"> </span><span class="n">cache_dir_path</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">KernelRuntime</span><span class="o">&gt;</span><span class="w"> </span><span class="n">build</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                                          </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">code</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="w">    </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">code</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                         </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dir_path</span><span class="p">,</span>
+<span class="w">                         </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="w"> </span><span class="o">&amp;</span><span class="n">cubin_path</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>静态配置（通过 <code>prepare_init</code> 设置）：</strong><br />
+- <code>library_root_path</code>：DeepGEMM 库根目录<br />
+- <code>library_include_path</code>：<code>library_root_path/include</code><br />
+- <code>cuda_home</code>：CUDA 安装路径<br />
+- <code>cuobjdump_path</code>：<code>cuda_home/bin/cuobjdump</code></p>
+<p><strong>环境变量控制：</strong></p>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>默认值</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DG_JIT_CACHE_DIR</code></td>
+<td><code>~/.deep_gemm</code></td>
+<td>缓存目录</td>
+</tr>
+<tr>
+<td><code>DG_JIT_CPP_STANDARD</code></td>
+<td>20</td>
+<td>C++ 标准</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DEBUG</code></td>
+<td>0</td>
+<td>调试输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_ASM</code></td>
+<td>0</td>
+<td>dump SASS</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_PTX</code></td>
+<td>0</td>
+<td>dump PTX</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_VERBOSE</code></td>
+<td>0</td>
+<td>PTXAS 详细日志</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_CHECK</code></td>
+<td>0</td>
+<td>检查 local memory</td>
+</tr>
+<tr>
+<td><code>DG_JIT_WITH_LINEINFO</code></td>
+<td>0</td>
+<td>包含行信息</td>
+</tr>
+<tr>
+<td><code>DG_JIT_USE_NVRTC</code></td>
+<td>0</td>
+<td>使用 NVRTC 替代 NVCC</td>
+</tr>
+<tr>
+<td><code>DG_JIT_NVCC_COMPILER</code></td>
+<td>自动检测</td>
+<td>NVCC 路径</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_COMPILER_COMMAND</code></td>
+<td>0</td>
+<td>打印编译命令</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_LOAD_TIME</code></td>
+<td>0</td>
+<td>打印加载时间</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="3-3-nvcc-compiler-实现" id="33-nvcc-compiler">3.3 NVCC Compiler 实现</hh3>
+<p><code>NVCCCompiler</code> 通过外部进程调用 NVCC：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">NVCCCompiler</span><span class="w"> </span><span class="k">final</span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">Compiler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="w"> </span><span class="n">nvcc_path</span><span class="p">;</span>
+
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">compile</span><span class="p">(...)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 1. 写入 kernel.cu</span>
+<span class="w">        </span><span class="n">put</span><span class="p">(</span><span class="n">code_path</span><span class="p">,</span><span class="w"> </span><span class="n">code</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 2. 在临时目录中编译（避免 cwd 文件污染）</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;cd {} &amp;&amp; {} {} -cubin -o {} {}&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="n">compile_dir</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="n">nvcc_path</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="n">code_path</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span>
+<span class="w">            </span><span class="n">cubin_path</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="n">flags</span><span class="p">);</span>
+<span class="w">        </span><span class="n">call_external_command</span><span class="p">(</span><span class="n">command</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 3. 可选：生成 PTX</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptx_path</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>NVCC 编译 flags：</strong></p>
+<div class="highlight"><pre><span></span><code>-std=c++20 --diag-suppress=39,161,174,177,186,940
+--ptxas-options=--register-usage-level=10
+-I{library_include_path}
+--gpu-architecture=sm_{arch}
+--compiler-options=-fPIC,-O3,-fconcepts,-Wno-deprecated-declarations,-Wno-abi
+-O3 --expt-relaxed-constexpr --expt-extended-lambda
+</code></pre></div>
+
+<p><strong>版本检测：</strong> 通过正则 <code>release (\d+\.\d+)</code> 解析 NVCC 版本，要求 &gt;= 12.3，推荐 &gt;= 12.9。</p>
+<hh3 id="3-4-nvrtc-compiler-实现" id="34-nvrtc-compiler">3.4 NVRTC Compiler 实现</hh3>
+<p><code>NVRTCCompiler</code> 使用 CUDA Runtime Compilation API，避免进程创建开销：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">NVRTCCompiler</span><span class="w"> </span><span class="k">final</span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">Compiler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">compile</span><span class="p">(...)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 1. 创建 NVRTC program</span>
+<span class="w">        </span><span class="n">nvrtcCreateProgram</span><span class="p">(</span><span class="o">&amp;</span><span class="n">program</span><span class="p">,</span><span class="w"> </span><span class="n">code</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;kernel.cu&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">,</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 2. 编译</span>
+<span class="w">        </span><span class="n">nvrtcCompileProgram</span><span class="p">(</span><span class="n">program</span><span class="p">,</span><span class="w"> </span><span class="n">num_options</span><span class="p">,</span><span class="w"> </span><span class="n">options</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 3. 获取 CUBIN</span>
+<span class="w">        </span><span class="n">nvrtcGetCUBINSize</span><span class="p">(</span><span class="n">program</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">cubin_size</span><span class="p">);</span>
+<span class="w">        </span><span class="n">nvrtcGetCUBIN</span><span class="p">(</span><span class="n">program</span><span class="p">,</span><span class="w"> </span><span class="n">cubin_data</span><span class="p">.</span><span class="n">data</span><span class="p">());</span>
+
+<span class="w">        </span><span class="c1">// 4. 写入文件</span>
+<span class="w">        </span><span class="n">put</span><span class="p">(</span><span class="n">cubin_path</span><span class="p">,</span><span class="w"> </span><span class="n">cubin_data</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>NVRTC 特有优化：</strong><br />
+- <strong>PCH (Pre-Compiled Headers)</strong>：NVRTC &gt;= 12.8 时启用 <code>--pch</code>，显著加速编译<br />
+- <strong><code>-default-device</code></strong>：确保设备代码编译<br />
+- <strong><code>--device-int128</code></strong>：支持 124 位整数运算</p>
+<hh3 id="3-5-include-parser-与依赖追踪" id="35-include-parser">3.5 Include Parser 与依赖追踪</hh3>
+<p><code>IncludeParser</code> 是 JIT 正确性的关键组件，它解析 kernel 代码中的 <code>#include &lt;deep_gemm/*&gt;</code> 指令，递归计算所有依赖头文件的 hash：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">IncludeParser</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">unordered_map</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">cache</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_hash_value</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">code</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">exclude_code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">i</span><span class="o">:</span><span class="w"> </span><span class="n">get_includes</span><span class="p">(</span><span class="n">code</span><span class="p">))</span>
+<span class="w">            </span><span class="n">ss</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">get_hash_value_by_path</span><span class="p">(</span><span class="n">library_include_path</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;$&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">get_hex_digest</span><span class="p">(</span><span class="n">ss</span><span class="p">.</span><span class="n">str</span><span class="p">());</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>设计要点：</strong><br />
+- 只解析 <code>&lt;deep_gemm/*&gt;</code> 风格的 include（angle bracket）<br />
+- 递归计算依赖树，检测循环依赖（通过 <code>std::optional</code> 标记中间状态）<br />
+- 结果缓存避免重复计算<br />
+- 最终 hash 注入到生成的代码中：<code>// Includes' hash value: {hash}</code></p>
+<hr />
+<hh2 id="4-kernel-caching-机制" id="4-kernel-caching">4. Kernel Caching 机制</hh2>
+<hh3 id="4-1-cache-key-设计" id="41-cache-key">4.1 Cache Key 设计</hh3>
+<p>Cache key 是一个 <strong>4 元组 hash</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">kernel_signature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;{}$${}$${}$${}&quot;</span><span class="p">,</span><span class="w"> </span>
+<span class="w">    </span><span class="n">name</span><span class="p">,</span><span class="w">           </span><span class="c1">// kernel 名称，如 &quot;sm90_fp8_gemm_1d1d&quot;</span>
+<span class="w">    </span><span class="n">signature</span><span class="p">,</span><span class="w">      </span><span class="c1">// 编译器签名，如 &quot;NVCC12.9&quot;</span>
+<span class="w">    </span><span class="n">flags</span><span class="p">,</span><span class="w">          </span><span class="c1">// 编译 flags</span>
+<span class="w">    </span><span class="n">code</span><span class="w">            </span><span class="c1">// 生成的 C++ 代码</span>
+<span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dir_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cache_dir_path</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="s">&quot;cache&quot;</span><span class="w"> </span><span class="o">/</span><span class="w"> </span>
+<span class="w">    </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;kernel.{}.{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">get_hex_digest</span><span class="p">(</span><span class="n">kernel_signature</span><span class="p">));</span>
+</code></pre></div>
+
+<p><strong>Cache key 包含的维度：</strong></p>
+<div class="mermaid">graph LR
+    A[Kernel Name] --> E[kernel_signature]
+    B[Compiler Signature<br/>NVCC/NVRTC + version] --> E
+    C[Compile Flags<br/>arch, include paths, options] --> E
+    D[Generated Code<br/>template args + include hash] --> E
+    E --> F[get_hex_digest<br/>FNV-1a + SplitMix64]
+    F --> G[Cache Dir Path]
+</div>
+
+<p><strong>Hash 算法</strong> (<code>hash.hpp</code>)：<br />
+- 使用 <strong>双种子 FNV-1a</strong> 生成两个 64-bit 状态<br />
+- 通过 <strong>SplitMix64</strong> 混淆得到最终 128-bit hex digest<br />
+- 冲突概率极低（约 2^-64），适合缓存场景</p>
+<hh3 id="4-2-cache-目录管理" id="42-cache">4.2 Cache 目录管理</hh3>
+<p><strong>目录结构：</strong></p>
+<div class="highlight"><pre><span></span><code>~/.deep_gemm/
+├── tmp/                    # 临时目录（编译中）
+│   └── {uuid}/
+└── cache/                  # 最终缓存
+    └── kernel.{name}.{hash}/
+        ├── kernel.cu       # 源代码
+        ├── kernel.cubin    # 编译产物
+        ├── kernel.ptx      # 可选：PTX
+        └── kernel.sass     # 可选：SASS
+</code></pre></div>
+
+<p><strong>原子性保证：</strong><br />
+1. 编译在 <code>tmp/{uuid}/</code> 中进行<br />
+2. 完成后 <code>fsync_dir</code> 确保数据落盘<br />
+3. <code>std::filesystem::rename</code> 是原子操作（同一文件系统内）<br />
+4. 如果多进程并发，只有一个 rename 成功，其他进程安全清理</p>
+<p><strong>分布式文件系统兼容：</strong><br />
+- <code>fsync_path</code> 确保文件数据可见<br />
+- <code>fsync_dir</code> 递归 fsync 目录项<br />
+- <code>safe_remove_all</code> 处理 <code>skip_permission_denied</code>，避免分布式 FS 上的 segfault</p>
+<hh3 id="4-3-运行时-cache" id="43-cache">4.3 运行时 Cache</hh3>
+<p><code>KernelRuntimeCache</code> 是内存中的二级缓存：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">KernelRuntimeCache</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">unordered_map</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">KernelRuntime</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">cache</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">KernelRuntime</span><span class="o">&gt;</span><span class="w"> </span><span class="n">get</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dir_path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 1. 内存缓存命中</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cache</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="n">dir_path</span><span class="p">))</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">cache</span><span class="p">[</span><span class="n">dir_path</span><span class="p">];</span>
+
+<span class="w">        </span><span class="c1">// 2. 文件系统校验</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">KernelRuntime</span><span class="o">::</span><span class="n">check_validity</span><span class="p">(</span><span class="n">dir_path</span><span class="p">))</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">cache</span><span class="p">[</span><span class="n">dir_path</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">KernelRuntime</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dir_path</span><span class="p">);</span>
+
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 需要重新编译</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>Cache 层级：</strong></p>
+<div class="highlight"><pre><span></span><code>flowchart TD
+    A[build(name, code)] --&gt; B{内存缓存命中?}
+    B --&gt;|Yes| C[返回缓存的 KernelRuntime]
+    B --&gt;|No| D{文件系统缓存命中?}
+    D --&gt;|Yes| E[加载 CUBIN → 创建 KernelRuntime]
+    D --&gt;|No| F[NVCC/NVRTC 编译]
+    F --&gt; G[写入文件系统]
+    G --&gt; E
+    E --&gt; H[存入内存缓存]
+    H --&gt; C
+</code></pre></div>
+
+<hr />
+<hh2 id="5-kernel-runtime-与-launch" id="5-kernel-runtime-launch">5. Kernel Runtime 与 Launch</hh2>
+<hh3 id="5-1-kernelruntime-加载" id="51-kernelruntime">5.1 KernelRuntime 加载</hh3>
+<p><code>KernelRuntime</code> 负责从 CUBIN 文件加载 kernel：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">KernelRuntime</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">LibraryHandle</span><span class="w"> </span><span class="n">library</span><span class="p">;</span>
+<span class="w">    </span><span class="n">KernelHandle</span><span class="w"> </span><span class="n">kernel</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">explicit</span><span class="w"> </span><span class="n">KernelRuntime</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dir_path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">cubin_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dir_path</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="s">&quot;kernel.cubin&quot;</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 方案1: CUDA 12.08+ Runtime API</span>
+<span class="w">        </span><span class="c1">// cudaLibraryLoadFromFile → cudaLibraryGetKernel</span>
+
+<span class="w">        </span><span class="c1">// 方案2: Driver API (默认)</span>
+<span class="w">        </span><span class="c1">// cuModuleLoad → cuModuleGetFunction</span>
+<span class="w">        </span><span class="c1">// 或 CUDA 12.4+: cuLibraryLoadFromFile → cuLibraryEnumerateKernels</span>
+
+<span class="w">        </span><span class="n">kernel</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load_kernel</span><span class="p">(</span><span class="n">cubin_path</span><span class="p">,</span><span class="w"> </span><span class="n">symbol_name</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">library</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>符号提取策略：</strong><br />
+- 默认通过 <code>cuobjdump -symbols</code> 解析 CUBIN<br />
+- 过滤 <code>STT_FUNC</code> + <code>STO_ENTRY</code> 类型的符号<br />
+- 排除非法符号：<code>vprintf</code>, <code>__instantiate_kernel</code>, <code>__internal</code>, <code>__assertfail</code><br />
+- 要求恰好 1 个合法符号</p>
+<hh3 id="5-2-launchruntime-模板" id="52-launchruntime">5.2 LaunchRuntime 模板</hh3>
+<p><code>LaunchRuntime</code> 是一个 CRTP (Curiously Recurring Template Pattern) 模板类：</p>
+<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Derived</span><span class="o">&gt;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LaunchRuntime</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 代码生成（静态多态）</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Args</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">generate</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Args</span><span class="o">&amp;</span><span class="w"> </span><span class="n">args</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Derived</span><span class="o">::</span><span class="n">generate_impl</span><span class="p">(</span><span class="n">args</span><span class="p">);</span>
+<span class="w">        </span><span class="n">code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="s">&quot;// Includes&#39; hash value: {}</span><span class="se">\n</span><span class="s">{}&quot;</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                           </span><span class="n">include_hash</span><span class="p">,</span><span class="w"> </span><span class="n">code</span><span class="p">);</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">code</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 内核启动</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Args</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">launch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">KernelRuntime</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">runtime</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                       </span><span class="k">const</span><span class="w"> </span><span class="n">Args</span><span class="o">&amp;</span><span class="w"> </span><span class="n">args</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 1. 获取当前 CUDA stream</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">getCurrentCUDAStream</span><span class="p">();</span>
+
+<span class="w">        </span><span class="c1">// 2. 构造 launch config</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">config</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">construct_launch_config</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">smem_size</span><span class="p">,</span><span class="w"> </span><span class="n">grid_dim</span><span class="p">,</span><span class="w"> </span><span class="n">block_dim</span><span class="p">,</span><span class="w"> </span><span class="n">cluster_dim</span><span class="p">,</span><span class="w"> </span><span class="n">enable_pdl</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 3. 派生类实现具体 launch 逻辑</span>
+<span class="w">        </span><span class="n">Derived</span><span class="o">::</span><span class="n">launch_impl</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span><span class="w"> </span><span class="n">config</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>使用示例（SM90FP8Gemm1D1DRuntime）：</strong></p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">SM90FP8Gemm1D1DRuntime</span><span class="w"> </span><span class="k">final</span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">LaunchRuntime</span><span class="o">&lt;</span><span class="n">SM90FP8Gemm1D1DRuntime</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="nc">Args</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">GemmDesc</span><span class="w"> </span><span class="n">gemm_desc</span><span class="p">;</span>
+<span class="w">        </span><span class="n">GemmConfig</span><span class="w"> </span><span class="n">gemm_config</span><span class="p">;</span>
+<span class="w">        </span><span class="n">LaunchArgs</span><span class="w"> </span><span class="n">launch_args</span><span class="p">;</span>
+<span class="w">        </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">gmem_a_ptr</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">gmem_b_ptr</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">grouped_layout</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">tensor_map_buffer</span><span class="p">;</span>
+<span class="w">        </span><span class="n">CUtensorMap</span><span class="w"> </span><span class="n">tensor_map_a_base</span><span class="p">,</span><span class="w"> </span><span class="n">tensor_map_b_base</span><span class="p">;</span>
+<span class="w">        </span><span class="n">CUtensorMap</span><span class="w"> </span><span class="n">tensor_map_sfa</span><span class="p">,</span><span class="w"> </span><span class="n">tensor_map_sfb</span><span class="p">,</span><span class="w"> </span><span class="n">tensor_map_cd</span><span class="p">;</span>
+<span class="w">    </span><span class="p">};</span>
+
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">generate_impl</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Args</span><span class="o">&amp;</span><span class="w"> </span><span class="n">args</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">fmt</span><span class="o">::</span><span class="n">format</span><span class="p">(</span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">            #include &lt;deep_gemm/impls/sm90_fp8_gemm_1d1d.cuh&gt;</span>
+<span class="s">            static void __instantiate_kernel() {{</span>
+<span class="s">                auto ptr = reinterpret_cast&lt;void*&gt;(&amp;sm90_fp8_gemm_1d1d_impl&lt;</span>
+<span class="s">                    {}, {}, {}, ...  // 编译时常量参数</span>
+<span class="s">                &gt;);</span>
+<span class="s">            }};</span>
+<span class="s">        </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">launch_impl</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">KernelHandle</span><span class="o">&amp;</span><span class="w"> </span><span class="n">kernel</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                           </span><span class="k">const</span><span class="w"> </span><span class="n">LaunchConfigHandle</span><span class="o">&amp;</span><span class="w"> </span><span class="n">config</span><span class="p">,</span><span class="w"> </span><span class="n">Args</span><span class="w"> </span><span class="n">args</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">launch_kernel</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span><span class="w"> </span><span class="n">config</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">gmem_a_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">gmem_b_ptr</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">grouped_layout</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_buffer</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">gemm_desc</span><span class="p">.</span><span class="n">m</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">gemm_desc</span><span class="p">.</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">gemm_desc</span><span class="p">.</span><span class="n">k</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_a_base</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_b_base</span><span class="p">,</span>
+<span class="w">            </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_sfa</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_sfb</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">.</span><span class="n">tensor_map_cd</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hh3 id="5-3-tma-descriptor-构建" id="53-tma-descriptor">5.3 TMA Descriptor 构建</hh3>
+<p>TMA (Tensor Memory Accelerator) 是 Hopper+ 架构的关键硬件特性。DeepGEMM 通过 <code>runtime_utils.hpp</code> 提供完整的 TMA descriptor 构建：</p>
+<div class="highlight"><pre><span></span><code><span class="k">static</span><span class="w"> </span><span class="n">CUtensorMap</span><span class="w"> </span><span class="nf">make_tma_2d_desc</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">t</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">gmem_inner_dim</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">gmem_outer_dim</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">smem_inner_dim</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">smem_outer_dim</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">gmem_outer_stride</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">swizzle_mode</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+</code></pre></div>
+
+<p><strong>TMA 配置参数：</strong><br />
+- <code>CU_TENSOR_MAP_INTERLEAVE_NONE</code>：无交错<br />
+- <code>CU_TENSOR_MAP_SWIZZLE_32B/64B/128B</code>：shared memory swizzle 模式<br />
+- <code>CU_TENSOR_MAP_L2_PROMOTION_L2_256B</code>：L2 提升<br />
+- <code>CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE</code>：越界不填充</p>
+<p><strong>Swizzle 模式映射：</strong></p>
+<table>
+<thead>
+<tr>
+<th>swizzle_mode</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0, 16</td>
+<td><code>CU_TENSOR_MAP_SWIZZLE_NONE</code></td>
+</tr>
+<tr>
+<td>32</td>
+<td><code>CU_TENSOR_MAP_SWIZZLE_32B</code></td>
+</tr>
+<tr>
+<td>64</td>
+<td><code>CU_TENSOR_MAP_SWIZZLE_64B</code></td>
+</tr>
+<tr>
+<td>128</td>
+<td><code>CU_TENSOR_MAP_SWIZZLE_128B</code></td>
+</tr>
+<tr>
+<td>base=32, mode=128</td>
+<td><code>CU_TENSOR_MAP_SWIZZLE_128B_ATOM_32B</code> (SM100)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-4-kernel-launch-流程" id="54-kernel-launch">5.4 Kernel Launch 流程</hh3>
+<div class="highlight"><pre><span></span><code>flowchart TD
+    A[LaunchRuntime::launch] --&gt; B[获取当前 CUDA Stream]
+    A --&gt; C[读取 device_runtime-&gt;get_pdl()]
+    B --&gt; D[construct_launch_config]
+    C --&gt; D
+    D --&gt; E{smem_size &gt; 0?}
+    E --&gt;|Yes| F[cudaFuncSetAttribute&lt;br/&gt;MaxDynamicSharedMemorySize]
+    E --&gt;|No| G[构建 gridDim/blockDim]
+    F --&gt; G
+    G --&gt; H{cluster_dim &gt; 1?}
+    H --&gt;|Yes| I[添加 ClusterDimension 属性]
+    H --&gt;|No| J{enable_pdl?}
+    I --&gt; J
+    J --&gt;|Yes| K[添加 PDL 属性]
+    J --&gt;|No| L[launch_kernel]
+    K --&gt; L
+</code></pre></div>
+
+<p><strong>Launch 属性：</strong><br />
+- <strong>Cluster Dimension</strong>：Hopper+ 的 Thread Block Cluster 特性，支持 2-SM 协作<br />
+- <strong>PDL (Programmatic Dependent Launch)</strong>：kernel 间的程序化同步</p>
+<hr />
+<hh2 id="6-device-runtime" id="6-device-runtime">6. Device Runtime</hh2>
+<hh3 id="6-1-cuda-设备管理" id="61-cuda">6.1 CUDA 设备管理</hh3>
+<p><code>DeviceRuntime</code> 封装了 CUDA 设备属性和状态：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DeviceRuntime</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_sms</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">tc_util</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">enable_pdl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">cudaDeviceProp</span><span class="o">&gt;</span><span class="w"> </span><span class="n">cached_prop</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 架构检测</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">pair</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">get_arch_pair</span><span class="p">();</span><span class="w">      </span><span class="c1">// {major, minor}</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_arch</span><span class="p">(</span><span class="kt">bool</span><span class="w"> </span><span class="n">number_only</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">support_arch_family</span><span class="p">);</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="nf">get_arch_major</span><span class="p">();</span><span class="w">                      </span><span class="c1">// 9 (Hopper) or 10 (Blackwell)</span>
+
+<span class="w">    </span><span class="c1">// SM 管理</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="nf">get_num_sms</span><span class="p">();</span><span class="w">                         </span><span class="c1">// 默认全部 SM</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">set_num_sms</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">new_num_sms</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// TC util</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="nf">get_tc_util</span><span class="p">();</span><span class="w">                         </span><span class="c1">// 默认 100%</span>
+
+<span class="w">    </span><span class="c1">// PDL 控制</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="nf">get_pdl</span><span class="p">();</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">set_pdl</span><span class="p">(</span><span class="kt">bool</span><span class="w"> </span><span class="n">new_enable_pdl</span><span class="p">);</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>arch 字符串映射：</strong></p>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>major.minor</th>
+<th>get_arch()</th>
+<th>get_arch(number_only)</th>
+<th>get_arch(x, true)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H100</td>
+<td>9.0</td>
+<td>"90a"</td>
+<td>"90"</td>
+<td>"90a"</td>
+</tr>
+<tr>
+<td>B200</td>
+<td>10.0</td>
+<td>"100a"</td>
+<td>"100"</td>
+<td>"100f"</td>
+</tr>
+<tr>
+<td>B300</td>
+<td>10.1</td>
+<td>"100a"</td>
+<td>"100"</td>
+<td>"100f"</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="6-2-cublaslt-集成" id="62-cublaslt">6.2 cuBLASLt 集成</hh3>
+<p><code>DeviceRuntime</code> 同时管理 cuBLASLt handle 和 workspace：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DeviceRuntime</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">cublasLtHandle_t</span><span class="w"> </span><span class="n">cublaslt_handle</span><span class="p">;</span>
+<span class="w">    </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">cublaslt_workspace</span><span class="p">;</span><span class="w">  </span><span class="c1">// 32 MB</span>
+
+<span class="w">    </span><span class="n">cublasLtHandle_t</span><span class="w"> </span><span class="nf">get_cublaslt_handle</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="w">    </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">get_cublaslt_workspace</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>两种 handle 模式：</strong><br />
+1. <strong>自管理</strong>（默认）：<code>cublasLtCreate</code> 创建独立 handle<br />
+2. <strong>PyTorch 托管</strong>：通过 <code>at::cuda::getCurrentCUDABlasLtHandle()</code> 获取（需 PyTorch &gt;= 2.3）</p>
+<p><strong>Workspace 模式：</strong><br />
+1. <strong>持久化</strong>（默认）：构造时分配 32MB tensor<br />
+2. <strong>临时</strong>：每次调用重新分配（用于 compute-sanitizer 测试）</p>
+<hh3 id="6-3-架构检测与-arch-字符串" id="63-arch">6.3 架构检测与 arch 字符串</hh3>
+<div class="highlight"><pre><span></span><code><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_arch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">number_only</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">support_arch_family</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">major</span><span class="p">,</span><span class="w"> </span><span class="n">minor</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_arch_pair</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">major</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">minor</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">number_only</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;100&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">support_arch_family</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="s">&quot;100f&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s">&quot;100a&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">to_string</span><span class="p">(</span><span class="n">major</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">minor</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">number_only</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s">&quot;a&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>注意：</strong> SM100 (Blackwell) 的 arch family 后缀 (<code>100f</code>) 仅在 NVCC/NVRTC &gt;= 12.9 时支持。</p>
+<hr />
+<hh2 id="7-handle-管理与-cuda-driver-抽象" id="7-handle-cuda-driver">7. Handle 管理与 CUDA Driver 抽象</hh2>
+<p><code>handle.hpp</code> 是 CUDA Driver API 的<strong>懒加载封装层</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 懒加载 CUDA driver</span>
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="nf">get_driver_handle</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dlopen</span><span class="p">(</span><span class="s">&quot;libcuda.so.1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">RTLD_LAZY</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">RTLD_LOCAL</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// 宏定义懒加载的 driver API</span>
+<span class="cp">#define DECL_LAZY_CUDA_DRIVER_FUNCTION(name) \</span>
+<span class="cp">    template &lt;typename... Args&gt; \</span>
+<span class="cp">    static auto lazy_##name(Args&amp;&amp;... args) -&gt; decltype(name(args...)) { \</span>
+<span class="cp">        static FuncType func = nullptr; \</span>
+<span class="cp">        if (func == nullptr) \</span>
+<span class="cp">            func = reinterpret_cast&lt;FuncType&gt;(dlsym(get_driver_handle(), #name)); \</span>
+<span class="cp">        return func(std::forward&lt;Args&gt;(args)...); \</span>
+<span class="cp">    }</span>
+</code></pre></div>
+
+<p><strong>懒加载的 Driver API：</strong><br />
+- <code>cuGetErrorName</code>, <code>cuGetErrorString</code><br />
+- <code>cuFuncSetAttribute</code><br />
+- <code>cuModuleLoad</code>, <code>cuModuleUnload</code>, <code>cuModuleGetFunction</code><br />
+- <code>cuLibraryLoadFromFile</code>, <code>cuLibraryUnload</code>, <code>cuKernelGetFunction</code><br />
+- <code>cuLaunchKernelEx</code><br />
+- <code>cuTensorMapEncodeTiled</code><br />
+- <code>cuLibraryGetKernelCount</code>, <code>cuLibraryEnumerateKernels</code> (CUDA 12.4+)</p>
+<p><strong>双 API 后端：</strong></p>
+<div class="highlight"><pre><span></span><code><span class="cp">#if CUDART_VERSION &gt;= 12080 and defined(DG_JIT_USE_RUNTIME_API)</span>
+<span class="w">    </span><span class="c1">// CUDA Runtime Unified API</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">LibraryHandle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cudaLibrary_t</span><span class="p">;</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">KernelHandle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cudaKernel_t</span><span class="p">;</span>
+<span class="w">    </span><span class="n">cudaLibraryLoadFromFile</span><span class="p">(...);</span>
+<span class="w">    </span><span class="n">cudaLaunchKernelExC</span><span class="p">(...);</span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="c1">// CUDA Driver API</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">LibraryHandle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">CUlibrary</span><span class="p">;</span><span class="w">  </span><span class="c1">// or CUmodule</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">KernelHandle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">CUfunction</span><span class="p">;</span>
+<span class="w">    </span><span class="n">cuLibraryLoadFromFile</span><span class="p">(...);</span>
+<span class="w">    </span><span class="n">cuLaunchKernelEx</span><span class="p">(...);</span>
+<span class="cp">#endif</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="8-utility-层" id="8-utility">8. Utility 层</hh2>
+<hh3 id="8-1-compatibility-hpp" id="81-compatibilityhpp">8.1 compatibility.hpp</hh3>
+<p>提供编译时特性检测宏：</p>
+<div class="highlight"><pre><span></span><code><span class="cp">#define DG_FP8_COMPATIBLE (TORCH_VERSION_MAJOR &gt; 2 or (TORCH_VERSION_MAJOR == 2 and TORCH_VERSION_MINOR &gt;= 1))</span>
+<span class="cp">#define DG_TENSORMAP_COMPATIBLE (CUDA_VERSION &gt;= 12010)</span>
+<span class="cp">#define DG_CUBLAS_GET_ERROR_STRING_COMPATIBLE (CUDART_VERSION &gt;= 11042)</span>
+<span class="cp">#define DG_CUBLASLT_ADVANCED_FEATURES_COMPATIBLE (CUDART_VERSION &gt;= 11080)</span>
+</code></pre></div>
+
+<hh3 id="8-2-exception-hpp" id="82-exceptionhpp">8.2 exception.hpp</hh3>
+<p>定义了统一的异常体系和检查宏：</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DGException</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">exception</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">message</span><span class="p">;</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="k">explicit</span><span class="w"> </span><span class="n">DGException</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">file</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                         </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">error</span><span class="p">);</span>
+<span class="p">};</span>
+
+<span class="c1">// 检查宏</span>
+<span class="cp">#define DG_HOST_ASSERT(cond) ...</span>
+<span class="cp">#define DG_HOST_UNREACHABLE(reason) ...</span>
+<span class="cp">#define DG_NVRTC_CHECK(cmd) ...</span>
+<span class="cp">#define DG_CUDA_DRIVER_CHECK(cmd) ...</span>
+<span class="cp">#define DG_CUDA_RUNTIME_CHECK(cmd) ...</span>
+<span class="cp">#define DG_CUBLASLT_CHECK(cmd) ...</span>
+</code></pre></div>
+
+<p><strong>错误传播路径：</strong></p>
+<div class="highlight"><pre><span></span><code>C++ 异常 → pybind11 自动转换 → Python RuntimeError
+</code></pre></div>
+
+<hh3 id="8-3-format-hpp" id="83-formathpp">8.3 format.hpp</hh3>
+<p>简单的 <code>fmt</code> 库封装：</p>
+<div class="highlight"><pre><span></span><code><span class="cp">#define FMT_HEADER_ONLY</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;fmt/base.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;fmt/format.h&gt;</span>
+</code></pre></div>
+
+<hh3 id="8-4-hash-hpp" id="84-hashhpp">8.4 hash.hpp</hh3>
+<p>提供 FNV-1a + SplitMix64 的 128-bit hash：</p>
+<div class="highlight"><pre><span></span><code><span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_hex_digest</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">state_0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fnv1a</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="mh">0xc6a4a7935bd1e995ull</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">state_1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fnv1a</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="mh">0x9e3779b97f4a7c15ull</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">// SplitMix64 混淆</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">hex</span><span class="p">(</span><span class="n">state_0</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">hex</span><span class="p">(</span><span class="n">state_1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="8-5-layout-hpp" id="85-layouthpp">8.5 layout.hpp</hh3>
+<p>提供 tensor 布局检查和 scaling factor 校验：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Major type 检测</span>
+<span class="n">cute</span><span class="o">::</span><span class="n">UMMA</span><span class="o">::</span><span class="n">Major</span><span class="w"> </span><span class="nf">get_major_type_ab</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">t</span><span class="p">);</span>
+
+<span class="c1">// SF layout 校验</span>
+<span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">check_sf_layout</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sf</span><span class="p">,</span><span class="w"> </span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">mn</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">gran_mn</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">gran_k</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="c1">// Recipe 默认值</span>
+<span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">get_default_recipe</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">ScalarType</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sfa_dtype</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">ScalarType</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sfb_dtype</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="8-6-lazy_init-hpp" id="86-lazy_inithpp">8.6 lazy_init.hpp</hh3>
+<p>通用的懒初始化模板：</p>
+<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LazyInit</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">function</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()</span><span class="o">&gt;</span><span class="w"> </span><span class="n">factory</span><span class="p">;</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">T</span><span class="o">*</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">factory</span><span class="p">();</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">ptr</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>使用场景：</strong><br />
+- <code>LazyInit&lt;Compiler&gt;</code>：编译器实例<br />
+- <code>LazyInit&lt;DeviceRuntime&gt;</code>：设备运行时<br />
+- <code>LazyInit&lt;HeuristicsRuntime&gt;</code>：启发式运行时</p>
+<hh3 id="8-7-math-hpp" id="87-mathhpp">8.7 math.hpp</hh3>
+<p>提供数学常量和工具函数：</p>
+<div class="highlight"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">kPackedFP4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">kInt8</span><span class="p">;</span><span class="w">  </span><span class="c1">// FP4 打包为 int8</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">ceil_div</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">T</span><span class="o">&amp;</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">T</span><span class="o">&amp;</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">align</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">T</span><span class="o">&amp;</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">T</span><span class="o">&amp;</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="k">static</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">get_tma_aligned_size</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">element_size</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="8-8-system-hpp" id="88-systemhpp">8.8 system.hpp</hh3>
+<p>系统级工具函数：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 环境变量读取</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">dtype_t</span><span class="o">&gt;</span>
+<span class="k">static</span><span class="w"> </span><span class="n">dtype_t</span><span class="w"> </span><span class="n">get_env</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">dtype_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">default_value</span><span class="p">);</span>
+
+<span class="c1">// 外部命令执行</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&gt;</span><span class="w"> </span><span class="n">call_external_command</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">command</span><span class="p">);</span>
+
+<span class="c1">// 文件收集</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&gt;</span><span class="w"> </span><span class="n">collect_files</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">root</span><span class="p">);</span>
+
+<span class="c1">// 目录操作</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="w"> </span><span class="nf">make_dirs</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">path</span><span class="p">);</span>
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">safe_remove_all</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">filesystem</span><span class="o">::</span><span class="n">path</span><span class="o">&amp;</span><span class="w"> </span><span class="n">path</span><span class="p">);</span>
+
+<span class="c1">// UUID 生成</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_uuid</span><span class="p">();</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="9-heuristics-与自动调优" id="9-heuristics">9. Heuristics 与自动调优</hh2>
+<p>DeepGEMM 的 heuristics 系统自动选择最优的 GEMM 配置：</p>
+<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">ArchSpec</span><span class="o">&gt;</span>
+<span class="k">static</span><span class="w"> </span><span class="n">GemmConfig</span><span class="w"> </span><span class="n">get_best_config</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">GemmDesc</span><span class="o">&amp;</span><span class="w"> </span><span class="n">desc</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 生成 layout 候选</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">layout_candidates</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">get_layout_candidates</span><span class="p">(</span><span class="n">desc</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. 评估每个候选</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">candidate</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">layout_candidates</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">get_layout_info</span><span class="p">(</span><span class="n">desc</span><span class="p">,</span><span class="w"> </span><span class="n">candidate</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">compare</span><span class="p">(</span><span class="n">info</span><span class="p">,</span><span class="w"> </span><span class="n">best_info</span><span class="p">))</span><span class="w"> </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">candidate</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. 推导其他配置</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">storage_config</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">get_storage_config</span><span class="p">(</span><span class="n">desc</span><span class="p">,</span><span class="w"> </span><span class="n">layout</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">pipeline_config</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">get_pipeline_config</span><span class="p">(</span><span class="n">desc</span><span class="p">,</span><span class="w"> </span><span class="n">layout</span><span class="p">,</span><span class="w"> </span><span class="n">storage_config</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">launch_config</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ArchSpec</span><span class="o">::</span><span class="n">get_launch_config</span><span class="p">(</span><span class="n">desc</span><span class="p">,</span><span class="w"> </span><span class="n">layout</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">layout</span><span class="p">,</span><span class="w"> </span><span class="n">storage_config</span><span class="p">,</span><span class="w"> </span><span class="n">pipeline_config</span><span class="p">,</span><span class="w"> </span><span class="n">launch_config</span><span class="p">};</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>配置维度：</strong></p>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Layout</td>
+<td>block_m, block_n, block_k, cluster_m, cluster_n</td>
+<td>tile 大小和集群配置</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>swizzle_a/b/cd_mode, load/store block</td>
+<td>TMA swizzle 和访存模式</td>
+</tr>
+<tr>
+<td>Pipeline</td>
+<td>smem_size, num_stages</td>
+<td>shared memory 和流水线深度</td>
+</tr>
+<tr>
+<td>Launch</td>
+<td>num_sms, num_threads, tma/math threads</td>
+<td>启动配置</td>
+</tr>
+</tbody>
+</table>
+<p><strong>SM90 ArchSpec 特性：</strong><br />
+- <code>smem_capacity = 232448</code> (227 KB)<br />
+- block_m 候选：{16, 32, 64, 128, 256}（根据问题规模）<br />
+- block_k 固定：128 / element_size<br />
+- 支持 cluster size 2 (multicast)</p>
+<hr />
+<hh2 id="10-错误处理体系" id="10">10. 错误处理体系</hh2>
+<p>DeepGEMM 使用 <strong>异常 + 宏</strong> 的错误处理策略：</p>
+<div class="mermaid">graph TD
+    A[错误发生] --> B{错误类型}
+    B -->|主机断言失败| C[DGException<br/>Assertion]
+    B -->|NVRTC 错误| D[DGException<br/>NVRTC]
+    B -->|CUDA Driver 错误| E[DGException<br/>CUDA driver]
+    B -->|CUDA Runtime 错误| F[DGException<br/>CUDA runtime]
+    B -->|cuBLASLt 错误| G[DGException<br/>cuBLASLt]
+    C --> H[what() 返回<br/>name + file:line + error]
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+    H --> I[pybind11 自动转换]
+    I --> J[Python RuntimeError]
+</div>
+
+<p><strong>关键设计：</strong><br />
+- 所有检查宏都包含 <code>__FILE__</code> 和 <code>__LINE__</code>，便于定位<br />
+- CUDA 错误码转换为可读字符串<br />
+- NVRTC 编译失败时打印完整 log<br />
+- 不支持 <code>cublasGetErrorString</code> 的旧版本使用 fallback 实现</p>
+<hr />
+<hh2 id="11-内存管理" id="11">11. 内存管理</hh2>
+<hh3 id="11-1-gpu-内存分配" id="111-gpu">11.1 GPU 内存分配</hh3>
+<p>DeepGEMM 的 GPU 内存管理遵循 <strong>"谁分配谁负责"</strong> 原则：</p>
+<table>
+<thead>
+<tr>
+<th>内存类型</th>
+<th>分配方式</th>
+<th>生命周期</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>输入/输出 tensor</td>
+<td>Python 侧 (torch::empty)</td>
+<td>Python GC</td>
+</tr>
+<tr>
+<td>cuBLASLt workspace</td>
+<td>DeviceRuntime 构造函数</td>
+<td>与 DeviceRuntime 同生命周期</td>
+</tr>
+<tr>
+<td>TMA tensor map buffer</td>
+<td>各 kernel 函数内 (torch::empty)</td>
+<td>函数作用域</td>
+</tr>
+<tr>
+<td>Scaling factor 变换结果</td>
+<td>transform_sf_* 函数</td>
+<td>返回给 Python</td>
+</tr>
+<tr>
+<td>对称通信 buffer (Mega)</td>
+<td>Python 侧</td>
+<td>Python GC</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="11-2-零拷贝视图" id="112">11.2 零拷贝视图</hh3>
+<p>大量使用 <code>torch::from_blob</code> 创建零拷贝视图：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 从 fused KV cache 中派生子张量</span>
+<span class="n">kv_cache</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">from_blob</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fused_kv_cache</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="p">{</span><span class="n">num_kv_blocks</span><span class="p">,</span><span class="w"> </span><span class="n">block_kv</span><span class="p">,</span><span class="w"> </span><span class="n">head_dim</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="n">kv_cache_stride_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">head_dim</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">},</span>
+<span class="w">    </span><span class="n">torch</span><span class="o">::</span><span class="n">TensorOptions</span><span class="p">().</span><span class="n">dtype</span><span class="p">(</span><span class="n">kPackedFP4</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="11-3-内存对齐" id="113">11.3 内存对齐</hh3>
+<p>TMA 硬件要求 16-byte 对齐：</p>
+<div class="highlight"><pre><span></span><code><span class="k">static</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">get_tma_aligned_size</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">element_size</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">kNumTMAAlignmentBytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">align</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">kNumTMAAlignmentBytes</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">element_size</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="12-关键设计洞察与架构评价" id="12">12. 关键设计洞察与架构评价</hh2>
+<hh3 id="12-1-设计亮点" id="121">12.1 设计亮点</hh3>
+<ol>
+<li><strong>分层缓存策略</strong>：内存缓存 + 文件系统缓存，兼顾速度和持久化</li>
+<li><strong>原子性保证</strong>：通过 <code>tmp → rename</code> 模式避免缓存损坏</li>
+<li><strong>编译器无关抽象</strong>：NVCC/NVRTC 可切换，适应不同部署环境</li>
+<li><strong>CRTP 静态多态</strong>：<code>LaunchRuntime&lt;Derived&gt;</code> 避免虚函数开销</li>
+<li><strong>懒加载 Driver API</strong>：<code>dlopen/dlsym</code> 避免启动时依赖</li>
+<li><strong>环境变量驱动调试</strong>：丰富的 <code>DG_JIT_*</code> 环境变量</li>
+</ol>
+<hh3 id="12-2-架构权衡" id="122">12.2 架构权衡</hh3>
+<table>
+<thead>
+<tr>
+<th>设计决策</th>
+<th>优势</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JIT 编译</td>
+<td>针对具体问题规模优化</td>
+<td>首次编译延迟</td>
+</tr>
+<tr>
+<td>模板实例化</td>
+<td>零运行时开销</td>
+<td>编译时间长</td>
+</tr>
+<tr>
+<td>文件系统缓存</td>
+<td>跨进程共享</td>
+<td>需要 fsync 保证一致性</td>
+</tr>
+<tr>
+<td>硬编码表达式</td>
+<td>高效</td>
+<td>灵活性受限</td>
+</tr>
+<tr>
+<td>双 API 后端</td>
+<td>兼容性</td>
+<td>代码复杂度</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="12-3-与传统-gemm-库的对比" id="123-gemm">12.3 与传统 GEMM 库的对比</hh3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>cuBLAS</th>
+<th>CUTLASS</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编译模式</td>
+<td>预编译</td>
+<td>预编译</td>
+<td>JIT</td>
+</tr>
+<tr>
+<td>FP8 支持</td>
+<td>有限</td>
+<td>需要手动适配</td>
+<td>原生</td>
+</tr>
+<tr>
+<td>Block Scale</td>
+<td>不支持</td>
+<td>复杂</td>
+<td>原生</td>
+</tr>
+<tr>
+<td>M-grouped GEMM</td>
+<td>不支持</td>
+<td>需要自定义</td>
+<td>原生</td>
+</tr>
+<tr>
+<td>MoE 融合</td>
+<td>不支持</td>
+<td>不支持</td>
+<td>原生 (Mega)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="12-4-关键创新点" id="124">12.4 关键创新点</hh3>
+<ol>
+<li><strong>compiled_dims 机制</strong>：允许将 M/N/K 的某一维作为编译时常量，启用编译器优化</li>
+<li><strong>Include Hash</strong>：追踪头文件依赖变化，确保缓存正确性</li>
+<li><strong>PDL 支持</strong>：利用 Hopper+ 的 Programmatic Dependent Launch 实现 kernel 间同步</li>
+<li><strong>UE8M0 Cast</strong>：SM100 的 FP4 scale factor 特殊编码格式</li>
+<li><strong>对称通信 buffer</strong>：Mega MoE 中 all-to-all 与 GEMM 的深度融合</li>
+</ol>
+<hr />
+<hh2 id="附录-a-关键数据结构关系图" id="a">附录 A：关键数据结构关系图</hh2>
+<div class="mermaid">classDiagram
+    class Compiler {
+        +signature: string
+        +flags: string
+        +cache_dir_path: path
+        +build(name, code) shared_ptr~KernelRuntime~
+        +compile(code, dir, cubin) void
+    }
+
+    class NVCCCompiler {
+        +nvcc_path: path
+        +compile(code, dir, cubin) void
+    }
+
+    class NVRTCCompiler {
+        +compile(code, dir, cubin) void
+    }
+
+    class KernelRuntime {
+        +library: LibraryHandle
+        +kernel: KernelHandle
+        +check_validity(dir) bool
+    }
+
+    class KernelRuntimeCache {
+        +cache: unordered_map
+        +get(dir) shared_ptr~KernelRuntime~
+    }
+
+    class DeviceRuntime {
+        +num_sms: int
+        +tc_util: int
+        +enable_pdl: bool
+        +get_arch() string
+        +get_arch_major() int
+    }
+
+    class LaunchArgs {
+        +grid_dim: pair~int,int~
+        +num_threads: int
+        +smem_size: int
+        +cluster_dim: int
+        +enable_pdl: bool
+    }
+
+    class GemmDesc {
+        +gemm_type: GemmType
+        +kernel_type: KernelType
+        +m, n, k: int
+        +num_sms, tc_util: int
+        +compiled_dims: string
+    }
+
+    class GemmConfig {
+        +layout: Layout
+        +storage_config: StorageConfig
+        +pipeline_config: PipelineConfig
+        +launch_config: LaunchConfig
+    }
+
+    Compiler <|-- NVCCCompiler
+    Compiler <|-- NVRTCCompiler
+    Compiler --> KernelRuntime : creates
+    KernelRuntimeCache --> KernelRuntime : caches
+    KernelRuntime --> DeviceRuntime : uses
+    LaunchArgs --> KernelRuntime : launches
+    GemmDesc --> GemmConfig : generates
+    GemmConfig --> LaunchArgs : derives
+</div>
+
+<hh2 id="附录-b-环境变量完整参考" id="b">附录 B：环境变量完整参考</hh2>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>类型</th>
+<th>默认值</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DG_JIT_CACHE_DIR</code></td>
+<td>string</td>
+<td><code>~/.deep_gemm</code></td>
+<td>JIT 缓存目录</td>
+</tr>
+<tr>
+<td><code>DG_JIT_CPP_STANDARD</code></td>
+<td>int</td>
+<td>20</td>
+<td>C++ 标准版本</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DEBUG</code></td>
+<td>int</td>
+<td>0</td>
+<td>调试模式（打印详细信息）</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_ASM</code></td>
+<td>int</td>
+<td>0</td>
+<td>dump SASS 汇编</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_PTX</code></td>
+<td>int</td>
+<td>0</td>
+<td>dump PTX</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_SASS</code></td>
+<td>int</td>
+<td>0</td>
+<td>dump SASS</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_VERBOSE</code></td>
+<td>int</td>
+<td>0</td>
+<td>PTXAS 详细输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_CHECK</code></td>
+<td>int</td>
+<td>0</td>
+<td>检查 local memory 使用</td>
+</tr>
+<tr>
+<td><code>DG_JIT_WITH_LINEINFO</code></td>
+<td>int</td>
+<td>0</td>
+<td>包含行信息</td>
+</tr>
+<tr>
+<td><code>DG_JIT_USE_NVRTC</code></td>
+<td>int</td>
+<td>0</td>
+<td>使用 NVRTC 替代 NVCC</td>
+</tr>
+<tr>
+<td><code>DG_JIT_NVCC_COMPILER</code></td>
+<td>string</td>
+<td>自动</td>
+<td>NVCC 编译器路径</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_COMPILER_COMMAND</code></td>
+<td>int</td>
+<td>0</td>
+<td>打印编译命令</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_LOAD_TIME</code></td>
+<td>int</td>
+<td>0</td>
+<td>打印 kernel 加载时间</td>
+</tr>
+<tr>
+<td><code>DG_USE_PYTORCH_CUBLASLT_HANDLE</code></td>
+<td>int</td>
+<td>0</td>
+<td>使用 PyTorch 的 cuBLASLt handle</td>
+</tr>
+<tr>
+<td><code>DG_USE_TEMP_CUBLASLT_WORKSPACE</code></td>
+<td>int</td>
+<td>0</td>
+<td>使用临时 workspace</td>
+</tr>
+<tr>
+<td><code>DG_PRINT_CONFIGS</code></td>
+<td>int</td>
+<td>0</td>
+<td>打印 heuristics 配置</td>
+</tr>
+<tr>
+<td><code>DG_COMM_KERNEL_DEBUG</code></td>
+<td>int</td>
+<td>0</td>
+<td>Mega MoE debug 模式</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>文档生成：基于 DeepGEMM v2.4.2 源码分析</em></p>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>

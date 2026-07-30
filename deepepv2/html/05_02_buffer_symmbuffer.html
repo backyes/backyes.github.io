@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP Buffer System 与 DeepGEMM SymmBuffer 映射分析</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: #efefef;
+  --text: #37352f;
+  --text-secondary: #6b7280;
+  --text-muted: #9b9a97;
+  --border: #e9e9e7;
+  --accent: #2383e2;
+  --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3;
+  --code-text: #eb5757;
+  --blockquote-border: #e9e9e7;
+  --table-border: #e9e9e7;
+  --table-header-bg: #f7f6f3;
+  --h1-size: 2.2em;
+  --h2-size: 1.6em;
+  --h3-size: 1.25em;
+  --line-height: 1.7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919;
+    --bg-secondary: #202020;
+    --bg-hover: #2f2f2f;
+    --text: #e8e8e5;
+    --text-secondary: #9b9a97;
+    --text-muted: #6b7280;
+    --border: #373737;
+    --accent: #529cca;
+    --accent-bg: #252525;
+    --code-bg: #2f2f2f;
+    --code-text: #ff7b72;
+    --blockquote-border: #373737;
+    --table-border: #373737;
+    --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  font-size: 16px;
+  line-height: var(--line-height);
+  color: var(--text);
+  background: var(--bg);
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px 100px;
+}
+h1 {
+  font-size: var(--h1-size);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.5em 0 0.5em;
+  letter-spacing: -0.02em;
+}
+h2 {
+  font-size: var(--h2-size);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.8em 0 0.4em;
+  letter-spacing: -0.01em;
+}
+h3 {
+  font-size: var(--h3-size);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.5em 0 0.3em;
+}
+h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote {
+  border-left: 3px solid var(--blockquote-border);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 4px 4px 0;
+}
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+}
+pre code {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  font-size: inherit;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+th {
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--table-border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+img { max-width: 100%; border-radius: 4px; }
+.mermaid { 
+  background: var(--bg); 
+  border: 1px solid var(--border); 
+  border-radius: 6px; 
+  padding: 20px; 
+  margin: 1.2em 0; 
+  overflow-x: auto;
+  text-align: center;
+}
+.toc { 
+  background: var(--bg-secondary); 
+  border-radius: 6px; 
+  padding: 16px 20px; 
+  margin: 1.5em 0; 
+}
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.toc a:hover { color: var(--accent); }
+.nav { 
+  display: flex; 
+  justify-content: space-between; 
+  margin-top: 3em; 
+  padding-top: 1.5em; 
+  border-top: 1px solid var(--border); 
+  font-size: 0.9em;
+}
+.nav a { color: var(--text-secondary); }
+.nav a:hover { color: var(--accent); }
+@media (max-width: 768px) {
+  .container { padding: 30px 20px 60px; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.4em; }
+  pre { padding: 12px 14px; font-size: 0.8em; }
+  table { font-size: 0.85em; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ 
+  startOnLoad: true, 
+  theme: 'default',
+  securityLevel: 'loose',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+});
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="deepep-buffer-system-与-deepgemm-symmbuffer-映射分析" id="deepep-buffer-system-deepgemm-symmbuffer">DeepEP Buffer System 与 DeepGEMM SymmBuffer 映射分析</hh1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 将 DeepEP 博客描述的 Buffer System 映射到 DeepGEMM SymmBuffer 的具体实现</p>
+</blockquote>
+<hr />
+<hh2 id="1-symmbuffer-内部布局" id="1-symmbuffer">1. SymmBuffer 内部布局</hh2>
+<hh3 id="1-1-内存分段总览" id="11">1.1 内存分段总览</hh3>
+<p>SymmBuffer 是一个<strong>单一大块对称内存</strong>（<code>symm_mem.empty(num_bytes, dtype=torch.int8, device='cuda')</code>），内部按功能划分为多个逻辑段。从 <code>csrc/apis/mega.hpp</code> 的 <code>get_symm_buffer_size_for_mega_moe</code> 函数可以看到完整布局：</p>
+<div class="highlight"><pre><span></span><code>SymmBuffer 内存布局 (从低地址到高地址):
+┌─────────────────────────────────────────────────────────────┐
+│  Workspace (元数据区)                                         │
+│  ├─ Grid Sync Counters (32 bytes)                            │
+│  ├─ Expert Send Count (num_experts × 8 bytes)                │
+│  ├─ Expert Recv Count (num_ranks × num_experts_per_rank × 8) │
+│  ├─ Expert Recv Count Sum (num_experts_per_rank × 8)         │
+│  ├─ L1 Arrival Count (num_max_pool_blocks × 4)               │
+│  ├─ L2 Arrival Mask (num_max_pool_blocks × 8)                │
+│  ├─ Src Token-Topk Idx (dispatch pulling 用)                  │
+│  └─ Token Src Metadata (combine write-back 用)                │
+├─────────────────────────────────────────────────────────────┤
+│  Input Token Buffer (FP8)                                     │
+│  shape: [num_max_tokens_per_rank, hidden]                    │
+├─────────────────────────────────────────────────────────────┤
+│  Input SF Buffer (K-major, per-32 UE8M0)                      │
+│  shape: [num_max_tokens_per_rank, hidden/128]                │
+├─────────────────────────────────────────────────────────────┤
+│  Input TopK Idx Buffer (int64)                               │
+│  shape: [num_max_tokens_per_rank, num_topk]                  │
+├─────────────────────────────────────────────────────────────┤
+│  Input TopK Weights Buffer (float32)                         │
+│  shape: [num_max_tokens_per_rank, num_topk]                  │
+├─────────────────────────────────────────────────────────────┤
+│  L1 Token Buffer (FP8, pool)                                  │
+│  shape: [num_max_pool_tokens, hidden]                        │
+├─────────────────────────────────────────────────────────────┤
+│  L1 SF Buffer (M-major, UTCCP 128-aligned)                    │
+│  shape: [num_padded_sf_pool_tokens, hidden/128]              │
+├─────────────────────────────────────────────────────────────┤
+│  L1 TopK Weights Buffer (per-pool-token)                      │
+│  shape: [num_max_pool_tokens, 1]                             │
+├─────────────────────────────────────────────────────────────┤
+│  L2 Token Buffer (FP8, pool)                                  │
+│  shape: [num_max_pool_tokens, intermediate_hidden]           │
+├─────────────────────────────────────────────────────────────┤
+│  L2 SF Buffer (M-major, UTCCP 128-aligned)                    │
+│  shape: [num_padded_sf_pool_tokens, intermediate_hidden/128] │
+├─────────────────────────────────────────────────────────────┤
+│  Combine Token Buffer (BF16)                                  │
+│  shape: [num_topk, num_max_tokens_per_rank, hidden]          │
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="1-2-代码证据-buffer-分配" id="12-buffer">1.2 代码证据：Buffer 分配</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/apis/mega.hpp: get_symm_buffer_size_for_mega_moe</span>
+
+<span class="c1">// Workspace: barriers, counts, metadata</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">workspace</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="p">(</span><span class="nb">nullptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">num_experts</span><span class="p">,</span>
+<span class="w">                                          </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">num_topk</span><span class="p">,</span><span class="w"> </span><span class="n">block_m</span><span class="p">);</span>
+
+<span class="c1">// Input buffers (Token Buffer 等价物)</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">input_token_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_token_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">input_sf_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_sf_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">input_topk_idx_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">input_topk_idx_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">input_sf_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">input_topk_weights_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">input_topk_weights_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">input_topk_idx_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+
+<span class="c1">// L1 pool: 所有本地 expert 共享的 token pool</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">l1_token_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_token_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_pool_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">input_topk_weights_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">l1_sf_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_sf_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_padded_sf_pool_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">l1_token_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+
+<span class="c1">// L2 pool: L1 输出 → L2 输入</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">l2_token_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_intermediate_token_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_pool_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">l1_topk_weights_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">l2_sf_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">fp8_intermediate_sf_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">num_padded_sf_pool_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">l2_token_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+
+<span class="c1">// Combine buffer: BF16, 用于跨 rank 写回</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">combine_token_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">bf16_token_layout</span><span class="p">,</span><span class="w"> </span><span class="n">num_topk</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">l2_sf_buffer</span><span class="p">.</span><span class="n">get_end_ptr</span><span class="p">());</span>
+</code></pre></div>
+
+<hh3 id="1-3-python-侧-view-映射" id="13-python-view">1.3 Python 侧 View 映射</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_sf</span><span class="p">,</span>
+ <span class="bp">self</span><span class="o">.</span><span class="n">topk_idx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">topk_weights</span><span class="p">,</span>
+ <span class="bp">self</span><span class="o">.</span><span class="n">l1_acts</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l1_acts_sf</span><span class="p">,</span>
+ <span class="bp">self</span><span class="o">.</span><span class="n">l2_acts</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l2_acts_sf</span><span class="p">)</span> <span class="o">=</span> <span class="n">slice_input_buffers</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+</code></pre></div>
+
+<p>注意：Python 侧只暴露了 8 个 view，<strong>Combine Buffer 和 Workspace 不暴露给 Python</strong>，仅供 kernel 内部使用。</p>
+<hr />
+<hh2 id="2-symmbuffer-段-deepep-buffer-层映射" id="2-symmbuffer-deepep-buffer">2. SymmBuffer 段 → DeepEP Buffer 层映射</hh2>
+<hh3 id="2-1-映射关系" id="21">2.1 映射关系</hh3>
+<table>
+<thead>
+<tr>
+<th>DeepEP Buffer 层</th>
+<th>SymmBuffer 对应段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>input_token_buffer</code> + <code>input_sf_buffer</code> + <code>input_topk_idx_buffer</code> + <code>input_topk_weights_buffer</code></td>
+<td>Router 输出，Token-major 布局</td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td>❌ 无独立对应</td>
+<td>Mega MoE 没有显式的 Dispatch Buffer</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td>❌ 无独立对应</td>
+<td>Mega MoE 没有显式的 Chunk 聚合</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>l1_token_buffer</code> / <code>l2_token_buffer</code> (pool)</td>
+<td>每个 rank 的 L1/L2 pool 即为 receive 目标</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer (L1)</strong></td>
+<td><code>l1_token_buffer</code> + <code>l1_sf_buffer</code> + <code>l1_topk_weights_buffer</code></td>
+<td>Expert GEMM L1 输入</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer (L2)</strong></td>
+<td><code>l2_token_buffer</code> + <code>l2_sf_buffer</code></td>
+<td>Expert GEMM L2 输入</td>
+</tr>
+<tr>
+<td><strong>Combine Buffer</strong></td>
+<td><code>combine_token_buffer</code> (BF16)</td>
+<td>L2 输出写回 + top-k reduce</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="2-2-关键差异-dispatch-chunk-buffer-的消失" id="22-dispatchchunk-buffer">2.2 关键差异：Dispatch/Chunk Buffer 的消失</hh3>
+<p>DeepEP 的 <strong>Normal Kernel</strong> 有完整的 5 层 buffer：</p>
+<div class="highlight"><pre><span></span><code>Token → Dispatch → Chunk → Network → Receive → Expert
+</code></pre></div>
+
+<p>Mega MoE 的 buffer 层级：</p>
+<div class="highlight"><pre><span></span><code>Token(input) → [NVLink pull] → L1 pool → L1 GEMM+SwiGLU → L2 pool → L2 GEMM → Combine buffer → [NVLink write-back] → output
+</code></pre></div>
+
+<p><strong>核心洞察</strong>: Mega MoE 通过 <strong>symmetric memory + dispatch warp 直接 pull</strong> 消除了显式的 Dispatch Buffer 和 Chunk Buffer。数据从 remote rank 的 <code>input_token_buffer</code> 直接通过 NVLink TMA load 拉到 local rank 的 <code>l1_token_buffer</code>，无需中间暂存。</p>
+<hr />
+<hh2 id="3-symmetric-memory-工作机制" id="3-symmetric-memory">3. Symmetric Memory 工作机制</hh2>
+<hh3 id="3-1-什么是-symmetric-memory" id="31-symmetric-memory">3.1 什么是 Symmetric Memory</hh3>
+<p>Symmetric Memory 是 PyTorch 2.x 引入的跨 rank 共享内存机制 (<code>torch.distributed._symmetric_memory</code>)。</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed._symmetric_memory</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">symm_mem</span>
+
+<span class="c1"># 1. 每个 rank 分配相同大小的 buffer</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+
+<span class="c1"># 2. 通过 rendezvous 注册到进程组，获取所有 rank 的地址</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">handle</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">rendezvous</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+
+<span class="c1"># 3. 获取所有 rank 的 buffer 地址列表</span>
+<span class="n">sym_buffer</span><span class="o">.</span><span class="n">handle</span><span class="o">.</span><span class="n">buffer_ptrs</span>  <span class="c1"># List[int64], 长度 = num_ranks</span>
+</code></pre></div>
+
+<hh3 id="3-2-symbuffer-结构-地址映射核心" id="32-symbuffer">3.2 SymBuffer 结构：地址映射核心</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">72</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">SymBuffer</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">base</span><span class="p">;</span><span class="w">                    </span><span class="c1">// 本地 buffer 基地址</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">kNumMaxRanks</span><span class="p">];</span><span class="w">   </span><span class="c1">// 各 rank 相对于本地的偏移</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">;</span><span class="w">               </span><span class="c1">// 当前 rank 编号</span>
+
+<span class="w">    </span><span class="c1">// 核心操作：将本地指针映射到目标 rank 的地址空间</span>
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">ptr_t</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="n">ptr_t</span><span class="w"> </span><span class="n">map</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">ptr_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">mapped_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">);</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">ptr_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mapped_ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong><code>map</code> 操作的本质</strong>：同一个指针（如 <code>input_token_buffer</code> 中的某个地址）在不同 rank 的 symmetric memory 中指向<strong>逻辑上对应的位置</strong>。通过 <code>map(ptr, dst_rank)</code>，当前 rank 可以直接访问 dst_rank 的 buffer 中相同偏移处的数据。</p>
+<hh3 id="3-3-为什么叫-symmetric" id="33-symmetric">3.3 为什么叫 "Symmetric"</hh3>
+<p>"Symmetric" 的含义是<strong>对称性</strong>：</p>
+<ol>
+<li><strong>大小对称</strong>: 每个 rank 分配<strong>完全相同大小</strong>的 buffer</li>
+<li><strong>布局对称</strong>: 每个 rank 内部的 segment 布局<strong>完全相同</strong></li>
+<li><strong>访问对称</strong>: 任何 rank 都可以通过相同的 offset 访问其他 rank 的对应位置</li>
+</ol>
+<div class="highlight"><pre><span></span><code>Rank 0 的 SymmBuffer          Rank 1 的 SymmBuffer
+┌──────────────────┐          ┌──────────────────┐
+│ Workspace        │          │ Workspace        │
+├──────────────────┤          ├──────────────────┤
+│ Input Token Buf  │◄────────►│ Input Token Buf  │  ← 相同 offset 访问
+├──────────────────┤  NVLink  ├──────────────────┤
+│ L1 Token Pool    │          │ L1 Token Pool    │
+├──────────────────┤          ├──────────────────┤
+│ L2 Token Pool    │          │ L2 Token Pool    │
+├──────────────────┤          ├──────────────────┤
+│ Combine Buf      │◄────────►│ Combine Buf      │
+└──────────────────┘          └──────────────────┘
+</code></pre></div>
+
+<hh3 id="3-4-cross-rank-shared-memory-的含义" id="34-cross-rank-shared-memory">3.4 Cross-Rank Shared Memory 的含义</hh3>
+<p>Cross-rank shared memory 不是真正的共享内存（物理上各 rank 的 GPU 显存独立），而是通过 <strong>NVLink P2P 访问</strong>实现的<strong>逻辑共享</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// kernel 中跨 rank 读取 remote token 的示例</span>
+<span class="c1">// sm100_fp8_fp4_mega_moe.cuh: 546-550</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">    </span><span class="n">pull_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w">  </span><span class="c1">// 本地 smem 目标</span>
+<span class="w">    </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">                   </span><span class="n">current_rank_in_expert</span><span class="p">),</span><span class="w">  </span><span class="c1">// 远程 rank 的 token 地址</span>
+<span class="w">    </span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kHidden</span><span class="p">);</span>
+</code></pre></div>
+
+<p>这里 <code>sym_buffer.map(...)</code> 将本地 <code>input_token_buffer</code> 的指针映射到 <code>current_rank_in_expert</code> 的地址空间，然后通过 TMA (Tensor Memory Accelerator) 执行 NVLink 远程加载。</p>
+<hr />
+<hh2 id="4-token-chunk-network-聚合的处理" id="4-tokenchunknetwork">4. Token→Chunk→Network 聚合的处理</hh2>
+<hh3 id="4-1-deepep-的做法" id="41-deepep">4.1 DeepEP 的做法</hh3>
+<p>DeepEP Normal Kernel 显式聚合：</p>
+<div class="highlight"><pre><span></span><code>Token Stream → Chunk (多个 token 聚合) → NVLink/RDMA 传输
+</code></pre></div>
+
+<ul>
+<li>Token = scheduling granularity</li>
+<li>Chunk = communication granularity</li>
+<li>目的: 减少小数据包开销，提高带宽利用率</li>
+</ul>
+<hh3 id="4-2-mega-moe-的做法-无显式-chunk" id="42-mega-moe-chunk">4.2 Mega MoE 的做法：无显式 Chunk</hh3>
+<p>Mega Mo E <strong>没有显式的 Chunk Buffer</strong>。它的 dispatch 策略是：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh: 457-600</span>
+<span class="c1">// Dispatch warps 按全局 token 索引轮转处理</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">warp_idx</span><span class="p">;</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">kNumGlobalWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. 确定该 token 属于哪个 expert、来自哪个 rank</span>
+<span class="w">    </span><span class="c1">// 2. 从 remote rank 的 input_token_buffer 直接 TMA load 到本地 smem</span>
+<span class="w">    </span><span class="c1">// 3. 从 smem TMA store 到本地 l1_token_buffer (pool)</span>
+<span class="w">    </span><span class="c1">// 4. 同时搬运 SF 和 topk_weights</span>
+<span class="w">    </span><span class="c1">// 5. 写 arrival count 通知 epilogue</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键区别</strong>：<br />
+- DeepEP: Token 先聚合到 Chunk，然后 Chunk 整体发送<br />
+- Mega MoE: 每个 token 独立通过 NVLink pull，无聚合</p>
+<hh3 id="4-3-为什么-mega-mo-e-不需要-chunk" id="43-mega-mo-e-chunk">4.3 为什么 Mega Mo E 不需要 Chunk</hh3>
+<ol>
+<li><strong>Decode 场景为主</strong>: Mega Mo E 面向 Blackwell SM100，主要优化 decode（小 batch），与 DeepEP Low-Latency Kernel 类似</li>
+<li><strong>NVLink 带宽充足</strong>: 节点内 NVLink 带宽极高（~900 GB/s），小数据包开销相对可接受</li>
+<li><strong>Compute-Communication 融合</strong>: 通过 persistent kernel + warp specialization，dispatch 和 GEMM 重叠执行，chunk 聚合的收益降低</li>
+<li><strong>对称内存的直接访问</strong>: symmetric memory 使得 remote access 像本地一样自然，无需显式 "发送-接收" 模型</li>
+</ol>
+<hr />
+<hh2 id="5-normal-low-latency-buffer-路径" id="5-normal-low-latency-buffer">5. Normal / Low-Latency Buffer 路径</hh2>
+<hh3 id="5-1-mega-mo-e-的答案-单一路径" id="51-mega-mo-e">5.1 Mega Mo E 的答案：单一路径</hh3>
+<p><strong>Mega Mo E 没有独立的 Normal / Low-Latency buffer 路径</strong>。它只有一套统一的 buffer 布局。</p>
+<p>但从行为上看，Mega Mo E 更接近 DeepEP 的 <strong>Low-Latency Kernel</strong>：<br />
+- 无 Chunk 聚合<br />
+- 直接 NVLink pull（类似 Direct RDMA）<br />
+- Token 级粒度调度</p>
+<hh3 id="5-2-代码证据" id="52">5.2 代码证据</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="c1"># 只有一个 SymmBuffer 类，没有 Normal/LowLatency 变体</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SymmBuffer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span>
+                 <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span>
+                 <span class="n">hidden</span><span class="p">,</span> <span class="n">intermediate_hidden</span><span class="p">,</span>
+                 <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">activation</span><span class="o">=</span><span class="s1">&#39;swiglu&#39;</span><span class="p">):</span>
+        <span class="c1"># 统一分配，无路径选择</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/apis/mega.hpp</span>
+<span class="c1">// 只有一个 fp8_fp4_mega_moe 入口</span>
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">fp8_fp4_mega_moe</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 直接调用 sm100_fp8_fp4_mega_moe</span>
+<span class="w">    </span><span class="c1">// 无 if (is_normal_kernel) 分支</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="6-buffer-尺寸计算" id="6-buffer">6. Buffer 尺寸计算</hh2>
+<hh3 id="6-1-关键参数" id="61">6.1 关键参数</hh3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>含义</th>
+<th>控制什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>num_max_tokens_per_rank</code></td>
+<td>每个 rank 最大 token 数</td>
+<td>Input Token Buffer 和 Combine Buffer 的第一维</td>
+</tr>
+<tr>
+<td><code>num_topk</code></td>
+<td>每个 token 选择的 expert 数</td>
+<td>TopK Idx/Weights 的宽度，Combine Buffer 的 topk 维</td>
+</tr>
+<tr>
+<td><code>hidden</code></td>
+<td>模型隐藏维度</td>
+<td>Token 的 K 维度</td>
+</tr>
+<tr>
+<td><code>intermediate_hidden</code></td>
+<td>FFN 中间维度</td>
+<td>L2 Token 的 K 维度</td>
+</tr>
+<tr>
+<td><code>num_experts</code></td>
+<td>全局 expert 总数</td>
+<td>Workspace 中 count 数组大小</td>
+</tr>
+<tr>
+<td><code>num_ranks</code></td>
+<td>进程数</td>
+<td>影响 pool 容量计算</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="6-2-pool-容量计算" id="62-pool">6.2 Pool 容量计算</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/include/deep_gemm/layout/mega_moe.cuh</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_HOST_DEVICE</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">get_num_max_pool_tokens</span><span class="p">(</span>
+<span class="w">    </span><span class="n">T</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">num_topk</span><span class="p">,</span>
+<span class="w">    </span><span class="n">T</span><span class="w"> </span><span class="n">num_experts_per_rank</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">block_m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 最坏情况: 所有 rank 的所有 token 都路由到本地 expert</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_max_recv_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_ranks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_max_experts_per_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">constexpr_min</span><span class="p">(</span><span class="n">num_topk</span><span class="p">,</span><span class="w"> </span><span class="n">num_experts_per_rank</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">constexpr_align</span><span class="p">(</span>
+<span class="w">        </span><span class="n">num_max_recv_tokens</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_max_experts_per_token</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_experts_per_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">block_m</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">),</span>
+<span class="w">        </span><span class="n">block_m</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>直觉理解</strong>：<br />
+- 每个 rank 最多发 <code>num_max_tokens_per_rank</code> 个 token<br />
+- 每个 token 选 <code>num_topk</code> 个 expert<br />
+- 最坏情况所有 token 都选本地的 <code>num_experts_per_rank</code> 个 expert 之一<br />
+- 所以本地 pool 需要容纳 <code>num_ranks × num_max_tokens_per_rank × min(num_topk, num_experts_per_rank)</code> 个 token<br />
+- 再加上 per-expert 的 BLOCK_M 对齐 padding</p>
+<hh3 id="6-3-sf-pool-容量" id="63-sf-pool">6.3 SF Pool 容量</hh3>
+<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_HOST_DEVICE</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">get_num_padded_sf_pool_tokens</span><span class="p">(</span><span class="n">T</span><span class="w"> </span><span class="n">num_max_pool_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">block_m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="n">num_max_pool_tokens</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">block_m</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">constexpr_align</span><span class="p">(</span><span class="n">block_m</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>SF 需要 128-aligned（UTCCP 硬件要求），所以每个 pool block 的 SF 需要 padding 到 128。</p>
+<hh3 id="6-4-数值示例" id="64">6.4 数值示例</hh3>
+<p>以 test_mega_moe.py 默认参数为例：<br />
+- <code>num_max_tokens_per_rank = 8192</code><br />
+- <code>num_topk = 6</code><br />
+- <code>num_experts = 384</code>, <code>num_ranks = 8</code> → <code>num_experts_per_rank = 48</code><br />
+- <code>hidden = 7168</code>, <code>intermediate_hidden = 3072</code><br />
+- <code>block_m = 192</code></p>
+<div class="highlight"><pre><span></span><code>num_max_pool_tokens = align(8 × 8192 × min(6, 48) + 48 × 191, 192)
+                    = align(393,216 + 9,168, 192)
+                    = 393,408 (约 384K tokens)
+
+num_padded_sf_pool_tokens = (393,408 / 192) × align(192, 128)
+                          = 2,049 × 256
+                          = 524,544
+
+Buffer 总大小 ≈ Workspace + Input(8192×7168 + ...) + L1 pool(393408×7168 + ...) + L2 pool + Combine
+            ≈ 数十 GiB 级别
+</code></pre></div>
+
+<hr />
+<hh2 id="7-transform_weights_for_mega_moe-的作用" id="7-transform_weights_for_mega_moe">7. transform_weights_for_mega_moe 的作用</hh2>
+<hh3 id="7-1-功能" id="71">7.1 功能</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">transform_weights_for_mega_moe</span><span class="p">(</span><span class="n">l1_weights</span><span class="p">,</span> <span class="n">l2_weights</span><span class="p">):</span>
+    <span class="c1"># L1: interleave gate/up, 然后 transpose SF for UTCCP</span>
+    <span class="n">l1_interleaved</span> <span class="o">=</span> <span class="n">_interleave_l1_weights</span><span class="p">(</span><span class="n">l1_weights</span><span class="p">)</span>
+    <span class="n">l1_weights</span> <span class="o">=</span> <span class="p">(</span><span class="n">l1_interleaved</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">_transpose_sf_for_utccp</span><span class="p">(</span><span class="n">l1_interleaved</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="c1"># L2: 只 transpose SF for UTCCP</span>
+    <span class="n">l2_weights</span> <span class="o">=</span> <span class="p">(</span><span class="n">l2_weights</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">_transpose_sf_for_utccp</span><span class="p">(</span><span class="n">l2_weights</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="k">return</span> <span class="n">l1_weights</span><span class="p">,</span> <span class="n">l2_weights</span>
+</code></pre></div>
+
+<hh3 id="7-2-l1-权重-interleave" id="72-l1-interleave">7.2 L1 权重 Interleave</hh3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_interleave_l1_weights</span><span class="p">(</span><span class="n">l1_weights</span><span class="p">):</span>
+    <span class="c1"># 原始布局: [gate: 0..N/2 | up: 0..N/2] (SwiGLU 的 gate 和 up 分开)</span>
+    <span class="c1"># 目标布局: [gate: 0..7, up: 0..7, gate: 8..15, up: 8..15, ...] (8 粒度交错)</span>
+</code></pre></div>
+
+<p><strong>为什么需要 interleave</strong>：<br />
+- SwiGLU 激活函数: <code>output = silu(gate) * up</code><br />
+- Epilogue 中 TMEM load 以 8 为一组读取<br />
+- Interleave 使得 gate/up 对在内存中相邻，SwiGLU 可以高效执行</p>
+<hh3 id="7-3-sf-transpose-utccp" id="73-sf-transpose-utccp">7.3 SF Transpose (UTCCP)</hh3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_transpose_sf_for_utccp</span><span class="p">(</span><span class="n">sf</span><span class="p">):</span>
+    <span class="c1"># 将 SF 从 K-major 转为 MN-major (4x32 transpose)</span>
+    <span class="c1"># 满足 SM100 UTCCP (Universal Tensor Memory Copy with Transpose) 的硬件要求</span>
+</code></pre></div>
+
+<p><strong>为什么需要 transpose SF</strong>：<br />
+- SM100 的 block-scaled MMA 使用 UTCCP 指令将 SF 从 smem 搬到 TMEM<br />
+- UTCCP 要求 SF 是 MN-major 布局（4×32 粒度）<br />
+- 原始 SF 是 K-major（per-32 elements along K）<br />
+- 需要 transpose 以匹配 UTCCP 的 4×32 数据搬运模式</p>
+<hh3 id="7-4-代码中的使用" id="74">7.4 代码中的使用</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># tests/test_mega_moe.py</span>
+<span class="n">l1_weights</span> <span class="o">=</span> <span class="n">cast_grouped_weights_to_fp4</span><span class="p">(</span><span class="n">l1_weights</span><span class="p">)</span>
+<span class="n">l2_weights</span> <span class="o">=</span> <span class="n">cast_grouped_weights_to_fp4</span><span class="p">(</span><span class="n">l2_weights</span><span class="p">)</span>
+<span class="n">transformed_l1_weights</span><span class="p">,</span> <span class="n">transformed_l2_weights</span> <span class="o">=</span> <span class="n">deep_gemm</span><span class="o">.</span><span class="n">transform_weights_for_mega_moe</span><span class="p">(</span>
+    <span class="n">l1_weights</span><span class="p">,</span> <span class="n">l2_weights</span>
+<span class="p">)</span>
+<span class="c1"># transformed_* 直接传入 kernel</span>
+<span class="n">deep_gemm</span><span class="o">.</span><span class="n">fp8_fp4_mega_moe</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">transformed_l1_weights</span><span class="p">,</span> <span class="n">transformed_l2_weights</span><span class="p">,</span> <span class="n">buffer</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="8-完整数据流图" id="8">8. 完整数据流图</hh2>
+<hh3 id="8-1-deepep-buffer-层级-mermaid" id="81-deepep-buffer-mermaid">8.1 DeepEP Buffer 层级 (Mermaid)</hh3>
+<div class="highlight"><pre><span></span><code>flowchart LR
+    subgraph DeepEP_Normal[&quot;DeepEP Normal Kernel (Throughput)&quot;]
+        direction TB
+        TB[&quot;Token Buffer&lt;br/&gt;(Token-major)&quot;]
+        DB[&quot;Dispatch Buffer&lt;br/&gt;(Dest-major)&quot;]
+        CB[&quot;Chunk Buffer&lt;br/&gt;(aggregated)&quot;]
+        NB[&quot;Network&lt;br/&gt;NVLink/RDMA&quot;]
+        RB[&quot;Receive Buffer&lt;br/&gt;(dest GPU)&quot;]
+        EB[&quot;Expert Buffer&lt;br/&gt;(Expert-major)&quot;]
+        TB --&gt; DB --&gt; CB --&gt; NB --&gt; RB --&gt; EB
+    end
+
+    subgraph DeepEP_LL[&quot;DeepEP Low-Latency Kernel (Decode)&quot;]
+        direction TB
+        TB2[&quot;Token Buffer&quot;]
+        NB2[&quot;Direct RDMA&quot;]
+        RB2[&quot;Receive Buffer&quot;]
+        EB2[&quot;Expert Buffer&quot;]
+        TB2 --&gt; NB2 --&gt; RB2 --&gt; EB2
+    end
+</code></pre></div>
+
+<hh3 id="8-2-mega-moe-symmbuffer-数据流-mermaid" id="82-mega-moe-symmbuffer-mermaid">8.2 Mega MoE SymmBuffer 数据流 (Mermaid)</hh3>
+<div class="highlight"><pre><span></span><code>flowchart TB
+    subgraph Input[&quot;Input Phase (每个 rank 本地)&quot;]
+        X[&quot;x (FP8 tokens)&lt;br/&gt;+ x_sf + topk_idx + topk_weights&lt;br/&gt;→ 写入 input_token_buffer&quot;]
+    end
+
+    subgraph Dispatch[&quot;Dispatch Phase (跨 rank)&quot;]
+        PULL[&quot;Dispatch Warps&lt;br/&gt;NVLink TMA Load&lt;br/&gt;从 remote rank 拉取 token&quot;]
+        META[&quot;Metadata 交换&lt;br/&gt;expert_send_count&lt;br/&gt;src_token_topk_idx&quot;]
+    end
+
+    subgraph L1Pool[&quot;L1 Expert Pool&quot;]
+        L1T[&quot;l1_token_buffer&lt;br/&gt;(FP8, pool)&quot;]
+        L1SF[&quot;l1_sf_buffer&lt;br/&gt;(M-major)&quot;]
+        L1W[&quot;l1_topk_weights&quot;]
+    end
+
+    subgraph L1GEMM[&quot;L1 GEMM + SwiGLU&quot;]
+        GEMM1[&quot;FP8×FP4 GEMM&lt;br/&gt;(block-scaled MMA)&quot;]
+        SWIGLU[&quot;SwiGLU + topk_weight&lt;br/&gt;in epilogue&quot;]
+    end
+
+    subgraph L2Pool[&quot;L2 Expert Pool&quot;]
+        L2T[&quot;l2_token_buffer&lt;br/&gt;(FP8, pool)&quot;]
+        L2SF[&quot;l2_sf_buffer&lt;br/&gt;(M-major)&quot;]
+    end
+
+    subgraph L2GEMM[&quot;L2 GEMM&quot;]
+        GEMM2[&quot;FP8×FP4 GEMM&lt;br/&gt;输出 BF16&quot;]
+    end
+
+    subgraph Combine[&quot;Combine Phase&quot;]
+        CB[&quot;combine_token_buffer&lt;br/&gt;(BF16, per-topk-slot)&quot;]
+        REDUCE[&quot;Top-K Reduce&lt;br/&gt;累加 + write-back to y&quot;]
+    end
+
+    X --&gt; PULL --&gt; L1T
+    META --&gt; PULL
+    L1T &amp; L1SF &amp; L1W --&gt; GEMM1 --&gt; SWIGLU --&gt; L2T
+    L2T &amp; L2SF --&gt; GEMM2 --&gt; CB --&gt; REDUCE
+</code></pre></div>
+
+<hh3 id="8-3-对比图-deepep-vs-mega-moe-mermaid" id="83-deepep-vs-mega-moe-mermaid">8.3 对比图：DeepEP vs Mega MoE (Mermaid)</hh3>
+<div class="highlight"><pre><span></span><code>flowchart LR
+    subgraph EP[&quot;DeepEP Buffer 层级&quot;]
+        direction TB
+        A1[&quot;Token Buffer&quot;] --&gt; A2[&quot;Dispatch Buffer&quot;] --&gt; A3[&quot;Chunk Buffer&quot;]
+        A3 --&gt; A4[&quot;Network&quot;] --&gt; A5[&quot;Receive Buffer&quot;] --&gt; A6[&quot;Expert Buffer&quot;]
+    end
+
+    subgraph MM[&quot;Mega MoE SymmBuffer 映射&quot;]
+        direction TB
+        B1[&quot;input_token_buffer&lt;br/&gt;(= Token Buffer)&quot;]
+        B2[&quot;❌ 无 Dispatch Buffer&lt;br/&gt;直接 NVLink pull&quot;]
+        B3[&quot;❌ 无 Chunk Buffer&lt;br/&gt;token 级直接传输&quot;]
+        B4[&quot;l1_token_buffer&lt;br/&gt;(= Receive + Expert Buffer)&quot;]
+        B5[&quot;l2_token_buffer&lt;br/&gt;(= L2 Expert Buffer)&quot;]
+        B6[&quot;combine_token_buffer&lt;br/&gt;(= Combine 输出)&quot;]
+        B1 --&gt; B4 --&gt; B5 --&gt; B6
+    end
+
+    A1 -.-&gt; B1
+    A5 -.-&gt; B4
+    A6 -.-&gt; B5
+</code></pre></div>
+
+<hr />
+<hh2 id="9-核心洞察总结" id="9">9. 核心洞察总结</hh2>
+<hh3 id="9-1-symmbuffer-的本质" id="91-symmbuffer">9.1 SymmBuffer 的本质</hh3>
+<p>SymmBuffer 是一个<strong>以 pool 为中心的融合 buffer 架构</strong>：</p>
+<ol>
+<li><strong>Input 区</strong>：每个 rank 的本地 Router 输出（Token Buffer 等价物）</li>
+<li><strong>Pool 区</strong>：所有本地 expert 共享的 token pool（Receive + Expert Buffer 融合）</li>
+<li><strong>Combine 区</strong>：L2 输出暂存 + top-k reduce（Combine Buffer）</li>
+<li><strong>Workspace</strong>：同步原语 + metadata</li>
+</ol>
+<hh3 id="9-2-与-deepep-的根本差异" id="92-deepep">9.2 与 DeepEP 的根本差异</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE (SymmBuffer)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer 层级</strong></td>
+<td>5 层 (Token→Dispatch→Chunk→Receive→Expert)</td>
+<td>3 层 (Input→Pool→Combine)</td>
+</tr>
+<tr>
+<td><strong>Dispatch 方式</strong></td>
+<td>显式 Dispatch Kernel + 中间 buffer</td>
+<td>Warp 直接 NVLink pull，无中间 buffer</td>
+</tr>
+<tr>
+<td><strong>Chunk 聚合</strong></td>
+<td>有（Normal Kernel）</td>
+<td>无（token 级）</td>
+</tr>
+<tr>
+<td><strong>Normal/LL 分离</strong></td>
+<td>两套 kernel + buffer</td>
+<td>单一套 buffer</td>
+</tr>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>普通显存 + 显式 send/recv</td>
+<td>Symmetric Memory + 地址映射</td>
+</tr>
+<tr>
+<td><strong>通信语义</strong></td>
+<td>Push 模型（source 主动发送）</td>
+<td>Pull 模型（destination 主动拉取）</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="9-3-为什么-mega-mo-e-可以消除-dispatch-chunk-buffer" id="93-mega-mo-e-dispatchchunk-buffer">9.3 为什么 Mega Mo E 可以消除 Dispatch/Chunk Buffer</hh3>
+<ol>
+<li><strong>Symmetric Memory 的地址对称性</strong>：任何 rank 可以直接访问任何其他 rank 的 buffer，无需 "打包-发送-解包"</li>
+<li><strong>Persistent Kernel + Warp Specialization</strong>：dispatch warps 和 GEMM warps 同时运行，dispatch 可以按需实时 pull</li>
+<li><strong>NVLink 的全连接拓扑</strong>：节点内所有 GPU 两两直连，pull 和 send 的延迟差异不大</li>
+<li><strong>Decode 场景为主</strong>：小 batch 下 chunk 聚合无收益，直接 token 级传输更优</li>
+</ol>
+<hh3 id="9-4-pull-vs-push-的范式转变" id="94-pull-vs-push">9.4 Pull vs Push 的范式转变</hh3>
+<div class="highlight"><pre><span></span><code>DeepEP (Push):
+  Source GPU: &quot;我要发 token X 给 Dest GPU&quot; → 写入 Dest 的 Receive Buffer
+
+Mega Mo E (Pull):
+  Dest GPU: &quot;我需要 token X 从 Source GPU&quot; → 从 Source 的 Input Buffer 拉取
+</code></pre></div>
+
+<p>Pull 模型的优势：<br />
+- <strong>接收方控制速率</strong>：避免发送方过快导致接收方溢出<br />
+- <strong>天然负载均衡</strong>：处理快的 rank 可以多 pull<br />
+- <strong>减少同步</strong>：不需要全局 "发送完毕" 信号，只需 per-block arrival count</p>
+<hr />
+<hh2 id="10-代码索引" id="10">10. 代码索引</hh2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>SymmBuffer 类定义、Python 接口</td>
+</tr>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>Buffer 尺寸计算、slice 函数、C++ 入口</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td>SymBuffer 结构（地址映射）</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td>Workspace、Buffer、Data 布局定义</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>完整 kernel 实现（dispatch/GEMM/combine）</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>配置计算（block size、pool 容量、pipeline）</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>使用示例、正确性验证</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="11-参考源码片段" id="11_1">11. 参考源码片段</hh2>
+<hh3 id="11-1-symmbuffer-初始化" id="111-symmbuffer">11.1 SymmBuffer 初始化</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SymmBuffer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span>
+                 <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span>
+                 <span class="n">hidden</span><span class="p">,</span> <span class="n">intermediate_hidden</span><span class="p">,</span>
+                 <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">activation</span><span class="o">=</span><span class="s1">&#39;swiglu&#39;</span><span class="p">):</span>
+        <span class="c1"># 1. 计算总字节数</span>
+        <span class="n">num_bytes</span><span class="p">,</span> <span class="n">slice_input_buffers</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">get_symm_buffer_size_for_mega_moe</span><span class="p">(</span>
+            <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">(),</span> <span class="n">num_experts</span><span class="p">,</span>
+            <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span>
+            <span class="n">hidden</span><span class="p">,</span> <span class="n">intermediate_hidden</span><span class="p">,</span>
+            <span class="n">use_fp8_dispatch</span><span class="p">,</span> <span class="n">activation</span>
+        <span class="p">)</span>
+        <span class="c1"># 2. 分配对称内存</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+        <span class="c1"># 3. 注册到进程组</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">handle</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">rendezvous</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+        <span class="c1"># 4. 创建 view</span>
+        <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_sf</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">topk_idx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">topk_weights</span><span class="p">,</span>
+         <span class="bp">self</span><span class="o">.</span><span class="n">l1_acts</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l1_acts_sf</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l2_acts</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l2_acts_sf</span><span class="p">)</span> <span class="o">=</span> \
+            <span class="n">slice_input_buffers</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+</code></pre></div>
+
+<hh3 id="11-2-跨-rank-访问" id="112-rank">11.2 跨 rank 访问</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh: 546-550</span>
+<span class="c1">// Dispatch warp 从 remote rank 拉取 token</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">    </span><span class="n">pull_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w">  </span><span class="c1">// 本地 smem</span>
+<span class="w">    </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span>
+<span class="w">        </span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">current_rank_in_expert</span><span class="w">     </span><span class="c1">// 目标 rank</span>
+<span class="w">    </span><span class="p">),</span>
+<span class="w">    </span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kHidden</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="11-3-combine-写回" id="113-combine">11.3 Combine 写回</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh: 1197-1202</span>
+<span class="c1">// Epilogue warp 将 L2 输出写回 remote rank 的 combine buffer</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">combine_token_buffer</span>
+<span class="w">    </span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">dst_topk_idx</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">dst_token_idx</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">dst_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">n_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">float4</span><span class="p">));</span>
+<span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">packed</span><span class="p">;</span>
+</code></pre></div>
+
+<hr />
+<p><em>分析基于 DeepGEMM 源码 (commit: 当前 main 分支) 与 DeepEP 博客文本</em></p>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>
