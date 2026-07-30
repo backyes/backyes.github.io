@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP Symmetric Memory 全面架构分析</title>
+<style>
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="deepep-symmetric-memory-全面架构分析" id="deepep-symmetric-memory">DeepEP Symmetric Memory 全面架构分析</hh1>
+<blockquote>
+<p>本文档深入分析 DeepEP 中 <strong>symmetric memory（对称内存）</strong> 的所有版本实现（V1 Legacy NVSHMEM 和 V2 Elastic NCCL Gin），涵盖软件依赖、内存类型、分配/映射/访问/同步机制、内核级代码示例，以及 V1 vs V2 的演进对比。</p>
+</blockquote>
+<hr />
+<hh2 id="目录" id="_1">目录</hh2>
+<ol>
+<li><a href="#1-概述与背景">概述与背景</a></li>
+<li><a href="#2-软件依赖">软件依赖</a></li>
+<li><a href="#3-symmetric-memory-类型体系">Symmetric Memory 类型体系</a></li>
+<li><a href="#4-核心数据结构与分配流程">核心数据结构与分配流程</a></li>
+<li><a href="#5-指针映射与远程访问机制">指针映射与远程访问机制</a></li>
+<li><a href="#6-内核级代码示例">内核级代码示例</a></li>
+<li><a href="#7-同步机制">同步机制</a></li>
+<li><a href="#8-v1-vs-v2-对比分析">V1 vs V2 对比分析</a></li>
+<li><a href="#9-python-api-与用户使用示例">Python API 与用户使用示例</a></li>
+<li><a href="#10-架构洞察总结">架构洞察总结</a></li>
+</ol>
+<hr />
+<hh2 id="1-概述与背景" id="1">1. 概述与背景</hh2>
+<p>Symmetric memory 是 DeepEP 通信架构的核心基础设施。其本质是：<strong>一块内存，多个 GPU 可以通过各自独立的虚拟地址（VA）访问同一块物理内存</strong>。这使得：</p>
+<ul>
+<li><strong>NVLink 域内</strong>：GPU 可以直接通过 NVLink 远程直接读写对端 HBM</li>
+<li><strong>RDMA 域间</strong>：NIC 可以直接通过 GPUDirect RDMA 读写远端 GPU 的 HBM，无需 CPU 介入</li>
+</ul>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    Symmetric Memory 物理布局                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   GPU 0 VA  ──────┐                                                 │
+│                   │     ┌──────────────────────────┐                │
+│   GPU 1 VA  ──────┼────▶│   Physical Memory        │                │
+│                   │     │   (HBM or DRAM)          │                │
+│   GPU 2 VA  ──────┘     └──────────────────────────┘                │
+│                                                                     │
+│   每个 GPU 持有不同的 VA 指针，但映射到同一块物理内存                    │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p>DeepEP 的 symmetric memory 演进分为两个大版本：</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>后端</th>
+<th>分配 API</th>
+<th>通信 API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>V1 Legacy</td>
+<td>NVSHMEM</td>
+<td><code>nvshmem_alloc</code></td>
+<td><code>nvshmemi_ibgda_put_nbi</code></td>
+</tr>
+<tr>
+<td>V2 Elastic</td>
+<td>NCCL GIN</td>
+<td><code>ncclMemAlloc</code> / CUDA Driver API</td>
+<td><code>ncclGin</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="2-软件依赖" id="2">2. 软件依赖</hh2>
+<hh3 id="2-1-pytorch-apis" id="21-pytorch-apis">2.1 PyTorch APIs</hh3>
+<p>DeepEP <strong>未直接使用</strong> <code>torch.distributed._symmetric_memory</code>（这是 PyTorch 更高层的封装）。DeepEP 直接调用底层 NCCL 和 CUDA Driver API：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:128 - 纯 GPU 分配</span>
+<span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclMemAlloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">));</span>
+
+<span class="c1">// symmetric.hpp:164 - CUDA Driver API 分配</span>
+<span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemAddressReserve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">kNumAlignmentBytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemCreate</span><span class="p">(</span><span class="o">&amp;</span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">gpu_prop</span><span class="p">));</span>
+<span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+</code></pre></div>
+
+<p>但 Python 侧使用 <code>torch.distributed</code> 进行 bootstrap 信息交换：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># elastic.py:342 - 交换 CPU handle (pid, fd)</span>
+<span class="n">dist</span><span class="o">.</span><span class="n">all_gather_object</span><span class="p">(</span><span class="n">cpu_comm</span><span class="p">,</span> <span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">fd</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">group</span><span class="p">)</span>
+</code></pre></div>
+
+<hh3 id="2-2-nccl-要求" id="22-nccl">2.2 NCCL 要求</hh3>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>NCCL 版本要求</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GIN (GPU-initiated Network)</td>
+<td>≥ 2.18+</td>
+<td>V2 Elastic 核心依赖</td>
+</tr>
+<tr>
+<td><code>ncclDevCommCreate</code> runtime version</td>
+<td>≥ 2.31</td>
+<td>编译时/运行时版本解耦</td>
+</tr>
+<tr>
+<td><code>ncclCommWindowRegister</code></td>
+<td>≥ 2.28</td>
+<td>symmetric memory 注册为 NCCL window</td>
+</tr>
+<tr>
+<td><code>ncclMemAlloc</code></td>
+<td>≥ 2.20</td>
+<td>纯 GPU symmetric memory 分配</td>
+</tr>
+<tr>
+<td><code>ncclGetLsaPointer</code></td>
+<td>≥ 2.28</td>
+<td>获取 NVLink 域内 LSA 指针</td>
+</tr>
+</tbody>
+</table>
+<p>关键代码（<code>nccl.cu:100-108</code>）：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// NCCL 2.31+ 使用 runtime version 创建 device communicator</span>
+<span class="cp">#if NCCL_VERSION_CODE &gt;= NCCL_VERSION(2, 31, 0)</span>
+<span class="w">    </span><span class="n">reqs</span><span class="p">.</span><span class="n">useRuntimeVersion</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="w">    </span><span class="n">dev_comm</span><span class="p">.</span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="n">props</span><span class="p">.</span><span class="n">devCommRuntimeVersionSize</span><span class="p">);</span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="n">EP_HOST_ASSERT</span><span class="p">(</span><span class="n">NCCL_VERSION_CODE</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">nccl_runtime_version</span><span class="p">);</span>
+<span class="w">    </span><span class="n">dev_comm</span><span class="p">.</span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="n">ncclDevComm_t</span><span class="p">));</span>
+<span class="cp">#endif</span>
+<span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclDevCommCreate</span><span class="p">(</span><span class="n">comm</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">reqs</span><span class="p">,</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="n">ncclDevComm_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">dev_comm</span><span class="p">.</span><span class="n">ptr</span><span class="p">)));</span>
+</code></pre></div>
+
+<hh3 id="2-3-硬件要求" id="23">2.3 硬件要求</hh3>
+<table>
+<thead>
+<tr>
+<th>硬件</th>
+<th>要求</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVLink</td>
+<td>SM90 (H100/H800) 必需</td>
+<td>节点内 symmetric pointer 直接访问</td>
+</tr>
+<tr>
+<td>GPUDirect RDMA</td>
+<td>跨节点通信必需</td>
+<td>NIC 直接读写远端 GPU HBM</td>
+</tr>
+<tr>
+<td>SM90/SM100</td>
+<td>V2 主要目标架构</td>
+<td>支持 GIN 和 TMA</td>
+</tr>
+<tr>
+<td>NVSwitch (可选)</td>
+<td>全连接 NVLink</td>
+<td>更大 scale-up domain</td>
+</tr>
+</tbody>
+</table>
+<p><code>DeviceContext</code> 构造函数（<code>symmetric.hpp:27-31</code>）自动检测硬件能力：</p>
+<div class="highlight"><pre><span></span><code><span class="n">DeviceContext</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaGetDevice</span><span class="p">(</span><span class="o">&amp;</span><span class="n">device_idx</span><span class="p">));</span>
+<span class="w">    </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuDeviceGet</span><span class="p">(</span><span class="o">&amp;</span><span class="n">device</span><span class="p">,</span><span class="w"> </span><span class="n">device_idx</span><span class="p">));</span>
+<span class="w">    </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuDeviceGetAttribute</span><span class="p">(</span><span class="o">&amp;</span><span class="n">numa_idx</span><span class="p">,</span><span class="w"> </span>
+<span class="w">        </span><span class="n">CU_DEVICE_ATTRIBUTE_HOST_NUMA_ID</span><span class="p">,</span><span class="w"> </span><span class="n">device</span><span class="p">));</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="3-symmetric-memory-类型体系" id="3-symmetric-memory">3. Symmetric Memory 类型体系</hh2>
+<p>DeepEP V2 定义了三种 symmetric memory 类型，根据使用场景自动选择：</p>
+<div class="mermaid">classDiagram
+    class SymmetricMemory {
+        <<abstract>>
+        +void* ptr
+        +int64_t num_bytes
+        +int64_t num_gpu_bytes
+        +int64_t num_cpu_bytes
+    }
+
+    class GPUSymmetricMemory {
+        +GPUSymmetricMemory(num_bytes)
+        ~GPUSymmetricMemory()
+    }
+
+    class ElasticSymmetricMemory {
+        -CUmemGenericAllocationHandle gpu_handle
+        -CUmemGenericAllocationHandle cpu_handle
+        +ElasticSymmetricMemory(num_gpu_bytes, num_cpu_bytes)
+        ~ElasticSymmetricMemory()
+    }
+
+    class HybridElasticSymmetricMemory {
+        -int num_scaleup_ranks
+        -CUmemGenericAllocationHandle gpu_handle
+        -vector~CUmemGenericAllocationHandle~ cpu_handles
+        -int local_export_fd
+        +HybridElasticSymmetricMemory(cpu_comm, num_gpu_bytes, num_cpu_bytes, ...)
+        ~HybridElasticSymmetricMemory()
+        +static create_cpu_handle(num_cpu_bytes) cpu_handle_t
+    }
+
+    SymmetricMemory <|-- GPUSymmetricMemory
+    SymmetricMemory <|-- ElasticSymmetricMemory
+    SymmetricMemory <|-- HybridElasticSymmetricMemory
+</div>
+
+<hh3 id="3-1-gpusymmetricmemory-纯-gpu-分配" id="31-gpusymmetricmemory-gpu">3.1 GPUSymmetricMemory — 纯 GPU 分配</hh3>
+<p><strong>当前默认路径</strong>，使用 <code>ncclMemAlloc</code> 分配纯 GPU symmetric memory。</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:124-140</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">GPUSymmetricMemory</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SymmetricMemory</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="k">explicit</span><span class="w"> </span><span class="n">GPUSymmetricMemory</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">EP_HOST_ASSERT</span><span class="p">(</span><span class="n">num_bytes</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">num_bytes</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumAlignmentBytes</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">        </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclMemAlloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">));</span><span class="w">  </span><span class="c1">// NCCL 分配，自动支持 symmetric</span>
+<span class="w">        </span><span class="n">EP_HOST_ASSERT</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumAlignmentBytes</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">;</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="o">~</span><span class="n">GPUSymmetricMemory</span><span class="p">()</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclMemFree</span><span class="p">(</span><span class="n">ptr</span><span class="p">));</span>
+<span class="w">            </span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>使用场景</strong>：<code>num_cpu_bytes == 0</code> 时自动选择，即纯 GPU 通信场景（无 Engram、无 CPU 缓冲区）。</p>
+<hh3 id="3-2-elasticsymmetricmemory-gpu-cpu-混合分配" id="32-elasticsymmetricmemory-gpu-cpu">3.2 ElasticSymmetricMemory — GPU + CPU 混合分配</hh3>
+<p>使用 CUDA Driver API 分配 <strong>GPU VRAM + CPU RAM（NUMA-local）</strong> 的连续 VA 范围：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:145-186</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ElasticSymmetricMemory</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SymmetricMemory</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">CUmemGenericAllocationHandle</span><span class="w"> </span><span class="n">gpu_handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{};</span>
+<span class="w">    </span><span class="n">CUmemGenericAllocationHandle</span><span class="w"> </span><span class="n">cpu_handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{};</span>
+
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">ElasticSymmetricMemory</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">DeviceContext</span><span class="w"> </span><span class="n">ctx</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">gpu_prop</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">gpu_alloc_prop</span><span class="p">();</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">cpu_prop</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">cpu_alloc_prop</span><span class="p">();</span>
+
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">;</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_cpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">;</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 1. 预留 VA 空间</span>
+<span class="w">        </span><span class="n">CUdeviceptr</span><span class="w"> </span><span class="n">addr</span><span class="p">;</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemAddressReserve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">kNumAlignmentBytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uintptr_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">addr</span><span class="p">));</span>
+
+<span class="w">        </span><span class="c1">// 2. 映射 GPU 段</span>
+<span class="w">        </span><span class="n">cumem_create_with_fallback</span><span class="p">(</span><span class="o">&amp;</span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">gpu_prop</span><span class="p">);</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">        </span><span class="n">set_access</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">device_idx</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 3. 映射 CPU 段</span>
+<span class="w">        </span><span class="n">cumem_create_with_fallback</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cpu_handle</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">cpu_prop</span><span class="p">);</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">cpu_handle</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">        </span><span class="n">set_access</span><span class="p">(</span><span class="n">addr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">device_idx</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">numa_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>内存布局</strong>：</p>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────┐
+│              ElasticSymmetricMemory VA 布局                   │
+├──────────────────────────────────────────────────────────────┤
+│  [ GPU VRAM (front) ]  [ CPU RAM / NUMA-local (back) ]      │
+│  ←── num_gpu_bytes ──→  ←──── num_cpu_bytes ────→           │
+│                                                              │
+│  整个连续 VA 范围兼容 `ncclCommWindowRegister`                │
+└──────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>使用场景</strong>：<code>num_cpu_bytes &gt; 0</code> 且 <code>allow_hybrid_mode == false</code> 时。</p>
+<hh3 id="3-3-hybridelasticsymmetricmemory-混合弹性分配" id="33-hybridelasticsymmetricmemory">3.3 HybridElasticSymmetricMemory — 混合弹性分配</hh3>
+<p><strong>最复杂的模式</strong>：每个 rank 创建自己的 NUMA-local CPU 段，然后导入并映射所有 intra-node CPU 段到每个 rank 的 VA 空间。</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:191-289</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">HybridElasticSymmetricMemory</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SymmetricMemory</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">;</span>
+<span class="w">    </span><span class="n">CUmemGenericAllocationHandle</span><span class="w"> </span><span class="n">gpu_handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{};</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">CUmemGenericAllocationHandle</span><span class="o">&gt;</span><span class="w"> </span><span class="n">cpu_handles</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">local_export_fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">HybridElasticSymmetricMemory</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">cpu_comm_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">,</span>
+<span class="w">                                 </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span>
+<span class="w">                                 </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">)</span><span class="o">:</span>
+<span class="w">        </span><span class="n">num_scaleup_ranks</span><span class="p">(</span><span class="n">num_scaleup_ranks</span><span class="p">),</span>
+<span class="w">        </span><span class="n">cpu_handles</span><span class="p">(</span><span class="n">num_scaleup_ranks</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">DeviceContext</span><span class="w"> </span><span class="n">ctx</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">gpu_prop</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">gpu_alloc_prop</span><span class="p">();</span>
+
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">;</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_cpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">;</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 预留 VA</span>
+<span class="w">        </span><span class="n">CUdeviceptr</span><span class="w"> </span><span class="n">addr</span><span class="p">;</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemAddressReserve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">kNumAlignmentBytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uintptr_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">addr</span><span class="p">));</span>
+
+<span class="w">        </span><span class="c1">// 映射 GPU 段</span>
+<span class="w">        </span><span class="n">cumem_create_with_fallback</span><span class="p">(</span><span class="o">&amp;</span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">gpu_prop</span><span class="p">);</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">gpu_handle</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">        </span><span class="n">set_access</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">device_idx</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 导入并映射所有 intra-node CPU 段</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">local_pid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getpid</span><span class="p">();</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">[</span><span class="n">num_scaleup_ranks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">];</span>
+<span class="w">            </span><span class="kt">int</span><span class="w"> </span><span class="n">local_fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fd</span><span class="p">;</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">pid</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">local_pid</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="c1">// 跨进程：通过 pidfd 导入 FD</span>
+<span class="w">                </span><span class="kt">int</span><span class="w"> </span><span class="n">pidfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">syscall</span><span class="p">(</span><span class="n">SYS_pidfd_open</span><span class="p">,</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">                </span><span class="n">local_fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">syscall</span><span class="p">(</span><span class="n">SYS_pidfd_getfd</span><span class="p">,</span><span class="w"> </span><span class="n">pidfd</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">                </span><span class="n">close</span><span class="p">(</span><span class="n">pidfd</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+
+<span class="w">            </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">;</span>
+<span class="w">            </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemImportFromShareableHandle</span><span class="p">(</span>
+<span class="w">                </span><span class="o">&amp;</span><span class="n">cpu_handles</span><span class="p">[</span><span class="n">i</span><span class="p">],</span>
+<span class="w">                </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uintptr_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">local_fd</span><span class="p">)),</span>
+<span class="w">                </span><span class="n">CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR</span><span class="p">));</span>
+<span class="w">            </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">cpu_handles</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">            </span><span class="n">set_access</span><span class="p">(</span><span class="n">addr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">device_idx</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">numa_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 创建 NUMA-local CPU 段并导出 POSIX FD</span>
+<span class="w">    </span><span class="k">static</span><span class="w"> </span><span class="n">cpu_handle_t</span><span class="w"> </span><span class="n">create_cpu_handle</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">DeviceContext</span><span class="w"> </span><span class="n">ctx</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">cpu_prop</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">cpu_alloc_prop</span><span class="p">();</span>
+
+<span class="w">        </span><span class="n">CUmemGenericAllocationHandle</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="w">        </span><span class="n">cumem_create_with_fallback</span><span class="p">(</span><span class="o">&amp;</span><span class="n">handle</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">cpu_prop</span><span class="p">);</span>
+
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemExportToShareableHandle</span><span class="p">(</span>
+<span class="w">            </span><span class="o">&amp;</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">handle</span><span class="p">,</span><span class="w"> </span><span class="n">CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+
+<span class="w">        </span><span class="c1">// POSIX FD 保持物理内存存活，可以释放 allocation handle</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemRelease</span><span class="p">(</span><span class="n">handle</span><span class="p">));</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">getpid</span><span class="p">(),</span><span class="w"> </span><span class="n">fd</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>内存布局</strong>：</p>
+<div class="highlight"><pre><span></span><code>┌────────────────────────────────────────────────────────────────────────────┐
+│              HybridElasticSymmetricMemory VA 布局                           │
+├────────────────────────────────────────────────────────────────────────────┤
+│  [GPU VRAM] [CPU rank0] [CPU rank1] [CPU rank2] ... [CPU rank(N-1)]       │
+│  ←─ GPU ──→ ←────────── intra-node CPU segments ──────────────→           │
+│                                                                            │
+│  每个 rank 的 CPU 段是 NUMA-local 的，通过 POSIX FD 跨进程导入               │
+└────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>使用场景</strong>：<code>num_cpu_bytes &gt; 0</code> 且 <code>allow_hybrid_mode == true</code> 时。</p>
+<hh3 id="3-4-类型选择逻辑" id="34">3.4 类型选择逻辑</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:291-317 - 统一分配入口</span>
+<span class="k">static</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">SymmetricMemory</span><span class="o">&gt;</span><span class="w"> </span><span class="n">alloc</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span>
+<span class="w">                                              </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">allow_hybrid_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span>
+<span class="w">                                              </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">                                              </span><span class="k">const</span><span class="w"> </span><span class="n">cpu_comm_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">cpu_comm</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">SymmetricMemory</span><span class="o">&gt;</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">num_cpu_bytes</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">allow_hybrid_mode</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">HybridElasticSymmetricMemory</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">                </span><span class="n">cpu_comm</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_scaleup_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">ElasticSymmetricMemory</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">                </span><span class="n">num_gpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">GPUSymmetricMemory</span><span class="o">&gt;</span><span class="p">(</span><span class="n">num_gpu_bytes</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 如果分配器可能产生 CPU 段，启用 NCCL elastic buffer register</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">dynamic_cast</span><span class="o">&lt;</span><span class="n">ElasticSymmetricMemory</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">result</span><span class="p">.</span><span class="n">get</span><span class="p">())</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">        </span><span class="n">setenv</span><span class="p">(</span><span class="s">&quot;NCCL_ELASTIC_BUFFER_REGISTER&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code>flowchart TD
+    A[alloc 入口] --&gt; B{num_cpu_bytes &gt; 0?}
+    B --&gt;|No| C[GPUSymmetricMemory&lt;br/&gt;ncclMemAlloc]
+    B --&gt;|Yes| D{allow_hybrid_mode?}
+    D --&gt;|No| E[ElasticSymmetricMemory&lt;br/&gt;GPU + 单 CPU 段]
+    D --&gt;|Yes| F[HybridElasticSymmetricMemory&lt;br/&gt;GPU + N 个 CPU 段]
+    C --&gt; G[setenv NCCL_ELASTIC_BUFFER_REGISTER=0]
+    E --&gt; H[setenv NCCL_ELASTIC_BUFFER_REGISTER=1]
+    F --&gt; H
+</code></pre></div>
+
+<hr />
+<hh2 id="4-核心数据结构与分配流程" id="4">4. 核心数据结构与分配流程</hh2>
+<hh3 id="4-1-分配流程总览" id="41">4.1 分配流程总览</hh3>
+<div class="mermaid">sequenceDiagram
+    participant Python as elastic.py
+    participant C++ as buffer.hpp
+    participant Sym as symmetric.hpp
+    participant NCCL as NCCL Runtime
+    participant CUDA as CUDA Driver
+
+    Python->>Python: 计算 buffer 大小
+    Python->>Python: create_cpu_handle (if hybrid)
+    Python->>Python: dist.all_gather_object 交换 (pid, fd)
+    Python->>C++: ElasticBuffer 构造函数
+
+    C++->>C++: 计算 workspace + buffer 总大小
+    C++->>C++: 创建 NCCLSymmetricMemoryContext
+
+    C++->>Sym: symmetric::alloc(num_gpu, num_cpu, hybrid, ...)
+    Sym->>NCCL: ncclMemAlloc (纯 GPU)
+    Sym->>CUDA: cuMemAddressReserve + cuMemCreate + cuMemMap (含 CPU)
+    Sym-->>C++: 返回 SymmetricMemory
+
+    C++->>NCCL: ncclCommWindowRegister(comm, ptr, num_bytes, &window)
+    C++->>NCCL: ncclGetLsaDevicePointer(window, 0, nvl_rank, &mapped_window_ptr)
+    C++->>NCCL: ncclDevCommCreate(comm, &reqs, &dev_comm)
+    C++-->>Python: 构造完成
+</div>
+
+<hh3 id="4-2-ncclsymmetricmemorycontext-核心上下文" id="42-ncclsymmetricmemorycontext">4.2 NCCLSymmetricMemoryContext — 核心上下文</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// api.cuh:47-93</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">NCCLSymmetricMemoryContext</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 原始窗口指针（不可从外部直接使用）</span>
+<span class="w">    </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">raw_window_ptr</span><span class="p">;</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">symmetric</span><span class="o">::</span><span class="n">SymmetricMemory</span><span class="o">&gt;</span><span class="w"> </span><span class="n">symmetric_memory</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 全局信息</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 逻辑域</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_scaleout_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">scaleup_rank_idx</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 物理域</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_rdma_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">num_nvl_ranks</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">rdma_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">is_scaleup_nvlink</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// NCCL 句柄</span>
+<span class="w">    </span><span class="n">ncclComm_t</span><span class="w"> </span><span class="n">comm</span><span class="p">;</span>
+<span class="w">    </span><span class="n">jit</span><span class="o">::</span><span class="n">NoRefPtr</span><span class="w"> </span><span class="n">dev_comm</span><span class="p">;</span><span class="w">      </span><span class="c1">// ncclDevComm_t*</span>
+<span class="w">    </span><span class="n">ncclWindow_t</span><span class="w"> </span><span class="n">window</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">mapped_window_ptr</span><span class="p">;</span><span class="w">     </span><span class="c1">// 本地映射指针</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">nvl_window_ptrs</span><span class="p">;</span><span class="w">  </span><span class="c1">// NVLink peer 指针</span>
+
+<span class="w">    </span><span class="c1">// 配置</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">num_gpu_bytes</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 获取 symmetric 指针（给定 rank）</span>
+<span class="w">    </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="nf">get_sym_ptr</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hh3 id="4-3-构造函数详解" id="43">4.3 构造函数详解</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// nccl.cu:62-148</span>
+<span class="n">NCCLSymmetricMemoryContext</span><span class="o">::</span><span class="n">NCCLSymmetricMemoryContext</span><span class="p">(</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">nccl_comm</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">symmetric</span><span class="o">::</span><span class="n">cpu_comm_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">,</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">,</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">allow_hybrid_mode</span><span class="p">,</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sl_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">)</span><span class="o">:</span>
+<span class="w">    </span><span class="n">rank_idx</span><span class="p">(</span><span class="n">rank_idx</span><span class="p">),</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">(</span><span class="n">num_ranks</span><span class="p">),</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">(</span><span class="n">num_allocated_qps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">    </span><span class="c1">// 1. 复用 NCCL communicator</span>
+<span class="w">    </span><span class="n">comm</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">ncclComm_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">nccl_comm</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. 初始化 NCCL device communicator（GIN 资源）</span>
+<span class="w">    </span><span class="n">ncclDevCommRequirements_t</span><span class="w"> </span><span class="n">reqs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">num_ranks</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">get_env</span><span class="p">(</span><span class="s">&quot;EP_DISABLE_GIN&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginContextCount</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">;</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginExclusiveContexts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginQueueDepth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kGinQPDepth</span><span class="p">;</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginTrafficClass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sl_idx</span><span class="p">;</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginSignalCount</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_ranks</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">        </span><span class="n">reqs</span><span class="p">.</span><span class="n">ginConnectionType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">allow_hybrid_mode</span><span class="w"> </span><span class="o">?</span><span class="w"> </span>
+<span class="w">            </span><span class="nl">NCCL_GIN_CONNECTION_RAIL</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">NCCL_GIN_CONNECTION_FULL</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclDevCommCreate</span><span class="p">(</span><span class="n">comm</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">reqs</span><span class="p">,</span><span class="w"> </span><span class="n">dev_comm</span><span class="p">.</span><span class="n">ptr</span><span class="p">));</span>
+
+<span class="w">    </span><span class="c1">// 3. 创建 symmetric memory</span>
+<span class="w">    </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">symmetric_memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">symmetric</span><span class="o">::</span><span class="n">alloc</span><span class="p">(</span>
+<span class="w">        </span><span class="n">num_bytes</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span>
+<span class="w">        </span><span class="n">allow_hybrid_mode</span><span class="p">,</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 4. 注册为 NCCL window（集合操作，内部 barrier）</span>
+<span class="w">    </span><span class="n">raw_window_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">symmetric_memory</span><span class="o">-&gt;</span><span class="n">ptr</span><span class="p">;</span>
+<span class="w">    </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclCommWindowRegister</span><span class="p">(</span><span class="n">comm</span><span class="p">,</span><span class="w"> </span><span class="n">raw_window_ptr</span><span class="p">,</span><span class="w"> </span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">symmetric_memory</span><span class="o">-&gt;</span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">window</span><span class="p">,</span><span class="w"> </span><span class="n">NCCL_WIN_STRICT_ORDERING</span><span class="p">));</span>
+
+<span class="w">    </span><span class="c1">// 5. 获取 LSA 指针</span>
+<span class="w">    </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclGetLsaDevicePointer</span><span class="p">(</span><span class="n">window</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">mapped_window_ptr</span><span class="p">));</span>
+
+<span class="w">    </span><span class="c1">// 6. 获取所有 LSA peer 指针</span>
+<span class="w">    </span><span class="n">nvl_window_ptrs</span><span class="p">.</span><span class="n">resize</span><span class="p">(</span><span class="n">num_nvl_ranks</span><span class="p">);</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_nvl_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span>
+<span class="w">        </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclGetLsaDevicePointer</span><span class="p">(</span><span class="n">window</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">nvl_window_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">]));</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="4-4-elasticbuffer-内存布局" id="44-elasticbuffer">4.4 ElasticBuffer 内存布局</hh3>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────┐
+│                    ElasticBuffer 完整内存布局                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  symmetric memory (num_sym_bytes = workspace + buffer):                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  [Workspace]  [              GPU Buffer              ] [CPU]   │   │
+│  │  ←─ 2MB ───→  ←──────── num_gpu_buffer_bytes ────────→ ←CPU→  │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  workspace = mapped_window_ptr (本地 LSA 映射)                           │
+│  buffer = workspace + num_workspace_bytes                               │
+│  CPU 段 = buffer + num_gpu_buffer_bytes                                 │
+│                                                                         │
+│  host_workspace (额外分配，用于 CPU 侧同步):                              │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  [Host Workspace (pinned, mapped)]                              │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:104-135 - ElasticBuffer 构造函数中的布局分配</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_workspace_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">align</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">layout</span><span class="o">::</span><span class="n">WorkspaceLayout</span><span class="o">::</span><span class="n">get_num_bytes</span><span class="p">(),</span><span class="w"> </span><span class="n">symmetric</span><span class="o">::</span><span class="n">kNumAlignmentBytes</span><span class="p">);</span>
+
+<span class="c1">// 创建 NCCL symmetric memory context</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_sym_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_workspace_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_buffer_bytes</span><span class="p">;</span>
+<span class="k">this</span><span class="o">-&gt;</span><span class="n">nccl_context</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">nccl</span><span class="o">::</span><span class="n">NCCLSymmetricMemoryContext</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">nccl_comm</span><span class="p">,</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">,</span><span class="w"> </span><span class="n">num_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_sym_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_buffer_bytes</span><span class="p">,</span>
+<span class="w">    </span><span class="n">allow_hybrid_mode</span><span class="p">,</span><span class="w"> </span><span class="n">sl_idx</span><span class="p">,</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">);</span>
+
+<span class="c1">// 分配 workspace 和 buffer 指针</span>
+<span class="n">workspace</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">mapped_window_ptr</span><span class="p">;</span>
+<span class="n">buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_workspace_bytes</span><span class="p">;</span>
+
+<span class="c1">// 分配 host workspaces</span>
+<span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaMallocHost</span><span class="p">(</span><span class="o">&amp;</span><span class="n">host_workspace</span><span class="p">,</span><span class="w"> </span>
+<span class="w">    </span><span class="n">layout</span><span class="o">::</span><span class="n">WorkspaceLayout</span><span class="o">::</span><span class="n">get_num_bytes</span><span class="p">(),</span><span class="w"> </span><span class="n">cudaHostAllocMapped</span><span class="p">));</span>
+<span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaHostGetDevicePointer</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mapped_host_workspace</span><span class="p">,</span><span class="w"> </span><span class="n">host_workspace</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="5-指针映射与远程访问机制" id="5">5. 指针映射与远程访问机制</hh2>
+<hh3 id="5-1-host-侧指针映射" id="51-host">5.1 Host 侧指针映射</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// nccl.cu:150-153 - Host 侧 symmetric 指针转换</span>
+<span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="nf">NCCLSymmetricMemoryContext::get_sym_ptr</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">mapped_window_ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">nvl_window_ptrs</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">])</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>原理</strong>：同一块 symmetric memory 在不同 rank 的 VA 空间中有不同的基地址，但 <strong>offset 相同</strong>。通过 <code>nvl_window_ptrs</code> 数组缓存每个 peer 的基地址，实现 O(1) 指针转换。</p>
+<hh3 id="5-2-device-侧指针映射-ncclgin" id="52-device-ncclgin">5.2 Device 侧指针映射 — NCCLGin</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// handle.cuh:57-92 - Device 侧 symmetric 指针转换</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">team_t</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">dtype_t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">void</span><span class="o">*&gt;</span>
+<span class="n">__device__</span><span class="w"> </span><span class="n">__forceinline__</span>
+<span class="n">dtype_t</span><span class="o">*</span><span class="w"> </span><span class="n">get_sym_ptr</span><span class="p">(</span><span class="n">dtype_t</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">IS_TEAM_RAIL</span><span class="p">({</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">team_rail</span><span class="p">.</span><span class="n">rank</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">ptr</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">;</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="n">IS_TEAM_WORLD_LSA</span><span class="p">({</span>
+<span class="w">        </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">kIsTeamLSA</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">is_same_v</span><span class="o">&lt;</span><span class="n">team_t</span><span class="p">,</span><span class="w"> </span><span class="n">ncclTeamTagLsa</span><span class="o">&gt;</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 不可通过 symmetric pointer 访问的返回 nullptr</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">not</span><span class="w"> </span><span class="n">is_nvlink_accessible</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_rank_idx</span><span class="p">))</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 转换为 NVLink rank index</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_nvl_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kIsTeamLSA</span><span class="w"> </span><span class="o">?</span>
+<span class="w">            </span><span class="nl">dst_rank_idx</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="p">(</span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">team_rail</span><span class="p">.</span><span class="n">rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">team_lsa</span><span class="p">.</span><span class="n">nRanks</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// Local rank bypass</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_nvl_rank_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">team_lsa</span><span class="p">.</span><span class="n">rank</span><span class="p">)</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 获取目标 rank 的基地址 + offset</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ncclGetLsaPointer</span><span class="p">(</span>
+<span class="w">            </span><span class="n">nccl_window</span><span class="p">,</span><span class="w"> </span><span class="n">get_sym_offset</span><span class="p">(</span><span class="n">ptr</span><span class="p">),</span><span class="w"> </span><span class="n">dst_nvl_rank_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="n">dtype_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键设计</strong>：<br />
+- 如果目标 rank 可通过 NVLink 访问 → 返回 symmetric pointer（直接 NVLink 读写）<br />
+- 如果不可访问 → 返回 <code>nullptr</code>，调用者 fallback 到 RDMA (GIN)</p>
+<hh3 id="5-3-nvlink-可达性判断" id="53-nvlink">5.3 NVLink 可达性判断</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// handle.cuh:37-54</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">team_t</span><span class="o">&gt;</span>
+<span class="n">__device__</span><span class="w"> </span><span class="n">__forceinline__</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">is_nvlink_accessible</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">IS_TEAM_LSA</span><span class="p">({</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span><span class="w">  </span><span class="c1">// LSA team 内全 NVLink 连接</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="n">IS_TEAM_WORLD</span><span class="p">({</span>
+<span class="w">        </span><span class="c1">// 仅 rail team 内的 rank 可通过 NVLink 访问</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">team_rail</span><span class="p">.</span><span class="n">rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">team_lsa</span><span class="p">.</span><span class="n">nRanks</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="k">and</span>
+<span class="w">               </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="p">(</span><span class="n">team_rail</span><span class="p">.</span><span class="n">rank</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">team_lsa</span><span class="p">.</span><span class="n">nRanks</span><span class="p">;</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="n">IS_TEAM_RAIL</span><span class="p">({</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">team_rail</span><span class="p">.</span><span class="n">rank</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="5-4-远程原子操作-red_add_rel" id="54-red_add_rel">5.4 远程原子操作 — red_add_rel</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// handle.cuh:96-120 - 自动选择 NVLink 或 RDMA 的远程原子加</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">team_t</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">dtype_t</span><span class="o">&gt;</span>
+<span class="n">__device__</span><span class="w"> </span><span class="n">__forceinline__</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">red_add_rel</span><span class="p">(</span><span class="n">dtype_t</span><span class="o">*</span><span class="w"> </span><span class="n">sym_ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">dtype_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">value</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span>
+<span class="w">                 </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">extra_options</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_sym_ptr</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">sym_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// NVLink 可达：使用 PTX 直接远程原子操作</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">is_same_v</span><span class="o">&lt;</span><span class="n">team_t</span><span class="p">,</span><span class="w"> </span><span class="n">ncclTeamTagRail</span><span class="o">&gt;</span><span class="w"> </span><span class="k">or</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">sym_ptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_gpu</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">);</span><span class="w">  </span><span class="c1">// GPU 端原子加</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">);</span><span class="w">  </span><span class="c1">// SYS 端原子加（跨 chip）</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// NVLink 不可达：fallback 到 GIN RDMA</span>
+<span class="w">        </span><span class="n">gin</span><span class="p">.</span><span class="n">signal</span><span class="p">(</span><span class="n">TEAM_WORLD_RAIL</span><span class="p">(),</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span>
+<span class="w">            </span><span class="n">ncclGin_VASignalAdd</span><span class="p">(</span><span class="n">nccl_window</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">sym_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">lsa_base_ptr</span><span class="p">,</span><span class="w"> </span>
+<span class="w">                </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">value</span><span class="p">)),</span>
+<span class="w">            </span><span class="n">ncclCoopThread</span><span class="p">(),</span><span class="w"> </span><span class="n">ncclGin_None</span><span class="p">(),</span>
+<span class="w">            </span><span class="n">cuda</span><span class="o">::</span><span class="n">thread_scope_thread</span><span class="p">,</span><span class="w"> </span><span class="n">cuda</span><span class="o">::</span><span class="n">thread_scope_device</span><span class="p">,</span>
+<span class="w">            </span><span class="n">ncclGinOptFlagsDefault</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">extra_options</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="6-内核级代码示例" id="6">6. 内核级代码示例</hh2>
+<hh3 id="6-1-dispatch-中的-symmetric-memory-使用" id="61-dispatch-symmetric-memory">6.1 Dispatch 中的 symmetric memory 使用</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:980-1003 - dispatch 内核启动</span>
+<span class="n">launch_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">sf_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">topk_idx</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="n">topk_idx_t</span><span class="o">&gt;</span><span class="p">(),</span><span class="w"> </span><span class="n">topk_weights_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">copied_topk_idx_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">cumulative_local_expert_recv_stats_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">psum_num_recv_tokens_per_scaleup_rank</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">psum_num_recv_tokens_per_expert</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">num_unaligned_recv_tokens_per_expert_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">dst_buffer_slot_idx</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">token_metadata_at_forward_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span>
+<span class="w">                </span><span class="n">hidden</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">element_size</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">num_sf_packs</span><span class="p">,</span><span class="w"> </span><span class="n">sf_token_stride</span><span class="p">,</span><span class="w"> </span><span class="n">sf_hidden_stride</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_experts</span><span class="p">,</span><span class="w"> </span><span class="n">num_topk</span><span class="p">,</span><span class="w"> </span><span class="n">expert_alignment</span><span class="p">,</span>
+<span class="w">                </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">window</span><span class="p">,</span><span class="w">  </span><span class="c1">// NCCL device comm + window</span>
+<span class="w">                </span><span class="n">buffer</span><span class="p">,</span><span class="w">                                        </span><span class="c1">// symmetric memory 缓冲区</span>
+<span class="w">                </span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">mapped_host_workspace</span><span class="p">,</span><span class="w">              </span><span class="c1">// workspace</span>
+<span class="w">                </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleup_rank_idx</span><span class="p">,</span>
+<span class="w">                </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleout_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleup_ranks</span><span class="p">,</span>
+<span class="w">                </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">is_scaleup_nvlink</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_sms</span><span class="p">,</span><span class="w"> </span><span class="n">num_channels_per_sm</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_smem_bytes</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_qps</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_timeout_cycles</span><span class="p">,</span>
+<span class="w">                </span><span class="n">cached_mode</span><span class="p">,</span><span class="w"> </span><span class="n">do_cpu_sync</span><span class="p">,</span>
+<span class="w">                </span><span class="n">comm_stream</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="6-2-all-gather-中的-symmetric-memory-直接访问" id="62-all-gather-symmetric-memory">6.2 All-Gather 中的 symmetric memory 直接访问</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:469-482 - all_gather 使用 symmetric pointer 进行拷贝</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tensors</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tensors</span><span class="p">[</span><span class="n">j</span><span class="p">];</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">rank_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_ranks</span><span class="p">;</span>
+<span class="w">        </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">src_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">();</span>
+<span class="w">        </span><span class="c1">// 使用 get_sym_ptr 获取目标 rank 的 symmetric pointer</span>
+<span class="w">        </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">get_sym_ptr</span><span class="p">(</span>
+<span class="w">            </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">offset</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">nbytes</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">rank_idx</span><span class="p">),</span><span class="w"> </span>
+<span class="w">            </span><span class="n">dst_rank_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">src_ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">dst_ptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">src_ptrs</span><span class="p">[</span><span class="n">count</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_ptr</span><span class="p">;</span>
+<span class="w">            </span><span class="n">dst_ptrs</span><span class="p">[</span><span class="n">count</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_ptr</span><span class="p">;</span>
+<span class="w">            </span><span class="n">sizes</span><span class="p">[</span><span class="n">count</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">nbytes</span><span class="p">();</span>
+<span class="w">            </span><span class="n">count</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="c1">// 批量异步拷贝</span>
+<span class="n">cudaMemcpyBatchAsync</span><span class="p">(</span><span class="n">dst_ptrs</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">src_ptrs</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">sizes</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_copies</span><span class="p">,</span><span class="w"> </span><span class="n">attrs</span><span class="p">,</span><span class="w"> </span><span class="n">comm_stream</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="6-3-agrs-session-signal-的-symmetric-pointer-写入" id="63-agrs-session-signal-symmetric-pointer">6.3 AGRS Session Signal 的 symmetric pointer 写入</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:411-417 - destroy_agrs_session 中的跨 rank 信号</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_ranks</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">rank_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_ranks</span><span class="p">;</span>
+<span class="w">    </span><span class="c1">// 写入目标 rank 的 symmetric memory 信号位置</span>
+<span class="w">    </span><span class="n">write_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span>
+<span class="w">        </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">get_sym_ptr</span><span class="p">(</span>
+<span class="w">            </span><span class="n">workspace_layout_wo_expert</span><span class="o">-&gt;</span><span class="n">get_agrs_session_signal_ptr</span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">rank_idx</span><span class="p">),</span><span class="w"> </span>
+<span class="w">            </span><span class="n">dst_rank_idx</span><span class="p">));</span>
+<span class="w">    </span><span class="n">wait_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace_layout_wo_expert</span><span class="o">-&gt;</span><span class="n">get_agrs_session_signal_ptr</span><span class="p">(</span><span class="n">dst_rank_idx</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="n">cuda_driver</span><span class="o">::</span><span class="n">batched_write_and_wait</span><span class="p">(</span><span class="n">comm_stream</span><span class="p">,</span><span class="w"> </span><span class="n">write_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">wait_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">agrs_session_idx</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="6-4-engram-fetch-rdma-通过-symmetric-memory" id="64-engram-fetch-rdma-symmetric-memory">6.4 Engram Fetch — RDMA 通过 symmetric memory</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:292-309 - engram_fetch 内核启动</span>
+<span class="n">launch_engram_fetch</span><span class="p">(</span>
+<span class="w">    </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">window</span><span class="p">,</span>
+<span class="w">    </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_buffer_bytes</span><span class="p">),</span><span class="w">  </span><span class="c1">// CPU 段作为源</span>
+<span class="w">    </span><span class="n">fetched</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">indices</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">    </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="n">ncclGinRequest_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">last_gin_requests</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">()),</span>
+<span class="w">    </span><span class="n">sf_table_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">fetched_sf_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">sf_token_stride</span><span class="p">,</span><span class="w"> </span><span class="n">sf_hidden_stride</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_engram_entries</span><span class="p">,</span>
+<span class="w">    </span><span class="n">engram_hidden</span><span class="p">,</span><span class="w"> </span><span class="n">elem_size</span><span class="p">,</span><span class="w"> </span><span class="n">num_sf_packs</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_entries_per_token</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_tokens</span><span class="p">,</span>
+<span class="w">    </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleout_ranks</span><span class="p">,</span>
+<span class="w">    </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleup_ranks</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_cpu_buffer_bytes</span><span class="p">,</span>
+<span class="w">    </span><span class="n">num_qps</span><span class="p">,</span>
+<span class="w">    </span><span class="n">allow_hybrid_mode</span><span class="p">,</span>
+<span class="w">    </span><span class="n">at</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">getCurrentCUDAStream</span><span class="p">()</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="7-同步机制" id="7">7. 同步机制</hh2>
+<hh3 id="7-1-多层同步体系" id="71">7.1 多层同步体系</hh3>
+<div class="highlight"><pre><span></span><code>flowchart TB
+    subgraph &quot;同步层级&quot;
+        A[GPU Barrier&lt;br/&gt;launch_barrier] --&gt; B[with_cpu_sync?]
+        B --&gt;|Yes| C[cudaDeviceSynchronize&lt;br/&gt;+ dist.barrier]
+        B --&gt;|No| D[仅 GPU 内部同步]
+
+        E[NCCL Window&lt;br/&gt;NCCL_WIN_STRICT_ORDERING] --&gt; F[保证写入顺序]
+
+        G[Gin Signal&lt;br/&gt;gin.signal/gin.wait] --&gt; H[RDMA 远程通知]
+
+        I[cudaMemcpyBatchAsync&lt;br/&gt;+ batched_write_and_wait] --&gt; J[AGRS 数据+信号原子操作]
+    end
+</code></pre></div>
+
+<hh3 id="7-2-barrier-实现" id="72-barrier">7.2 Barrier 实现</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:181-208 - ElasticBuffer::barrier</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">use_comm_stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">with_cpu_sync</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sequential</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">compute_stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">getCurrentCUDAStream</span><span class="p">();</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">use_comm_stream</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">comm_stream</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">compute_stream</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">use_comm_stream</span><span class="p">)</span>
+<span class="w">        </span><span class="n">stream_wait</span><span class="p">(</span><span class="n">comm_stream</span><span class="p">,</span><span class="w"> </span><span class="n">compute_stream</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// CPU 同步</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">with_cpu_sync</span><span class="p">)</span>
+<span class="w">        </span><span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaDeviceSynchronize</span><span class="p">());</span>
+
+<span class="w">    </span><span class="c1">// 启动 GPU barrier（使用 NCCL GIN）</span>
+<span class="w">    </span><span class="n">launch_barrier</span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">window</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleup_rank_idx</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleout_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleup_ranks</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">num_gpu_timeout_cycles</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">is_scaleup_nvlink</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">sequential</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">stream</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">with_cpu_sync</span><span class="p">)</span>
+<span class="w">        </span><span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaDeviceSynchronize</span><span class="p">());</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">use_comm_stream</span><span class="p">)</span>
+<span class="w">        </span><span class="n">stream_wait</span><span class="p">(</span><span class="n">compute_stream</span><span class="p">,</span><span class="w"> </span><span class="n">comm_stream</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="7-3-cpu-侧同步-64-bit-编码" id="73-cpu-64-bit">7.3 CPU 侧同步 — 64-bit 编码</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:1017-1064 - dispatch 中的 CPU 同步等待</span>
+<span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">ready</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 读取每个 scaleup rank 的接收 token 数</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">counter_scaleup_rank_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleup_ranks</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">ready</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">encode_decode_positive</span><span class="p">(</span>
+<span class="w">            </span><span class="n">host_workspace_layout</span><span class="p">.</span><span class="n">get_scaleup_rank_count_ptr</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">()[</span><span class="n">counter_scaleup_rank_idx</span><span class="p">]);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">((</span><span class="n">ready</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">is_decoded_positive_ready</span><span class="p">(</span><span class="n">count</span><span class="p">)))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">num_recv_tokens</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">count</span><span class="p">;</span>
+<span class="w">            </span><span class="o">++</span><span class="w"> </span><span class="n">counter_scaleup_rank_idx</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 读取 expert 计数</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">counter_local_expert_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_local_experts</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">ready</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">encode_decode_positive</span><span class="p">(</span>
+<span class="w">            </span><span class="n">host_workspace_layout</span><span class="p">.</span><span class="n">get_expert_count_ptr</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">()[</span><span class="n">counter_local_expert_idx</span><span class="p">]);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">((</span><span class="n">ready</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">is_decoded_positive_ready</span><span class="p">(</span><span class="n">count</span><span class="p">)))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">num_recv_tokens_per_expert_list</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">count</span><span class="p">);</span>
+<span class="w">            </span><span class="n">num_expanded_tokens</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">count</span><span class="p">;</span>
+<span class="w">            </span><span class="o">++</span><span class="w"> </span><span class="n">counter_local_expert_idx</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ready</span><span class="p">)</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// 超时检查</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">chrono</span><span class="o">::</span><span class="n">duration_cast</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">chrono</span><span class="o">::</span><span class="n">seconds</span><span class="o">&gt;</span><span class="p">(</span><span class="n">now</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_cpu_time</span><span class="p">).</span><span class="n">count</span><span class="p">()</span><span class="w"> </span>
+<span class="w">        </span><span class="o">&gt;</span><span class="w"> </span><span class="n">num_cpu_timeout_secs</span><span class="p">)</span>
+<span class="w">        </span><span class="k">throw</span><span class="w"> </span><span class="n">EPExceptionWithLineInfo</span><span class="p">(</span><span class="s">&quot;Dispatch CPU wait&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">get_buffer_info</span><span class="p">());</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="8-v1-vs-v2-对比分析" id="8-v1-vs-v2">8. V1 vs V2 对比分析</hh2>
+<hh3 id="8-1-架构总览对比" id="81">8.1 架构总览对比</hh3>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│                        V1 Legacy (NVSHMEM)                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                     │
+│  │  NVLink IPC │    │  NVSHMEM    │    │  NVSHMEM    │                     │
+│  │  (intra)    │    │  (inter)    │    │  (LL mode)  │                     │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                     │
+│         │                  │                  │                             │
+│  cudaMemcpy           nvshmem_put_nbi    nvshmemi_ibgda_put_nbi             │
+│  (IPC open)           (RDMA via QP)      (IBGDA direct)                     │
+│                                                                              │
+│  分配: cudaMalloc + IPC handle    分配: nvshmem_alloc                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        V2 Elastic (NCCL GIN)                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    Symmetric Memory (统一抽象)                        │    │
+│  │  GPUSymmetricMemory / ElasticSymmetricMemory / HybridElastic        │    │
+│  └──────────────────────────────┬──────────────────────────────────────┘    │
+│                                 │                                            │
+│                    ncclCommWindowRegister                                    │
+│                                 │                                            │
+│         ┌───────────────────────┼───────────────────────┐                    │
+│         ▼                       ▼                       ▼                    │
+│  ┌────────────┐          ┌────────────┐          ┌────────────┐            │
+│  │ NVLink LSA │          │  NCCL GIN  │          │  RDMA QP   │            │
+│  │ (direct)   │          │  (signal)  │          │  (put/get) │            │
+│  └────────────┘          └────────────┘          └────────────┘            │
+│                                                                              │
+│  分配: ncclMemAlloc / CUDA Driver API                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="8-2-内存分配对比" id="82">8.2 内存分配对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 Legacy</th>
+<th>V2 Elastic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NVLink 分配</strong></td>
+<td><code>cudaMalloc</code> + IPC handle 导出</td>
+<td><code>ncclMemAlloc</code> 或 CUDA Driver API</td>
+</tr>
+<tr>
+<td><strong>RDMA 分配</strong></td>
+<td><code>nvshmem_alloc(size, alignment)</code></td>
+<td>同 NVLink（统一 symmetric memory）</td>
+</tr>
+<tr>
+<td><strong>CPU 分配</strong></td>
+<td>无</td>
+<td><code>cuMemCreate</code> (NUMA-local)</td>
+</tr>
+<tr>
+<td><strong>跨进程共享</strong></td>
+<td>IPC handle (<code>cudaIpcMemHandle</code>)</td>
+<td>POSIX FD (<code>pidfd_getfd</code>)</td>
+</tr>
+<tr>
+<td><strong>Window 注册</strong></td>
+<td>无（NVSHMEM 自行管理）</td>
+<td><code>ncclCommWindowRegister</code></td>
+</tr>
+<tr>
+<td><strong>对齐要求</strong></td>
+<td><code>LEGACY_NUM_BUFFER_ALIGNMENT_BYTES</code> (128B)</td>
+<td><code>kNumAlignmentBytes</code> (2MB)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="8-3-v1-nvshmem-分配代码" id="83-v1-nvshmem">8.3 V1 NVSHMEM 分配代码</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// buffer.hpp:256-286 (V1 Legacy)</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">sync</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">device_ids</span><span class="p">,</span>
+<span class="w">          </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">pybind11</span><span class="o">::</span><span class="n">bytearray</span><span class="o">&gt;&gt;&amp;</span><span class="w"> </span><span class="n">all_gathered_handles</span><span class="p">,</span>
+<span class="w">          </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">pybind11</span><span class="o">::</span><span class="n">bytearray</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">root_unique_id_opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. NVLink IPC handle 同步</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">num_nvl_bytes</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rdma_rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_nvl_ranks</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_nvl_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">offset</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">rank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">shared_memory_allocator</span><span class="p">.</span><span class="n">open_mem_handle</span><span class="p">(</span><span class="o">&amp;</span><span class="n">buffer_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ipc_handles</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+<span class="w">                </span><span class="n">barrier_signal_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span>
+<span class="w">                    </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">buffer_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">])</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_nvl_bytes</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="n">cudaMemcpy</span><span class="p">(</span><span class="n">buffer_ptrs_gpu</span><span class="p">,</span><span class="w"> </span><span class="n">buffer_ptrs</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">cudaMemcpyHostToDevice</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 2. NVSHMEM 初始化与分配</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">num_rdma_bytes</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">nvshmem</span><span class="o">::</span><span class="n">init</span><span class="p">(</span><span class="n">root_unique_id</span><span class="p">,</span><span class="w"> </span><span class="n">nvshmem_rank</span><span class="p">,</span><span class="w"> </span><span class="n">num_nvshmem_ranks</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">        </span><span class="n">rdma_buffer_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nvshmem</span><span class="o">::</span><span class="n">alloc</span><span class="p">(</span><span class="n">num_rdma_bytes</span><span class="p">,</span><span class="w"> </span><span class="n">LEGACY_NUM_BUFFER_ALIGNMENT_BYTES</span><span class="p">);</span>
+<span class="w">        </span><span class="n">cudaMemset</span><span class="p">(</span><span class="n">rdma_buffer_ptr</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">num_rdma_bytes</span><span class="p">);</span>
+<span class="w">        </span><span class="n">nvshmem</span><span class="o">::</span><span class="n">barrier</span><span class="p">(</span><span class="nb">true</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="8-4-v1-nvshmem-通信代码" id="84-v1-nvshmem">8.4 V1 NVSHMEM 通信代码</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// internode.cu:176-194 - V1 使用 NVSHMEM IBGDA 进行 RDMA put</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_id</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRDMARanks</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">num_warps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">rdma_rank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 跨 rank：使用 NVSHMEM IBGDA put</span>
+<span class="w">        </span><span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">            </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_recv_num_tokens_mixed</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">rdma_rank</span><span class="p">)),</span>
+<span class="w">            </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_recv_num_tokens_mixed</span><span class="p">.</span><span class="n">send_buffer</span><span class="p">(</span><span class="n">i</span><span class="p">)),</span>
+<span class="w">            </span><span class="p">(</span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_rdma_experts</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">),</span>
+<span class="w">            </span><span class="n">translate_dst_rdma_rank</span><span class="o">&lt;</span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">),</span>
+<span class="w">            </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 同 rank：直接 copy</span>
+<span class="w">        </span><span class="n">UNROLLED_WARP_COPY</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="p">...,</span><span class="w"> </span><span class="n">ld_volatile_global</span><span class="p">,</span><span class="w"> </span><span class="n">st_na_global</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="8-5-v2-nccl-gin-通信代码" id="85-v2-nccl-gin">8.5 V2 NCCL GIN 通信代码</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// handle.cuh:175-198 - V2 使用 NCCL GIN put</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">team_t</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">remote_action_t</span><span class="o">&gt;</span>
+<span class="n">__device__</span><span class="w"> </span><span class="n">__forceinline__</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">put</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">recv_sym_ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">send_sym_ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span>
+<span class="w">         </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">extra_options</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">         </span><span class="k">const</span><span class="w"> </span><span class="n">remote_action_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">remote_action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">remote_action_t</span><span class="p">())</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">IS_TEAM_WORLD_RAIL</span><span class="p">({</span>
+<span class="w">        </span><span class="n">gin</span><span class="p">.</span><span class="n">put</span><span class="p">(</span><span class="n">TEAM_WORLD_RAIL</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">dst_rank_idx</span><span class="p">,</span>
+<span class="w">                </span><span class="n">nccl_window</span><span class="p">,</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">recv_sym_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">lsa_base_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">nccl_window</span><span class="p">,</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">send_sym_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">lsa_base_ptr</span><span class="p">,</span>
+<span class="w">                </span><span class="n">num_bytes</span><span class="p">,</span>
+<span class="w">                </span><span class="n">remote_action</span><span class="p">,</span>
+<span class="w">                </span><span class="n">ncclGin_None</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">ncclCoopThread</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">ncclGin_None</span><span class="p">(),</span>
+<span class="w">                </span><span class="n">cuda</span><span class="o">::</span><span class="n">thread_scope_thread</span><span class="p">,</span>
+<span class="w">                </span><span class="n">cuda</span><span class="o">::</span><span class="n">thread_scope_device</span><span class="p">,</span>
+<span class="w">                </span><span class="n">ncclGinOptFlagsDefault</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">extra_options</span><span class="p">);</span>
+<span class="w">    </span><span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="8-6-关键差异总结" id="86">8.6 关键差异总结</hh3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>V1 Legacy</th>
+<th>V2 Elastic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>NVLink IPC + NVSHMEM 分离</td>
+<td>统一 symmetric memory 抽象</td>
+</tr>
+<tr>
+<td><strong>通信后端</strong></td>
+<td>NVSHMEM IBGDA</td>
+<td>NCCL GIN</td>
+</tr>
+<tr>
+<td><strong>RDMA 编程</strong></td>
+<td>显式 QP 管理</td>
+<td>GIN 自动管理 QP</td>
+</tr>
+<tr>
+<td><strong>CPU 段支持</strong></td>
+<td>无</td>
+<td>有（Elastic/Hybrid）</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td><code>nvshmem_sync</code> + <code>barrier_block</code></td>
+<td>NCCL barrier + Gin signal</td>
+</tr>
+<tr>
+<td><strong>指针转换</strong></td>
+<td>手动 <code>buffer_ptrs[]</code> 数组</td>
+<td><code>ncclGetLsaPointer</code> + <code>get_sym_ptr</code></td>
+</tr>
+<tr>
+<td><strong>多节点</strong></td>
+<td>NVSHMEM team</td>
+<td>NCCL rail/world team</td>
+</tr>
+<tr>
+<td><strong>弹性</strong></td>
+<td>固定大小</td>
+<td>支持 CPU+GPU 混合、hybrid mode</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="9-python-api-与用户使用示例" id="9-python-api">9. Python API 与用户使用示例</hh2>
+<hh3 id="9-1-elasticbuffer-初始化" id="91-elasticbuffer">9.1 ElasticBuffer 初始化</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># elastic.py:228-367 - ElasticBuffer 构造函数</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ElasticBuffer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+                 <span class="n">group</span><span class="p">:</span> <span class="n">dist</span><span class="o">.</span><span class="n">ProcessGroup</span><span class="p">,</span>
+                 <span class="n">num_bytes</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">num_cpu_bytes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">num_max_tokens_per_rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">hidden</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">num_topk</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">use_fp8_dispatch</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                 <span class="n">allow_hybrid_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                 <span class="n">allow_multiple_reduction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                 <span class="n">prefer_overlap_with_compute</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                 <span class="n">sl_idx</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+                 <span class="n">num_allocated_qps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                 <span class="n">num_cpu_timeout_secs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">,</span> 
+                 <span class="n">num_gpu_timeout_secs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+                 <span class="n">explicitly_destroy</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+
+        <span class="c1"># 1. 创建 NCCL comm handle</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">nccl_comm_handle</span> <span class="o">=</span> <span class="n">get_nccl_comm_handle</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">force_new_comm</span><span class="o">=</span><span class="n">num_cpu_bytes</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># 2. 计算 buffer 大小</span>
+        <span class="k">if</span> <span class="n">num_bytes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">num_bytes</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">calculate_elastic_buffer_size</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">nccl_comm_handle</span><span class="o">.</span><span class="n">get</span><span class="p">(),</span>
+                <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">hidden</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span> <span class="n">use_fp8_dispatch</span><span class="p">,</span>
+                <span class="n">allow_hybrid_mode</span><span class="p">,</span> <span class="n">allow_multiple_reduction</span><span class="p">)</span>
+
+        <span class="c1"># 3. 创建 CPU communicator（交换 POSIX FD handles）</span>
+        <span class="n">cpu_comm</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">allow_hybrid_mode</span> <span class="ow">and</span> <span class="n">num_cpu_bytes</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">pid</span><span class="p">,</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">create_cpu_handle</span><span class="p">(</span><span class="n">num_cpu_bytes</span><span class="p">)</span>
+            <span class="n">cpu_comm</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span>
+            <span class="n">dist</span><span class="o">.</span><span class="n">all_gather_object</span><span class="p">(</span><span class="n">cpu_comm</span><span class="p">,</span> <span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">fd</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">group</span><span class="p">)</span>
+
+        <span class="c1"># 4. 创建 C++ handle</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">runtime</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">ElasticBuffer</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">rank</span><span class="p">(),</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">(),</span>
+                                        <span class="bp">self</span><span class="o">.</span><span class="n">nccl_comm_handle</span><span class="o">.</span><span class="n">get</span><span class="p">(),</span> <span class="n">cpu_comm</span><span class="p">,</span>
+                                        <span class="n">num_bytes</span><span class="p">,</span> <span class="n">num_cpu_bytes</span><span class="p">,</span>
+                                        <span class="n">allow_hybrid_mode</span><span class="p">,</span>
+                                        <span class="n">allow_multiple_reduction</span><span class="p">,</span>
+                                        <span class="n">prefer_overlap_with_compute</span><span class="p">,</span>
+                                        <span class="n">sl_idx</span><span class="p">,</span> <span class="n">num_allocated_qps</span><span class="p">,</span>
+                                        <span class="n">num_cpu_timeout_secs</span><span class="p">,</span> <span class="n">num_gpu_timeout_secs</span><span class="p">,</span>
+                                        <span class="bp">self</span><span class="o">.</span><span class="n">explicitly_destroy</span><span class="p">)</span>
+
+        <span class="c1"># 5. Barrier 确保所有 peer 初始化可见</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+</code></pre></div>
+
+<hh3 id="9-2-典型使用示例" id="92">9.2 典型使用示例</hh3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">deep_ep</span>
+
+<span class="c1"># 初始化</span>
+<span class="n">group</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">new_group</span><span class="p">(</span><span class="n">ranks</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<span class="n">buffer</span> <span class="o">=</span> <span class="n">deep_ep</span><span class="o">.</span><span class="n">ElasticBuffer</span><span class="p">(</span>
+    <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">,</span>
+    <span class="n">num_max_tokens_per_rank</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+    <span class="n">hidden</span><span class="o">=</span><span class="mi">7168</span><span class="p">,</span>
+    <span class="n">num_topk</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allow_hybrid_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Dispatch（使用 symmetric memory 进行 all-to-all）</span>
+<span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_weights</span><span class="p">,</span>
+    <span class="n">num_experts</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+    <span class="n">num_sms</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+    <span class="n">async_with_compute_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allocate_on_comm_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># ... 计算 ...</span>
+
+<span class="c1"># Combine（反向传输）</span>
+<span class="n">combined_x</span><span class="p">,</span> <span class="n">combined_topk_weights</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">combine</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">topk_weights</span><span class="p">,</span> <span class="n">num_sms</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+    <span class="n">async_with_compute_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allocate_on_comm_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<hh3 id="9-3-engram-cpu-段使用示例" id="93-engram-cpu">9.3 Engram — CPU 段使用示例</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># 写入 Engram 存储（到 CPU 段）</span>
+<span class="n">buffer</span><span class="o">.</span><span class="n">engram_write</span><span class="p">(</span><span class="n">storage</span><span class="p">,</span> <span class="n">sf</span><span class="p">)</span>
+
+<span class="c1"># 从远端 fetch Engram（通过 RDMA 读取远端 CPU 段）</span>
+<span class="n">fetch_hook</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">engram_fetch</span><span class="p">(</span><span class="n">indices</span><span class="p">,</span> <span class="n">num_qps</span><span class="o">=</span><span class="mi">65</span><span class="p">)</span>
+<span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_sf</span> <span class="o">=</span> <span class="n">fetch_hook</span><span class="p">()</span>  <span class="c1"># 阻塞等待 RDMA 完成</span>
+</code></pre></div>
+
+<hh3 id="9-4-agrs-all-gather-reduce-scatter" id="94-agrs-all-gather-reduce-scatter">9.4 AGRS — All-Gather Reduce-Scatter</hh3>
+<div class="highlight"><pre><span></span><code><span class="n">buffer</span><span class="o">.</span><span class="n">agrs_set_config</span><span class="p">(</span><span class="n">num_max_session_bytes</span><span class="o">=</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">,</span> <span class="n">num_max_all_gathers_per_session</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="n">buffer</span><span class="o">.</span><span class="n">create_agrs_session</span><span class="p">()</span>
+
+<span class="c1"># 获取 in-place tensor（直接在 symmetric memory 上操作）</span>
+<span class="n">tensor</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">agrs_get_inplace_tensor</span><span class="p">((</span><span class="mi">128</span><span class="p">,</span> <span class="mi">7168</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+
+<span class="c1"># All-gather（通过 NVLink symmetric memory）</span>
+<span class="n">gathered</span><span class="p">,</span> <span class="n">handle</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">all_gather</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+<span class="n">handle</span><span class="p">()</span>  <span class="c1"># 等待数据到达</span>
+
+<span class="n">buffer</span><span class="o">.</span><span class="n">destroy_agrs_session</span><span class="p">()</span>
+</code></pre></div>
+
+<hh3 id="9-5-buffer-大小计算" id="95-buffer">9.5 Buffer 大小计算</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># 获取推荐的 buffer 大小</span>
+<span class="n">num_bytes</span> <span class="o">=</span> <span class="n">deep_ep</span><span class="o">.</span><span class="n">ElasticBuffer</span><span class="o">.</span><span class="n">get_buffer_size_hint</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">hidden</span><span class="o">=</span><span class="mi">7168</span><span class="p">,</span> <span class="n">num_topk</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">allow_hybrid_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">allow_multiple_reduction</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Recommended buffer size: </span><span class="si">{</span><span class="n">num_bytes</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1024</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> MB&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="10-架构洞察总结" id="10">10. 架构洞察总结</hh2>
+<hh3 id="10-1-设计哲学" id="101">10.1 设计哲学</hh3>
+<p>DeepEP 的 symmetric memory 设计体现了 <strong>"统一抽象 + 自动 fallback"</strong> 的哲学：</p>
+<ol>
+<li><strong>统一抽象</strong>：<code>SymmetricMemory</code> 基类封装了三种底层实现，上层代码无需关心具体类型</li>
+<li><strong>自动 fallback</strong>：<code>get_sym_ptr</code> 在 device 侧自动判断 NVLink 可达性，不可达时返回 <code>nullptr</code>，调用者 fallback 到 RDMA</li>
+<li><strong>零拷贝</strong>：通过 symmetric pointer 实现跨 rank 直接读写，无需本地暂存</li>
+</ol>
+<hh3 id="10-2-v1-v2-演进的本质" id="102-v1-v2">10.2 V1 → V2 演进的本质</hh3>
+<table>
+<thead>
+<tr>
+<th>演进维度</th>
+<th>V1</th>
+<th>V2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>内存管理</strong></td>
+<td>手动 IPC + NVSHMEM</td>
+<td>NCCL 统一 window</td>
+</tr>
+<tr>
+<td><strong>通信编程</strong></td>
+<td>显式 QP 操作</td>
+<td>声明式 GIN API</td>
+</tr>
+<tr>
+<td><strong>CPU 集成</strong></td>
+<td>无</td>
+<td>NUMA-aware CPU 段</td>
+</tr>
+<tr>
+<td><strong>弹性</strong></td>
+<td>固定拓扑</td>
+<td>Hybrid mode 自适应</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="10-3-关键性能因素" id="103">10.3 关键性能因素</hh3>
+<ol>
+<li><strong>2MB 对齐</strong>：<code>symmetric::kNumAlignmentBytes = 2097152</code> 确保大页映射，减少 TLB miss</li>
+<li><strong>NUMA-local CPU</strong>：<code>HybridElasticSymmetricMemory</code> 使用 <code>CU_MEM_LOCATION_TYPE_HOST_NUMA</code> 确保 CPU 段在本地 NUMA 节点</li>
+<li><strong>FABRIC fallback</strong>：<code>cumem_create_with_fallback</code> 自动尝试 FABRIC handle，失败时回退到 POSIX FD</li>
+<li><strong>GIN QP 数量</strong>：hybrid mode 分配 65/129 QPs，direct mode 仅 17 QPs</li>
+</ol>
+<hh3 id="10-4-代码路径总结" id="104">10.4 代码路径总结</hh3>
+<div class="highlight"><pre><span></span><code>Python: deep_ep.buffers.elastic.ElasticBuffer
+    │
+    ▼ pybind11
+C++: deep_ep::elastic::ElasticBuffer (csrc/elastic/buffer.hpp)
+    │
+    ├── nccl::NCCLSymmetricMemoryContext (csrc/kernels/backend/api.cuh)
+    │       │
+    │       ├── symmetric::alloc() → GPUSymmetricMemory / ElasticSymmetricMemory / HybridElastic
+    │       ├── ncclCommWindowRegister → ncclWindow_t
+    │       ├── ncclGetLsaDevicePointer → mapped_window_ptr + nvl_window_ptrs
+    │       └── ncclDevCommCreate → ncclDevComm_t (GIN)
+    │
+    ├── launch_dispatch / launch_combine → kernel
+    │       │
+    │       └── handle.cuh NCCLGin (device side)
+    │               ├── get_sym_ptr → NVLink pointer or nullptr
+    │               ├── red_add_rel → PTX atomic or Gin signal
+    │               ├── put / get → Gin RDMA operations
+    │               └── signal / wait → Gin notifications
+    │
+    └── launch_barrier / launch_engram_fetch / launch_pp_send_recv / ...
+</code></pre></div>
+
+<hh3 id="10-5-核心文件索引" id="105">10.5 核心文件索引</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>核心职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/backend/symmetric.hpp</code></td>
+<td>319</td>
+<td>symmetric memory 分配抽象</td>
+</tr>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td>1383</td>
+<td>ElasticBuffer 主实现</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>1107</td>
+<td>Python 侧 API</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/handle.cuh</code></td>
+<td>230</td>
+<td>Device 侧 NCCLGin 访问</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/backend/api.cuh</code></td>
+<td>105</td>
+<td>NCCLSymmetricMemoryContext 定义</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/backend/nccl.cu</code></td>
+<td>165</td>
+<td>NCCL 后端实现</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>~2385</td>
+<td>V1 NVSHMEM 通信内核</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>190</td>
+<td>V1 配置与布局</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/buffer.hpp</code></td>
+<td>~1795</td>
+<td>V1 Legacy Buffer 实现</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="附录-a-关键常量与类型定义" id="a">附录 A：关键常量与类型定义</hh2>
+<div class="highlight"><pre><span></span><code><span class="c1">// symmetric.hpp:16 - 对齐常量</span>
+<span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">kNumAlignmentBytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2097152</span><span class="p">;</span><span class="w">  </span><span class="c1">// 2 MB</span>
+
+<span class="c1">// symmetric.hpp:19-20 - CPU 通信类型</span>
+<span class="k">using</span><span class="w"> </span><span class="n">cpu_handle_t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">pair</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="p">;</span><span class="w">  </span><span class="c1">// (pid, fd)</span>
+<span class="k">using</span><span class="w"> </span><span class="n">cpu_comm_t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">cpu_handle_t</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="c1">// nccl.cu - GIN 配置</span>
+<span class="n">reqs</span><span class="p">.</span><span class="n">ginContextCount</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_allocated_qps</span><span class="p">;</span>
+<span class="n">reqs</span><span class="p">.</span><span class="n">ginExclusiveContexts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="n">reqs</span><span class="p">.</span><span class="n">ginQueueDepth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kGinQPDepth</span><span class="p">;</span>
+<span class="n">reqs</span><span class="p">.</span><span class="n">ginConnectionType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">allow_hybrid_mode</span><span class="w"> </span><span class="o">?</span><span class="w"> </span>
+<span class="w">    </span><span class="nl">NCCL_GIN_CONNECTION_RAIL</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">NCCL_GIN_CONNECTION_FULL</span><span class="p">;</span>
+</code></pre></div>
+
+<hh2 id="附录-b-环境变量" id="b">附录 B：环境变量</hh2>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NCCL_ELASTIC_BUFFER_REGISTER</code></td>
+<td>自动设置</td>
+<td>启用 NCCL elastic buffer 注册</td>
+</tr>
+<tr>
+<td><code>NCCL_WIN_STRIDE</code></td>
+<td>自动设置</td>
+<td>NCCL window stride（大 buffer 时）</td>
+</tr>
+<tr>
+<td><code>NCCL_SYM_REUSE_SYSMEM_HANDLES</code></td>
+<td>设置</td>
+<td>多平面网络下复用 sysmem handles</td>
+</tr>
+<tr>
+<td><code>EP_DISABLE_GIN</code></td>
+<td>0</td>
+<td>禁用 GIN（调试用）</td>
+</tr>
+<tr>
+<td><code>EP_BUFFER_DEBUG</code></td>
+<td>0</td>
+<td>打印 buffer 调试信息</td>
+</tr>
+<tr>
+<td><code>EP_OVERRIDE_RDMA_SL</code></td>
+<td>-</td>
+<td>覆盖 RDMA service level</td>
+</tr>
+<tr>
+<td><code>EP_AVOID_RECORD_STREAM</code></td>
+<td>0</td>
+<td>避免 record_stream（性能优化）</td>
+</tr>
+<tr>
+<td><code>EP_NUM_MAX_LOCAL_RANKS</code></td>
+<td>16</td>
+<td>最大本地 rank 数</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<blockquote>
+<p><strong>文档版本</strong>: v1.0<br />
+<strong>分析日期</strong>: 2026-07-30<br />
+<strong>基于代码</strong>: DeepEP main branch (commit dd758ca)<br />
+<strong>分析方法</strong>: 全量源码阅读 + 架构逆向</p>
+</blockquote>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>

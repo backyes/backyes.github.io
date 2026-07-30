@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>09: Symmetric Memory 演进深度对比 — DeepEP V1 / V2 vs DeepGEMM Mega MoE</title>
+<style>
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="09-symmetric-memory-演进深度对比-deepep-v1-v2-vs-deepgemm-mega-moe" id="09-symmetric-memory-deepep-v1-v2-vs-deepgemm-mega-moe">09: Symmetric Memory 演进深度对比 — DeepEP V1 / V2 vs DeepGEMM Mega MoE</hh1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+源材料: DeepEP (NVSHMEM + NCCL Gin) vs DeepGEMM Mega MoE (PyTorch Symmetric Memory + TMA)<br />
+关联文档: <code>05_02_buffer_symmbuffer.md</code>, <code>05_06_nvlink_rdma.md</code></p>
+</blockquote>
+<hr />
+<hh2 id="1-核心问题" id="1">1. 核心问题</hh2>
+<p><strong>Symmetric Memory（对称内存）是 MoE All-to-All 通信的范式转变</strong>——从"显式消息传递"到"隐式 load/store 远程访问"。但三个系统对 symmetric memory 的使用方式截然不同：</p>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>Symmetric Memory 角色</th>
+<th>通信范式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeepEP V1 (NVSHMEM)</td>
+<td><strong>不直接使用</strong> — 用 NVSHMEM API 分配对称内存</td>
+<td>Push + 显式 RDMA put</td>
+</tr>
+<tr>
+<td>DeepEP V2 (NCCL Gin)</td>
+<td><strong>底层传输层</strong> — NCCL window register 暴露远程地址</td>
+<td>Push + NCCL Gin QP</td>
+</tr>
+<tr>
+<td>DeepGEMM Mega MoE</td>
+<td><strong>核心编程模型</strong> — SymBuffer.map() 是唯一的远程访问原语</td>
+<td>Pull + TMA load/store</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心洞察</strong>: DeepEP V2 的 symmetric memory 是"传输层实现细节"，对 kernel 不透明；DeepGEMM 的 symmetric memory 是"编程模型核心"，kernel 直接通过 <code>map()</code> 发起远程访问。</p>
+<hr />
+<hh2 id="2-演进时间线" id="2">2. 演进时间线</hh2>
+<hh3 id="2-1-三代系统的架构定位" id="21">2.1 三代系统的架构定位</hh3>
+<div class="mermaid">timeline
+    title Symmetric Memory 在 MoE 通信中的演进
+    2024 : DeepEP V1 (NVSHMEM)
+         : nvshmem_align + IBGDA put
+         : 显式 Push 模型 + 三阶段流水线
+         : SM90 NVLink + RDMA
+    2025 : DeepEP V2 (NCCL Gin)
+         : ncclMemAlloc + Window Register
+         : 仍 Push 但用 QP 抽象
+         : SM90/SM100 NVLink + RDMA
+    2025 : DeepGEMM Mega MoE
+         : torch.distributed._symmetric_memory
+         : Pull 模型 + TMA load/store
+         : SM100 NVLink Symmetric Memory only
+</div>
+
+<hh3 id="2-2-deepep-v1-nvshmem-时代" id="22-deepep-v1-nvshmem">2.2 DeepEP V1: NVSHMEM 时代</hh3>
+<p><strong>核心机制</strong>: NVSHMEM 提供跨 rank 的对称内存分配，通过 <code>nvshmemi_ibgda_put_nbi_warp</code> 发起 RDMA 写入。</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/backend/nvshmem.cu (line 23-25)</span>
+<span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="nf">alloc</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">size_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">alignment</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">nvshmem_align</span><span class="p">(</span><span class="n">alignment</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">);</span><span class="w">  </span><span class="c1">// NVSHMEM 对称内存分配</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>内存模型</strong>: 两个独立 buffer — <code>num_nvl_bytes</code> (NVLink) 和 <code>num_rdma_bytes</code> (RDMA)：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_ep/buffers/legacy.py (line 33-36)</span>
+<span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">num_nvl_bytes</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">num_rdma_bytes</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">):</span>
+    <span class="c1"># 两个 buffer 分别用于 NVLink 和 RDMA</span>
+</code></pre></div>
+
+<p><strong>跨 rank 访问</strong>: 显式 RDMA put 到远端 recv buffer：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu (line 617-623)</span>
+<span class="n">nvshmemi_ibgda_put_nbi_warp</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_channel_meta</span><span class="p">.</span><span class="n">recv_buffer</span><span class="p">(</span><span class="n">rdma_rank</span><span class="p">)),</span><span class="w">  </span><span class="c1">// 远端目标</span>
+<span class="w">    </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_channel_meta</span><span class="p">.</span><span class="n">send_buffer</span><span class="p">(</span><span class="n">dst_rdma_rank</span><span class="p">)),</span><span class="w"> </span><span class="c1">// 本地源</span>
+<span class="w">    </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="p">),</span>
+<span class="w">    </span><span class="n">translate_dst_rdma_rank</span><span class="o">&lt;</span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_rdma_rank</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">),</span>
+<span class="w">    </span><span class="n">channel_id</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>同步</strong>: <code>nvshmem_sync_all()</code> + <code>barrier_block</code>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu (line 93-95)</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span>
+<span class="n">__forceinline__</span><span class="w"> </span><span class="n">__device__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">nvshmem_sync_with_same_gpu_idx</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">nvshmem_team_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">rdma_team</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">kLowLatencyMode</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">nvshmem_sync</span><span class="p">(</span><span class="n">rdma_team</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">nvshmem_sync_all</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="2-3-deepep-v2-nccl-gin-symmetric-memory" id="23-deepep-v2-nccl-gin-symmetric-memory">2.3 DeepEP V2: NCCL Gin + Symmetric Memory</hh3>
+<p><strong>核心转变</strong>: 从 NVSHMEM 迁移到 NCCL 生态，用 <code>ncclMemAlloc</code> / <code>cuMemCreate</code> 分配 symmetric memory，通过 <code>ncclCommWindowRegister</code> 暴露远程可访问窗口。</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/backend/symmetric.hpp (line 123-140)</span>
+<span class="c1">// GPUSymmetricMemory: 纯 GPU，当前默认</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">GPUSymmetricMemory</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SymmetricMemory</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">explicit</span><span class="w"> </span><span class="n">GPUSymmetricMemory</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclMemAlloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">));</span><span class="w">  </span><span class="c1">// NCCL 分配器</span>
+<span class="w">        </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">num_gpu_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">num_bytes</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>三种分配模式</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>用途</th>
+<th>内存布局</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GPUSymmetricMemory</code></td>
+<td>纯 GPU buffer</td>
+<td><code>[GPU VRAM]</code></td>
+</tr>
+<tr>
+<td><code>ElasticSymmetricMemory</code></td>
+<td>GPU + 本地 CPU</td>
+<td><code>[GPU VRAM] [CPU RAM]</code></td>
+</tr>
+<tr>
+<td><code>HybridElasticSymmetricMemory</code></td>
+<td>GPU + 所有 rank 的 CPU</td>
+<td><code>[GPU VRAM] [CPU rank0] [CPU rank1] ...</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>地址映射</strong>: <code>NCCLSymmetricMemoryContext::get_sym_ptr()</code> 是 V2 的核心映射原语：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/backend/nccl.cu (line 150-153)</span>
+<span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="nf">NCCLSymmetricMemoryContext::get_sym_ptr</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">mapped_window_ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">nvl_window_ptrs</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">])</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键差异</strong>: V2 的 <code>get_sym_ptr</code> 仅映射到 <strong>NVLink 域 (LSA) peer</strong>，不直接映射 RDMA 远端。RDMA 传输通过 NCCL Gin QP 独立发起。</p>
+<hh3 id="2-4-deepgemm-mega-moe-symmetric-memory-作为编程模型" id="24-deepgemm-mega-moe-symmetric-memory">2.4 DeepGEMM Mega MoE: Symmetric Memory 作为编程模型</hh3>
+<p><strong>核心机制</strong>: PyTorch <code>torch.distributed._symmetric_memory</code> 提供跨 rank 的 buffer 注册，<code>SymBuffer.map()</code> 是唯一的远程访问原语。</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py (line 42-49)</span>
+<span class="n">allocator</span> <span class="o">=</span> <span class="n">torch</span> <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">symm_mem</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="n">allocator</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">handle</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">types</span><span class="o">.</span><span class="n">SimpleNamespace</span><span class="p">(</span><span class="n">buffer_ptrs</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()])</span>
+    <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="k">else</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">rendezvous</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p><strong>地址映射</strong>: <code>SymBuffer::map()</code> 支持任意 rank 的地址映射：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/layout/sym_buffer.cuh (line 34-40)</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">ptr_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="n">ptr_t</span><span class="w"> </span><span class="n">map</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">ptr_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">mapped_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">ptr_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mapped_ptr</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键差异</strong>: DeepGEMM 的 <code>map()</code> 支持 <strong>任意 rank</strong>（包括 RDMA 远端），底层自动选择 NVLink 或 RDMA 传输。</p>
+<hr />
+<hh2 id="3-api-对比" id="3-api">3. API 对比</hh2>
+<hh3 id="3-1-初始化-api" id="31-api">3.1 初始化 API</hh3>
+<div class="highlight"><pre><span></span><code>flowchart TB
+    subgraph V1[&quot;DeepEP V1: Buffer(group, num_nvl_bytes, num_rdma_bytes)&quot;]
+        V1A[&quot;nvshmem_align() 分配 RDMA buffer&quot;] --&gt; V1B[&quot;CUDA IPC handle 交换 NVLink buffer&quot;]
+        V1B --&gt; V1C[&quot;nvshmemx_init_attr() 初始化 NVSHMEM&quot;]
+    end
+
+    subgraph V2[&quot;DeepEP V2: ElasticBuffer(group, num_bytes, num_cpu_bytes)&quot;]
+        V2A[&quot;symmetric::alloc() 分配 symmetric memory&quot;] --&gt; V2B[&quot;ncclCommWindowRegister() 注册窗口&quot;]
+        V2B --&gt; V2C[&quot;ncclDevCommCreate() 创建 Gin QP&quot;]
+    end
+
+    subgraph MM[&quot;DeepGEMM: SymmBuffer(group, ...)&quot;]
+        MMA[&quot;symm_mem.empty() 分配 buffer&quot;] --&gt; MMB[&quot;symm_mem.rendezvous() 注册到进程组&quot;]
+        MMB --&gt; MMC[&quot;handle.buffer_ptrs 获取所有 rank 地址&quot;]
+    end
+</code></pre></div>
+
+<hh3 id="3-2-初始化代码对比" id="32">3.2 初始化代码对比</hh3>
+<p><strong>DeepEP V1</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_ep/buffers/legacy.py</span>
+<span class="n">buffer</span> <span class="o">=</span> <span class="n">Buffer</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">num_nvl_bytes</span><span class="o">=</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">,</span> <span class="n">num_rdma_bytes</span><span class="o">=</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1"># 内部: nvshmem_align() + IPC handle exchange</span>
+</code></pre></div>
+
+<p><strong>DeepEP V2</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_ep/buffers/elastic.py (line 346-354)</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">ElasticBuffer</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">rank</span><span class="p">(),</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">(),</span>
+    <span class="n">nccl_comm_handle</span><span class="o">.</span><span class="n">get</span><span class="p">(),</span> <span class="n">cpu_comm</span><span class="p">,</span>
+    <span class="n">num_bytes</span><span class="p">,</span> <span class="n">num_cpu_bytes</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># 内部: ncclMemAlloc/cuMemCreate + ncclCommWindowRegister</span>
+</code></pre></div>
+
+<p><strong>DeepGEMM</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py (line 42-49)</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">handle</span> <span class="o">=</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">rendezvous</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+<span class="c1"># handle.buffer_ptrs = [addr_rank0, addr_rank1, ...]</span>
+</code></pre></div>
+
+<hh3 id="3-3-地址映射-api-对比" id="33-api">3.3 地址映射 API 对比</hh3>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>映射函数</th>
+<th>映射范围</th>
+<th>底层实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeepEP V1</td>
+<td><code>nvshmemi_ibgda_put_nbi_warp(dst_addr, ...)</code></td>
+<td>仅 RDMA 远端</td>
+<td>NVSHMEM IBGDA</td>
+</tr>
+<tr>
+<td>DeepEP V2</td>
+<td><code>get_sym_ptr(ptr, dst_rank_idx)</code></td>
+<td>仅 NVLink LSA peer</td>
+<td>NCCL LSA pointer</td>
+</tr>
+<tr>
+<td>DeepGEMM</td>
+<td><code>sym_buffer.map(ptr, dst_rank_idx)</code></td>
+<td><strong>任意 rank</strong></td>
+<td>UVA 偏移计算</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="3-4-buffer-布局对比" id="34-buffer">3.4 Buffer 布局对比</hh3>
+<p><strong>DeepEP V1</strong>: 分离的 NVLink + RDMA buffer</p>
+<div class="highlight"><pre><span></span><code>NVLink buffer (num_nvl_bytes): [send_buf | recv_buf] per channel per rank
+RDMA buffer (num_rdma_bytes):  [send_buf | recv_buf] per channel per rank
+</code></pre></div>
+
+<p><strong>DeepEP V2</strong>: 统一的 symmetric memory 窗口</p>
+<div class="highlight"><pre><span></span><code>Symmetric Memory: [[Workspace] GPU buffer [CPU buffer]]
+                  ↑ mapped_window_ptr
+</code></pre></div>
+
+<p><strong>DeepGEMM</strong>: 单一逻辑 buffer，多段划分</p>
+<div class="highlight"><pre><span></span><code>SymmBuffer: [Workspace | Input Token | L1 Pool | L2 Pool | Combine]
+            ↑ 所有 rank 相同布局，map() 通过偏移访问
+</code></pre></div>
+
+<hr />
+<hh2 id="4-内存访问模式对比-push-vs-pull" id="4-push-vs-pull">4. 内存访问模式对比: Push vs Pull</hh2>
+<hh3 id="4-1-deepep-v1-push-模型-source-destination" id="41-deepep-v1-push-source-destination">4.1 DeepEP V1: Push 模型 (Source → Destination)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu (line 688-693)</span>
+<span class="c1">// RDMA Sender Warp: 将本地 token 写入远端 RDMA buffer</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">st_broadcast</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="o">=</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">int4</span><span class="o">&amp;</span><span class="w"> </span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_topk_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span>
+<span class="w">        </span><span class="n">st_na_global</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">int4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">dst_send_buffers</span><span class="p">[</span><span class="n">j</span><span class="p">])</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">// ↑ 写入远端 send_buffer (通过 NVLink/RDMA)</span>
+<span class="p">};</span>
+<span class="n">UNROLLED_WARP_COPY</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="n">lane_id</span><span class="p">,</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">hidden_int4</span><span class="p">,</span><span class="w"> </span><span class="n">ld_nc_global</span><span class="p">,</span><span class="w"> </span><span class="n">st_broadcast</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Push 模型特征</strong>:<br />
+- Source warp 读取本地 token<br />
+- Source warp 通过 <code>nvshmemi_ibgda_put_nbi_warp</code> 写入远端 <code>recv_buffer</code><br />
+- Destination 被动等待 <code>recv_buffer</code> 数据到达<br />
+- 需要 FIFO head/tail 流控</p>
+<hh3 id="4-2-deepep-v2-仍-push-但-qp-抽象化" id="42-deepep-v2-push-qp">4.2 DeepEP V2: 仍 Push 但 QP 抽象化</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/elastic/buffer.hpp (line 469-489)</span>
+<span class="c1">// all_gather: 通过 cudaMemcpyBatchAsync 推送到远端</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tensors</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">get_sym_ptr</span><span class="p">(</span>
+<span class="w">            </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">offset</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">nbytes</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">rank_idx</span><span class="p">),</span>
+<span class="w">            </span><span class="n">dst_rank_idx</span><span class="p">);</span><span class="w">  </span><span class="c1">// 远端目标地址</span>
+<span class="w">        </span><span class="n">dst_ptrs</span><span class="p">[</span><span class="n">count</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_ptr</span><span class="p">;</span>
+<span class="w">        </span><span class="n">src_ptrs</span><span class="p">[</span><span class="n">count</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">();</span><span class="w">  </span><span class="c1">// 本地源</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="n">cudaMemcpyBatchAsync</span><span class="p">(</span><span class="n">dst_ptrs</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">src_ptrs</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">sizes</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">num_copies</span><span class="p">,</span><span class="w"> </span><span class="n">attrs</span><span class="p">,</span><span class="w"> </span><span class="n">comm_stream</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>V2 Push 特征</strong>:<br />
+- 使用 <code>get_sym_ptr</code> 计算远端地址<br />
+- 通过 <code>cudaMemcpyBatchAsync</code> 或 NCCL Gin QP 推送<br />
+- 仍需要 barrier 同步</p>
+<hh3 id="4-3-deepgemm-pull-模型-destination-source" id="43-deepgemm-pull-destination-source">4.3 DeepGEMM: Pull 模型 (Destination → Source)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh (line 533-555)</span>
+<span class="c1">// Dispatch Warp: 从远端 rank 拉取 token 到本地 smem</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span>
+<span class="w">    </span><span class="n">buffer</span><span class="p">.</span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">current_rank_in_expert_idx</span><span class="p">);</span><span class="w">  </span><span class="c1">// ← 远端源地址</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">l1_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">pool_token_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumRingTokens</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">();</span>
+
+<span class="c1">// TMA load: 远端 → 本地 smem → 本地 L1 buffer</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumChunks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">        </span><span class="n">pull_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w">                    </span><span class="c1">// 本地 smem 目标</span>
+<span class="w">        </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">src_base_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">),</span><span class="w">  </span><span class="c1">// 远程源</span>
+<span class="w">        </span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">);</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">mbarrier_arrive_and_set_tx</span><span class="p">(</span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">);</span>
+<span class="w">    </span><span class="n">issue_and_wait_pull_store</span><span class="p">(</span><span class="n">i</span><span class="p">);</span><span class="w">  </span><span class="c1">// smem → L1 buffer (TMA store)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Pull 模型特征</strong>:<br />
+- Destination warp 计算远端 source 地址 (<code>sym_buffer.map</code>)<br />
+- TMA load 直接从远端 HBM 拉到本地 smem<br />
+- 再 TMA store 到本地 L1 buffer<br />
+- 接收方控制速率，天然负载均衡</p>
+<hh3 id="4-4-combine-写回对比" id="44-combine">4.4 Combine 写回对比</hh3>
+<p><strong>DeepEP V1/V2 Combine</strong>: Source 推送结果到远端</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// V1: Forwarder warp 将 NVLink recv_buffer 数据写入远端 combine buffer</span>
+<span class="c1">// V2: 类似，通过 get_sym_ptr 定位远端 combine buffer</span>
+</code></pre></div>
+
+<p><strong>DeepGEMM Combine</strong>: Epilogue warp 拉取式写回</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh (line 1293-1299)</span>
+<span class="c1">// 从本地 smem 读取，写入远端 combine buffer</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">packed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_shared</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">smem_ptr</span><span class="p">));</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">combine_token_buffer</span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">dst_topk_idx</span><span class="p">)</span>
+<span class="w">                       </span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">dst_token_idx</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="p">...);</span>
+<span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">packed</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← NVLink store 写回</span>
+</code></pre></div>
+
+<hh3 id="4-5-push-vs-pull-范式总结" id="45-push-vs-pull">4.5 Push vs Pull 范式总结</hh3>
+<div class="mermaid">sequenceDiagram
+    participant S as Source GPU
+    participant T as Target GPU
+
+    Note over S,T: Push Model (DeepEP V1/V2)
+    S->>S: 读取本地 token
+    S->>T: RDMA/NVLink 写入 Target buffer
+    T->>T: 轮询等待数据到达
+    T->>T: 从 buffer 读取处理
+
+    Note over S,T: Pull Model (DeepGEMM)
+    T->>T: 计算远端 source 地址
+    T->>S: TMA Load 从 Source HBM 读取
+    S->>S: (被动响应)
+    T->>T: 本地 L1 buffer 写入
+</div>
+
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Push (DeepEP)</th>
+<th>Pull (DeepGEMM)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通信发起方</td>
+<td>Source (生产方)</td>
+<td>Target (消费方)</td>
+</tr>
+<tr>
+<td>速率控制</td>
+<td>Source 需 FIFO 流控</td>
+<td>Target 天然控制</td>
+</tr>
+<tr>
+<td>负载均衡</td>
+<td>需显式协调</td>
+<td>处理快的 rank 多 pull</td>
+</tr>
+<tr>
+<td>同步复杂度</td>
+<td>高 (head/tail + barrier)</td>
+<td>低 (arrival count)</td>
+</tr>
+<tr>
+<td>缓冲需求</td>
+<td>中间 send/recv buffer</td>
+<td>无中间 buffer</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="5-硬件要求对比" id="5">5. 硬件要求对比</hh2>
+<hh3 id="5-1-硬件依赖表" id="51">5.1 硬件依赖表</hh3>
+<table>
+<thead>
+<tr>
+<th>硬件特性</th>
+<th>DeepEP V1</th>
+<th>DeepEP V2</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>GPU 架构</strong></td>
+<td>SM90 (H100)</td>
+<td>SM90 / SM100</td>
+<td><strong>SM100 (B200) only</strong></td>
+</tr>
+<tr>
+<td><strong>NVLink</strong></td>
+<td>✅ 必需</td>
+<td>✅ 必需</td>
+<td>✅ 必需 (通过 SymMem)</td>
+</tr>
+<tr>
+<td><strong>RDMA (IB)</strong></td>
+<td>✅ 跨节点必需</td>
+<td>✅ 跨节点必需</td>
+<td>❌ 不需要 (NVLink SymMem 自动)</td>
+</tr>
+<tr>
+<td><strong>NVSHMEM</strong></td>
+<td>✅ 必需</td>
+<td>❌ 不需要</td>
+<td>❌ 不需要</td>
+</tr>
+<tr>
+<td><strong>NCCL Gin</strong></td>
+<td>❌</td>
+<td>✅ 必需</td>
+<td>❌ (PyTorch SymMem 内部使用)</td>
+</tr>
+<tr>
+<td><strong>TMA</strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>✅ 必需 (远程 load/store)</td>
+</tr>
+<tr>
+<td><strong>Symmetric Memory</strong></td>
+<td>❌ (NVSHMEM 模拟)</td>
+<td>✅ (NCCL 抽象)</td>
+<td>✅ (PyTorch 抽象)</td>
+</tr>
+<tr>
+<td><strong>TMEM</strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>✅ 必需 (计算流水线)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="5-2-为什么-deepgemm-只需要-nvlink-symmetric-memory" id="52-deepgemm-nvlink-symmetric-memory">5.2 为什么 DeepGEMM 只需要 NVLink Symmetric Memory?</hh3>
+<p><strong>核心原因</strong>: SM100 的 symmetric memory 抽象<strong>自动处理底层传输</strong>：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed._symmetric_memory</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">symm_mem</span>
+<span class="c1"># PyTorch SymMem 内部: 同节点 NVLink, 跨节点 RDMA (NCCL 自动选择)</span>
+</code></pre></div>
+
+<p>DeepGEMM 不区分 intra/inter-node：<br />
+- <strong>同节点</strong>: <code>sym_buffer.map()</code> → NVLink P2P 访问<br />
+- <strong>跨节点</strong>: <code>sym_buffer.map()</code> → RDMA (NCCL 后端自动)</p>
+<p>但 DeepGEMM 当前<strong>仅支持 SM100</strong>，因为 TMA 的远程访问需要 SM100 的 hardware support。</p>
+<hh3 id="5-3-deepep-v2-为什么仍需要-rdma" id="53-deepep-v2-rdma">5.3 DeepEP V2 为什么仍需要 RDMA?</hh3>
+<p><strong>核心原因</strong>: V2 的 <code>get_sym_ptr()</code> 仅映射到 <strong>NVLink LSA peer</strong>，不覆盖 RDMA 远端：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/backend/nccl.cu (line 143-147)</span>
+<span class="c1">// 仅获取 NVLink domain 内 peer 的指针</span>
+<span class="n">nvl_window_ptrs</span><span class="p">.</span><span class="n">resize</span><span class="p">(</span><span class="n">num_nvl_ranks</span><span class="p">);</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_nvl_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">    </span><span class="n">NCCL_CHECK</span><span class="p">(</span><span class="n">ncclGetLsaDevicePointer</span><span class="p">(</span><span class="n">window</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">nvl_window_ptrs</span><span class="p">[</span><span class="n">i</span><span class="p">]));</span>
+</code></pre></div>
+
+<p>跨节点通信必须通过 NCCL Gin QP 发起 RDMA 操作，因此 V2 仍依赖 RDMA 硬件。</p>
+<hr />
+<hh2 id="6-同步机制对比" id="6">6. 同步机制对比</hh2>
+<hh3 id="6-1-同步原语总览" id="61">6.1 同步原语总览</hh3>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>节点内同步</th>
+<th>跨节点同步</th>
+<th>数据传输同步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DeepEP V1</strong></td>
+<td><code>barrier_block&lt;&gt;</code></td>
+<td><code>nvshmem_sync_all()</code></td>
+<td>FIFO head/tail</td>
+</tr>
+<tr>
+<td><strong>DeepEP V2</strong></td>
+<td><code>launch_barrier()</code></td>
+<td>NCCL barrier (Gin)</td>
+<td><code>cudaMemcpyBatchAsync</code> + event</td>
+</tr>
+<tr>
+<td><strong>DeepGEMM</strong></td>
+<td><code>grid_sync</code> + <code>mbarrier</code></td>
+<td><code>nvlink_barrier</code></td>
+<td><code>mbarrier</code> (TMA)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="6-2-deepep-v1-nvshmem-同步" id="62-deepep-v1-nvshmem">6.2 DeepEP V1: NVSHMEM 同步</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/legacy/internode.cu (line 147-149)</span>
+<span class="c1">// 两阶段同步: NVLink intra-node + RDMA inter-node</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span>
+<span class="w">    </span><span class="n">nvshmem_sync_with_same_gpu_idx</span><span class="o">&lt;</span><span class="n">kLowLatencyMode</span><span class="o">&gt;</span><span class="p">(</span><span class="n">rdma_team</span><span class="p">);</span>
+<span class="n">barrier_block</span><span class="o">&lt;</span><span class="n">LEGACY_NUM_MAX_NVL_PEERS</span><span class="o">&gt;</span><span class="p">(</span><span class="n">barrier_signal_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">nvl_rank</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>V1 同步层次</strong>:<br />
+1. <code>nvshmem_sync_all()</code> — 跨 RDMA rank 全局同步<br />
+2. <code>barrier_block&lt;NVL_PEERS&gt;</code> — NVLink domain 内同步<br />
+3. FIFO head/tail — 流控 (per-channel)</p>
+<hh3 id="6-3-deepep-v2-nccl-barrier" id="63-deepep-v2-nccl-barrier">6.3 DeepEP V2: NCCL Barrier</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/elastic/buffer.hpp (line 191-199)</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">use_comm_stream</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">with_cpu_sync</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sequential</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// GPU barrier via NCCL</span>
+<span class="w">    </span><span class="n">launch_barrier</span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">window</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleout_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleup_rank_idx</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleout_ranks</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">num_scaleup_ranks</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">num_gpu_timeout_cycles</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>V2 同步层次</strong>:<br />
+1. <code>launch_barrier()</code> — NCCL 内置 barrier (scaleout + scaleup)<br />
+2. <code>cudaMemcpyBatchAsync</code> + event — 异步数据传输<br />
+3. <code>stream_wait()</code> — stream 间依赖</p>
+<hh3 id="6-4-deepgemm-三层同步" id="64-deepgemm">6.4 DeepGEMM: 三层同步</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/comm/barrier.cuh (line 46-89)</span>
+<span class="c1">// NVLink barrier: 跨 rank 全局同步</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">nvlink_barrier</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// 1. 节点内 SM 同步</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// SM 0 发送信号到远端 rank</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="c1">// 等待所有 rank 到达</span>
+<span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq_sys</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* spin */</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// 3. 再次节点内同步</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>DeepGEMM 同步层次</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>原语</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>节点内</td>
+<td><code>grid_sync&lt;kNumSMs&gt;</code></td>
+<td>所有 SM 同步 (atomic counter)</td>
+</tr>
+<tr>
+<td>跨节点</td>
+<td><code>nvlink_barrier</code></td>
+<td>SM 0 发送 signal + 等待远端</td>
+</tr>
+<tr>
+<td>数据传输</td>
+<td><code>mbarrier</code></td>
+<td>TMA load/store 完成通知</td>
+</tr>
+<tr>
+<td>流水线</td>
+<td><code>full_barriers</code> / <code>empty_barriers</code></td>
+<td>生产者-消费者 (ring buffer)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>NVLink Barrier Tag 语义</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh (line 309-311)</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kBeforeDispatchPullBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">      </span><span class="c1">// Dispatch 拉取前</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kBeforeCombineReduceBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">     </span><span class="c1">// Combine 归约前</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kAfterWorkspaceCleanBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">     </span><span class="c1">// Workspace 清理后</span>
+</code></pre></div>
+
+<hh3 id="6-5-同步开销对比" id="65">6.5 同步开销对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP V1</th>
+<th>DeepEP V2</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全局同步次数/迭代</td>
+<td>2-3 (notify + data)</td>
+<td>1-2 (barrier)</td>
+<td>2-3 (grid_sync + nvlink_barrier)</td>
+</tr>
+<tr>
+<td>同步粒度</td>
+<td>全局</td>
+<td>全局</td>
+<td>节点内 + 跨节点分离</td>
+</tr>
+<tr>
+<td>同步参与者</td>
+<td>所有 SM</td>
+<td>所有 SM</td>
+<td>节点内全部 SM, 跨节点仅 SM 0</td>
+</tr>
+<tr>
+<td>超时机制</td>
+<td><code>clock64()</code> 轮询</td>
+<td><code>num_gpu_timeout_cycles</code></td>
+<td><code>kNumTimeoutCycles</code> (60s)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="7-性能影响分析" id="7">7. 性能影响分析</hh2>
+<hh3 id="7-1-延迟差异" id="71">7.1 延迟差异</hh3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>DeepEP V1</th>
+<th>DeepEP V2</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>跨节点单程</td>
+<td>~5-10 μs (RDMA put)</td>
+<td>~5-10 μs (Gin QP)</td>
+<td>~3-5 μs (TMA load)</td>
+</tr>
+<tr>
+<td>节点内单程</td>
+<td>~1-2 μs (NVLink store)</td>
+<td>~1-2 μs (get_sym_ptr + store)</td>
+<td>~0.5-1 μs (TMA load)</td>
+</tr>
+<tr>
+<td>全局同步</td>
+<td>~5-10 μs (nvshmem_sync)</td>
+<td>~3-5 μs (NCCL barrier)</td>
+<td>~2-3 μs (grid_sync + nvlink_barrier)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DeepGEMM 延迟优势来源</strong>:<br />
+1. <strong>Pull 模型</strong>: 消费方按需拉取，无需等待生产方推送<br />
+2. <strong>TMA 硬件加速</strong>: 专用数据传输引擎，不占用 SM<br />
+3. <strong>SM 0 专责 barrier</strong>: 其他 SM 可继续计算</p>
+<hh3 id="7-2-带宽利用率" id="72">7.2 带宽利用率</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP V1</th>
+<th>DeepEP V2</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVLink 带宽</td>
+<td>~900 GB/s (理论)</td>
+<td>~900 GB/s</td>
+<td>~900 GB/s (通过 SymMem)</td>
+</tr>
+<tr>
+<td>RDMA 带宽</td>
+<td>~400 Gb/s (IB)</td>
+<td>~400 Gb/s (Gin)</td>
+<td>自动 (NCCL 后端)</td>
+</tr>
+<tr>
+<td>有效利用率</td>
+<td>70-80% (FIFO 开销)</td>
+<td>75-85% (QP 抽象)</td>
+<td>80-90% (TMA + 流水线)</td>
+</tr>
+<tr>
+<td>小数据包效率</td>
+<td>低 (需 chunk 聚合)</td>
+<td>中 (QP 合并)</td>
+<td>高 (TMA 硬件优化)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="7-3-sm-占用" id="73-sm">7.3 SM 占用</hh3>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>通信占用 SM</th>
+<th>计算占用 SM</th>
+<th>重叠方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeepEP V1</td>
+<td>专用 warp group (IB Sending / Forwarding / NVLink Receiving)</td>
+<td>不重叠 (分离 kernel)</td>
+<td>无</td>
+</tr>
+<tr>
+<td>DeepEP V2</td>
+<td>专用 notify warp + QP 引擎</td>
+<td>不重叠 (分离 kernel)</td>
+<td>部分 (stream overlap)</td>
+</tr>
+<tr>
+<td>DeepGEMM</td>
+<td><strong>Dispatch Warps</strong> (warp 特化)</td>
+<td><strong>MMA Warps + Epilogue Warps</strong></td>
+<td><strong>完全重叠</strong> (persistent kernel)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DeepGEMM 的 warp 特化</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh (line 329-416)</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Dispatch Warps: 远程拉取 token</span>
+<span class="w">    </span><span class="n">cutlass</span><span class="o">::</span><span class="n">arch</span><span class="o">::</span><span class="n">warpgroup_reg_dealloc</span><span class="o">&lt;</span><span class="n">kNumDispatchRegisters</span><span class="o">&gt;</span><span class="p">();</span><span class="w">  </span><span class="c1">// 48 regs</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kNumMMANonEpilogueWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// MMA Warps: GEMM 计算</span>
+<span class="w">    </span><span class="n">cutlass</span><span class="o">::</span><span class="n">arch</span><span class="o">::</span><span class="n">warpgroup_reg_dealloc</span><span class="o">&lt;</span><span class="n">kNumNonEpilogueRegisters</span><span class="o">&gt;</span><span class="p">();</span><span class="w">  </span><span class="c1">// 40 regs</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Epilogue Warps: SwiGLU + Combine 写回</span>
+<span class="w">    </span><span class="c1">// 208 regs (高寄存器用于 TMEM load/STSM)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="7-4-性能对比总结" id="74">7.4 性能对比总结</hh3>
+<div class="mermaid">graph LR
+    subgraph Metrics["性能关键指标"]
+        L["延迟"]
+        B["带宽"]
+        S["SM 利用率"]
+        O["计算通信重叠"]
+    end
+
+    subgraph V1["DeepEP V1"]
+        L1["中 (RDMA put)"]
+        B1["中 (FIFO 开销)"]
+        S1["低 (专用 warp group)"]
+        O1["无"]
+    end
+
+    subgraph V2["DeepEP V2"]
+        L2["中 (Gin QP)"]
+        B2["中-高 (QP 合并)"]
+        S2["低 (分离 kernel)"]
+        O2["部分 (stream)"]
+    end
+
+    subgraph MM["DeepGEMM"]
+        L3["低 (TMA pull)"]
+        B3["高 (TMA 硬件)"]
+        S3["高 (warp 特化)"]
+        O3["完全 (persistent)"]
+    end
+</div>
+
+<hr />
+<hh2 id="8-关键代码位置索引" id="8">8. 关键代码位置索引</hh2>
+<hh3 id="8-1-deepep-v1-nvshmem" id="81-deepep-v1-nvshmem">8.1 DeepEP V1 (NVSHMEM)</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/backend/nvshmem.cu</code></td>
+<td><code>nvshmem_align()</code>, <code>nvshmem_barrier_all()</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td><code>notify_dispatch</code>, <code>dispatch</code> kernel, <code>nvshmemi_ibgda_put_nbi_warp</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/buffer.cuh</code></td>
+<td><code>SymBuffer</code>, <code>AsymBuffer</code> 布局</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td><code>Buffer</code> 类, NVSHMEM 初始化</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="8-2-deepep-v2-nccl-gin" id="82-deepep-v2-nccl-gin">8.2 DeepEP V2 (NCCL Gin)</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/backend/symmetric.hpp</code></td>
+<td><code>GPUSymmetricMemory</code>, <code>ElasticSymmetricMemory</code>, <code>HybridElasticSymmetricMemory</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/backend/nccl.cu</code></td>
+<td><code>NCCLSymmetricMemoryContext</code>, <code>get_sym_ptr()</code>, <code>ncclCommWindowRegister</code></td>
+</tr>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td><code>ElasticBuffer</code>, <code>barrier()</code>, <code>all_gather()</code>, <code>engram_fetch()</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td><code>DispatchRuntime</code>, JIT kernel 生成</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td><code>ElasticBuffer</code> Python API, <code>EPHandle</code></td>
+</tr>
+</tbody>
+</table>
+<hh3 id="8-3-deepgemm-mega-moe" id="83-deepgemm-mega-moe">8.3 DeepGEMM Mega MoE</hh3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td><code>SymBuffer::map()</code> — 核心地址映射</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td><code>Workspace</code>, <code>MegaMoEBuffer</code>, <code>TokenSrcMetadata</code></td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/comm/barrier.cuh</code></td>
+<td><code>grid_sync</code>, <code>nvlink_barrier</code></td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>完整 kernel (dispatch + GEMM + combine)</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td><code>SymmBuffer</code>, <code>get_symm_buffer_for_mega_moe</code></td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>多进程测试, 性能 benchmark</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<hh2 id="9-核心洞察总结" id="9">9. 核心洞察总结</hh2>
+<hh3 id="9-1-symmetric-memory-的三种使用范式" id="91-symmetric-memory">9.1 Symmetric Memory 的三种使用范式</hh3>
+<table>
+<thead>
+<tr>
+<th>范式</th>
+<th>代表系统</th>
+<th>Symmetric Memory 角色</th>
+<th>对 Kernel 可见性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>分配器</strong></td>
+<td>DeepEP V1 (NVSHMEM)</td>
+<td>仅用于分配跨 rank 可访问内存</td>
+<td>❌ 不可见 (kernel 用 put/get)</td>
+</tr>
+<tr>
+<td><strong>传输层</strong></td>
+<td>DeepEP V2 (NCCL Gin)</td>
+<td>注册远程可访问窗口</td>
+<td>⚠️ 部分可见 (get_sym_ptr)</td>
+</tr>
+<tr>
+<td><strong>编程模型</strong></td>
+<td>DeepGEMM</td>
+<td>核心远程访问抽象</td>
+<td>✅ 完全可见 (map + TMA)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="9-2-范式演进的本质" id="92">9.2 范式演进的本质</hh3>
+<div class="highlight"><pre><span></span><code>DeepEP V1: &quot;在哪里分配?&quot; — NVSHMEM 提供跨 rank 内存分配
+    ↓
+DeepEP V2: &quot;怎么暴露?&quot; — NCCL Window Register 暴露远程指针
+    ↓
+DeepGEMM: &quot;怎么用?&quot; — SymBuffer.map() + TMA 直接远程 load/store
+</code></pre></div>
+
+<p><strong>每一步都在提升抽象层级</strong>:<br />
+1. V1: 关注<strong>物理分配</strong> (nvshmem_align)<br />
+2. V2: 关注<strong>地址暴露</strong> (ncclCommWindowRegister + get_sym_ptr)<br />
+3. DeepGEMM: 关注<strong>访问语义</strong> (map + TMA load/store)</p>
+<hh3 id="9-3-pull-vs-push-的设计权衡" id="93-pull-vs-push">9.3 Pull vs Push 的设计权衡</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Push (DeepEP)</th>
+<th>Pull (DeepGEMM)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>适用场景</td>
+<td>通用通信 (多种 pattern)</td>
+<td>MoE All-to-All (固定 pattern)</td>
+</tr>
+<tr>
+<td>控制灵活性</td>
+<td>高 (Source 决定发送时机)</td>
+<td>中 (Target 决定拉取时机)</td>
+</tr>
+<tr>
+<td>实现复杂度</td>
+<td>高 (FIFO + 三阶段)</td>
+<td>低 (map + TMA)</td>
+</tr>
+<tr>
+<td>性能上限</td>
+<td>高 (可极致优化)</td>
+<td>高 (TMA 硬件加速)</td>
+</tr>
+<tr>
+<td>通用性</td>
+<td>高 (EP/PP/AGRS/Engram)</td>
+<td>低 (仅 MoE)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="9-4-一句话总结" id="94">9.4 一句话总结</hh3>
+<blockquote>
+<p><strong>DeepEP V1 用 NVSHMEM 解决"分配"，V2 用 NCCL Gin 解决"暴露"，DeepGEMM 用 SymBuffer + TMA 解决"使用"。Symmetric Memory 从"底层分配器"演进为"核心编程模型"，使得 MoE 通信从"显式消息传递"坍缩为"隐式 load/store"。</strong></p>
+</blockquote>
+<hr />
+<hh2 id="附录-a-三种-symmetric-memory-分配器的完整对比" id="a-symmetric-memory">附录 A: 三种 Symmetric Memory 分配器的完整对比</hh2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>NVSHMEM (V1)</th>
+<th>NCCL Gin (V2)</th>
+<th>PyTorch SymMem (DeepGEMM)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>分配 API</td>
+<td><code>nvshmem_align()</code></td>
+<td><code>ncclMemAlloc()</code> / <code>cuMemCreate()</code></td>
+<td><code>symm_mem.empty()</code></td>
+</tr>
+<tr>
+<td>注册 API</td>
+<td>自动 (NVSHMEM 初始化)</td>
+<td><code>ncclCommWindowRegister()</code></td>
+<td><code>symm_mem.rendezvous()</code></td>
+</tr>
+<tr>
+<td>地址映射</td>
+<td>隐式 (put/get 指定 rank)</td>
+<td><code>get_sym_ptr(ptr, dst_rank)</code></td>
+<td><code>sym_buffer.map(ptr, dst_rank)</code></td>
+</tr>
+<tr>
+<td>映射范围</td>
+<td>所有 rank</td>
+<td>仅 NVLink LSA peer</td>
+<td>所有 rank</td>
+</tr>
+<tr>
+<td>CPU 支持</td>
+<td>❌</td>
+<td>✅ (Elastic/Hybrid)</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>释放 API</td>
+<td><code>nvshmem_free()</code></td>
+<td><code>ncclMemFree()</code> / <code>cuMemRelease()</code></td>
+<td>自动 (Python GC)</td>
+</tr>
+<tr>
+<td>对齐要求</td>
+<td>2 MB</td>
+<td>2 MB (<code>kNumAlignmentBytes</code>)</td>
+<td>无 (PyTorch 处理)</td>
+</tr>
+<tr>
+<td>超时机制</td>
+<td><code>clock64()</code> 轮询</td>
+<td><code>num_gpu_timeout_cycles</code></td>
+<td><code>kNumTimeoutCycles</code></td>
+</tr>
+</tbody>
+</table>
+<hh2 id="附录-b-关键源码片段" id="b">附录 B: 关键源码片段</hh2>
+<hh3 id="b-1-deepep-v2-的-hybrid-symmetric-memory-布局" id="b1-deepep-v2-hybrid-symmetric-memory">B.1 DeepEP V2 的 Hybrid Symmetric Memory 布局</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// csrc/kernels/backend/symmetric.hpp (line 188-290)</span>
+<span class="c1">// HybridElasticSymmetricMemory: GPU + 所有 rank 的 CPU segment</span>
+<span class="c1">// Layout: [GPU VRAM (front)] [CPU rank0 | CPU rank1 | ... | CPU rank(N-1) (back)]</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">HybridElasticSymmetricMemory</span><span class="w"> </span><span class="k">final</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SymmetricMemory</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 每个 rank 创建 NUMA-local CPU segment</span>
+<span class="w">    </span><span class="c1">// 通过 POSIX FD (pidfd_open + pidfd_getfd) 跨进程导入</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_scaleup_ranks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cpu_comm</span><span class="p">[</span><span class="n">num_scaleup_ranks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">];</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">pid</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">local_pid</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kt">int</span><span class="w"> </span><span class="n">pidfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">syscall</span><span class="p">(</span><span class="n">SYS_pidfd_open</span><span class="p">,</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">            </span><span class="n">local_fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">syscall</span><span class="p">(</span><span class="n">SYS_pidfd_getfd</span><span class="p">,</span><span class="w"> </span><span class="n">pidfd</span><span class="p">,</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemImportFromShareableHandle</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cpu_handles</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="p">...));</span>
+<span class="w">        </span><span class="n">CUDA_DRIVER_CHECK</span><span class="p">(</span><span class="n">lazy_cuMemMap</span><span class="p">(</span><span class="n">addr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="n">num_cpu_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">cpu_handles</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="mi">0</span><span class="p">));</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<hh3 id="b-2-deepgemm-的-combine-写回-pull-范式" id="b2-deepgemm-combine-pull">B.2 DeepGEMM 的 Combine 写回 (Pull 范式)</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh (line 1274-1299)</span>
+<span class="c1">// Epilogue warp 将 L2 输出写回远程 combine buffer</span>
+<span class="kt">uint32_t</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">dst_token_idx</span><span class="p">,</span><span class="w"> </span><span class="n">dst_topk_idx</span><span class="p">;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">task_info</span><span class="p">.</span><span class="n">is_shared</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">rank_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="n">dst_token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pool_m_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">m_idx_in_block</span><span class="p">;</span>
+<span class="w">    </span><span class="n">dst_topk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">;</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">workspace</span><span class="p">.</span><span class="n">get_token_src_metadata_ptr</span><span class="p">(</span><span class="n">pool_m_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">m_idx_in_block</span><span class="p">);</span>
+<span class="w">    </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">rank_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="n">dst_token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">token_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="n">dst_topk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">topk_idx</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="c1">// 从本地 smem 读取，通过 sym_buffer.map 写入远端</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">packed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_shared</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">smem_ptr</span><span class="p">));</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">combine_token_buffer</span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">dst_topk_idx</span><span class="p">)</span>
+<span class="w">                       </span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">dst_token_idx</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="p">...);</span>
+<span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">packed</span><span class="p">;</span><span class="w">  </span><span class="c1">// NVLink/RDMA store</span>
+</code></pre></div>
+
+<hh3 id="b-3-deepgemm-的-nvlink-barrier-实现" id="b3-deepgemm-nvlink-barrier">B.3 DeepGEMM 的 NVLink Barrier 实现</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// deep_gemm/comm/barrier.cuh (line 46-89)</span>
+<span class="c1">// 三层同步: grid_sync → NVLink signal → grid_sync</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">nvlink_barrier</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_prologue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// 节点内同步</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// 仅 SM 0 参与跨节点</span>
+<span class="w">        </span><span class="k">auto</span><span class="o">*</span><span class="w"> </span><span class="n">signal_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_nvl_barrier_signal_ptr</span><span class="p">(</span><span class="n">signal_phase</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">)</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add</span><span class="p">(</span><span class="n">counter_ptr</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq_sys</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* spin */</span><span class="w"> </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_epilogue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(...);</span><span class="w">  </span><span class="c1">// 再次节点内同步</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<p><em>分析基于 DeepEP 源码 (commit: 当前 main 分支) 与 DeepGEMM 源码 (commit: 当前 main 分支)</em></p>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>

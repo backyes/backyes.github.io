@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepGEMM Mega MoE 对称内存（Symmetric Memory）深度分析</title>
+<style>
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<hh1 id="deepgemm-mega-moe-对称内存-symmetric-memory-深度分析" id="deepgemm-mega-moe-symmetric-memory">DeepGEMM Mega MoE 对称内存（Symmetric Memory）深度分析</hh1>
+<blockquote>
+<p>基于 DeepGEMM 源码的 Mega MoE kernel 对称内存使用全解析：从 Python API 到 CUDA kernel 的 NVLink 直接访问机制</p>
+</blockquote>
+<hr />
+<hh2 id="目录" id="_1">目录</hh2>
+<ol>
+<li><a href="#1-概述与设计哲学">概述与设计哲学</a></li>
+<li><a href="#2-软件依赖与硬件要求">软件依赖与硬件要求</a></li>
+<li><a href="#3-symbuffer-核心数据结构">SymBuffer 核心数据结构</a></li>
+<li><a href="#4-megamoebuffer-内存布局">MegaMoEBuffer 内存布局</a></li>
+<li><a href="#5-对称内存分配与注册">对称内存分配与注册</a></li>
+<li><a href="#6-nvlink-barrier-同步机制">NVLink Barrier 同步机制</a></li>
+<li><a href="#7-dispatch-warps远程数据拉取">Dispatch Warps：远程数据拉取</a></li>
+<li><a href="#8-epilogue-warpscombine-写回">Epilogue Warps：Combine 写回</a></li>
+<li><a href="#9-combinetop-k-归约">Combine Reduction：Top-K 归约</a></li>
+<li><a href="#10-python-api-完整使用流程">Python API 完整使用流程</a></li>
+<li><a href="#11-与-deepep-的对比分析">与 DeepEP 的对比分析</a></li>
+<li><a href="#12-关键设计洞察">关键设计洞察</a></li>
+</ol>
+<hr />
+<hh2 id="1-概述与设计哲学" id="1">1. 概述与设计哲学</hh2>
+<p>DeepGEMM 的 Mega MoE kernel 是 <strong>单 kernel 融合 MoE 全流水线</strong> 的极致实现。其核心创新在于利用 <strong>symmetric memory（对称内存）</strong> 将传统 MoE 的 Dispatch → GEMM → Combine 三阶段消除为单 kernel 内的 warp 协作：</p>
+<div class="highlight"><pre><span></span><code>传统 MoE:   Dispatch(kernel) → GEMM(kernel) → Combine(kernel)
+Mega MoE:   Single Kernel (Dispatch Warps + MMA Warps + Epilogue/Combine Warps)
+</code></pre></div>
+
+<p><strong>对称内存的本质</strong>：通过 NVLink 提供的跨 GPU 虚拟地址直接访问能力，让一个 GPU 可以直接读写另一个 GPU 的 HBM，无需显式数据拷贝。</p>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    Symmetric Memory 抽象模型                          │
+│                                                                     │
+│  GPU 0 HBM          GPU 1 HBM          GPU 2 HBM          GPU 3 HBM │
+│  ┌──────────┐       ┌──────────┐       ┌──────────┐       ┌───────┐ │
+│  │SymBuffer │       │SymBuffer │       │SymBuffer │       │  ...  │ │
+│  │  Rank 0  │◄──────│  Rank 1  │◄──────│  Rank 2  │◄──────│       │ │
+│  └──────────┘       └──────────┘       └──────────┘       └───────┘ │
+│       ▲                   ▲                   ▲                     │
+│       │    NVLink Fabric (GPU-centric access)    │                     │
+│       └───────────────────┴─────────────────────┘                     │
+│              任何 Rank 可访问任何其他 Rank 的 SymBuffer                 │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<hh2 id="2-软件依赖与硬件要求" id="2">2. 软件依赖与硬件要求</hh2>
+<hh3 id="2-1-pytorch-symmetric-memory-api" id="21-pytorch-symmetric-memory-api">2.1 PyTorch Symmetric Memory API</hh3>
+<p>Mega MoE 依赖 PyTorch 的 <code>torch.distributed._symmetric_memory</code> 模块：</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deep_gemm/mega/__init__.py:10</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed._symmetric_memory</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">symm_mem</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+</code></pre></div>
+
+<p><strong>核心 API 调用</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>用途</th>
+<th>代码位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>symm_mem.empty(num_bytes, dtype, device)</code></td>
+<td>单 rank 分配</td>
+<td><code>__init__.py:43</code></td>
+</tr>
+<tr>
+<td><code>symm_mem.rendezvous(buffer, group)</code></td>
+<td>多 rank 注册并获取跨 rank 指针</td>
+<td><code>__init__.py:47</code></td>
+</tr>
+<tr>
+<td><code>allocator.empty(...)</code></td>
+<td>根据 rank 数自动选择分配器</td>
+<td><code>__init__.py:42-43</code></td>
+</tr>
+</tbody>
+</table>
+<hh3 id="2-2-硬件要求" id="22">2.2 硬件要求</hh3>
+<table>
+<thead>
+<tr>
+<th>要求</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SM100 (Blackwell)</strong></td>
+<td>TMEM（Tensor Memory）是 Mega MoE 单 kernel 融合的关键硬件原语</td>
+</tr>
+<tr>
+<td><strong>NVLink</strong></td>
+<td>对称内存的跨 GPU 访问依赖 NVLink fabric</td>
+</tr>
+<tr>
+<td><strong>2-CTA Cluster</strong></td>
+<td>SM100 的 2-CTA MMA 需要 cluster 支持</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="2-3-为什么必须-sm100" id="23-sm100">2.3 为什么必须 SM100？</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:78</span>
+<span class="cp">#if (defined(__CUDA_ARCH__) and (__CUDA_ARCH__ &gt;= 1000)) or defined(__CLION_IDE__)</span>
+</code></pre></div>
+
+<p>SM100 提供了三个 Mega MoE 不可或缺的能力：</p>
+<ol>
+<li><strong>TMEM（Tensor Memory）</strong>：片上存储 MMA 累加器，使计算与写回完全解耦</li>
+<li><strong>UTCCP（UTility Copy）</strong>：SMEM → TMEM 的异步拷贝，用于 Scale Factor 加载</li>
+<li><strong>2-CTA UMMA</strong>：单指令完成 256×N×K 的矩阵乘法，配合 multicast 减少 SMEM 带宽压力</li>
+</ol>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────┐
+│              SM100 Mega MoE 硬件能力依赖                      │
+│                                                              │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                  │
+│  │  TMEM   │    │ UTCCP   │    │2-CTA    │                  │
+│  │ 256 cols│    │SMEM→TMEM│    │  UMMA   │                  │
+│  │ per SM  │    │ async   │    │Multicast│                  │
+│  └────┬────┘    └────┬────┘    └────┬────┘                  │
+│       │              │              │                        │
+│       ▼              ▼              ▼                        │
+│  ┌─────────────────────────────────────────┐                │
+│  │    计算-写回解耦 + SF异步加载 + 大矩阵   │                │
+│  └─────────────────────────────────────────┘                │
+└──────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<hh2 id="3-symbuffer-核心数据结构" id="3-symbuffer">3. SymBuffer 核心数据结构</hh2>
+<hh3 id="3-1-结构定义" id="31">3.1 结构定义</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sym_buffer.cuh:9-12</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumMaxRanks</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">SymBuffer</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">base</span><span class="p">;</span><span class="w">                           </span><span class="c1">// 本地 buffer 基地址</span>
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">kNumMaxRanks</span><span class="p">];</span><span class="w">          </span><span class="c1">// 各 rank 相对于 base 的偏移</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">;</span><span class="w">                      </span><span class="c1">// 当前 rank 编号</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p><strong>设计精髓</strong>：每个 rank 的 SymBuffer 大小相同、布局相同，因此跨 rank 访问只需加上一个固定偏移：</p>
+<div class="highlight"><pre><span></span><code>Rank 0 视角:
+  base = 0x1000 (本地)
+  offsets[0] = 0        (本地)
+  offsets[1] = 0x800000 (Rank 1 的 buffer 基地址 - Rank 0 的 buffer 基地址)
+  offsets[2] = 0x1000000
+  ...
+
+Rank 1 视角:
+  base = 0x1800 (本地)
+  offsets[0] = -0x800000
+  offsets[1] = 0
+  offsets[2] = 0x800000
+  ...
+</code></pre></div>
+
+<hh3 id="3-2-map-函数-地址转换核心" id="32-map">3.2 map() 函数：地址转换核心</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sym_buffer.cuh:34-40</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">ptr_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="n">ptr_t</span><span class="w"> </span><span class="n">map</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">ptr_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">kNumRanks</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">ptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 单 rank 无需转换</span>
+
+<span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">mapped_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offsets</span><span class="p">[</span><span class="n">dst_rank_idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">ptr_t</span><span class="o">*&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mapped_ptr</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>工作原理</strong>：<br />
+- 输入：本地 rank 视角的虚拟地址 <code>ptr</code><br />
+- 输出：可通过 NVLink 远程访问的地址（目标 rank 的 HBM 物理地址）<br />
+- 关键：<code>ptr</code> 必须是 <strong>本地 rank 的合法虚拟地址</strong>，map 后变成远端可访问地址</p>
+<hh3 id="3-3-构造过程" id="33">3.3 构造过程</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sym_buffer.cuh:19-25</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Container</span><span class="o">&gt;</span>
+<span class="k">explicit</span><span class="w"> </span><span class="n">SymBuffer</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Container</span><span class="o">&amp;</span><span class="w"> </span><span class="n">c</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">)</span><span class="o">:</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">(</span><span class="n">rank_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">c</span><span class="p">.</span><span class="n">size</span><span class="p">());</span>
+<span class="w">    </span><span class="n">base</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">c</span><span class="p">[</span><span class="n">rank_idx</span><span class="p">];</span><span class="w">                          </span><span class="c1">// 本地基地址</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumMaxRanks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span>
+<span class="w">        </span><span class="n">offsets</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">size</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">base</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">  </span><span class="c1">// 计算各 rank 偏移</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>在 JIT kernel 中的调用：</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.hpp:290</span>
+<span class="p">.</span><span class="n">sym_buffer_ptrs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">SymBuffer</span><span class="o">&lt;&gt;</span><span class="p">(</span><span class="n">sym_buffer_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">),</span>
+</code></pre></div>
+
+<p>其中 <code>sym_buffer_ptrs</code> 是 <code>std::vector&lt;int64_t&gt;</code>，由 <code>symm_mem.rendezvous()</code> 返回。</p>
+<hr />
+<hh2 id="4-megamoebuffer-内存布局" id="4-megamoebuffer">4. MegaMoEBuffer 内存布局</hh2>
+<hh3 id="4-1-整体布局" id="41">4.1 整体布局</hh3>
+<p>MegaMoEBuffer 是单一大块连续内存，通过 <code>base</code> 指针和偏移量划分为多个逻辑区域：</p>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                     MegaMoEBuffer 内存布局                           │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Workspace (128B+)                                            │   │
+│  │  - Grid sync counters (4 × uint32)                           │   │
+│  │  - NVLink barrier counter + 2 phase signals                  │   │
+│  │  - Schedule task counters (L1/L2/SharedL1/SharedL2)          │   │
+│  │  - Expert send/recv counts (per-expert atomic)               │   │
+│  │  - Ring buffer full/empty counts                             │   │
+│  │  - Source token-topk indices (for dispatch)                  │   │
+│  │  - Token source metadata (for combine write-back)            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Input Buffers (per-rank, 本地写入/远程读取)                   │   │
+│  │  - input_token_buffer:       [num_max_tokens, hidden] FP8    │   │
+│  │  - input_sf_buffer:          [num_max_tokens, hidden/128]    │   │
+│  │  - input_topk_idx_buffer:    [num_max_tokens, topk] int64   │   │
+│  │  - input_topk_weights_buffer:[num_max_tokens, topk] float32  │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Shared Expert Buffers                                        │   │
+│  │  - shared_l1_token_buffer:   (reuse input_token_buffer)      │   │
+│  │  - shared_l1_sf_buffer:      [num_sf_tokens, hidden/128]    │   │
+│  │  - shared_l2_token_buffer:   [num_tokens, shared_inter]     │   │
+│  │  - shared_l2_sf_buffer:      [num_sf_tokens, shared_int/128]│   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Routed Expert Ring Buffers (复用池)                          │   │
+│  │  - l1_token_buffer:          [num_ring_tokens, hidden]      │   │
+│  │  - l1_sf_buffer:             [num_sf_ring_tokens, h/128]    │   │
+│  │  - l1_topk_weights_buffer:   [num_ring_tokens, 1] float     │   │
+│  │  - l2_token_buffer:          [num_ring_tokens, inter]       │   │
+│  │  - l2_sf_buffer:             [num_sf_ring_tokens, int/128]  │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Combine Buffer (per-topk-slot, 远程写入)                     │   │
+│  │  - combine_token_buffer:     [topk(+1), num_tokens, hidden] │   │
+│  │    BF16, 每个 topk slot 独立区域，用于 top-k reduce          │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="4-2-关键尺寸计算" id="42">4.2 关键尺寸计算</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// mega.hpp:58-65 - Ring buffer 容量计算</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">num_ring_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">block_m</span><span class="o">:</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">kCandidateBlockM</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_pool_blocks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ceil_div</span><span class="p">(</span><span class="n">num_max_routed_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">block_m</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">num_experts_per_rank</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_live_pool_blocks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sched</span><span class="o">::</span><span class="n">get_num_max_live_pool_blocks</span><span class="p">(</span>
+<span class="w">        </span><span class="n">num_pool_blocks</span><span class="p">,</span><span class="w"> </span><span class="n">num_sms</span><span class="p">,</span><span class="w"> </span><span class="n">hidden</span><span class="p">,</span><span class="w"> </span><span class="n">intermediate_hidden</span><span class="p">);</span>
+<span class="w">    </span><span class="n">num_ring_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">max</span><span class="p">(</span><span class="n">num_ring_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">num_live_pool_blocks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">block_m</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="n">num_ring_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">align</span><span class="p">(</span><span class="n">num_ring_tokens</span><span class="p">,</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">kLCMCandidateBlockM</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>Ring buffer 容量</strong>取决于最坏情况下的活跃 pool blocks 数，需遍历所有候选 BLOCK_M 取最大值。</p>
+<hh3 id="4-3-workspace-详细布局" id="43-workspace">4.3 Workspace 详细布局</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// mega_moe.cuh:129-137 - Workspace 128B 头部布局</span>
+<span class="c1">// [ 0..15]: 4 x uint32_t grid sync counters</span>
+<span class="c1">// [16..20]: uint32_t NVLink barrier counter</span>
+<span class="c1">// [20..27]: 2 x int NVLink barrier signals (phase 0 and 1)</span>
+<span class="c1">// [28..31]: uint32_t L1 schedule task counter</span>
+<span class="c1">// [32..35]: uint32_t L2 schedule task counter</span>
+<span class="c1">// [36..39]: uint32_t shared L1 schedule task counter</span>
+<span class="c1">// [40..43]: uint32_t shared L2 schedule task counter</span>
+<span class="c1">// [44..127]: padding (隔离 hot expert counters)</span>
+</code></pre></div>
+
+<hr />
+<hh2 id="5-对称内存分配与注册" id="5">5. 对称内存分配与注册</hh2>
+<hh3 id="5-1-python-侧分配" id="51-python">5.1 Python 侧分配</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># __init__.py:34-51</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SymmBuffer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="o">...</span><span class="p">):</span>
+        <span class="c1"># 1. 计算所需字节数</span>
+        <span class="n">num_bytes</span><span class="p">,</span> <span class="n">slice_input_buffers</span> <span class="o">=</span> <span class="n">_C</span><span class="o">.</span><span class="n">get_symm_buffer_size_for_mega_moe</span><span class="p">(</span>
+            <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">(),</span> <span class="n">num_experts</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span>
+            <span class="n">hidden</span><span class="p">,</span> <span class="n">intermediate_hidden</span><span class="p">,</span> <span class="n">mma_type</span><span class="p">,</span> <span class="n">activation</span><span class="p">,</span> <span class="n">num_shared_experts</span>
+        <span class="p">)</span>
+
+        <span class="c1"># 2. 选择分配器</span>
+        <span class="n">allocator</span> <span class="o">=</span> <span class="n">torch</span> <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">symm_mem</span>
+
+        <span class="c1"># 3. 分配</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="n">allocator</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_bytes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+
+        <span class="c1"># 4. 注册（多 rank 时获取跨 rank 指针）</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">handle</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">types</span><span class="o">.</span><span class="n">SimpleNamespace</span><span class="p">(</span><span class="n">buffer_ptrs</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()])</span>
+            <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">size</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span>
+            <span class="k">else</span> <span class="n">symm_mem</span><span class="o">.</span><span class="n">rendezvous</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="c1"># 5. 初始化</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">group</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+</code></pre></div>
+
+<hh3 id="5-2-跨-rank-指针传递" id="52-rank">5.2 跨 rank 指针传递</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># __init__.py:169-170</span>
+<span class="n">_C</span><span class="o">.</span><span class="n">fp8_fp4_mega_moe</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">sym_buffer</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span>                    <span class="c1"># 本地 buffer tensor</span>
+    <span class="n">sym_buffer</span><span class="o">.</span><span class="n">handle</span><span class="o">.</span><span class="n">buffer_ptrs</span><span class="p">,</span>        <span class="c1"># 所有 rank 的基地址列表</span>
+    <span class="n">sym_buffer</span><span class="o">.</span><span class="n">group</span><span class="o">.</span><span class="n">rank</span><span class="p">(),</span>              <span class="c1"># 当前 rank 编号</span>
+    <span class="o">...</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1">// mega.hpp:243-244 → sm100_fp8_fp4_mega_moe.hpp:290</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_ranks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">sym_buffer_ptrs</span><span class="p">.</span><span class="n">size</span><span class="p">());</span>
+<span class="c1">// ...</span>
+<span class="p">.</span><span class="n">sym_buffer_ptrs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">SymBuffer</span><span class="o">&lt;&gt;</span><span class="p">(</span><span class="n">sym_buffer_ptrs</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">),</span>
+</code></pre></div>
+
+<hh3 id="5-3-输入数据准备" id="53">5.3 输入数据准备</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># test_mega_moe.py:170-179 - 每次 kernel 调用前拷贝输入</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">copy_inputs_to_buffer</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">is_bf16xbf16</span><span class="p">:</span>
+        <span class="n">buffer</span><span class="o">.</span><span class="n">x</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">buffer</span><span class="o">.</span><span class="n">x</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="n">buffer</span><span class="o">.</span><span class="n">x_sf</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">num_shared_experts</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">_copy_fp8_sf</span><span class="p">(</span><span class="n">buffer</span><span class="o">.</span><span class="n">shared_l1_acts_sf</span><span class="p">,</span> <span class="n">shared_l1_x_sf</span><span class="p">,</span> <span class="n">num_tokens</span><span class="p">)</span>
+    <span class="n">buffer</span><span class="o">.</span><span class="n">topk_idx</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">topk_idx</span><span class="p">)</span>
+    <span class="n">buffer</span><span class="o">.</span><span class="n">topk_weights</span><span class="p">[:</span><span class="n">num_tokens</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">topk_weights</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>注意</strong>：debug 模式下 kernel 会 zero 整个 buffer，因此每次调用前必须重新拷贝输入。</p>
+<hr />
+<hh2 id="6-nvlink-barrier-同步机制" id="6-nvlink-barrier">6. NVLink Barrier 同步机制</hh2>
+<hh3 id="6-1-双层同步架构" id="61">6.1 双层同步架构</hh3>
+<p>Mega MoE 使用 <strong>grid_sync（SM 内同步）+ nvlink_barrier（跨 rank 同步）</strong> 的双层架构：</p>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    NVLink Barrier 状态机                             │
+│                                                                     │
+│  Grid Sync (SM 内)          NVLink Signal            Grid Sync      │
+│  ┌──────────┐    ┌──────────────────────────┐    ┌──────────┐      │
+│  │ 所有 SM  │    │ SM 0 发 signal 到所有    │    │ 所有 SM  │      │
+│  │ 到达屏障 │───►│ 远端 rank 并等待回应     │───►│ 继续执行 │      │
+│  └──────────┘    └──────────────────────────┘    └──────────┘      │
+│                                                                     │
+│  Phase 0: signal = +1 → 等待 signal == num_ranks                   │
+│  Phase 1: signal = -1 → 等待 signal == 0                           │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="6-2-grid_sync-实现" id="62-grid_sync">6.2 grid_sync 实现</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// barrier.cuh:21-44</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">sync_scope_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">grid_sync</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="n">sync_scope_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kFinishSumTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x80000000u</span><span class="p">;</span>
+<span class="w">    </span><span class="n">sync_scope</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">count_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_grid_sync_count_ptr</span><span class="o">&lt;</span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">        </span><span class="c1">// SM 0 写入特殊值，其他 SM 写 1</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">old_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">atomic_add_rel</span><span class="p">(</span>
+<span class="w">            </span><span class="n">count_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="p">(</span><span class="n">kFinishSumTag</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">))</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">new_value</span><span class="p">;</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">start_clock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clock64</span><span class="p">();</span>
+<span class="w">        </span><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">new_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq</span><span class="p">(</span><span class="n">count_ptr</span><span class="p">);</span>
+<span class="w">            </span><span class="c1">// 超时检测 (60s)</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">clock64</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_clock</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="n">DG_DEVICE_ASSERT</span><span class="p">(</span><span class="nb">false</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="s">&quot;Grid sync timeout&quot;</span><span class="p">);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(((</span><span class="n">new_value</span><span class="w"> </span><span class="o">^</span><span class="w"> </span><span class="n">old_value</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">kFinishSumTag</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">sync_scope</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键设计</strong>：<br />
+- 使用 XOR tag 检测完成，避免计数器溢出问题<br />
+- SM 0 写入 <code>0x80000000 - (kNumSMs-1)</code>，其他 SM 各写 1，总和达到 tag 时完成<br />
+- 支持 4 个独立的 grid sync counter（dispatch 和 epilogue 使用不同 counter 避免冲突）</p>
+<hh3 id="6-3-nvlink_barrier-实现" id="63-nvlink_barrier">6.3 nvlink_barrier 实现</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// barrier.cuh:46-89</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span>
+<span class="w">          </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kTag</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">sync_scope_t</span><span class="o">&gt;</span>
+<span class="n">CUTLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">nvlink_barrier</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">Workspace</span><span class="o">&amp;</span><span class="w"> </span><span class="n">workspace</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">SymBuffer</span><span class="o">&lt;</span><span class="n">kNumRanks</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="n">sync_scope_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_prologue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span>
+<span class="w">                                   </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">sync_epilogue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. Grid sync (prologue)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_prologue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 2. NVLink cross-rank barrier (仅 SM 0 参与)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sm_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">auto</span><span class="o">*</span><span class="w"> </span><span class="n">counter_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_nvl_barrier_counter_ptr</span><span class="p">();</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">counter_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">signal_phase</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="o">*</span><span class="w"> </span><span class="n">signal_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_nvl_barrier_signal_ptr</span><span class="p">(</span><span class="n">signal_phase</span><span class="p">);</span>
+
+<span class="w">        </span><span class="c1">// 发送信号到远端 ranks</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">)</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add_rel_sys</span><span class="p">(</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">),</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">        </span><span class="n">sync_scope</span><span class="p">();</span>
+
+<span class="w">        </span><span class="c1">// 等待所有 rank 到达</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">thread_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">ptx</span><span class="o">::</span><span class="n">red_add</span><span class="p">(</span><span class="n">counter_ptr</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">            </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">signal_sign</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">kNumRanks</span><span class="p">);</span>
+<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_acq_sys</span><span class="p">(</span><span class="n">signal_ptr</span><span class="p">)</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="c1">// 超时检测</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. Grid sync (epilogue)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sync_epilogue</span><span class="p">)</span>
+<span class="w">        </span><span class="n">grid_sync</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kGridSyncIndex</span><span class="o">&gt;</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sync_scope</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>核心原语</strong>：<br />
+- <code>ptx::red_add_rel_sys</code>：远程 atomic add（通过 NVLink 直接写远端 HBM）<br />
+- <code>ptx::ld_acq_sys</code>：带 system scope 的 acquire load（确保看到远端写入）<br />
+- 双 phase 设计避免 signal 竞争</p>
+<hh3 id="6-4-barrier-使用点" id="64-barrier">6.4 Barrier 使用点</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:309-311 - NVLink barrier tags</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kBeforeDispatchPullBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">      </span><span class="c1">// Pull 前</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kBeforeCombineReduceBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">     </span><span class="c1">// Combine 前</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kAfterWorkspaceCleanBarrierTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">     </span><span class="c1">// Workspace 清理后</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code>时间线:
+  Dispatch Count → Grid Sync → [NVLink Barrier #1] → Pull Data → 
+  Clean Workspace → [NVLink Barrier #3] → ... → Combine Write-back → 
+  [NVLink Barrier #2] → Combine Reduce
+</code></pre></div>
+
+<hr />
+<hh2 id="7-dispatch-warps-远程数据拉取" id="7-dispatch-warps">7. Dispatch Warps：远程数据拉取</hh2>
+<hh3 id="7-1-warp-角色分配" id="71-warp">7.1 Warp 角色分配</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:329</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Dispatch warps: 负责从远端 rank 拉取 token 数据</span>
+</code></pre></div>
+
+<hh3 id="7-2-dispatch-四阶段" id="72-dispatch">7.2 Dispatch 四阶段</hh3>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                  Dispatch Warps 执行流程                             │
+│                                                                     │
+│  Phase 1: Count Expert Tokens                                       │
+│    ┌─────────────────────────────────────────────────────────┐     │
+│    │ 读取 topk_idx → atomicAdd 到 expert_token_count         │     │
+│    │ (本地 smem, 统计每个 expert 需要接收多少 token)          │     │
+│    └─────────────────────────────────────────────────────────┘     │
+│                              ↓                                      │
+│  Phase 2: Get SM Offset                                             │
+│    ┌─────────────────────────────────────────────────────────┐     │
+│    │ atomicAdd 到 workspace.expert_send_count                │     │
+│    │ (全局 atomic, 获取本 SM 在全局 token 中的偏移)           │     │
+│    │ 64-bit 编码: [32-bit count | 32-bit sm_offset]          │     │
+│    └─────────────────────────────────────────────────────────┘     │
+│                              ↓                                      │
+│  Phase 3: Write Source Indices (跨 rank)                            │
+│    ┌─────────────────────────────────────────────────────────┐     │
+│    │ sym_buffer.map(dst_ptr, dst_rank_idx) = token_topk_idx  │     │
+│    │ (通过 NVLink 写远端 workspace 的 src_token_topk_idx)     │     │
+│    └─────────────────────────────────────────────────────────┘     │
+│                              ↓                                      │
+│  Phase 4: Pull Token Data (跨 rank)                                 │
+│    ┌─────────────────────────────────────────────────────────┐     │
+│    │ TMA load 从远端 input_token_buffer → 本地 l1 ring      │     │
+│    │ (通过 NVLink 直接读取远端 HBM)                           │     │
+│    └─────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="7-3-跨-rank-写入-source-indices" id="73-rank-source-indices">7.3 跨 rank 写入 source indices</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:371-377</span>
+<span class="n">read_topk_idx</span><span class="p">([</span><span class="o">&amp;</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">token_topk_idx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">&amp;</span><span class="w"> </span><span class="n">expert_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atomicAdd_block</span><span class="p">(</span><span class="n">shared_storage</span><span class="p">.</span><span class="n">expert_token_count</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">expert_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">workspace</span><span class="p">.</span><span class="n">get_src_token_topk_idx_ptr</span><span class="p">(</span>
+<span class="w">        </span><span class="n">expert_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="p">,</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">dst_slot_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">token_topk_idx</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← 跨 rank 写入</span>
+<span class="p">});</span>
+</code></pre></div>
+
+<p><strong>关键</strong>：<code>sym_buffer.map(dst_ptr, dst_rank_idx)</code> 将本地虚拟地址转换为远端 rank 可访问的物理地址，然后通过普通 store 指令完成跨 rank 写入。</p>
+<hh3 id="7-4-跨-rank-拉取-token-数据" id="74-rank-token">7.4 跨 rank 拉取 token 数据</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:533-556</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span>
+<span class="w">    </span><span class="n">buffer</span><span class="p">.</span><span class="n">input_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">src_token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span>
+<span class="w">    </span><span class="n">current_rank_in_expert_idx</span><span class="p">);</span><span class="w">  </span><span class="c1">// ← 远端源地址</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_base_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">l1_token_buffer</span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">pool_token_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kNumRingTokens</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">();</span><span class="w">  </span><span class="c1">// ← 本地目标地址</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cute</span><span class="o">::</span><span class="n">elect_one_sync</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumChunks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span>
+<span class="w">            </span><span class="n">pull_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w">                          </span><span class="c1">// 本地 smem</span>
+<span class="w">            </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">src_base_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">),</span><span class="w"> </span><span class="c1">// 远端 HBM</span>
+<span class="w">            </span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span>
+<span class="w">        </span><span class="p">);</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">mbarrier_arrive_and_set_tx</span><span class="p">(</span><span class="n">pull_mbarrier</span><span class="p">,</span><span class="w"> </span><span class="n">kNumBytesPerPull</span><span class="p">);</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>TMA 远程 load</strong>：SM100 的 TMA（Tensor Memory Accelerator）支持通过 NVLink 从远端 HBM 直接加载数据到本地 smem，无需 CPU 介入。</p>
+<hh3 id="7-5-round-robin-rank-选择" id="75-round-robin-rank">7.5 Round-Robin Rank 选择</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:461-509</span>
+<span class="c1">// Round-robin rank selection via iterative min-peeling</span>
+<span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 计算活跃 rank 数和最小剩余 token 数</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">num_actives_in_lane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">min_in_lane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xffffffff</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanksPerLane</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">num_actives_in_lane</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">remaining</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">remaining</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">            </span><span class="n">min_in_lane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cute</span><span class="o">::</span><span class="n">min</span><span class="p">(</span><span class="n">min_in_lane</span><span class="p">,</span><span class="w"> </span><span class="n">remaining</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">num_active_ranks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__reduce_add_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">num_actives_in_lane</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">length</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__reduce_min_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">min_in_lane</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 命中当前轮次</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">num_round_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">length</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_active_ranks</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">slot_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_round_tokens</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 确定当前 token 来自哪个 rank</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// 进入下一轮</span>
+<span class="w">    </span><span class="n">slot_idx</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">num_round_tokens</span><span class="p">;</span>
+<span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">length</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRanksPerLane</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">i</span><span class="p">)</span>
+<span class="w">        </span><span class="n">remaining</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">cute</span><span class="o">::</span><span class="n">min</span><span class="p">(</span><span class="n">remaining</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="n">length</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>min-peeling 算法</strong>：确保来自不同 rank 的 token 被均匀交错处理，最大化 NVLink 带宽利用率。</p>
+<hr />
+<hh2 id="8-epilogue-warps-combine-写回" id="8-epilogue-warpscombine">8. Epilogue Warps：Combine 写回</hh2>
+<hh3 id="8-1-l2-输出写回远端" id="81-l2">8.1 L2 输出写回远端</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:1260-1299</span>
+<span class="c1">// Write into remote buffers</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">row_in_atom</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">warp_idx_in_wg</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">ATOM_M</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">bank_group_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">8</span><span class="p">;</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumRowsPerWarp</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">row_in_store</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">warp_idx_in_wg</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">m_idx_in_block</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">epilogue_wg_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">WG_BLOCK_M</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">STORE_BLOCK_M</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">row_in_store</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">m_idx_in_block</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">valid_m</span><span class="p">)</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">dst_token_idx</span><span class="p">,</span><span class="w"> </span><span class="n">dst_topk_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">task_info</span><span class="p">.</span><span class="n">is_shared</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">rank_idx</span><span class="p">;</span><span class="w">  </span><span class="c1">// shared expert 写回本地</span>
+<span class="w">        </span><span class="n">dst_token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pool_m_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">m_idx_in_block</span><span class="p">;</span>
+<span class="w">        </span><span class="n">dst_topk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">src_metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">workspace</span><span class="p">.</span><span class="n">get_token_src_metadata_ptr</span><span class="p">(</span><span class="n">pool_m_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">m_idx_in_block</span><span class="p">);</span>
+<span class="w">        </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">rank_idx</span><span class="p">;</span><span class="w">   </span><span class="c1">// 写回源 rank</span>
+<span class="w">        </span><span class="n">dst_token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">token_idx</span><span class="p">;</span><span class="w"> </span><span class="c1">// 源 token 位置</span>
+<span class="w">        </span><span class="n">dst_topk_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">src_metadata</span><span class="p">.</span><span class="n">topk_idx</span><span class="p">;</span><span class="w">   </span><span class="c1">// 对应的 topk slot</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 从 smem 读取</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">smem_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cm">/* ... */</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">packed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ptx</span><span class="o">::</span><span class="n">ld_shared</span><span class="p">(</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">smem_ptr</span><span class="p">));</span>
+
+<span class="w">    </span><span class="c1">// 写入远端 combine buffer</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">.</span><span class="n">combine_token_buffer</span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">dst_topk_idx</span><span class="p">)</span>
+<span class="w">                           </span><span class="p">.</span><span class="n">get_data_buffer</span><span class="p">(</span><span class="n">dst_token_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">float4</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">        </span><span class="n">dst_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">n_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">float4</span><span class="p">));</span>
+<span class="w">    </span><span class="o">*</span><span class="n">sym_buffer</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">packed</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← 跨 rank 写入</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键</strong>：L2 GEMM 的输出通过 <code>sym_buffer.map</code> 直接写入远端 rank 的 <code>combine_token_buffer</code>，每个 topk slot 独立区域。</p>
+<hh3 id="8-2-combine-buffer-布局" id="82-combine-buffer">8.2 Combine Buffer 布局</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// mega_moe.cuh:433-435</span>
+<span class="n">combine_token_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Buffer</span><span class="p">(</span>
+<span class="w">    </span><span class="n">bf16_token_layout</span><span class="p">,</span><span class="w"> </span>
+<span class="w">    </span><span class="n">num_topk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">num_shared_experts</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">1u</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0u</span><span class="p">),</span><span class="w">  </span><span class="c1">// 每个 topk + shared expert</span>
+<span class="w">    </span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span>
+<span class="w">    </span><span class="cm">/* ... */</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code>combine_token_buffer 布局:
+┌──────────────────────────────────────────────────────────────┐
+│ Slot 0 (topk=0):  [token_0_hidden, token_1_hidden, ...] BF16│
+│ Slot 1 (topk=1):  [token_0_hidden, token_1_hidden, ...] BF16│
+│ ...                                                          │
+│ Slot k-1:         [token_0_hidden, token_1_hidden, ...] BF16│
+│ Slot k (shared):  [token_0_hidden, token_1_hidden, ...] BF16│  ← 仅当 shared experts &gt; 0
+└──────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<hh2 id="9-combine-reduction-top-k-归约" id="9-combine-reductiontop-k">9. Combine Reduction：Top-K 归约</hh2>
+<hh3 id="9-1-双缓冲流水线" id="91">9.1 双缓冲流水线</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:1350-1354</span>
+<span class="c1">// Per-warp buffer: 2 stage load buffers + 1 store buffer</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">combine_load_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">utils</span><span class="o">::</span><span class="n">PatternVisitor</span><span class="p">([</span><span class="o">&amp;</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="o">&amp;</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">uint4</span><span class="o">&gt;</span><span class="p">(</span><span class="n">smem_buffer</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">epilogue_warp_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumEpilogueWarps</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumChunkBytes</span><span class="p">);</span>
+<span class="p">});</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">combine_store_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="o">&lt;</span><span class="n">uint4</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">smem_buffer</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">epilogue_warp_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kNumEpilogueWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumChunkBytes</span><span class="p">);</span>
+</code></pre></div>
+
+<hh3 id="9-2-top-k-reduce-核心逻辑" id="92-top-k-reduce">9.2 Top-K Reduce 核心逻辑</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:1367-1421</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumEpilogueWarps</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">epilogue_warp_idx</span><span class="p">;</span>
+<span class="w">     </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span>
+<span class="w">     </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumEpilogueWarps</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 读取 top-k slot indices</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">stored_topk_slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">?</span>
+<span class="w">        </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">__ldg</span><span class="p">(</span><span class="n">buffer</span><span class="p">.</span><span class="n">input_topk_idx_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span>
+<span class="w">                               </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">))</span><span class="w"> </span><span class="o">:</span>
+<span class="w">        </span><span class="p">(</span><span class="n">kNumSharedExperts</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">kNumTopk</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">total_mask</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ballot_sync</span><span class="p">(</span><span class="mh">0xffffffff</span><span class="p">,</span><span class="w"> </span><span class="n">stored_topk_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">chunk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">chunk</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumChunks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">chunk</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">mask</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">total_mask</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// 加载第一个 topk 数据</span>
+<span class="w">        </span><span class="kt">bool</span><span class="w"> </span><span class="n">do_reduce</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">move_mask_and_load</span><span class="p">(</span><span class="n">load_stage_idx</span><span class="p">);</span>
+
+<span class="w">        </span><span class="n">float2</span><span class="w"> </span><span class="n">reduced</span><span class="p">[</span><span class="n">kNumUint4PerLane</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumElemsPerUint4</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{};</span>
+<span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">do_reduce</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="c1">// 预取下一个 topk 数据（双缓冲）</span>
+<span class="w">            </span><span class="n">do_reduce</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">move_mask_and_load</span><span class="p">(</span><span class="n">load_stage_idx</span><span class="w"> </span><span class="o">^</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+
+<span class="w">            </span><span class="c1">// 累加当前 topk 数据</span>
+<span class="w">            </span><span class="n">combine_load_barriers</span><span class="p">[</span><span class="n">load_stage_idx</span><span class="p">]</span><span class="o">-&gt;</span><span class="n">wait</span><span class="p">(</span><span class="n">combine_phase</span><span class="p">);</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumUint4PerLane</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">uint4_values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">combine_load_buffer</span><span class="p">[</span><span class="n">load_stage_idx</span><span class="p">][</span><span class="n">j</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">];</span>
+<span class="w">                </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">bf16_values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">nv_bfloat162</span><span class="o">*&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">uint4_values</span><span class="p">);</span>
+<span class="w">                </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">l</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">l</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumElemsPerUint4</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="w"> </span><span class="n">l</span><span class="p">)</span>
+<span class="w">                    </span><span class="n">ptx</span><span class="o">::</span><span class="n">accumulate</span><span class="p">(</span><span class="n">reduced</span><span class="p">[</span><span class="n">j</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumElemsPerUint4</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">l</span><span class="p">],</span><span class="w"> </span><span class="n">bf16_values</span><span class="p">[</span><span class="n">l</span><span class="p">]);</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="n">combine_phase</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="n">load_stage_idx</span><span class="p">;</span>
+<span class="w">            </span><span class="n">load_stage_idx</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="c1">// ... cast to BF16 and TMA store to y</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hh3 id="9-3-combine-数据流" id="93-combine">9.3 Combine 数据流</hh3>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    Combine Reduction 数据流                          │
+│                                                                     │
+│  远端 combine_token_buffer (per-topk-slot)                          │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐                               │
+│  │ Slot 0  │ │ Slot 1  │ │ Slot k-1│                               │
+│  └────┬────┘ └────┬────┘ └────┬────┘                               │
+│       │           │           │                                     │
+│       ▼           ▼           ▼                                     │
+│  ┌─────────────────────────────────────┐                           │
+│  │  TMA Load (本地, 从 combine buffer) │                           │
+│  └─────────────────────────────────────┘                           │
+│       │                                                             │
+│       ▼                                                             │
+│  ┌─────────────────────────────────────┐                           │
+│  │  Float Accumulate (Top-K Reduce)    │                           │
+│  └─────────────────────────────────────┘                           │
+│       │                                                             │
+│       ▼                                                             │
+│  ┌─────────────────────────────────────┐                           │
+│  │  Cast to BF16 → TMA Store → y      │                           │
+│  └─────────────────────────────────────┘                           │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>注意</strong>：Combine 阶段对 <code>combine_token_buffer</code> 的访问是 <strong>本地读取</strong>（因为该 buffer 已被 Epilogue Warps 通过 NVLink 写回本地），不需要 <code>sym_buffer.map</code>。</p>
+<hr />
+<hh2 id="10-python-api-完整使用流程" id="10-python-api">10. Python API 完整使用流程</hh2>
+<hh3 id="10-1-完整调用示例" id="101">10.1 完整调用示例</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># test_mega_moe.py:93-99 - 分配对称内存</span>
+<span class="n">buffer</span> <span class="o">=</span> <span class="n">deep_gemm</span><span class="o">.</span><span class="n">get_symm_buffer_for_mega_moe</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span>
+    <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">,</span>
+    <span class="n">hidden</span><span class="p">,</span> <span class="n">intermediate_hidden</span><span class="p">,</span>
+    <span class="n">num_shared_experts</span><span class="o">=</span><span class="n">num_shared_experts</span><span class="p">,</span>
+    <span class="n">mma_type</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">mma_type</span>
+<span class="p">)</span>
+
+<span class="c1"># test_mega_moe.py:160-161 - 权重变换</span>
+<span class="n">transformed_l1_weights</span><span class="p">,</span> <span class="n">transformed_l2_weights</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">deep_gemm</span><span class="o">.</span><span class="n">transform_weights_for_mega_moe</span><span class="p">(</span><span class="n">l1_weights</span><span class="p">,</span> <span class="n">l2_weights</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># test_mega_moe.py:181-198 - 执行 kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_fused</span><span class="p">():</span>
+    <span class="n">cumulative_local_expert_recv_stats_fused</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">initial_cumulative_local_expert_recv_stats_fused</span><span class="p">)</span>
+    <span class="n">copy_inputs_to_buffer</span><span class="p">()</span>  <span class="c1"># 每次调用前拷贝输入</span>
+
+    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">num_tokens</span><span class="p">,</span> <span class="n">hidden</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+    <span class="n">kernel_kwargs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">y</span><span class="o">=</span><span class="n">y</span><span class="p">,</span> <span class="n">l1_weights</span><span class="o">=</span><span class="n">transformed_l1_weights</span><span class="p">,</span> <span class="n">l2_weights</span><span class="o">=</span><span class="n">transformed_l2_weights</span><span class="p">,</span>
+        <span class="n">sym_buffer</span><span class="o">=</span><span class="n">buffer</span><span class="p">,</span>
+        <span class="n">cumulative_local_expert_recv_stats</span><span class="o">=</span><span class="n">cumulative_local_expert_recv_stats_fused</span><span class="p">,</span>
+        <span class="n">activation_clamp</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">activation_clamp</span><span class="p">,</span>
+        <span class="n">fast_math</span><span class="o">=</span><span class="nb">bool</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">fast_math</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">num_shared_experts</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">kernel_kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+            <span class="n">shared_l1_weights</span><span class="o">=</span><span class="n">transformed_shared_l1_weights</span><span class="p">,</span>
+            <span class="n">shared_l2_weights</span><span class="o">=</span><span class="n">transformed_shared_l2_weights</span>
+        <span class="p">)</span>
+    <span class="p">(</span><span class="n">deep_gemm</span><span class="o">.</span><span class="n">bf16_mega_moe</span> <span class="k">if</span> <span class="n">is_bf16xbf16</span> <span class="k">else</span> <span class="n">deep_gemm</span><span class="o">.</span><span class="n">fp8_fp4_mega_moe</span><span class="p">)(</span><span class="o">**</span><span class="n">kernel_kwargs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">y</span><span class="p">,</span> <span class="n">cumulative_local_expert_recv_stats_fused</span>
+</code></pre></div>
+
+<hh3 id="10-2-权重变换" id="102">10.2 权重变换</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1"># __init__.py:97-111 - gate/up 交错</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_interleave_weights</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">gran</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="c1"># [gate: 0..7, up: 0..7, gate: 8..15, up: 8..15, ...] instead of [gate | up]</span>
+    <span class="n">g</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="o">*</span><span class="n">rest</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="n">n</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">gate</span> <span class="o">=</span> <span class="n">t</span><span class="p">[:,</span> <span class="p">:</span><span class="n">half</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">half</span> <span class="o">//</span> <span class="n">gran</span><span class="p">,</span> <span class="n">gran</span><span class="p">,</span> <span class="o">*</span><span class="n">rest</span><span class="p">)</span>
+    <span class="n">up</span> <span class="o">=</span> <span class="n">t</span><span class="p">[:,</span> <span class="n">half</span><span class="p">:]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">half</span> <span class="o">//</span> <span class="n">gran</span><span class="p">,</span> <span class="n">gran</span><span class="p">,</span> <span class="o">*</span><span class="n">rest</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">gate</span><span class="p">,</span> <span class="n">up</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="o">*</span><span class="n">rest</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="k">if</span> <span class="n">squeeze_group_dim</span> <span class="k">else</span> <span class="n">result</span>
+
+<span class="c1"># __init__.py:114-128 - SF 转置 (UTCCP 需要)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_transpose_sf_for_utccp</span><span class="p">(</span><span class="n">sf</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="n">num_groups</span><span class="p">,</span> <span class="n">mn</span><span class="p">,</span> <span class="n">packed_sf_k</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="p">(</span><span class="n">sf</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">num_groups</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="n">packed_sf_k</span><span class="p">)</span>
+                <span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+                <span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">num_groups</span><span class="p">,</span> <span class="n">mn</span><span class="p">,</span> <span class="n">packed_sf_k</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">result</span>
+</code></pre></div>
+
+<hh3 id="10-3-参数传递链" id="103">10.3 参数传递链</hh3>
+<div class="highlight"><pre><span></span><code>Python:
+  sym_buffer.buffer ──────────────► torch::Tensor (本地 buffer)
+  sym_buffer.handle.buffer_ptrs ──► std::vector&lt;int64_t&gt; (所有 rank 基地址)
+  sym_buffer.group.rank() ────────► int (当前 rank)
+
+C++ API (mega.hpp):
+  sym_buffer_ptrs ────────────────► layout::SymBuffer&lt;&gt;(sym_buffer_ptrs, rank_idx)
+
+JIT Kernel (sm100_fp8_fp4_mega_moe.hpp):
+  args.sym_buffer_ptrs ───────────► 通过 __grid_constant__ 传入 kernel
+
+CUDA Kernel:
+  sym_buffer.get_base_ptr() ──────► 本地基地址
+  sym_buffer.map(ptr, rank) ──────► 跨 rank 地址转换
+</code></pre></div>
+
+<hr />
+<hh2 id="11-与-deepep-的对比分析" id="11-deepep">11. 与 DeepEP 的对比分析</hh2>
+<hh3 id="11-1-架构对比" id="111">11.1 架构对比</hh3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>执行模式</strong></td>
+<td>多 kernel（Dispatch + GEMM + Combine）</td>
+<td>单 kernel 融合</td>
+</tr>
+<tr>
+<td><strong>通信方式</strong></td>
+<td>NCCL all-to-all / NVLink peer access</td>
+<td>NVLink symmetric memory 直接访问</td>
+</tr>
+<tr>
+<td><strong>中间数据存储</strong></td>
+<td>显式 buffer（5层模型）</td>
+<td>对称内存中的 ring buffer</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td>NCCL barrier + 信号量</td>
+<td>自定义 grid_sync + nvlink_barrier</td>
+</tr>
+<tr>
+<td><strong>数据搬运</strong></td>
+<td>显式 copy kernel</td>
+<td>TMA 远程 load/store</td>
+</tr>
+<tr>
+<td><strong>Combine</strong></td>
+<td>独立 kernel + 跨 rank reduce</td>
+<td>同一 kernel 内 warp 协作</td>
+</tr>
+<tr>
+<td><strong>硬件要求</strong></td>
+<td>SM90+ (Hopper)</td>
+<td>SM100 (Blackwell)</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="11-2-对称内存使用差异" id="112">11.2 对称内存使用差异</hh3>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    DeepEP vs DeepGEMM 对称内存使用                   │
+│                                                                     │
+│  DeepEP (传统模式):                                                 │
+│  ┌──────────┐     ┌──────────┐     ┌──────────┐                    │
+│  │ Dispatch │────►│   GEMM   │────►│ Combine  │                    │
+│  │  Kernel  │     │  Kernel  │     │  Kernel  │                    │
+│  └──────────┘     └──────────┘     └──────────┘                    │
+│       │                 │                │                          │
+│       ▼                 ▼                ▼                          │
+│  NCCL all-to-all  本地 GEMM      NCCL all-to-all                   │
+│  (显式数据拷贝)   (无通信)       (显式 reduce)                      │
+│                                                                     │
+│  DeepGEMM Mega MoE (融合模式):                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    Single Kernel                              │   │
+│  │  ┌──────────┐     ┌──────────┐     ┌──────────┐             │   │
+│  │  │ Dispatch │────►│   GEMM   │────►│ Combine  │             │   │
+│  │  │  Warps   │     │  Warps   │     │  Warps   │             │   │
+│  │  └──────────┘     └──────────┘     └──────────┘             │   │
+│  │       │                 │                │                    │   │
+│  │       ▼                 ▼                ▼                    │   │
+│  │  TMA remote load   本地 TMEM      NVLink store              │   │
+│  │  (NVLink direct)   (片上累加)     (NVLink direct)            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hh3 id="11-3-关键差异详解" id="113">11.3 关键差异详解</hh3>
+<table>
+<thead>
+<tr>
+<th>差异点</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据搬运粒度</strong></td>
+<td>整块 tensor 拷贝</td>
+<td>逐 token TMA load</td>
+</tr>
+<tr>
+<td><strong>通信与计算重叠</strong></td>
+<td>kernel 间流水线</td>
+<td>warp 间流水线（同一 kernel 内）</td>
+</tr>
+<tr>
+<td><strong>中间 buffer</strong></td>
+<td>显式 5 层 buffer</td>
+<td>ring buffer 复用</td>
+</tr>
+<tr>
+<td><strong>同步开销</strong></td>
+<td>NCCL kernel launch</td>
+<td>单次 grid_sync (~μs 级)</td>
+</tr>
+<tr>
+<td><strong>内存占用</strong></td>
+<td>多份完整 buffer</td>
+<td>单份共享 buffer + ring</td>
+</tr>
+<tr>
+<td><strong>远程访问方式</strong></td>
+<td>NCCL 集体通信</td>
+<td>NVLink 直接 load/store</td>
+</tr>
+<tr>
+<td><strong>Combine reduce</strong></td>
+<td>跨 rank allreduce</td>
+<td>本地 top-k accumulate</td>
+</tr>
+</tbody>
+</table>
+<hh3 id="11-4-mega-mo-e-独特设计" id="114-mega-mo-e">11.4 Mega Mo E 独特设计</hh3>
+<ol>
+<li>
+<p><strong>Ring Buffer 复用</strong>：L1/L2 的 activation buffer 采用 ring buffer 结构，容量只需覆盖最坏情况下的活跃 blocks，而非全量 token。</p>
+</li>
+<li>
+<p><strong>Warp 角色分工</strong>：同一 kernel 内不同 warp 承担不同角色（Dispatch / TMA Load / MMA Issue / Epilogue / Combine），通过 barrier 同步协作。</p>
+</li>
+<li>
+<p><strong>TMEM 计算-写回解耦</strong>：SM100 的 TMEM 允许 MMA 计算与 epilogue 写回完全并行，通过 <code>tmem_full_barriers</code> / <code>tmem_empty_barriers</code> 同步。</p>
+</li>
+<li>
+<p><strong>UTCCP SF 异步加载</strong>：Scale Factor 通过 UTCCP 从 SMEM 异步拷贝到 TMEM，与 MMA 计算重叠。</p>
+</li>
+<li>
+<p><strong>min-peeling rank 选择</strong>：Dispatch warps 使用 min-peeling 算法实现 round-robin rank 选择，最大化 NVLink 带宽利用率。</p>
+</li>
+</ol>
+<hr />
+<hh2 id="12-关键设计洞察" id="12">12. 关键设计洞察</hh2>
+<hh3 id="12-1-对称内存消除了什么" id="121">12.1 对称内存消除了什么？</hh3>
+<div class="highlight"><pre><span></span><code>传统 MoE 的 &quot;Destination-major&quot; 问题:
+  - 每个 rank 需要为每个 expert 预分配接收 buffer
+  - 需要知道 &quot;谁要给我发多少数据&quot; → 两次 all-to-all
+  - 中间 buffer 无法复用（不同 expert 数据独立）
+
+对称内存的 &quot;Data Access&quot; 范式:
+  - 远端 HBM 可直接访问，无需本地暂存
+  - Ring buffer 按 pool block 复用，容量 = 最坏情况活跃 blocks
+  - 单 kernel 内完成全部操作，无 kernel launch 开销
+</code></pre></div>
+
+<hh3 id="12-2-64-bit-编码的巧妙运用" id="122-64-bit">12.2 64-bit 编码的巧妙运用</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:364-367</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">send_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1ull</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">shared_storage</span><span class="p">.</span><span class="n">expert_token_count</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+<span class="n">shared_storage</span><span class="p">.</span><span class="n">expert_token_count</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">workspace</span><span class="p">.</span><span class="n">get_expert_send_count_ptr</span><span class="p">(</span><span class="n">i</span><span class="p">),</span><span class="w"> </span><span class="n">send_value</span><span class="p">));</span>
+</code></pre></div>
+
+<p><strong>高 32 位</strong>：token 数量（用于计算全局偏移）<br />
+<strong>低 32 位</strong>：SM 偏移（用于写入 source indices）</p>
+<p>一次 atomic 操作同时完成 "获取偏移" 和 "预留空间"。</p>
+<hh3 id="12-3-超时检测的必要性" id="123">12.3 超时检测的必要性</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// barrier.cuh:12</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">60l</span><span class="n">l</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">2000000000l</span><span class="n">l</span><span class="p">;</span><span class="w">  </span><span class="c1">// 60s at 2 GHz</span>
+
+<span class="c1">// barrier.cuh:36-39</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">clock64</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_clock</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;DeepGEMM grid sync timeout: ...&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">DG_DEVICE_ASSERT</span><span class="p">(</span><span class="nb">false</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="s">&quot;Grid sync timeout&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>跨 rank 同步必须考虑超时，否则单节点故障会导致整个集群 hang。</p>
+<hh3 id="12-4-寄存器压力管理" id="124">12.4 寄存器压力管理</hh3>
+<div class="highlight"><pre><span></span><code><span class="c1">// sm100_fp8_fp4_mega_moe.cuh:315-322</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">kUseMoreEpilogueRegisters</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">64</span><span class="p">;</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumDispatchRegisters</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kUseMoreEpilogueRegisters</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">48</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">96</span><span class="p">;</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumNonEpilogueRegisters</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kUseMoreEpilogueRegisters</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">40</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">88</span><span class="p">;</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">kNumEpilogueRegisters</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kUseMoreEpilogueRegisters</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">208</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">160</span><span class="p">;</span>
+</code></pre></div>
+
+<p>不同 warp 角色使用 <code>warpgroup_reg_alloc/dealloc</code> 动态调整寄存器分配，在 64512 的总寄存器限制内最大化利用率。</p>
+<hh3 id="12-5-总结" id="125">12.5 总结</hh3>
+<p>DeepGEMM Mega MoE 的对称内存使用代表了一种 <strong>通信-计算融合</strong> 的极致范式：</p>
+<ol>
+<li><strong>消除显式通信</strong>：通过 NVLink 直接访问远端 HBM，将通信转化为地址映射</li>
+<li><strong>消除中间 buffer</strong>：ring buffer 复用 + 单 kernel 融合，内存效率最大化</li>
+<li><strong>消除 kernel launch 开销</strong>：warp 角色协作替代 kernel 间同步</li>
+<li><strong>硬件-软件协同设计</strong>：TMEM、UTCCP、2-CTA MMA 等 SM100 特性被充分利用</li>
+</ol>
+<p>这种设计使 Mega MoE 在支持 shared experts 的场景下，实现了传统 MoE 无法达到的 <strong>单 kernel 全流水线融合</strong>。</p>
+<hr />
+<hh2 id="附录-a-关键文件索引" id="a">附录 A：关键文件索引</hh2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>核心内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td>44</td>
+<td>SymBuffer 定义与 map()</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/comm/barrier.cuh</code></td>
+<td>91</td>
+<td>grid_sync + nvlink_barrier</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td>446</td>
+<td>MegaMoEBuffer 内存布局</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1461</td>
+<td>FP8/FP4 kernel 实现</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_bf16_mega_moe.cuh</code></td>
+<td>1283</td>
+<td>BF16 kernel 实现</td>
+</tr>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>406</td>
+<td>C++ API 入口</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/impls/sm100_fp8_fp4_mega_moe.hpp</code></td>
+<td>319</td>
+<td>JIT 编译与 TMA desc</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>203</td>
+<td>Python API</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>443</td>
+<td>完整测试用例</td>
+</tr>
+</tbody>
+</table>
+<hh2 id="附录-b-关键代码位置索引" id="b">附录 B：关键代码位置索引</hh2>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>文件:行号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SymBuffer::map()</td>
+<td><code>sym_buffer.cuh:34-40</code></td>
+</tr>
+<tr>
+<td>nvlink_barrier 定义</td>
+<td><code>barrier.cuh:46-89</code></td>
+</tr>
+<tr>
+<td>grid_sync 定义</td>
+<td><code>barrier.cuh:21-44</code></td>
+</tr>
+<tr>
+<td>MegaMoEBuffer 构造</td>
+<td><code>mega_moe.cuh:353-436</code></td>
+</tr>
+<tr>
+<td>Dispatch Pull TMA load</td>
+<td><code>sm100_fp8_fp4_mega_moe.cuh:533-556</code></td>
+</tr>
+<tr>
+<td>Combine 写回远端</td>
+<td><code>sm100_fp8_fp4_mega_moe.cuh:1260-1299</code></td>
+</tr>
+<tr>
+<td>Combine Top-K reduce</td>
+<td><code>sm100_fp8_fp4_mega_moe.cuh:1367-1421</code></td>
+</tr>
+<tr>
+<td>64-bit 编码 atomic</td>
+<td><code>sm100_fp8_fp4_mega_moe.cuh:364-367</code></td>
+</tr>
+<tr>
+<td>min-peeling rank 选择</td>
+<td><code>sm100_fp8_fp4_mega_moe.cuh:461-509</code></td>
+</tr>
+<tr>
+<td>Python SymmBuffer 分配</td>
+<td><code>__init__.py:34-51</code></td>
+</tr>
+<tr>
+<td>权重 gate/up 交错</td>
+<td><code>__init__.py:97-111</code></td>
+</tr>
+<tr>
+<td>测试完整流程</td>
+<td><code>test_mega_moe.py:93-198</code></td>
+</tr>
+</tbody>
+</table>
+<div class="nav">
+<a href="index.html">&#8592; 返回索引</a>
+<a href="#">&#8593; 顶部</a>
+</div>
+</div>
+</body>
+</html>
