@@ -27,7 +27,9 @@ Traditional autoregressive decode is the canonical memory-bound workload: minima
 
 **Key insight**: As MTP depth $k$ grows, inference arithmetic intensity approaches — and can theoretically *exceed* — training intensity, because MTP's multi-step prediction path generates more FLOPs per byte of HBM traffic than single-step training.
 
-**Industry context**: NVIDIA's H100 (3.35 TB/s HBM3) → B200 (~8 TB/s HBM3E) → Rubin NVL72 (~22 TB/s HBM4) shows bandwidth growing ~6.5× across 3 generations, while compute (FP16) grew ~4× in the same window. MTP accelerates this divergence — compute demand outpaces memory supply. DeepSeek-V3's MTP uses 1-2 auxiliary prediction depths with a 0.1 loss scaling factor, trained sequentially with full causal chains at each depth <a id="ref-1"></a>[[1]](#ref-1).
+**The acceptance rate caveat**: The $k\times$ compute growth is a *theoretical upper bound*. Realized gains depend on **acceptance rate** — the fraction of predicted tokens that pass verification. DSpark (DeepSeek + PKU, 2026) empirically shows that naive deep drafters (essentially stacked MTP) suffer from ==rapid acceptance decay== ("suffix decay"): deeper predictions have progressively lower acceptance rates <a id="ref-5"></a>[[5]](#ref-5). This is precisely why DeepSeek abandoned the "deeper MTP" route in favor of semi-autoregressive drafting with confidence-scheduled verification. In practice, production MTP deployments (DeepSeek-V3) use only 1-2 auxiliary depths with a 0.1 loss scaling factor <a id="ref-1"></a>[[1]](#ref-1) — the "large MTP (k=5+)" scenario remains theoretical, not production-validated.
+
+**Industry context**: NVIDIA's H100 (3.35 TB/s HBM3) → B200 (~8 TB/s HBM3E) → Rubin NVL72 (~22 TB/s HBM4) shows bandwidth growing ~6.5× across 3 generations, while compute (FP16) grew ~4× in the same window. MTP accelerates this divergence — compute demand outpaces memory supply.
 
 ---
 
@@ -35,20 +37,20 @@ Traditional autoregressive decode is the canonical memory-bound workload: minima
 
 MTP does not uniformly benefit interconnects. The impact bifurcates by scale:
 
-| MTP Scale | Favors | Disfavors |
-|---|---|---|
-| **Small MTP** (k=1-3) | Large supernodes, low-latency semantics | — |
-| **Large MTP** (k=5+) | High-bandwidth fabrics (UB, NVLink) | Low-latency mechanisms |
+| MTP Scale | Production Status | Favors | Disfavors |
+|---|---|---|---|
+| **Small MTP** (k=1-2) | Deployed (DeepSeek-V3) | Large supernodes, low-latency semantics (e.g., LPX-class) | — |
+| **Deep Speculative** (DSpark-style) | Deployed (June 2026) | Semi-autoregressive drafting + confidence verification | Naive deep stacking |
+| **"Large MTP"** (k=5+, naive stacking) | ==Theoretical only== — acceptance decay makes it uneconomical | High-bandwidth fabrics (if solved) | Low-latency mechanisms |
 
 **Breakdown**:
-- **Large EP (Expert Parallelism)** thrives on low-latency — its fine-grained All-to-All patterns are latency-sensitive. MTP's added compute depth amplifies EP synchronization overhead.
-- **Large MTP** favors Unified Bandwidth (UB) and high-bandwidth fabrics — large compute blocks match large data movement.
-- **Low-latency interconnects** (e.g., NVLink-class, CXL.mem) see diminishing returns — when compute dominates, shaving microseconds matters less.
-- **Hardware-direct, high-cost driver stacks** lose ROI — their premium assumes memory is the bottleneck.
+- **Small MTP (k=1-2)** is the current production reality. At this scale, low-latency interconnects remain valuable — LPX-class SRAM-centric chips still hold advantage for latency-sensitive decode.
+- **Deep Speculative (DSpark)** is DeepSeek's answer to the acceptance decay problem: instead of stacking MTP deeper, it uses semi-autoregressive drafting with confidence-scheduled verification, achieving 60-85% speedup <a id="ref-5"></a>[[5]](#ref-5>. This is the *actual* production mechanism for "beyond k=2" gains — not naive MTP stacking.
+- **"Large MTP" (k+ naive stacking)** remains theoretical because acceptance rate decays rapidly with depth. The k× compute benefit is real *only if* acceptance can be solved — which is exactly why DSpark abandoned this path.
 
-> **The inflection point depends on MTP's two-tier deployment scale** — small and large MTP impose fundamentally different interconnect requirements.
+> **The inflection point depends on which MTP regime dominates**: small-MTP preserves low-latency value; DSpark-style deep speculative shifts value toward verification-bandwidth.
 
-**Industry comparison**: NVIDIA's Groq 3 LPX achieves 150 TB/s per LPU via on-chip SRAM — ~6.8× more than Rubin's ~22 TB/s HBM4 <a id="ref-2"></a>[[2]](#ref-2). But this advantage *only matters when memory bandwidth is the bottleneck*. MTP's compute-centric shift reduces the penalty of HBM's bandwidth ceiling, indirectly weakening the SRAM-only value proposition.
+**Industry comparison**: NVIDIA's Groq 3 LPX achieves 150 TB/s per LPU via on-chip SRAM — ~6.8× more than Rubin's ~22 TB/s HBM4 <a id="ref-2"></a>[[2]](#ref-2). LPX is explicitly designed for the small-MTP/low-latency decode scenario, paired with Rubin GPU for prefill/attention. This positioning is *consistent* with MTP's bifurcated impact — LPX serves the low-latency branch that remains valuable.
 
 ---
 
@@ -69,23 +71,23 @@ MTP ↑ → Compute intensity ↑ → Per-node HBM pressure ↓
 
 ---
 
-## 4. Specialized Silicon: The Streaming Chip Squeeze
+## 4. Specialized Silicon: The SRAM-Only Squeeze
 
-**LPX and SRAM-centric streaming architectures face market suppression.**
+**Pure SRAM architectures without GPU partners face market suppression — but LPX is an exception, not the rule.**
 
-| Chip | Architecture | SRAM | HBM | Bandwidth | MTP Impact |
-|---|---|---|---|---|---|
-| **NVIDIA LPX** (Groq 3) | SRAM-centric LPU | 500 MB/LPU, 128 GB/rack | None | 150 TB/s per LPU, 40 PB/s/rack | Memory advantage diluted |
-| **Cerebras WSE-3** | Wafer-scale SRAM | 44 GB on-wafer | None | ~21 PB/s | Compute-bound workloads don't need wafer memory |
-| **Groq Trillium** | Deterministic dataflow | Massive on-chip | None | 80 TB/s | SRAM premium harder to justify |
-| **NVIDIA B200** | HBM-balanced GPU | Minimal | 8 TB/s HBM3E | 8 TB/s | ==Better positioned== — compute-first |
-| **Google TPU v5p** | MXU-heavy | Moderate | HBM-balanced | Balanced | ==Better positioned== — compute-first |
+| Chip | Architecture | SRAM | HBM | Bandwidth | GPU Partner? | MTP Impact |
+|---|---|---|---|---|---|---|
+| **Cerebras WSE-3** | Wafer-scale SRAM | 44 GB on-wafer | None | ~21 PB/s | ✗ | Memory advantage diluted |
+| **Groq Trillium** | Deterministic dataflow | Massive on-chip | None | 80 TB/s | ✗ | SRAM premium harder to justify |
+| **Etched Sohu** | Hardwired transformer ASIC | On-chip weights | None | Extreme | ✗ | Compute-bound friendly |
+| **NVIDIA LPX** (Groq 3) | SRAM-centric LPU | 500 MB/LPU, 128 GB/rack | None | 150 TB/s per LPU | ==✓ (Rubin NVL72)== | ==Preserved== — serves low-latency branch |
+| **NVIDIA B200** | HBM-balanced GPU | Minimal | 8 TB/s HBM3E | 8 TB/s | — | ==Better positioned== — compute-first |
 
-**Core problem**: SRAM-centric architectures optimize for memory latency/bandwidth elimination. When MTP makes compute the bottleneck, SRAM's bandwidth advantage dilutes while its area/power penalty persists.
+**The LPX exception**: LPX is explicitly designed as Rubin NVL72's decode partner — LPU handles low-latency decode, GPU handles prefill/attention <a id="ref-2"></a>[[2]](#ref-2). This maps directly onto MTP's small-MTP/low-latency branch (Section 2), so LPX's value proposition is *reinforced*, not eroded. Its claimed ==35× throughput-per-megawatt== is viable precisely because it targets the latency-sensitive regime where SRAM's advantage persists.
 
-**Hard numbers**: LPX claims ==35× higher inference throughput per megawatt== vs HBM-based GPU inference <a id="ref-2"></a>[[2]](#ref-2). But this ratio assumes memory-bound workloads. As MTP shifts workloads toward compute-bound, the effective advantage shrinks — perhaps to 10-15×, still significant but no longer transformative enough to justify the ecosystem disruption of a new architecture.
+**The squeeze targets**: Pure SRAM architectures without a GPU partner — Cerebras WSE-3 (~21 PB/s wafer bandwidth) and Groq Trillium (deterministic dataflow, 80 TB/s) — face a harder calculus. Their design assumption is that eliminating off-chip memory is *the* key optimization. When MTP shifts workloads toward compute-bound, SRAM's bandwidth advantage dilutes while its area/power penalty persists. Cerebras benchmarks show >6× speed advantage over Groq at wafer scale <a id="ref-7"></a>[[7]](#ref-7), but this advantage is measured on memory-bound workloads — it narrows as workloads shift.
 
-> **The SRAM-architecture assumption — that eliminating off-chip memory is the key optimization — is breaking.** If these chips haven't reached scale yet, MTP may close their market window.
+> **The pure-SRAM assumption — that eliminating off-chip memory is sufficient — is breaking.** Architectures without a GPU partner (Cerebras, Trillium) face a narrower market window. Those with a GPU partner (LPX) are positioned for the low-latency branch that MTP preserves.
 
 ---
 
@@ -171,9 +173,9 @@ Two paths to million-token sequences:
 | **Linear Attention** | Kimi3 (KDA) | Linear (but exponential decay) | Linear + Full Attn | ✗ |
 | **Sparse Attention (DSA)** | DeepSeek V4, GLM52 | Sparse-controllable | Sparse-controllable | ✓ |
 
-**Kimi3's fundamental problem**: Linear + Full Attention hybrid still implies ==exponential memory and computational cost==. Linear attention's effective memory capacity decays exponentially with sequence length (forget-gate information loss compounds). The 25% Full Attention retained by Kimi3 remains quadratic at scale.
+**Kimi3's fundamental problem**: Linear + Full Attention hybrid still implies ==poor scaling of memory and computational cost==. Under current forget-gate mechanisms, linear attention's effective memory capacity decays exponentially with sequence length (forget-gate information loss compounds) — meaning the "linear" claim holds only for short-context quality, not for million-token effective retention. The 25% Full Attention retained by Kimi3 remains quadratic at scale.
 
-> **Only sparse attention can scale storage/memory cost.** This is structurally determined — no engineering optimization can fix it.
+> **Within the current forget-gate paradigm, only sparse attention can scale storage/memory cost sub-quadratically.** The compounding information decay in linear attention is a mathematical property of the gated recurrence, not a solvable engineering gap — it can be mitigated (e.g., better gate designs, hybrid ratios) but not eliminated without effectively becoming sparse.
 
 Kimi's own late-2025 technical report acknowledged this: they recognized the need to merge into the sparse path. Kimi3's productization simply chose linear attention first.
 
@@ -215,7 +217,9 @@ DeepSeek's strategy is not accidental — it represents a **systems design metho
 
 <a id="ref-4"></a>**[4]** HBM Generations — HBM3: 819 GB/s → HBM3E: 1.2 TB/s → HBM4: 2.0 TB/s per stack. GPU: H100 3.35 TB/s → B200 ~8 TB/s → Rubin ~22 TB/s. [Wikipedia HBM](https://en.wikipedia.org/wiki/High_Bandwidth_Memory)
 
-<a id="ref-5"></a>**[5]** DeepSeek DSpark — 60-85% faster speculative decoding (June 2026). [AcingAI](https://acingai.com/articles/deepseek-dspark-speculative-decoding) | [arXiv:2603.23911](https://arxiv.org/html/2603.23911v1)
+<a id="ref-5"></a>**[5]** DeepSeek DSpark — 60-85% faster speculative decoding (June 2026). Semi-autoregressive drafting + confidence-scheduled verification; explicitly addresses acceptance decay in deep MTP stacking. [AcingAI](https://acingai.com/articles/deepseek-dspark-speculative-decoding) | [arXiv:2607.05147](https://arxiv.org/abs/2607.05147)
+
+<a id="ref-7"></a>**[7]** Cerebras CS-3 vs Groq LPU — >6× speed advantage at wafer scale (memory-bound benchmarks). [Cerebras Blog](https://www.cerebras.ai/blog/cerebras-cs-3-vs-groq-lpu)
 
 <a id="ref-6"></a>**[6]** SGLang Speculative Decoding — 1.4× throughput with MTP on DeepSeek models. [HPC-AI Tutorial](https://company.hpc-ai.com/blog/sglang-speculative-decoding-tutorial)
 
