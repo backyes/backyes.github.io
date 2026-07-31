@@ -373,34 +373,24 @@ def gen_featured_reports():
         '</section>',
     ])
 
-def gen_two_up(posts):
-    post_items = []
+def gen_recent_posts_band(posts):
+    items = []
     for p in posts[:6]:
-        post_items.extend([
+        items.extend([
             '<article class="latest-card">',
             f'  <time datetime="{p["date"]}">{p["date"]}</time>',
             f'  <h3><a href="{p["url"]}">{p["title"]}</a></h3>',
-            f'  <p>{p["excerpt"][:120]}\u2026</p>',
+            f'  <p>{p["excerpt"][:140]}\u2026</p>',
             '</article>',
         ])
-    cat_links = []
-    for cat_key, cat_info in CATS.items():
-        cat_reports = [r for r in REPORTS if r["cat"] == cat_key]
-        if cat_reports:
-            cat_links.append(f'<a href="#survey">{cat_info["label"]} ({len(cat_reports)})</a>')
     return _join([
-        '<section class="two-up">',
-        '  <div class="section-card">',
-        '    <div class="section-heading"><div><h2>Latest Writing</h2></div></div>',
-        '    <div class="latest-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">',
-        *("      " + l for l in post_items),
-        '    </div>',
+        '<section class="section-card">',
+        '  <div class="section-heading">',
+        '    <div><h2>Recent Posts</h2></div>',
+        '    <a href="posts.html" style="color:var(--blue);font-size:.9rem;font-weight:700">View all 12 posts \u2192</a>',
         '  </div>',
-        '  <div class="section-card">',
-        '    <div class="section-heading"><div><h2>Browse by Category</h2></div></div>',
-        '    <div class="path-links">',
-        *("      " + l for l in cat_links),
-        '    </div>',
+        '  <div class="latest-grid">',
+        *("    " + l for l in items),
         '  </div>',
         '</section>',
     ])
@@ -669,7 +659,7 @@ def main():
     hero = gen_hero()
     signal_grid = gen_signal_grid()
     featured_reports = gen_featured_reports()
-    two_up = gen_two_up(posts)
+    recent_posts_band = gen_recent_posts_band(posts)
     paths_grid = gen_paths_grid()
     latest_posts = gen_latest_posts(posts)
     footer = gen_footer()
@@ -688,7 +678,7 @@ def main():
     idx = re.sub(r'<!--HERO-->.*?<!--/HERO-->', f'<!--HERO-->\n{hero}\n<!--/HERO-->', idx, flags=re.S)
     idx = re.sub(r'<!--SIGNAL_GRID-->.*?<!--/SIGNAL_GRID-->', f'<!--SIGNAL_GRID-->\n{signal_grid}\n<!--/SIGNAL_GRID-->', idx, flags=re.S)
     idx = re.sub(r'<!--FEATURED_REPORTS-->.*?<!--/FEATURED_REPORTS-->', f'<!--FEATURED_REPORTS-->\n{featured_reports}\n<!--/FEATURED_REPORTS-->', idx, flags=re.S)
-    idx = re.sub(r'<!--TWO_UP-->.*?<!--/TWO_UP-->', f'<!--TWO_UP-->\n{two_up}\n<!--/TWO_UP-->', idx, flags=re.S)
+    idx = re.sub(r'<!--TWO_UP-->.*?<!--/TWO_UP-->', f'<!--TWO_UP-->\n{recent_posts_band}\n<!--/TWO_UP-->', idx, flags=re.S)
     idx = re.sub(r'<!--PATHS_GRID-->.*?<!--/PATHS_GRID-->', f'<!--PATHS_GRID-->\n{paths_grid}\n<!--/PATHS_GRID-->', idx, flags=re.S)
     idx = re.sub(r'<!--LATEST_POSTS-->.*?<!--/LATEST_POSTS-->', f'<!--LATEST_POSTS-->\n{latest_posts}\n<!--/LATEST_POSTS-->', idx, flags=re.S)
     idx = re.sub(r'<!--FOOTER-->.*?<!--/FOOTER-->', f'<!--FOOTER-->\n{footer}\n<!--/FOOTER-->', idx, flags=re.S)
