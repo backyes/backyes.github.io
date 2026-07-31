@@ -396,77 +396,24 @@ def gen_recent_posts_band(posts):
     ])
 
 def gen_paths_grid():
-    paths = [
-        ("I am designing an AI inference system", "Start with vLLM architecture, P/D disaggregation, and KV-cache routing patterns.", [("vLLM Analysis", "vllm_research/vllm_analysis/index.html"), ("P/D Separation", "pd-separation/report.html")]),
-        ("I am evaluating chip architecture", "GPU microarchitecture, DeepEP communication, and packaging technology deep dives.", [("DeepEP Analysis", "deep-ep/DeepEP_Final_Analysis_Report.html"), ("DeepGEMM vs DeepEP", "deepepv2/html/index.html")]),
-        ("I am researching interconnects", "NVLink, CXL, Sparse CLOS, and memory fabric architecture analysis.", [("AI Supernode Bus", "ai-supernode-bus/report.html"), ("HBM/CXL Memory", "hbm-cxl/report.html")]),
-        ("I am tracking industry strategy", "Hyperscaler roadmaps, vendor positioning, and infrastructure economics.", [("AMD Full Stack", "amd-latest-tech-2026/index.html"), ("SpaceX Analysis", "spacex/太空经济与SpaceX深度分析报告.html")]),
-    ]
-    cards = []
-    for title, desc, links in paths:
-        links_html = []
-        for label, url in links:
-            links_html.append(f'<a href="{url}">{label} →</a>')
-        cards.extend([
-            '<article class="path-card">',
-            f'  <h3>{title}</h3>',
-            f'  <p>{desc}</p>',
-            '  <div class="path-links">',
-            *("    " + l for l in links_html),
-            '  </div>',
-            '</article>',
-        ])
-    return _join([
-        '<section class="section-card" id="paths" aria-labelledby="paths-title">',
-        '  <div class="section-heading">',
-        '    <div><h2 id="paths-title">Browse by What You Need</h2></div>',
-        '    <p>Organized by problem type so you can get to the right material without scanning the whole site.</p>',
-        '  </div>',
-        '  <div class="paths-grid">',
-        *("    " + l for l in cards),
-        '  </div>',
-        '</section>',
-    ])
+    return ""  # removed from homepage
 
 def gen_latest_posts(posts):
-    items = []
-    for p in posts[:6]:
-        items.extend([
-            '<article class="latest-card">',
-            f'  <time datetime="{p["date"]}">{p["date"]}</time>',
-            f'  <h3><a href="{p["url"]}">{p["title"]}</a></h3>',
-            f'  <p>{p["excerpt"][:140]}\u2026</p>',
-            '</article>',
-        ])
-    return _join([
-        '<section class="section-card" id="latest" aria-labelledby="latest-title">',
-        '  <div class="section-heading">',
-        '    <div><h2 id="latest-title">All Posts</h2></div>',
-        '    <a href="posts.html" style="color:var(--blue);font-size:.9rem;font-weight:700">View all posts \u2192</a>',
-        '  </div>',
-        '  <div class="latest-grid">',
-        *("    " + l for l in items),
-        '  </div>',
-        '</section>',
-    ])
-
+    return ""  # removed from homepage, nav already has Posts
 def gen_footer():
     return _join([
-        '<section class="footer-grid" aria-label="About and site notes">',
-        '  <article class="footer-card">',
-        '    <h2>What You Will Find Here</h2>',
-        '    <p>This collection focuses on AI infrastructure: chip architecture, inference systems, interconnect technology, and industry strategy. The through-line is first-principles thinking.</p>',
-        '    <div class="footer-links">',
-        '      <a href="posts.html">Explore all posts</a>',
-        '      <a href="https://github.com/backyes" target="_blank" rel="noopener">GitHub</a>',
-        '      <a href="tags.html">Browse tags</a>',
-        '    </div>',
-        '  </article>',
-        '  <article class="footer-card">',
-        '    <h3>Site Notes</h3>',
-        '    <p class="note">This site is co-created with AI assistants.</p>',
-        '    <p class="note" style="margin-top:14px;">These views are my own.</p>',
-        '  </article>',
+        '<section class="section-card" style="text-align:center;padding:28px">',
+        '  <div style="display:flex;justify-content:center;flex-wrap:wrap;gap:14px;margin-bottom:14px">',
+        '    <a href="posts.html" style="font-weight:700">Posts</a>',
+        '    <a href="#survey" style="font-weight:700">Survey by AI</a>',
+        '    <a href="tags.html" style="font-weight:700">Tags</a>',
+        '    <a href="https://github.com/backyes" target="_blank" rel="noopener">GitHub</a>',
+        '    <a href="https://www.zhihu.com/people/nono-nono-66" target="_blank" rel="noopener">知乎</a>',
+        '    <a href="https://x.com/backyes1" target="_blank" rel="noopener">X</a>',
+        '    <a href="https://space.bilibili.com/327400087" target="_blank" rel="noopener">Bilibili</a>',
+        '    <a href="https://www.linkedin.com/in/yanfei-wang-5081b4126/" target="_blank" rel="noopener">LinkedIn</a>',
+        '  </div>',
+        '  <p style="color:var(--ink-mute);font-size:.85rem;margin:0">\u00a9 2026 backyes \u00b7 Human-driven, AI-amplified \u00b7 Built with Claude Code</p>',
         '</section>',
     ])
 
