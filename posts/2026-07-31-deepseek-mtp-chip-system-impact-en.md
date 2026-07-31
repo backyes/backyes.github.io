@@ -31,6 +31,8 @@ Traditional autoregressive decode is the canonical memory-bound workload: minima
 
 **Industry context**: NVIDIA's GPU roadmap shows memory bandwidth growing slower than compute across generations — the structural gap MTP exploits:
 
+> ⚠️ **规格待 review** — 下表数据基于官方发布信息整理，建议读者点击 Source 链接人工核实关键数字。
+
 | GPU | Architecture | Memory | BW | FP8 Dense | BW/Compute Ratio | Source |
 |---|---|---|---|---|---|---|
 | **H100 SXM** | Hopper | 80 GB HBM3 | 3.35 TB/s | 989 TFLOPS | 3.4 GB/s per TFLOP | [NVIDIA H100](https://www.nvidia.com/en-us/data-center/h100/) |
