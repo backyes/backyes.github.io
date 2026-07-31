@@ -135,7 +135,7 @@ CATS = {
 # ──── Site identity ────
 SITE = {
     "name": "backyes",
-    "tagline": "Notes on AI infrastructure, chip architecture, and system design.",
+    "tagline": "Thoughts on AI infrastructure, chip architecture, and system design.",
     "title": "backyes — AI Infrastructure Insights",
     "description": "Research hub for AI infrastructure: chip architecture, inference systems, interconnects, and first-principles analysis.",
     "hero_eyebrow": "First-Principles Analysis of AI Infrastructure",
