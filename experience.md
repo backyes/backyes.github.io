@@ -217,3 +217,69 @@ cd ~/work/claude_workspace
 | `posts.html` | 重写为浅色 Lil'Log 风格 |
 | `tags.html` | 重写为浅色风格 |
 | `DESIGN_SPEC.md` | 新建设计规格书 |
+
+---
+
+## 四、2026-07-31 (续): 重构迭代调整记录
+
+### 最终首页结构
+```
+Topbar (brand + nav + search)
+Hero (headline + CTA + metrics + aside)
+Recent Posts (全宽 3 列)
+Architecture & AI Essentials (featured reports 3 列)
+Survey by AI (filter tabs + 2-3 列卡片)
+Popular Tags
+Footer (单行链接)
+```
+
+### 删除的板块
+- **Signal Grid**: 4 个描述卡片（AI system design / Chip & interconnect / Infrastructure economics / Research synthesis）
+- **Browse by What You Need**: 4 个 path cards
+- **All Posts**: 重复（导航栏已有 Posts）
+- **Footer 双栏**: What You Will Find Here + Site Notes
+
+### 关键迭代教训
+
+#### 1. build_site.py 模板覆盖问题
+- **问题**: 手动编辑 index.html 后，运行 build_site.py 会被模板生成覆盖
+- **根因**: build_site.py 读取 index.html 自身作为模板，替换 `<!--PLACEHOLDER-->` 之间的内容
+- **解决**: 每次修改模板后必须重新运行 build_site.py；直接编辑 build_site.py 中的生成函数
+- **教训**: **修改首页结构 = 改 build_site.py 生成函数 + 运行 build，不要直接改 index.html 的占位符内容**
+
+#### 2. Survey 过滤功能失效
+- **问题**: 点击过滤标签后卡片不隐藏
+- **根因**: JS 选择器 `#grid .card` 找不到元素 — 卡片没有包裹在 `<div class="grid" id="grid">` 中
+- **解决**: `gen_cards()` 返回值加上 `<div class="grid" id="grid">` 包裹
+- **教训**: **JS querySelector 依赖的 DOM 结构必须与 HTML 模板一致；修改模板后验证 JS 选择器**
+
+#### 3. display: '' vs display: 'flex'
+- **问题**: 过滤后卡片用 `display: ''` 恢复显示，但 flex 布局丢失
+- **解决**: 改用 `display: 'flex'` 显式恢复
+- **教训**: **grid/flex 子元素用 display:none 隐藏后，恢复时需显式设置原始 display 值**
+
+#### 4. 手机端导航换行
+- **问题**: 手机端 topnav 多个链接换行不美观
+- **解决**: 添加 `.nav-hide-mobile` 类，手机端隐藏 Essentials/Tags，只保留 Posts + Survey by AI + 搜索图标
+- **教训**: **导航项超过 4 个时，手机端需要折叠或隐藏次要项**
+
+#### 5. 搜索按钮缺失
+- **问题**: 重构后搜索按钮从导航栏消失
+- **解决**: 添加 SVG 搜索图标按钮，绑定 `onclick` 打开 search-overlay
+- **教训**: **重构时注意保留原有功能入口（搜索、社交链接等），不要遗漏**
+
+#### 6. 卡片视觉文字
+- **尝试**: 将 visual 文字改为多行描述（如 "vLLM\n架构统一\n分析"）
+- **用户反馈**: 理解错误 — 用户想要 2-3 张卡片一行，不是单张卡片内多行文字
+- **最终**: visual 保持简短关键字，grid 用 auto-fill minmax(300px, 1fr) 实现 2-3 列
+- **教训**: **"2列" 通常指布局列数，不是文字行数；模糊需求先确认再实施**
+
+### 最终文件清单
+| 文件 | 行数 | 说明 |
+|---|---|---|
+| `assets/css/main.css` | ~520 | 完整设计系统 |
+| `build_site.py` | ~700 | 12 个生成函数 |
+| `index.html` | ~450 | 模板 + 占位符 |
+| `posts.html` | ~120 | 文章列表 |
+| `tags.html` | ~80 | 标签页 |
+| `DESIGN_SPEC.md` | ~300 | 设计规格书 |
