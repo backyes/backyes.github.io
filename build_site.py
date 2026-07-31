@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-build_site.py — 生成 index.html / posts.html / tags.html
-从模板 + 报告元数据 + 手写 posts/*.md 构建完整静态站。
+build_site.py v2 — 生成 index.html / posts.html / tags.html
+Vikas Goyal 风格 + Lil'Log Posts + astrofy Survey Cards
 
+从模板 + 报告元数据 + 手写 posts/*.md 构建完整静态站。
 由 sync_reports.sh 在 rsync 之后调用。
 """
 import os, re, json, glob, html
@@ -11,8 +12,6 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 POSTS_DIR = os.path.join(REPO, 'posts')
 
 # ──── 报告元数据 (与 sync_reports.sh 的 PROJECTS 数组保持同步) ────
-# visual = 卡片上的大字 (提取标题关键词)
-# tags = 具体技术关键词 (用于 Tags 页聚合)
 REPORTS = [
     {"dst":"amd-latest-tech-2026","entry":"index.html","visual":"AMD",
      "title":"AMD 全栈 AI 基础设施调研",
@@ -21,17 +20,17 @@ REPORTS = [
      "tags":["AMD","EPYC","Venice","MI455X","CDNA","Helios","Zen6","RyzenAI","Gorgon","路线图"]},
     {"dst":"umdk","entry":"analysis/cam_v2/CAM深度分析报告_v2.html","visual":"UMDK",
      "title":"UMDK/CAM 深度分析 v2",
-     "desc":"CAM 通信加速库 8 章深度分析 v2 (2026-07-27) · EP Normal Zero-Buffer 流水线 / EP Low-Latency 8+4 阶段细粒度同步 / Fused Deep MoE 三变体 (BF16/W4A8/FWK) + Catlass GEMM / Detour All-to-All+ReduceScatter / A2E-E2A 跨域通信 / 框架基础设施 / 双层CMake+HFA+OPX / 跨章节设计洞察",
+     "desc":"CAM 通信加速库 8 章深度分析 v2 (2026-07-27) · EP Normal Zero-Buffer 流水线 / EP Low-Latency 8+4 阶段细粒度同步 / Fused Deep MoE 三变体 + Catlass GEMM / Detour All-to-All+ReduceScatter / A2E-E2A 跨域通信",
      "cat":"chip","priority":"p0",
      "tags":["UMDK","CAM","EP通信","Low-Latency","Fused Deep MoE","Catlass","Detour","A2E","跨域通信","设计洞察"]},
     {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
-     "desc":"12 章统一分析 + 3 专题 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 百万序列 Prefill 专题 12 章 (Chunked/CP/MLA/KV Offload/Disagg/Sparse 6 路线 + D 卡缓冲内存分配 · KV Cache 即 Buffer / 1M token = 1.15 GB / NIXL vs Mooncake) · HBM 索引架构 · vllm_ascend 全模块 · 全 file:line 溯源",
+     "desc":"12 章统一分析 + 3 专题 (第一性原理 / 热路径 / KV-Cache 4 层 / 分布式 / Ascend Overlay / Perf Handbook) · 百万序列 Prefill 专题 12 章 · KV Cache 即 Buffer / 1M token = 1.15 GB / NIXL vs Mooncake",
      "cat":"inference","priority":"p0",
      "tags":["vLLM","KV-Cache","调度器","分布式推理","Ascend","百万Prefill","D卡缓冲","HBM索引"]},
     {"dst":"pd-separation","entry":"report.html","visual":"P/D",
      "title":"P/D 分离 KVCache 流通",
-     "desc":"vLLM / SGLang / LMCache / Mooncake / Dynamo 五大框架的 Prefill-Decode 分离 + KV Cache 路由内部实现源码级拆解 · BootstrapQueue→WaitingQueue→InflightQueue 全生命周期",
+     "desc":"vLLM / SGLang / LMCache / Mooncake / Dynamo 五大框架的 Prefill-Decode 分离 + KV Cache 路由内部实现源码级拆解",
      "cat":"inference","priority":"p0",
      "tags":["P-D分离","KV-Cache","vLLM","SGLang","Dynamo","请求路由"]},
     {"dst":"mlsys2026","entry":"index.html","visual":"MLSys",
@@ -84,11 +83,9 @@ REPORTS = [
      "desc":"联盟首批意向成员 + 初创企业调研报告 · 含 306 家深度分析",
      "cat":"space","priority":"p2",
      "tags":["太空经济","航天","初创企业","产业调研"]},
-
-    # ── 以下为新规模化添加 ──
     {"dst":"pd-routing","entry":"report.html","visual":"Routing",
      "title":"PD 分离 Request Routing 内部实现",
-     "desc":"PD 分离架构下请求路由的源码级拆解 · SGLang / Mooncake / LMCache 内部队列生命周期 · 与 P/D KVCache 流通互补视角",
+     "desc":"PD 分离架构下请求路由的源码级拆解 · SGLang / Mooncake / LMCache 内部队列生命周期",
      "cat":"inference","priority":"p1",
      "tags":["P-D分离","请求路由","SGLang","LMCache","队列","源码分析"]},
     {"dst":"trillium","entry":"Trillium_vs_NVIDIA_LPX_架构分析.html","visual":"Trillium",
@@ -113,12 +110,12 @@ REPORTS = [
      "tags":["推理社区","CoreWeave","推理部署","前沿动态","开源"]},
     {"dst":"deep-ep","entry":"DeepEP_Final_Analysis_Report.html","visual":"DeepEP",
      "title":"DeepEP 深度设计分析 (Survey by AI)",
-     "desc":"DeepSeek 开源 DeepEP 库三视角深度设计分析 · MoE 专家并行 AllToAll 通信 / NVLink+RDMA 双域融合 / Low-Latency 内核 / Normal 内核 / 性能基准与竞品对比",
+     "desc":"DeepSeek 开源 DeepEP 库三视角深度设计分析 · MoE 专家并行 AllToAll 通信 / NVLink+RDMA 双域融合 / Low-Latency 内核",
      "cat":"network","priority":"p0",
      "tags":["DeepEP","MoE","AllToAll","专家并行","NVLink","RDMA","通信库","DeepSeek"]},
     {"dst":"deepepv2","entry":"html/index.html","visual":"DGEMM",
      "title":"DeepGEMM & DeepEP 三向对比 (Survey by AI)",
-     "desc":"36 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比10篇 + DeepEP独立分析11篇 + Legacy/NVShmem 2篇）· 博客理论 ⇌ DeepEP源码 ⇌ DeepGEMM源码 · 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传 / 数据布局 5层→4层→3层",
+     "desc":"36 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比10篇 + DeepEP独立分析11篇）· 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传",
      "cat":"chip","priority":"p0",
      "tags":["DeepGEMM","DeepEP","MoE","Mega MoE","SymmBuffer","Warp Specialization","NVLink","RDMA","对称内存","博客验证","三向对比"]},
 ]
@@ -135,6 +132,22 @@ CATS = {
     "space":      {"label":"太空经济","color":"tag-space"},
 }
 
+# ──── Site identity ────
+SITE = {
+    "name": "backyes",
+    "tagline": "Notes on AI infrastructure, chip architecture, and system design.",
+    "title": "backyes — AI Infrastructure Insights",
+    "description": "Research hub for AI infrastructure: chip architecture, inference systems, interconnects, and first-principles analysis.",
+    "hero_eyebrow": "For AI Infrastructure Researchers",
+    "hero_h1": "How to think clearly about AI system design, chip architecture, and infrastructure leverage.",
+    "hero_copy": "Deep analysis of AI hardware, inference frameworks, and interconnect architectures — from first principles, with data to back it up.",
+    "hero_cta_primary": "Read the essentials",
+    "hero_cta_primary_url": "#essential-reads",
+    "hero_cta_browse": "Browse by topic",
+    "hero_cta_browse_url": "#paths",
+    "newsletter_url": "#",
+}
+
 # ──── 解析手写文章 ────
 def parse_post(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -142,7 +155,6 @@ def parse_post(filepath):
     m = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', content, re.S)
     if not m:
         return None
-    # 简易 frontmatter 解析 (不依赖 pyyaml)
     fm = {}
     for line in m.group(1).split('\n'):
         line = line.strip()
@@ -179,7 +191,7 @@ def load_posts():
             posts.append(p)
     return posts
 
-# ──── Markdown → HTML (完整支持表格/引用/代码/链接/加粗) ────
+# ──── Markdown → HTML ────
 def md_to_html(text):
     lines = text.split('\n')
     out = []
@@ -191,25 +203,17 @@ def md_to_html(text):
             out.append('</ul>')
             in_ul = False
     def inline(s):
-        # 图片 ![alt](url) — 必须在链接之前处理
         s = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img src="\2" alt="\1" style="max-width:100%;display:block;margin:1.5em auto">', s)
-        # 关键数字 $number$ → 蓝色高亮
         s = re.sub(r'\$([\d,.]+)\$', r'<span class="key-num">\1</span>', s)
-        # 高亮 ==text== → 下划线标记
         s = re.sub(r'==([^=]+)==', r'<mark>\1</mark>', s)
-        # 代码 `code`
-        s = re.sub(r'`([^`]+)`', r'<code>\1></code>', s)
-        # 加粗 **text**
+        s = re.sub(r'`([^`]+)`', r'<code>\1</code>', s)
         s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
-        # 斜体 *text* (不在 ** 内部)
         s = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', s)
-        # 链接 [text](url)
         s = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank" rel="noopener">\1</a>', s)
         return s
 
     while i < len(lines):
         s = lines[i].strip()
-        # 代码块 ```
         if s.startswith('```'):
             lang = s[3:].strip()
             code_lines = []
@@ -221,10 +225,9 @@ def md_to_html(text):
             out.append(f'<pre><code>{"<br>".join(code_lines)}</code></pre>')
             i += 1
             continue
-        # 表格 | ... | ... |
         if '|' in s and s.startswith('|') and s.endswith('|') and i+1 < len(lines) and re.match(r'^[\s|:-]+$', lines[i+1].strip()):
             header = [c.strip() for c in s.strip('|').split('|')]
-            i += 2  # skip header + separator
+            i += 2
             rows = []
             while i < len(lines) and '|' in lines[i] and lines[i].strip().startswith('|'):
                 row = [c.strip() for c in lines[i].strip().strip('|').split('|')]
@@ -238,70 +241,247 @@ def md_to_html(text):
                 out.append(f'<tr>{td}</tr>')
             out.append('</tbody></table>')
             continue
-        # 标题（添加 anchor id 用于 TOC 跳转）
         hm = re.match(r'^(#{1,3})\s+(.*)', s)
         if hm:
             close_ul()
             level = len(hm.group(1))
             title_text = hm.group(2)
-            # 生成 anchor: 去除 markdown 格式，转小写，空格改横线
             anchor_text = re.sub(r'\*\*([^*]+)\*\*', r'\1', title_text)
             anchor_text = re.sub(r'=([^=]+)==', r'\1', anchor_text)
             anchor = re.sub(r'[^\w\- ]', '', anchor_text).strip().replace(' ', '-').lower()
             anchor = re.sub(r'-+', '-', anchor)[:50]
             out.append(f'<h{level} id="{anchor}">{inline(title_text)}</h{level}>')
             i += 1; continue
-        # 引用 >
         if s.startswith('>'):
             close_ul()
             quote = s[1:].strip()
             out.append(f'<blockquote><p>{inline(quote)}</p></blockquote>')
             i += 1; continue
-        # 分隔线 ---
         if s == '---':
             close_ul()
             out.append('<hr>')
             i += 1; continue
-        # 独立的图片行 ![alt](url)
         img_only = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', s)
         if img_only:
             close_ul()
             out.append(f'<img src="{img_only.group(2)}" alt="{img_only.group(1)}" style="max-width:100%;display:block;margin:1.5em auto">')
             i += 1; continue
-        # 无序列表
         if s.startswith('- ') or s.startswith('* '):
             if not in_ul:
                 out.append('<ul>'); in_ul = True
             out.append(f'<li>{inline(s[2:])}</li>')
             i += 1; continue
-        # 空行
         if s == '':
             close_ul()
             i += 1; continue
-        # 普通段落
         close_ul()
         out.append(f'<p>{inline(s)}</p>')
         i += 1
     close_ul()
     return '\n'.join(out)
 
-# ──── 卡片视觉: 大字标题 (HTML 文字, 响应式字号匹配首页 hero) ────
+# ──── 卡片视觉 ────
 def visual_placeholder(visual, cat):
-    # 灰阶配色
     shades = {
-        "inference":"#2a2f38",
-        "system":   "#2d323c",
-        "network":  "#2b303a",
-        "chip":     "#2e333e",
-        "mixed":    "#2c313b",
+        "inference":"#2a2f38","network":"#2b303a","chip":"#2e333e",
+        "cluster":"#2d323c","model":"#2c313b","storage":"#2a3038",
+        "recsys":"#2b3138","conference":"#2d3038","space":"#2e3138",
     }
     c = shades.get(cat, "#2a2f38")
-    txt = visual or ""
-    # HTML div + clamp() 字号,匹配首页 "Thoughts on AI infrastructure" 风格
-    return f'<div class="visual" style="background:{c}">{txt}</div>'
+    return f'<div class="visual" style="background:{c}">{visual or ""}</div>'
 
-# ──── 生成报告卡片 ────
+# ════════════════════════════════════════════════════════════════════
+#  VIKAS GOYLE STYLE GENERATORS
+# ════════════════════════════════════════════════════════════════════
+
+def _join(lines):
+    return "\n".join(lines)
+
+def gen_hero():
+    return _join([
+        '<section class="hero" aria-labelledby="hero-title">',
+        '  <div class="hero-panel">',
+        f'    <div class="eyebrow">{SITE["hero_eyebrow"]}</div>',
+        f'    <h1 id="hero-title">{SITE["hero_h1"]}</h1>',
+        f'    <p class="hero-copy">{SITE["hero_copy"]}</p>',
+        '    <div class="hero-actions">',
+        f'      <a class="button button-primary" href="{SITE["hero_cta_primary_url"]}">{SITE["hero_cta_primary"]}</a>',
+        f'      <a class="button button-secondary" href="{SITE["hero_cta_browse_url"]}">{SITE["hero_cta_browse"]}</a>',
+        '    </div>',
+        '    <div class="hero-metrics">',
+        '      <div class="metric">',
+        '        <span class="metric-label">System Architecture</span>',
+        '        <strong>Inference frameworks, KV-cache routing, P/D disaggregation, and distributed serving patterns.</strong>',
+        '      </div>',
+        '      <div class="metric">',
+        '        <span class="metric-label">Chip &amp; Interconnect</span>',
+        '        <strong>GPU microarchitecture, NVLink/NVL72, CXL memory fabric, and packaging technology deep dives.</strong>',
+        '      </div>',
+        '      <div class="metric">',
+        '        <span class="metric-label">Industry Insight</span>',
+        '        <strong>First-principles analysis of hyperscaler strategy, vendor roadmaps, and infrastructure economics.</strong>',
+        '      </div>',
+        '    </div>',
+        '  </div>',
+        '  <aside class="hero-aside" aria-label="How to use this site">',
+        '    <p class="aside-kicker">Use This Page</p>',
+        '    <h2 class="aside-title">Choose the lens that matches the problem in front of you.</h2>',
+        '    <p class="aside-text">Start with the essentials if you are designing systems. Go to the survey section for AI-generated deep dives. Read posts for human-written analysis.</p>',
+        '    <ul class="aside-list">',
+        '      <li><span>For system designers</span>Begin with architecture essentials and chip microarchitecture series.</li>',
+        '      <li><span>For researchers</span>Browse the AI survey section for paper-level deep dives with source tracing.</li>',
+        '      <li><span>For industry watchers</span>Read posts for critical analysis of vendor strategy and market dynamics.</li>',
+        '    </ul>',
+        '  </aside>',
+        '</section>',
+    ])
+
+def gen_signal_grid():
+    cards = [
+        ("AI system design, without hand-waving", "Inference architectures, KV-cache management, scheduling, and distributed serving — from first principles."),
+        ("Chip & interconnect deep dives", "GPU microarchitecture, NVLink topology, CXL memory, and packaging technology analyzed quantitatively."),
+        ("Infrastructure economics", "Cost models, utilization analysis, and TCO projections for AI hardware at scale."),
+        ("Research synthesis", "Cross-paper analysis of MLSys/OSDI/SOSP findings, with critical evaluation and source tracing."),
+    ]
+    items = ""
+    for title, desc in cards:
+        items += f'<article class="signal-card"><strong>{title}</strong><p>{desc}</p></article>\n'
+    return f'<section class="signal-grid" aria-label="What this site covers">\n{items}</section>'
+
+def gen_featured_reports():
+    p0_reports = [r for r in REPORTS if r["priority"] == "p0"][:6]
+    cards = []
+    for r in p0_reports:
+        cat = CATS.get(r["cat"], CATS["inference"])
+        cards.extend([
+            '<article class="article-card">',
+            f'  <div class="article-tag">{cat["label"]}</div>',
+            f'  <h3>{r["title"]}</h3>',
+            f'  <p>{r["desc"]}</p>',
+            f'  <a class="article-link" href="{r["dst"]}/{r["entry"]}">Read the analysis →</a>',
+            '</article>',
+        ])
+    return _join([
+        '<section class="section-card" id="essential-reads" aria-labelledby="essential-reads-title">',
+        '  <div class="section-heading">',
+        '    <div><h2 id="essential-reads-title">Architecture &amp; AI Essentials</h2></div>',
+        '    <p>Start here for the most in-depth analysis — chip architecture, inference systems, and communication libraries.</p>',
+        '  </div>',
+        '  <div class="featured-grid">',
+        *("    " + l for l in cards),
+        '  </div>',
+        '</section>',
+    ])
+
+def gen_two_up(posts):
+    post_items = []
+    for p in posts[:6]:
+        post_items.extend([
+            '<article class="latest-card">',
+            f'  <time datetime="{p["date"]}">{p["date"]}</time>',
+            f'  <h3><a href="{p["url"]}">{p["title"]}</a></h3>',
+            f'  <p>{p["excerpt"][:120]}\u2026</p>',
+            '</article>',
+        ])
+    cat_links = []
+    for cat_key, cat_info in CATS.items():
+        cat_reports = [r for r in REPORTS if r["cat"] == cat_key]
+        if cat_reports:
+            cat_links.append(f'<a href="#survey">{cat_info["label"]} ({len(cat_reports)})</a>')
+    return _join([
+        '<section class="two-up">',
+        '  <div class="section-card">',
+        '    <div class="section-heading"><div><h2>Latest Writing</h2></div></div>',
+        '    <div class="latest-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">',
+        *("      " + l for l in post_items),
+        '    </div>',
+        '  </div>',
+        '  <div class="section-card">',
+        '    <div class="section-heading"><div><h2>Browse by Category</h2></div></div>',
+        '    <div class="path-links">',
+        *("      " + l for l in cat_links),
+        '    </div>',
+        '  </div>',
+        '</section>',
+    ])
+
+def gen_paths_grid():
+    paths = [
+        ("I am designing an AI inference system", "Start with vLLM architecture, P/D disaggregation, and KV-cache routing patterns.", [("vLLM Analysis", "vllm_research/vllm_analysis/index.html"), ("P/D Separation", "pd-separation/report.html")]),
+        ("I am evaluating chip architecture", "GPU microarchitecture, DeepEP communication, and packaging technology deep dives.", [("DeepEP Analysis", "deep-ep/DeepEP_Final_Analysis_Report.html"), ("DeepGEMM vs DeepEP", "deepepv2/html/index.html")]),
+        ("I am researching interconnects", "NVLink, CXL, Sparse CLOS, and memory fabric architecture analysis.", [("AI Supernode Bus", "ai-supernode-bus/report.html"), ("HBM/CXL Memory", "hbm-cxl/report.html")]),
+        ("I am tracking industry strategy", "Hyperscaler roadmaps, vendor positioning, and infrastructure economics.", [("AMD Full Stack", "amd-latest-tech-2026/index.html"), ("SpaceX Analysis", "spacex/太空经济与SpaceX深度分析报告.html")]),
+    ]
+    cards = []
+    for title, desc, links in paths:
+        links_html = []
+        for label, url in links:
+            links_html.append(f'<a href="{url}">{label} →</a>')
+        cards.extend([
+            '<article class="path-card">',
+            f'  <h3>{title}</h3>',
+            f'  <p>{desc}</p>',
+            '  <div class="path-links">',
+            *("    " + l for l in links_html),
+            '  </div>',
+            '</article>',
+        ])
+    return _join([
+        '<section class="section-card" id="paths" aria-labelledby="paths-title">',
+        '  <div class="section-heading">',
+        '    <div><h2 id="paths-title">Browse by What You Need</h2></div>',
+        '    <p>Organized by problem type so you can get to the right material without scanning the whole site.</p>',
+        '  </div>',
+        '  <div class="paths-grid">',
+        *("    " + l for l in cards),
+        '  </div>',
+        '</section>',
+    ])
+
+def gen_latest_posts(posts):
+    items = []
+    for p in posts[:6]:
+        items.extend([
+            '<article class="latest-card">',
+            f'  <time datetime="{p["date"]}">{p["date"]}</time>',
+            f'  <h3><a href="{p["url"]}">{p["title"]}</a></h3>',
+            f'  <p>{p["excerpt"][:140]}\u2026</p>',
+            '</article>',
+        ])
+    return _join([
+        '<section class="section-card" id="latest" aria-labelledby="latest-title">',
+        '  <div class="section-heading">',
+        '    <div><h2 id="latest-title">All Posts</h2></div>',
+        '    <p>Human-written analysis \u2014 critical perspectives on AI infrastructure, chips, and system design.</p>',
+        '  </div>',
+        '  <div class="latest-grid">',
+        *("    " + l for l in items),
+        '  </div>',
+        '</section>',
+    ])
+
+def gen_footer():
+    return _join([
+        '<section class="footer-grid" aria-label="About and site notes">',
+        '  <article class="footer-card">',
+        '    <h2>What You Will Find Here</h2>',
+        '    <p>This collection focuses on AI infrastructure: chip architecture, inference systems, interconnect technology, and industry strategy. The through-line is first-principles thinking.</p>',
+        '    <div class="footer-links">',
+        '      <a href="posts.html">Explore all posts</a>',
+        '      <a href="https://github.com/backyes" target="_blank" rel="noopener">GitHub</a>',
+        '      <a href="tags.html">Browse tags</a>',
+        '    </div>',
+        '  </article>',
+        '  <article class="footer-card">',
+        '    <h3>Site Notes</h3>',
+        '    <p class="note">This site is co-created with AI assistants.</p>',
+        '    <p class="note" style="margin-top:14px;">These views are my own.</p>',
+        '  </article>',
+        '</section>',
+    ])
+
 def gen_cards():
+    """Survey by AI report cards (astrofy style, adapted to light theme)"""
     cards = ""
     for prefix in ("p0","p1","p2"):
         for r in REPORTS:
@@ -320,7 +500,6 @@ def gen_cards():
 '''
     return cards
 
-# ──── 生成 Search DB (JSON) ────
 def gen_search_db(posts):
     items = []
     for r in REPORTS:
@@ -331,7 +510,6 @@ def gen_search_db(posts):
                       "tags": " ".join(p.get("tags",[]))})
     return json.dumps(items, ensure_ascii=False)
 
-# ──── 生成 Tag Cloud — 使用具体技术 tags ────
 def gen_tag_cloud(posts):
     tag_count = {}
     for r in REPORTS:
@@ -340,17 +518,15 @@ def gen_tag_cloud(posts):
     for p in posts:
         for t in p.get("tags", []):
             tag_count[t] = tag_count.get(t, 0) + 1
-    # 按计数降序,取前 20 个
     html_parts = []
     for tag, count in sorted(tag_count.items(), key=lambda x: -x[1])[:24]:
         html_parts.append(f'<a href="tags.html" class="tag-pill"># {tag} <span class="count">{count}</span></a>')
     return "\n".join(html_parts)
 
-# ──── 生成 Posts 列表 (Lil'Log 风格) ────
 def gen_posts_list(posts, full=False):
     if not posts:
         return ('<div class="empty"><div class="emoji">✍️</div>'
-                '<p>Posts 栏目已预留。<br>这里将放入我个人的观察、分析与观点——独立于 AI 报告的手写洞察。<br><br>'
+                '<p>Posts 栏目已预留。<br>这里将放入我个人的观察、分析与观点。<br><br>'
                 '<em>敬请期待。</em></p></div>')
     items = ""
     for p in posts:
@@ -366,7 +542,6 @@ def gen_posts_list(posts, full=False):
 '''
     return f'<ul class="posts-list">{items}</ul>'
 
-# ──── 生成标签 sidebar ────
 def gen_tags_sidebar(posts):
     tag_count = {}
     for r in REPORTS:
@@ -380,7 +555,6 @@ def gen_tags_sidebar(posts):
         out += f'<li><a href="#tag-{tag}"># {tag} <span class="cnt">{count}</span></a></li>\n'
     return out
 
-# ──── 生成 Tags 页完整内容 — 按具体技术 tag 聚合 ────
 def gen_tags_full(posts):
     groups = {}
     for r in REPORTS:
@@ -392,23 +566,19 @@ def gen_tags_full(posts):
             groups.setdefault(t,[]).append(
                 {"t": p["title"], "d": p["excerpt"], "u": p["url"], "kind":"Post"})
     out = ""
-    # 按计数降序排列
     for tag in sorted(groups.keys(), key=lambda t: -len(groups[t])):
         items = groups[tag]
         out += f'<div class="tag-group" id="tag-{tag}" data-tag="{tag}">'
         out += f'<h3><span class="hash">#</span> {tag} <span class="cnt">({len(items)})</span></h3>'
         out += '<ul class="posts-list">'
         for it in items:
-            kind_label = 'AI' if it.get('kind')=='AI' else 'Post'
             out += f'''<li class="posts-item">
   <div class="posts-content"><h3><a href="{it['u']}">{it['t']}</a></h3><p class="posts-excerpt">{it['d']}</p></div>
 </li>'''
         out += '</ul></div>'
     return out
 
-# ──── 提取文章目录（TOC）────
 def extract_toc(body):
-    """从 markdown body 提取 H2/H3 标题，生成 TOC HTML"""
     toc_items = []
     for line in body.split('\n'):
         if line.startswith('## '):
@@ -426,13 +596,11 @@ def extract_toc(body):
     items_html = '\n'.join(f'<li>{item}</li>' for item in toc_items)
     return f'<div class="toc"><div class="toc-title">Contents</div><ul>{items_html}</ul></div>'
 
-# ──── 生成单篇文章 HTML ────
 def gen_post_page(post):
     with open(post["source"], 'r', encoding='utf-8') as f:
         content = f.read()
     m = re.match(r'^---\s*\n.*?\n---\s*\n(.*)$', content, re.S)
     body = m.group(1).strip() if m else content
-    # 跳过 body 中第一个 # 标题(与文章标题重复)
     body_lines = body.split('\n')
     start = 0
     for idx, line in enumerate(body_lines):
@@ -452,74 +620,24 @@ def gen_post_page(post):
 <title>{post["title"]} · backyes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/css/main.css">
-<style>
-.article-layout{{display:flex;gap:32px;max-width:1160px;margin:0 auto;padding:0 32px}}
-.toc-sidebar{{flex:0 0 220px;position:sticky;top:0;align-self:flex-start;padding:40px 0;max-height:100vh;overflow-y:auto}}
-.toc{{font-size:.82rem}}
-.toc-title{{font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;font-size:.75rem}}
-.toc ul{{list-style:none;padding:0;margin:0;border-left:2px solid var(--border-soft)}}
-.toc li{{margin:0}}
-.toc a{{display:block;padding:6px 0 6px 14px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;margin-left:-2px;transition:all .15s}}
-.toc a:hover{{color:var(--fg);border-left-color:var(--accent)}}
-.toc a.toc-h2{{font-weight:500}}
-.toc a.toc-h3{{font-size:.78rem;padding-left:24px;color:var(--muted-2)}}
-.toc a.toc-h3:hover{{color:var(--muted)}}
-.article{{flex:1;max-width:960px;padding:40px 0 80px;min-width:0}}
-.article h1{{font-family:var(--font-serif);font-size:2rem;font-weight:600;margin:0 0 8px}}
-.article .meta{{color:var(--muted-2);font-size:.85rem;margin-bottom:40px;padding-bottom:20px;border-bottom:1px solid var(--border-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}}
-.article-body{{font-family:var(--font-serif);font-size:1.1rem;line-height:1.8;color:var(--fg-2)}}
-.article-body h2{{font-size:1.5rem;font-weight:700;margin:2em 0 .6em;padding-bottom:.4em;border-bottom:2px solid var(--accent);color:var(--fg)}}
-.article-body h3{{font-size:1.25rem;font-weight:600;margin:1.5em 0 .5em;padding-left:10px;border-left:3px solid var(--accent);color:var(--fg2)}}
-.article-body p{{margin:0 0 1.2em}}
-.article-body strong{{color:var(--fg);font-weight:600}}
-.article-body mark{{background:linear-gradient(180deg,transparent 60%,var(--accent-soft) 60%);padding:0 3px;color:var(--fg);font-weight:600}}
-.article-body .key-callout{{border-left:4px solid var(--accent);background:var(--callout);padding:14px 20px;margin:1.5em 0;border-radius:0 8px 8px 0}}
-.article-body .key-callout p{{margin:0 0 .5em}}
-.article-body .key-callout p:last-child{{margin:0}}
-.article-body .key-num{{color:var(--accent);font-weight:700;font-size:1.1em}}
-.article-body .hl-blue{{background:rgba(74,143,224,.12);border-left:3px solid var(--accent);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
-.article-body .hl-amber{{background:rgba(210,153,34,.12);border-left:3px solid #d29922;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
-.article-body .hl-green{{background:rgba(63,185,80,.12);border-left:3px solid #3fb950;padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
-.article-body .hl-blue p,.article-body .hl-amber p,.article-body .hl-green p{{margin:0}}
-.article-body table{{border-collapse:separate;border-spacing:0;width:100%;margin:1.5em 0;font-size:.88em;display:block;overflow-x:auto;border:1px solid var(--border);border-radius:8px}}
-.article-body th{{background:linear-gradient(180deg,rgba(74,143,224,.08),rgba(74,143,224,.04));font-weight:600;padding:10px 12px;border-bottom:2px solid rgba(74,143,224,.25);text-align:left;font-size:.85em;text-transform:uppercase;letter-spacing:.03em;color:var(--fg)}}
-.article-body td{{padding:9px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top;line-height:1.5}}
-.article-body tr:last-child td{{border-bottom:none}}
-.article-body tr:nth-child(even) td{{background:rgba(24,27,32,.2)}}
-.article-body tr:hover td{{background:rgba(74,143,224,.06)}}
-.article-body thead th{{position:sticky;top:0}}
-.article-body blockquote{{border-left:4px solid var(--accent);background:var(--callout);padding:10px 16px;margin:1.2em 0;border-radius:0 6px 6px 0}}
-.article-body blockquote p{{margin:0}}
-.article-body code{{background:var(--surface);border:1px solid var(--border2);padding:1px 5px;border-radius:4px;font-size:.85em;font-family:'JetBrains Mono',monospace}}
-.article-body pre code{{background:none;border:none;padding:0}}
-.article-body a{{color:var(--accent);text-decoration:none}}
-.article-body a:hover{{text-decoration:underline}}
-.article-body hr{{border:none;border-top:1px solid var(--border-soft);margin:2em 0}}
-.back{{display:inline-block;margin-bottom:28px;color:var(--accent);font-size:.9rem}}
-@media(max-width:900px){{
-  .toc-sidebar{{display:none}}
-  .article-layout{{padding:0 16px}}
-}}
-@media(max-width:768px){{
-  .article{{padding:24px 0 60px}}
-  .article-body h2{{font-size:1.3rem}}
-  .article-body h3{{font-size:1.1rem}}
-  .article-body table{{font-size:.8rem}}
-  .article-body th,.article-body td{{padding:6px 8px}}
-}}
-</style>
 </head>
 <body>
-<nav class="nav"><div class="nav-inner">
-  <a href="../" class="nav-brand"><span class="dot"></span>backyes</a>
-  <ul class="nav-links">
-    <li><a href="../#survey">Survey by AI</a></li>
-    <li><a href="../posts.html" class="active">Posts</a></li>
-    <li><a href="../tags.html">Tags</a></li>
-  </ul>
-</div></nav>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../">backyes</a></div>
+    <div class="brand-tagline">{SITE["tagline"]}</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../#essential-reads">Essentials</a>
+    <a href="../#survey">Survey by AI</a>
+    <a href="../posts.html" class="active">Posts</a>
+    <a href="../tags.html">Tags</a>
+  </nav>
+</header>
+</div>
 <div class="article-layout">
   <aside class="toc-sidebar">
     {toc_html}
@@ -533,20 +651,31 @@ def gen_post_page(post):
     </div>
   </article>
 </div>
-<footer class="footer"><div class="wrap"><p>© 2026 backyes · All rights reserved · edit by backyes.github.io</p></div></footer>
+<footer class="footer-grid" style="margin-top:60px">
+  <div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified</p></div>
+</footer>
 </body>
 </html>'''
 
-# ──── 主流程 ────
+# ════════════════════════════════════════════════════════════════════
+#  MAIN
+# ════════════════════════════════════════════════════════════════════
+
 def main():
     posts = load_posts()
     print(f"  解析到 {len(posts)} 篇手写文章")
 
-    # 生成报告卡片
+    # Generate all sections
+    hero = gen_hero()
+    signal_grid = gen_signal_grid()
+    featured_reports = gen_featured_reports()
+    two_up = gen_two_up(posts)
+    paths_grid = gen_paths_grid()
+    latest_posts = gen_latest_posts(posts)
+    footer = gen_footer()
     cards = gen_cards()
     search_db = gen_search_db(posts)
     tag_cloud = gen_tag_cloud(posts)
-    posts_preview = gen_posts_list(posts[:6])  # index 预览前 6 篇
     posts_full = gen_posts_list(posts, full=True)
     posts_search_db = json.dumps(
         [{"t":p["title"],"d":p["excerpt"],"u":p["url"],"tags":" ".join(p.get("tags",[]))}
@@ -554,42 +683,36 @@ def main():
     tags_full = gen_tags_full(posts)
     tags_sidebar = gen_tags_sidebar(posts)
 
-    # index.html (从 index.html 自身读取 — template 与输出合并,placeholder 在 source 里)
+    # ──── index.html ────
     idx = open(os.path.join(REPO, 'index.html'), encoding='utf-8').read()
-    # 为了幂等,保留 SEARCH_DB 的占位: 先找到并替换,写回时仍然保留 placeholder
-    # 策略: 替换 SEARCH_DB 那一行,但写回 template 时保留 <!--SEARCH_DB-->
-    # 简化: 直接输出,但保留 <!--SEARCH_DB--> placeholder (替换时仅替换 JSON 部分)
-    idx = re.sub(r'<!--PROJECT_CARDS-->.*?<!--/PROJECT_CARDS-->',
-                 f'<!--PROJECT_CARDS-->\n{cards}<!--/PROJECT_CARDS-->', idx, flags=re.S)
-    # SEARCH_DB: 匹配 const SEARCH_DB=[...]; 或 const SEARCH_DB=<!--SEARCH_DB-->; 整体替换
-    idx = re.sub(r'const SEARCH_DB=(?:\[.*?\]|<!--SEARCH_DB-->);',
-                 f'const SEARCH_DB={search_db};', idx, flags=re.S)
-    idx = re.sub(r'<!--TAG_CLOUD-->.*?<!--/TAG_CLOUD-->',
-                 f'<!--TAG_CLOUD-->\n{tag_cloud}\n<!--/TAG_CLOUD-->', idx, flags=re.S)
-    idx = re.sub(r'<!--PREVIEW_POSTS-->.*?<!--/PREVIEW_POSTS-->',
-                 f'<!--PREVIEW_POSTS-->\n{posts_preview}\n<!--/PREVIEW_POSTS-->', idx, flags=re.S)
+    idx = re.sub(r'<!--HERO-->.*?<!--/HERO-->', f'<!--HERO-->\n{hero}\n<!--/HERO-->', idx, flags=re.S)
+    idx = re.sub(r'<!--SIGNAL_GRID-->.*?<!--/SIGNAL_GRID-->', f'<!--SIGNAL_GRID-->\n{signal_grid}\n<!--/SIGNAL_GRID-->', idx, flags=re.S)
+    idx = re.sub(r'<!--FEATURED_REPORTS-->.*?<!--/FEATURED_REPORTS-->', f'<!--FEATURED_REPORTS-->\n{featured_reports}\n<!--/FEATURED_REPORTS-->', idx, flags=re.S)
+    idx = re.sub(r'<!--TWO_UP-->.*?<!--/TWO_UP-->', f'<!--TWO_UP-->\n{two_up}\n<!--/TWO_UP-->', idx, flags=re.S)
+    idx = re.sub(r'<!--PATHS_GRID-->.*?<!--/PATHS_GRID-->', f'<!--PATHS_GRID-->\n{paths_grid}\n<!--/PATHS_GRID-->', idx, flags=re.S)
+    idx = re.sub(r'<!--LATEST_POSTS-->.*?<!--/LATEST_POSTS-->', f'<!--LATEST_POSTS-->\n{latest_posts}\n<!--/LATEST_POSTS-->', idx, flags=re.S)
+    idx = re.sub(r'<!--FOOTER-->.*?<!--/FOOTER-->', f'<!--FOOTER-->\n{footer}\n<!--/FOOTER-->', idx, flags=re.S)
+    idx = re.sub(r'<!--PROJECT_CARDS-->.*?<!--/PROJECT_CARDS-->', f'<!--PROJECT_CARDS-->\n{cards}<!--/PROJECT_CARDS-->', idx, flags=re.S)
+    idx = re.sub(r'const SEARCH_DB=(?:\[.*?\]|<!--SEARCH_DB-->);', f'const SEARCH_DB={search_db};', idx, flags=re.S)
+    idx = re.sub(r'<!--TAG_CLOUD-->.*?<!--/TAG_CLOUD-->', f'<!--TAG_CLOUD-->\n{tag_cloud}\n<!--/TAG_CLOUD-->', idx, flags=re.S)
     open(os.path.join(REPO,'index.html'),'w',encoding='utf-8').write(idx)
     print("  ✓ index.html 已生成")
 
-    # posts.html
+    # ──── posts.html ────
     ph = open(os.path.join(REPO, 'posts.html'), encoding='utf-8').read()
-    ph = re.sub(r'<!--POSTS_FULL-->.*?<!--/POSTS_FULL-->',
-                f'<!--POSTS_FULL-->\n{posts_full}\n<!--/POSTS_FULL-->', ph, flags=re.S)
-    ph = re.sub(r'const POSTS_DB=(?:\[.*?\]|<!--POSTS_SEARCH_DB-->);',
-                f'const POSTS_DB={posts_search_db};', ph, flags=re.S)
+    ph = re.sub(r'<!--POSTS_FULL-->.*?<!--/POSTS_FULL-->', f'<!--POSTS_FULL-->\n{posts_full}\n<!--/POSTS_FULL-->', ph, flags=re.S)
+    ph = re.sub(r'const POSTS_DB=(?:\[.*?\]|<!--POSTS_SEARCH_DB-->);', f'const POSTS_DB={posts_search_db};', ph, flags=re.S)
     open(os.path.join(REPO,'posts.html'),'w',encoding='utf-8').write(ph)
     print("  ✓ posts.html 已生成")
 
-    # tags.html
+    # ──── tags.html ────
     th = open(os.path.join(REPO, 'tags.html'), encoding='utf-8').read()
-    th = re.sub(r'<!--TAGS_SIDEBAR-->.*?<!--/TAGS_SIDEBAR-->',
-                f'<!--TAGS_SIDEBAR-->\n{tags_sidebar}\n<!--/TAGS_SIDEBAR-->', th, flags=re.S)
-    th = re.sub(r'<!--TAGS_FULL-->.*?<!--/TAGS_FULL-->',
-                f'<!--TAGS_FULL-->\n{tags_full}\n<!--/TAGS_FULL-->', th, flags=re.S)
+    th = re.sub(r'<!--TAGS_SIDEBAR-->.*?<!--/TAGS_SIDEBAR-->', f'<!--TAGS_SIDEBAR-->\n{tags_sidebar}\n<!--/TAGS_SIDEBAR-->', th, flags=re.S)
+    th = re.sub(r'<!--TAGS_FULL-->.*?<!--/TAGS_FULL-->', f'<!--TAGS_FULL-->\n{tags_full}\n<!--/TAGS_FULL-->', th, flags=re.S)
     open(os.path.join(REPO,'tags.html'),'w',encoding='utf-8').write(th)
     print("  ✓ tags.html 已生成")
 
-    # 生成单篇文章 HTML
+    # ──── Generate individual post pages ────
     for p in posts:
         page = gen_post_page(p)
         out = os.path.join(REPO, 'posts', f"{p['slug']}.html")

@@ -1,7 +1,7 @@
 # 建站经验沉淀
 
 > backyes.github.io — LLM Infrastructure Insights (Research Hub)
-> 最后更新: 2026-07-22
+> 最后更新: 2026-07-31
 
 ## 一、技术栈选型
 
@@ -176,3 +176,44 @@ cd ~/work/claude_workspace
 ./sync_reports.sh --no-push    # 本地试
 ./sync_reports.sh pd-routing   # 只同步某项目
 ```
+
+## 三、2026-07-31: 全站重构 — Vikas Goyal 风格
+
+### 重构概览
+- **目标**: 以 Vikas Goyal (vikasgoyal.github.io) 博客风格为基底，融合现有 Posts 的 Lil'Log 阅读体验和 Survey by AI 的 astrofy 卡片风格
+- **变更范围**: main.css 完全重写、build_site.py 新增 7 个生成函数、index.html/posts.html/tags.html 全部重写
+- **备份**: `_backup_20260731_093750/` (含 git bundle)
+
+### 设计规格
+- 详见 `DESIGN_SPEC.md` — 先写规格再实施，避免反复修改
+- 暖色纸张底色 (#f6f3ec) + 玻璃拟态卡片 + Libre Baskerville 衬线标题 + Manrope 无衬线正文
+- 三色强调：绿(#0f5d44)主强调 + 金(#bf8b2c)辅助 + 蓝(#163e7a)链接
+- 首页结构：Hero → Signal Grid → Featured Reports → Two-Up → Paths → Posts → Survey → Tags → Footer
+
+### 踩坑
+
+#### Python 3.11 f-string 三重引号限制
+- **问题**: `f'''...'''` 在 Python 3.11 中无法正确处理包含 `'''` 的内容
+- **错误**: `SyntaxError: f-string: unterminated string`
+- **解决**: 使用 `_join([...])` 列表拼接替代三重引号 f-string
+- **教训**: **Python 3.11 中避免使用 `f'''...'''` 三重引号 f-string，改用列表拼接**
+
+#### Playwright 抓取需要代理
+- **问题**: WebFetch 工具无法访问 vikasgoyal.github.io
+- **解决**: 使用 Playwright + `proxy={"server": "http://127.0.0.1:7897"}` 启动浏览器
+- **教训**: **GitHub Pages 站点访问需要显式代理配置**
+
+#### 先写规格再实施
+- **决策**: 先写 DESIGN_SPEC.md 明确色彩/字体/布局/组件规格，再开始编码
+- **效果**: 减少反复修改，一次构建成功
+- **教训**: **视觉重构任务先写规格书，避免在 CSS 和 HTML 之间反复跳转修改**
+
+### 文件变更
+| 文件 | 操作 |
+|---|---|
+| `assets/css/main.css` | 完全重写 (375行 → 520行) |
+| `build_site.py` | 新增 _join() + 7 个 Vikas 风格生成函数 |
+| `index.html` | 重写为 Vikas 风格骨架 |
+| `posts.html` | 重写为浅色 Lil'Log 风格 |
+| `tags.html` | 重写为浅色风格 |
+| `DESIGN_SPEC.md` | 新建设计规格书 |
