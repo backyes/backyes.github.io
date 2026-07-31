@@ -13,6 +13,11 @@ POSTS_DIR = os.path.join(REPO, 'posts')
 
 # ──── 报告元数据 (与 sync_reports.sh 的 PROJECTS 数组保持同步) ────
 REPORTS = [
+    {"dst":"nvidia-specs-research","entry":"nvidia-specs-report.html","visual":"NVIDIA",
+     "title":"NVIDIA 产品全规格深度调研",
+     "desc":"NVIDIA GPU / CPU / 网络全产品线规格深度调研报告 · 数据中心 GPU (H100/B200/GB200) / Grace CPU / Spectrum-X 网络 / DGX 系统",
+     "cat":"chip","priority":"p0",
+     "tags":["NVIDIA","GPU","H100","B200","GB200","Grace","Spectrum-X","数据中心"]},
     {"dst":"amd-latest-tech-2026","entry":"index.html","visual":"AMD",
      "title":"AMD 全栈 AI 基础设施调研",
      "desc":"AMD Advancing AI 2026 全栈深度调研 · EPYC Venice (Zen 6/6c, 256 核) / MI455X (CDNA 4, 2.61 PFLOPS FP8) / Helios 机架 / Ryzen AI Gorgon · 芯片 + 集群 + 路线图",
