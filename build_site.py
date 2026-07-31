@@ -387,7 +387,7 @@ def gen_recent_posts_band(posts):
         '<section class="section-card">',
         '  <div class="section-heading">',
         '    <div><h2>Recent Posts</h2></div>',
-        '    <a href="posts.html" style="color:var(--blue);font-size:.9rem;font-weight:700">View all 12 posts \u2192</a>',
+        '    <a href="posts.html" style="color:var(--blue);font-size:.9rem;font-weight:700">View all posts \u2192</a>',
         '  </div>',
         '  <div class="latest-grid">',
         *("    " + l for l in items),
