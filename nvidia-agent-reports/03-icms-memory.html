@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>03 Icms Memory · NVIDIA Agent Reports</title>
+<title>03 ICMS 内存 · NVIDIA Agent Reports</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -24,631 +24,295 @@
   </nav>
 </header>
 </div>
-<div class="article-layout" style="max-width:900px;margin:0 auto;padding:0 20px">
+<div class="article-layout">
   <article class="article">
     <div class="article-body">
-<h1>NVIDIA ICMS/CMX 存储架构与内存系统规格深度调研报告</h1>
-<br>
-<blockquote><p>**调研日期**: 2026-07-31  </p></blockquote>
-<blockquote><p>**调研人**: Claude (存储架构研究专家)  </p></blockquote>
-<blockquote><p>**报告状态**: 完成</p></blockquote>
-<br>
-<p>---</p>
-<br>
-<h2>⚠️ 重要发现：ICMS 术语纠正</h2>
-<br>
+<h1 id="nvidia-icmscmx-存储架构与内存系统规格深度调研报告">NVIDIA ICMS/CMX 存储架构与内存系统规格深度调研报告</h1>
+<blockquote><p><strong>调研日期</strong>: 2026-07-31</p></blockquote>
+<blockquote><p><strong>调研人</strong>: Claude (存储架构研究专家)</p></blockquote>
+<blockquote><p><strong>报告状态</strong>: 完成</p></blockquote>
+<hr>
+<h2 id="重要发现icms-术语纠正">⚠️ 重要发现：ICMS 术语纠正</h2>
 <p><strong>ICMS 并非 "Integrated Coherent Memory System"，而是 "Inference Context Memory Storage"（推理上下文内存存储）</strong>，也称为 <strong>CMX（Context Memory Storage）</strong>。这是 NVIDIA 在 CES 2026 上宣布的全新 AI 存储平台，基于 BlueField-4 DPU 构建，专为大规模推理场景下的 KV Cache 存储而设计。</p>
-<br>
-<p>---</p>
-<br>
-<h2>目录</h2>
-<br>
-<p>1. [ICMS/CMX 架构（核心发现）](#1-icmscmx-架构)</p>
-<p>2. [HBM 规格](#2-hbm-规格)</p>
-<p>3. [GPU 内存子系统](#3-gpu-内存子系统)</p>
-<p>4. [系统级存储架构](#4-系统级存储架构)</p>
-<p>5. [缓存一致性](#5-缓存一致性)</p>
-<p>6. [信息来源](#6-信息来源)</p>
-<br>
-<p>---</p>
-<br>
-<h2>1. ICMS/CMX 架构</h2>
-<br>
-<h3>1.1 定义与定位</h3>
-<br>
+<hr>
+<h2 id="目录">目录</h2>
+<p>1. <a href="#1-icmscmx-架构" target="_blank" rel="noopener">ICMS/CMX 架构（核心发现）</a></p>
+<p>2. <a href="#2-hbm-规格" target="_blank" rel="noopener">HBM 规格</a></p>
+<p>3. <a href="#3-gpu-内存子系统" target="_blank" rel="noopener">GPU 内存子系统</a></p>
+<p>4. <a href="#4-系统级存储架构" target="_blank" rel="noopener">系统级存储架构</a></p>
+<p>5. <a href="#5-缓存一致性" target="_blank" rel="noopener">缓存一致性</a></p>
+<p>6. <a href="#6-信息来源" target="_blank" rel="noopener">信息来源</a></p>
+<hr>
+<h2 id="1-icmscmx-架构">1. ICMS/CMX 架构</h2>
+<h3 id="11-定义与定位">1.1 定义与定位</h3>
 <p><strong>NVIDIA CMX（Context Memory Storage）</strong> 是 NVIDIA Vera Rubin 平台中的全新存储层级，全称为 <strong>Inference Context Memory Storage (ICMS)</strong>。它是一个完全集成的存储基础设施，基于 NVIDIA STX 参考架构，使用 NVIDIA BlueField-4 数据处理器构建。</p>
-<br>
 <p><strong>核心定位</strong>：在 GPU HBM（G1）和企业级共享存储（G4）之间创建一个新的 <strong>G3.5 层级</strong>——一个以太网连接的闪存层级，专为 KV Cache 优化。</p>
-<br>
-<blockquote><p>来源：[NVIDIA 官方博客 - Introducing NVIDIA BlueField-4-Powered CMX](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/)</p></blockquote>
-<br>
-<h3>1.2 架构组成</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│                    AI Factory Pod                            │
-│                                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
-│  │ Rubin    │  │ Rubin    │  │ Rubin    │  ...            │
-│  │ Compute  │  │ Compute  │  │ Compute  │                 │
-│  │ Node     │  │ Node     │  │ Node     │                 │
-│  │ (GPU+    │  │ (GPU+    │  │ (GPU+    │                 │
-│  │  DPU)    │  │  DPU)    │  │  DPU)    │                 │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘                 │
-│       │              │              │                       │
-│       └──────────────┼──────────────┘                       │
-│                      │                                      │
-│            ┌─────────▼─────────┐                           │
-│            │  Spectrum-X       │                           │
-│            │  Ethernet Fabric  │                           │
-│            │  (RDMA/RoCE)      │                           │
-│            └─────────┬─────────┘                           │
-│                      │                                      │
-│       ┌──────────────┼──────────────┐                      │
-│       │              │              │                       │
-│  ┌────▼────┐   ┌────▼────┐   ┌────▼────┐                 │
-│  │ BlueField│   │ BlueField│   │ BlueField│                │
-│  │ -4 DPU  │   │ -4 DPU  │   │ -4 DPU  │                 │
-│  │ (CMX    │   │ (CMX    │   │ (CMX    │                 │
-│  │Controller)│  │Controller)│  │Controller)│               │
-│  └────┬────┘   └────┬────┘   └────┬────┘                 │
-│       │              │              │                       │
-│  ┌────▼──────────────▼──────────────▼────┐                │
-│  │        NVMe Flash Storage Trays       │                │
-│  │        (G3.5 Context Memory Tier)     │                │
-│  └───────────────────────────────────────┘                │
-│                                                             │
-│  ┌───────────────────────────────────────┐                │
-│  │   G4: Shared Object/File Storage      │                │
-│  │   (Durable cold storage)              │                │
-│  └───────────────────────────────────────┘                │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA 官方博客 - Introducing NVIDIA BlueField-4-Powered CMX</a></p></blockquote>
+<h3 id="12-架构组成">1.2 架构组成</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│                    AI Factory Pod                            │<br>│                                                             │<br>│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │<br>│  │ Rubin    │  │ Rubin    │  │ Rubin    │  ...            │<br>│  │ Compute  │  │ Compute  │  │ Compute  │                 │<br>│  │ Node     │  │ Node     │  │ Node     │                 │<br>│  │ (GPU+    │  │ (GPU+    │  │ (GPU+    │                 │<br>│  │  DPU)    │  │  DPU)    │  │  DPU)    │                 │<br>│  └────┬─────┘  └────┬─────┘  └────┬─────┘                 │<br>│       │              │              │                       │<br>│       └──────────────┼──────────────┘                       │<br>│                      │                                      │<br>│            ┌─────────▼─────────┐                           │<br>│            │  Spectrum-X       │                           │<br>│            │  Ethernet Fabric  │                           │<br>│            │  (RDMA/RoCE)      │                           │<br>│            └─────────┬─────────┘                           │<br>│                      │                                      │<br>│       ┌──────────────┼──────────────┐                      │<br>│       │              │              │                       │<br>│  ┌────▼────┐   ┌────▼────┐   ┌────▼────┐                 │<br>│  │ BlueField│   │ BlueField│   │ BlueField│                │<br>│  │ -4 DPU  │   │ -4 DPU  │   │ -4 DPU  │                 │<br>│  │ (CMX    │   │ (CMX    │   │ (CMX    │                 │<br>│  │Controller)│  │Controller)│  │Controller)│               │<br>│  └────┬────┘   └────┬────┘   └────┬────┘                 │<br>│       │              │              │                       │<br>│  ┌────▼──────────────▼──────────────▼────┐                │<br>│  │        NVMe Flash Storage Trays       │                │<br>│  │        (G3.5 Context Memory Tier)     │                │<br>│  └───────────────────────────────────────┘                │<br>│                                                             │<br>│  ┌───────────────────────────────────────┐                │<br>│  │   G4: Shared Object/File Storage      │                │<br>│  │   (Durable cold storage)              │                │<br>│  └───────────────────────────────────────┘                │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
 <p><strong>关键组件</strong>：</p>
-<li>**NVIDIA BlueField-4 DPU**：为 CMX 提供超高速连接、集成多核 CPU 和高带宽内存</li>
-<li>**STX 参考架构**：机架级存储基础设施</li>
-<li>**Spectrum-X Ethernet**：提供可预测的低延迟、高带宽 RDMA 连接</li>
-<li>**NVIDIA DOCA Memos**：KV 通信和存储层框架</li>
-<li>**NVIDIA Grove**：拓扑感知编排层</li>
-<li>**NVIDIA Dynamo/NIXL**：推理框架的 KV 块管理器</li>
-<br>
-<blockquote><p>来源：[NVIDIA 官方博客](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/)</p></blockquote>
-<br>
-<h3>1.3 存储层级（G1-G4 体系）</h3>
-<br>
-<p>| 层级 | 名称 | 用途 | 特点 |</p>
-<p>|------|------|------|------|</p>
-<p>| G1 | GPU HBM | 热 KV，活跃生成 | 纳秒级访问，最高效率 |</p>
-<p>| G2 | System RAM | KV 暂存和缓冲 | 从 HBM 溢出 |</p>
-<p>| G3 | Local SSDs | 暖 KV，短期复用 | 单节点绑定，不易扩展 |</p>
-<p>| <strong>G3.5</strong> | <strong>CMX (ICMS)</strong> | <strong>代理长期记忆</strong> | <strong>PB级共享容量，低延迟闪存</strong> |</p>
-<p>| G4 | Shared Storage | 冷数据、历史记录 | 毫秒级延迟，高持久性 |</p>
-<br>
-<blockquote><p>来源：[NVIDIA 官方博客](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/)</p></blockquote>
-<br>
-<h3>1.4 ICMS/CMX 关键规格</h3>
-<br>
-<p>| 规格项 | 数值/描述 | 来源 |</p>
-<p>|--------|-----------|------|</p>
-<p>| 每 Pod 共享容量 | PB 级 | [NVIDIA Blog](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/) |</p>
-<p>| TPS 提升 | 最高 5x（长上下文/代理工作负载） | 同上 |</p>
-<p>| 能效提升 | 比传统存储高 5x | 同上 |</p>
-<p>| 处理器 | NVIDIA BlueField-4 DPU | 同上 |</p>
-<p>| 网络连接 | Spectrum-X Ethernet (RDMA) | 同上 |</p>
-<p>| 协议支持 | NVMe/NVMe-oF, NVMe KV 扩展 | 同上 |</p>
-<p>| 安全特性 | 线速加密和 CRC 数据保护 | 同上 |</p>
-<p>| 编排框架 | NVIDIA DOCA Memos + Dynamo + NIXL | 同上 |</p>
-<br>
-<h3>1.5 与 GPU、CPU、DPU 的关系</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│                    Vera Rubin Platform                       │
-│                                                             │
-│  ┌──────────────┐     NVLink-C2C      ┌──────────────┐     │
-│  │  Rubin GPU   │ ◄──────────────────► │  Vera CPU    │     │
-│  │  (Compute)   │    1.8 TB/s          │  (Host)      │     │
-│  └──────┬───────┘                      └──────┬───────┘     │
-│         │                                     │             │
-│         │ BlueField-4 DPU                     │             │
-│         │ (KV I/O 加速)                       │             │
-│         │                                     │             │
-│  ┌──────▼─────────────────────────────────────▼───────┐    │
-│  │              Spectrum-X Ethernet                    │    │
-│  │         (AI-optimized RDMA Fabric)                 │    │
-│  └──────────────────────┬─────────────────────────────┘    │
-│                         │                                   │
-│  ┌──────────────────────▼─────────────────────────────┐    │
-│  │         CMX (ICMS) G3.5 Context Memory            │    │
-│  │         NVMe Flash Storage Trays                   │    │
-│  └───────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
-<h3>1.6 缓存一致性协议细节</h3>
-<br>
+<ul>
+<li><strong>NVIDIA BlueField-4 DPU</strong>：为 CMX 提供超高速连接、集成多核 CPU 和高带宽内存</li>
+<li><strong>STX 参考架构</strong>：机架级存储基础设施</li>
+<li><strong>Spectrum-X Ethernet</strong>：提供可预测的低延迟、高带宽 RDMA 连接</li>
+<li><strong>NVIDIA DOCA Memos</strong>：KV 通信和存储层框架</li>
+<li><strong>NVIDIA Grove</strong>：拓扑感知编排层</li>
+<li><strong>NVIDIA Dynamo/NIXL</strong>：推理框架的 KV 块管理器</li>
+</ul>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA 官方博客</a></p></blockquote>
+<h3 id="13-存储层级g1-g4-体系">1.3 存储层级（G1-G4 体系）</h3>
+<table><thead><tr><th>层级</th><th>名称</th><th>用途</th><th>特点</th></tr></thead><tbody>
+<tr><td>G1</td><td>GPU HBM</td><td>热 KV，活跃生成</td><td>纳秒级访问，最高效率</td></tr>
+<tr><td>G2</td><td>System RAM</td><td>KV 暂存和缓冲</td><td>从 HBM 溢出</td></tr>
+<tr><td>G3</td><td>Local SSDs</td><td>暖 KV，短期复用</td><td>单节点绑定，不易扩展</td></tr>
+<tr><td><strong>G3.5</strong></td><td><strong>CMX (ICMS)</strong></td><td><strong>代理长期记忆</strong></td><td><strong>PB级共享容量，低延迟闪存</strong></td></tr>
+<tr><td>G4</td><td>Shared Storage</td><td>冷数据、历史记录</td><td>毫秒级延迟，高持久性</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA 官方博客</a></p></blockquote>
+<h3 id="14-icmscmx-关键规格">1.4 ICMS/CMX 关键规格</h3>
+<table><thead><tr><th>规格项</th><th>数值/描述</th><th>来源</th></tr></thead><tbody>
+<tr><td>每 Pod 共享容量</td><td>PB 级</td><td><a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA Blog</a></td></tr>
+<tr><td>TPS 提升</td><td>最高 5x（长上下文/代理工作负载）</td><td>同上</td></tr>
+<tr><td>能效提升</td><td>比传统存储高 5x</td><td>同上</td></tr>
+<tr><td>处理器</td><td>NVIDIA BlueField-4 DPU</td><td>同上</td></tr>
+<tr><td>网络连接</td><td>Spectrum-X Ethernet (RDMA)</td><td>同上</td></tr>
+<tr><td>协议支持</td><td>NVMe/NVMe-oF, NVMe KV 扩展</td><td>同上</td></tr>
+<tr><td>安全特性</td><td>线速加密和 CRC 数据保护</td><td>同上</td></tr>
+<tr><td>编排框架</td><td>NVIDIA DOCA Memos + Dynamo + NIXL</td><td>同上</td></tr>
+</tbody></table>
+<h3 id="15-与-gpucpudpu-的关系">1.5 与 GPU、CPU、DPU 的关系</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│                    Vera Rubin Platform                       │<br>│                                                             │<br>│  ┌──────────────┐     NVLink-C2C      ┌──────────────┐     │<br>│  │  Rubin GPU   │ ◄──────────────────► │  Vera CPU    │     │<br>│  │  (Compute)   │    1.8 TB/s          │  (Host)      │     │<br>│  └──────┬───────┘                      └──────┬───────┘     │<br>│         │                                     │             │<br>│         │ BlueField-4 DPU                     │             │<br>│         │ (KV I/O 加速)                       │             │<br>│         │                                     │             │<br>│  ┌──────▼─────────────────────────────────────▼───────┐    │<br>│  │              Spectrum-X Ethernet                    │    │<br>│  │         (AI-optimized RDMA Fabric)                 │    │<br>│  └──────────────────────┬─────────────────────────────┘    │<br>│                         │                                   │<br>│  ┌──────────────────────▼─────────────────────────────┐    │<br>│  │         CMX (ICMS) G3.5 Context Memory            │    │<br>│  │         NVMe Flash Storage Trays                   │    │<br>│  └───────────────────────────────────────────────────┘    │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
+<h3 id="16-缓存一致性协议细节">1.6 缓存一致性协议细节</h3>
 <p>ICMS/CMX 本身<strong>不涉及传统的 CPU-GPU 缓存一致性协议</strong>。它的创新在于：</p>
-<br>
 <p>1. <strong>DOCA Memos 框架</strong>：引入 KV 通信和存储层，将 KV Cache 视为一等资源</p>
 <p>2. <strong>无状态、可扩展方法</strong>：与 AI 原生 KV Cache 策略对齐</p>
 <p>3. <strong>KV 块管理</strong>：通过 NVIDIA Dynamo 的 KV 块管理器协调 KV 数据在各级存储间的移动</p>
 <p>4. <strong>预取机制（Prestaging）</strong>：将 KV 块从 CMX 预取到 G2/G1 内存，避免解码停顿</p>
-<br>
-<blockquote><p>来源：[NVIDIA 官方博客](https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/)</p></blockquote>
-<br>
-<h3>1.7 在 Grace Blackwell 系统中的角色</h3>
-<br>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/" target="_blank" rel="noopener">NVIDIA 官方博客</a></p></blockquote>
+<h3 id="17-在-grace-blackwell-系统中的角色">1.7 在 Grace Blackwell 系统中的角色</h3>
 <p>在 Grace Blackwell 系统中，CMX 作为<strong>机架级上下文存储层</strong>：</p>
+<ul>
 <li>扩展 GPU 有效内存</li>
 <li>将 KV Cache 转化为共享、高带宽、长期记忆资源</li>
 <li>通过卸载 KV 移动和将上下文视为可复用、非持久数据类来减少重新计算和解码停顿</li>
-<br>
-<p>---</p>
-<br>
-<h2>2. HBM 规格</h2>
-<br>
-<h3>2.1 HBM 代际规格对比</h3>
-<br>
-<p>| 参数 | HBM2 | HBM2e | HBM3 | HBM3e | HBM4 (预计) |</p>
-<p>|------|------|-------|------|-------|-------------|</p>
-<p>| 每 Stack 容量 | 8 GB | 16 GB | 16-24 GB | 24-36 GB | 32-48 GB |</p>
-<p>| 每 Stack 带宽 | 307 GB/s | 461 GB/s | 819 GB/s | 1.0-1.2 TB/s | ~1.6 TB/s |</p>
-<p>| IO 速率 (per pin) | 2.0 Gbps | 3.2 Gbps | 6.4 Gbps | 8.0-9.6 Gbps | ~10+ Gbps |</p>
-<p>| IO 引脚数 | 1024 | 1024 | 1024 | 1024 | 1024 |</p>
-<p>| 堆叠高度 | 8-Hi | 8-Hi | 8-Hi/12-Hi | 12-Hi | 12-Hi/16-Hi |</p>
-<p>| 工艺节点 | 20nm | 15nm | 1β | 1β | 1β |</p>
-<br>
-<blockquote><p>来源：[Wikipedia - High Bandwidth Memory](https://en.wikipedia.org/wiki/High_Bandwidth_Memory), [SK Hynix 官方数据](https://www.skhynix.com)</p></blockquote>
-<br>
-<h3>2.2 NVIDIA GPU 的 HBM 配置</h3>
-<br>
-<p>| GPU | 架构 | HBM 类型 | Stack 数 | 总容量 | 总带宽 | TDP |</p>
-<p>|-----|------|----------|----------|--------|--------|-----|</p>
-<p>| <strong>H100 SXM</strong> | Hopper | HBM3 | 5 (of 6 sites) | 80 GB | 3.35 TB/s | 700W |</p>
-<p>| <strong>H100 NVL</strong> | Hopper | HBM3 | 4+ (bridge) | 94 GB | 3.9 TB/s | 350-400W |</p>
-<p>| <strong>H100 PCIe</strong> | Hopper | HBM2e | 4 | 80 GB | 2.0 TB/s | 350W |</p>
-<p>| <strong>H200 SXM</strong> | Hopper | HBM3e | 6 | 141 GB | 4.8 TB/s | 700W |</p>
-<p>| <strong>H200 NVL</strong> | Hopper | HBM3e | 6 | 141 GB | 4.8 TB/s | 600W |</p>
-<p>| <strong>B200</strong> | Blackwell | HBM3e | 8 | 192 GB | 8.0 TB/s | 1000W |</p>
-<p>| <strong>GB200 NVL72</strong> | Grace Blackwell | HBM3e | 8 (per GPU) | 192 GB (per GPU) | 8.0 TB/s (per GPU) | - |</p>
-<br>
-<blockquote><p>来源：[NVIDIA H100 官方页面](https://www.nvidia.com/en-us/data-center/h100/), [NVIDIA H200 官方页面](https://www.nvidia.com/en-us/data-center/h200/), [NVIDIA Blackwell 架构](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)</p></blockquote>
-<br>
-<h3>2.3 HBM 与 GPU 的 3D 封装</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────┐
-│           CoWoS 封装 (Chip-on-Wafer-on-Substrate) │
-│                                         │
-│  ┌─────────────────────────────────┐   │
-│  │         GPU Die (H100/B200)      │   │
-│  │    (80B / 208B transistors)      │   │
-│  └──────────────┬──────────────────┘   │
-│                 │                       │
-│         ┌───────▼───────┐              │
-│         │   Silicon      │              │
-│         │   Interposer   │              │
-│         │   (65nm)       │              │
-│         └───┬───┬───┬───┘              │
-│             │   │   │                   │
-│         ┌───▼┐┌─▼──┐▼┐                 │
-│         │HBM ││HBM ││HBM│ ...          │
-│         │Stack││Stack││Stack│            │
-│         └────┘└───┘└──┘                 │
-│                                         │
-│  ┌─────────────────────────────────┐   │
-│  │      Organic Package Substrate   │   │
-│  └─────────────────────────────────┘   │
-└─────────────────────────────────────────┘
-</code></pre>
-<br>
+</ul>
+<hr>
+<h2 id="2-hbm-规格">2. HBM 规格</h2>
+<h3 id="21-hbm-代际规格对比">2.1 HBM 代际规格对比</h3>
+<table><thead><tr><th>参数</th><th>HBM2</th><th>HBM2e</th><th>HBM3</th><th>HBM3e</th><th>HBM4 (预计)</th></tr></thead><tbody>
+<tr><td>每 Stack 容量</td><td>8 GB</td><td>16 GB</td><td>16-24 GB</td><td>24-36 GB</td><td>32-48 GB</td></tr>
+<tr><td>每 Stack 带宽</td><td>307 GB/s</td><td>461 GB/s</td><td>819 GB/s</td><td>1.0-1.2 TB/s</td><td>~1.6 TB/s</td></tr>
+<tr><td>IO 速率 (per pin)</td><td>2.0 Gbps</td><td>3.2 Gbps</td><td>6.4 Gbps</td><td>8.0-9.6 Gbps</td><td>~10+ Gbps</td></tr>
+<tr><td>IO 引脚数</td><td>1024</td><td>1024</td><td>1024</td><td>1024</td><td>1024</td></tr>
+<tr><td>堆叠高度</td><td>8-Hi</td><td>8-Hi</td><td>8-Hi/12-Hi</td><td>12-Hi</td><td>12-Hi/16-Hi</td></tr>
+<tr><td>工艺节点</td><td>20nm</td><td>15nm</td><td>1β</td><td>1β</td><td>1β</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://en.wikipedia.org/wiki/High_Bandwidth_Memory" target="_blank" rel="noopener">Wikipedia - High Bandwidth Memory</a>, <a href="https://www.skhynix.com" target="_blank" rel="noopener">SK Hynix 官方数据</a></p></blockquote>
+<h3 id="22-nvidia-gpu-的-hbm-配置">2.2 NVIDIA GPU 的 HBM 配置</h3>
+<table><thead><tr><th>GPU</th><th>架构</th><th>HBM 类型</th><th>Stack 数</th><th>总容量</th><th>总带宽</th><th>TDP</th></tr></thead><tbody>
+<tr><td><strong>H100 SXM</strong></td><td>Hopper</td><td>HBM3</td><td>5 (of 6 sites)</td><td>80 GB</td><td>3.35 TB/s</td><td>700W</td></tr>
+<tr><td><strong>H100 NVL</strong></td><td>Hopper</td><td>HBM3</td><td>4+ (bridge)</td><td>94 GB</td><td>3.9 TB/s</td><td>350-400W</td></tr>
+<tr><td><strong>H100 PCIe</strong></td><td>Hopper</td><td>HBM2e</td><td>4</td><td>80 GB</td><td>2.0 TB/s</td><td>350W</td></tr>
+<tr><td><strong>H200 SXM</strong></td><td>Hopper</td><td>HBM3e</td><td>6</td><td>141 GB</td><td>4.8 TB/s</td><td>700W</td></tr>
+<tr><td><strong>H200 NVL</strong></td><td>Hopper</td><td>HBM3e</td><td>6</td><td>141 GB</td><td>4.8 TB/s</td><td>600W</td></tr>
+<tr><td><strong>B200</strong></td><td>Blackwell</td><td>HBM3e</td><td>8</td><td>192 GB</td><td>8.0 TB/s</td><td>1000W</td></tr>
+<tr><td><strong>GB200 NVL72</strong></td><td>Grace Blackwell</td><td>HBM3e</td><td>8 (per GPU)</td><td>192 GB (per GPU)</td><td>8.0 TB/s (per GPU)</td><td>-</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://www.nvidia.com/en-us/data-center/h100/" target="_blank" rel="noopener">NVIDIA H100 官方页面</a>, <a href="https://www.nvidia.com/en-us/data-center/h200/" target="_blank" rel="noopener">NVIDIA H200 官方页面</a>, <a href="https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/" target="_blank" rel="noopener">NVIDIA Blackwell 架构</a></p></blockquote>
+<h3 id="23-hbm-与-gpu-的-3d-封装">2.3 HBM 与 GPU 的 3D 封装</h3>
+<pre><code>┌─────────────────────────────────────────┐<br>│           CoWoS 封装 (Chip-on-Wafer-on-Substrate) │<br>│                                         │<br>│  ┌─────────────────────────────────┐   │<br>│  │         GPU Die (H100/B200)      │   │<br>│  │    (80B / 208B transistors)      │   │<br>│  └──────────────┬──────────────────┘   │<br>│                 │                       │<br>│         ┌───────▼───────┐              │<br>│         │   Silicon      │              │<br>│         │   Interposer   │              │<br>│         │   (65nm)       │              │<br>│         └───┬───┬───┬───┘              │<br>│             │   │   │                   │<br>│         ┌───▼┐┌─▼──┐▼┐                 │<br>│         │HBM ││HBM ││HBM│ ...          │<br>│         │Stack││Stack││Stack│            │<br>│         └────┘└───┘└──┘                 │<br>│                                         │<br>│  ┌─────────────────────────────────┐   │<br>│  │      Organic Package Substrate   │   │<br>│  └─────────────────────────────────┘   │<br>└─────────────────────────────────────────┘</code></pre>
 <p><strong>封装技术细节</strong>：</p>
-<li>**CoWoS-S** (Silicon)：台积电 CoWoS 硅中介层技术，用于 H100/H200</li>
-<li>**CoWoS-L** (Local)：用于 B200/GB200，更大尺寸中介层</li>
-<li>**HBM 与 GPU 间距**：通过微凸点（μBump）和 TSV（硅通孔）连接</li>
-<li>**IO 密度**：HBM3e 每 stack 1024 个数据引脚，速率 8-9.6 Gbps/pin</li>
-<br>
-<blockquote><p>来源：[TSMC CoWoS 技术](https://www.tsmc.com), [NVIDIA Hot Chips 2024](http://hc34.hotchips.org/assets/program/conference/day1/GPU%20HPC/HC2022.NVIDIA.Choquette.vfinal01.pdf)</p></blockquote>
-<br>
-<p>---</p>
-<br>
-<h2>3. GPU 内存子系统</h2>
-<br>
-<h3>3.1 内存层次架构</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│                    GPU Memory Hierarchy                      │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 1: Registers (寄存器)                          │   │
-│  │  - H100: 64K 32-bit registers per SM                │   │
-│  │  - 每线程最多 255 个寄存器                            │   │
-│  │  - 延迟: ~1 cycle                                   │   │
-│  │  - 带宽: 极高 (每个 SM 每周期数 TB/s)                │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 2: L1 Cache / Shared Memory (统一)             │   │
-│  │  - H100: 最高 228-256 KB per SM (可配置)             │   │
-│  │  - 延迟: ~28-35 cycles                               │   │
-│  │  - 带宽: 极高 (每 SM ~数 TB/s)                       │   │
-│  │  - 用途: 线程块协作、寄存器溢出                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 3: L2 Cache (二级缓存)                         │   │
-│  │  - H100 SXM5: 50 MB (全 GPU 共享)                    │   │
-│  │  - H100 PCIe: 40 MB                                 │   │
-│  │  - 延迟: 150-200 cycles (近端) / 300+ cycles (远端)  │   │
-│  │  - 架构: 分叉/分区 (bifurcated)                      │   │
-│  │  - 带宽: ~数 TB/s                                    │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 4: Global Memory (HBM)                         │   │
-│  │  - H100 SXM5: 80 GB HBM3, 3.35 TB/s                 │   │
-│  │  - H200 SXM: 141 GB HBM3e, 4.8 TB/s                 │   │
-│  │  - B200: 192 GB HBM3e, 8.0 TB/s                     │   │
-│  │  - 延迟: ~120 ns (~400+ cycles)                      │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 5: System Memory (DRAM)                        │   │
-│  │  - 通过 PCIe/NVLink-C2C 访问                        │   │
-│  │  - 延迟: 数 μs                                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Tier 6: Remote Storage (CMX/GDS)                    │   │
-│  │  - GPUDirect Storage / CMX                          │   │
-│  │  - 延迟: 数 ms                                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
-<blockquote><p>来源：[NVIDIA Hopper Architecture In-Depth](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/), [Chips and Cheese H100 分析](https://chipsandcheese.com/p/nvidias-h100-funny-l2-and-tons-of-bandwidth), [Medium - GPU Memory Hierarchy](https://medium.com/@indiai/gpu-memory-hierarchy-how-ai-training-actually-works-24f00cc13050)</p></blockquote>
-<br>
-<h3>3.2 各架构内存层次详细规格</h3>
-<br>
-<p>| 架构 | Register/SM | L1+Shared/SM | L2 Cache | HBM 容量 | HBM 带宽 |</p>
-<p>|------|-------------|--------------|----------|----------|----------|</p>
-<p>| <strong>Pascal P100</strong> | 64K | 64 KB | 4 MB | 16 GB HBM2 | 720 GB/s |</p>
-<p>| <strong>Volta V100</strong> | 64K | 128 KB | 6 MB | 32 GB HBM2 | 900 GB/s |</p>
-<p>| <strong>Ampere A100</strong> | 64K | 164 KB | 40 MB | 80 GB HBM2e | 2.0 TB/s |</p>
-<p>| <strong>Hopper H100</strong> | 64K | 228-256 KB | 50 MB | 80 GB HBM3 | 3.35 TB/s |</p>
-<p>| <strong>Hopper H200</strong> | 64K | 228-256 KB | 50 MB | 141 GB HBM3e | 4.8 TB/s |</p>
-<p>| <strong>Blackwell B200</strong> | 64K | 256 KB | 50 MB+ | 192 GB HBM3e | 8.0 TB/s |</p>
-<br>
-<blockquote><p>来源：[NVIDIA 架构白皮书](https://www.nvidia.com/en-us/data-center/technologies/), [Chips and Cheese](https://chipsandcheese.com)</p></blockquote>
-<br>
-<h3>3.3 Unified Memory / UVM 架构</h3>
-<br>
+<ul>
+<li><strong>CoWoS-S</strong> (Silicon)：台积电 CoWoS 硅中介层技术，用于 H100/H200</li>
+<li><strong>CoWoS-L</strong> (Local)：用于 B200/GB200，更大尺寸中介层</li>
+<li><strong>HBM 与 GPU 间距</strong>：通过微凸点（μBump）和 TSV（硅通孔）连接</li>
+<li><strong>IO 密度</strong>：HBM3e 每 stack 1024 个数据引脚，速率 8-9.6 Gbps/pin</li>
+</ul>
+<blockquote><p>来源：<a href="https://www.tsmc.com" target="_blank" rel="noopener">TSMC CoWoS 技术</a>, <a href="http://hc34.hotchips.org/assets/program/conference/day1/GPU%20HPC/HC2022.NVIDIA.Choquette.vfinal01.pdf" target="_blank" rel="noopener">NVIDIA Hot Chips 2024</a></p></blockquote>
+<hr>
+<h2 id="3-gpu-内存子系统">3. GPU 内存子系统</h2>
+<h3 id="31-内存层次架构">3.1 内存层次架构</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│                    GPU Memory Hierarchy                      │<br>│                                                             │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 1: Registers (寄存器)                          │   │<br>│  │  - H100: 64K 32-bit registers per SM                │   │<br>│  │  - 每线程最多 255 个寄存器                            │   │<br>│  │  - 延迟: ~1 cycle                                   │   │<br>│  │  - 带宽: 极高 (每个 SM 每周期数 TB/s)                │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 2: L1 Cache / Shared Memory (统一)             │   │<br>│  │  - H100: 最高 228-256 KB per SM (可配置)             │   │<br>│  │  - 延迟: ~28-35 cycles                               │   │<br>│  │  - 带宽: 极高 (每 SM ~数 TB/s)                       │   │<br>│  │  - 用途: 线程块协作、寄存器溢出                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 3: L2 Cache (二级缓存)                         │   │<br>│  │  - H100 SXM5: 50 MB (全 GPU 共享)                    │   │<br>│  │  - H100 PCIe: 40 MB                                 │   │<br>│  │  - 延迟: 150-200 cycles (近端) / 300+ cycles (远端)  │   │<br>│  │  - 架构: 分叉/分区 (bifurcated)                      │   │<br>│  │  - 带宽: ~数 TB/s                                    │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 4: Global Memory (HBM)                         │   │<br>│  │  - H100 SXM5: 80 GB HBM3, 3.35 TB/s                 │   │<br>│  │  - H200 SXM: 141 GB HBM3e, 4.8 TB/s                 │   │<br>│  │  - B200: 192 GB HBM3e, 8.0 TB/s                     │   │<br>│  │  - 延迟: ~120 ns (~400+ cycles)                      │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 5: System Memory (DRAM)                        │   │<br>│  │  - 通过 PCIe/NVLink-C2C 访问                        │   │<br>│  │  - 延迟: 数 μs                                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Tier 6: Remote Storage (CMX/GDS)                    │   │<br>│  │  - GPUDirect Storage / CMX                          │   │<br>│  │  - 延迟: 数 ms                                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/" target="_blank" rel="noopener">NVIDIA Hopper Architecture In-Depth</a>, <a href="https://chipsandcheese.com/p/nvidias-h100-funny-l2-and-tons-of-bandwidth" target="_blank" rel="noopener">Chips and Cheese H100 分析</a>, <a href="https://medium.com/@indiai/gpu-memory-hierarchy-how-ai-training-actually-works-24f00cc13050" target="_blank" rel="noopener">Medium - GPU Memory Hierarchy</a></p></blockquote>
+<h3 id="32-各架构内存层次详细规格">3.2 各架构内存层次详细规格</h3>
+<table><thead><tr><th>架构</th><th>Register/SM</th><th>L1+Shared/SM</th><th>L2 Cache</th><th>HBM 容量</th><th>HBM 带宽</th></tr></thead><tbody>
+<tr><td><strong>Pascal P100</strong></td><td>64K</td><td>64 KB</td><td>4 MB</td><td>16 GB HBM2</td><td>720 GB/s</td></tr>
+<tr><td><strong>Volta V100</strong></td><td>64K</td><td>128 KB</td><td>6 MB</td><td>32 GB HBM2</td><td>900 GB/s</td></tr>
+<tr><td><strong>Ampere A100</strong></td><td>64K</td><td>164 KB</td><td>40 MB</td><td>80 GB HBM2e</td><td>2.0 TB/s</td></tr>
+<tr><td><strong>Hopper H100</strong></td><td>64K</td><td>228-256 KB</td><td>50 MB</td><td>80 GB HBM3</td><td>3.35 TB/s</td></tr>
+<tr><td><strong>Hopper H200</strong></td><td>64K</td><td>228-256 KB</td><td>50 MB</td><td>141 GB HBM3e</td><td>4.8 TB/s</td></tr>
+<tr><td><strong>Blackwell B200</strong></td><td>64K</td><td>256 KB</td><td>50 MB+</td><td>192 GB HBM3e</td><td>8.0 TB/s</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://www.nvidia.com/en-us/data-center/technologies/" target="_blank" rel="noopener">NVIDIA 架构白皮书</a>, <a href="https://chipsandcheese.com" target="_blank" rel="noopener">Chips and Cheese</a></p></blockquote>
+<h3 id="33-unified-memory-uvm-架构">3.3 Unified Memory / UVM 架构</h3>
 <p><strong>Unified Virtual Memory (UVM)</strong> 是 NVIDIA 的统一内存架构：</p>
-<br>
-<li>**虚拟地址空间**：CPU 和 GPU 共享统一的虚拟地址空间</li>
-<li>**按需页面迁移**：页面在 CPU 和 GPU 之间按需迁移</li>
-<li>**Hopper 引入的 Page Migration 引擎**：</li>
-<p>  - 硬件加速的页面迁移</p>
-<p>  - 支持细粒度页面移动</p>
-<p>  - 减少 CPU 干预</p>
-<p>  - 与 NVLink-C2C 配合实现高效 CPU-GPU 内存共享</p>
-<br>
-<blockquote><p>来源：[NVIDIA Hopper Architecture In-Depth](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/)</p></blockquote>
-<br>
-<h3>3.4 Page Migration 引擎（Hopper 引入）</h3>
-<br>
+<ul>
+<li><strong>虚拟地址空间</strong>：CPU 和 GPU 共享统一的虚拟地址空间</li>
+<li><strong>按需页面迁移</strong>：页面在 CPU 和 GPU 之间按需迁移</li>
+<li><strong>Hopper 引入的 Page Migration 引擎</strong>：</li>
+<li>硬件加速的页面迁移</li>
+<li>支持细粒度页面移动</li>
+<li>减少 CPU 干预</li>
+<li>与 NVLink-C2C 配合实现高效 CPU-GPU 内存共享</li>
+</ul>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/" target="_blank" rel="noopener">NVIDIA Hopper Architecture In-Depth</a></p></blockquote>
+<h3 id="34-page-migration-引擎hopper-引入">3.4 Page Migration 引擎（Hopper 引入）</h3>
 <p>Hopper 架构引入了<strong>硬件 Page Migration 引擎</strong>：</p>
-<br>
-<li>**功能**：自动管理 CPU 和 GPU 之间的数据移动</li>
-<li>**优势**：</li>
-<p>  - 减少 CPU 开销</p>
-<p>  - 支持更大的地址空间</p>
-<p>  - 与 NVLink-C2C 配合实现高效内存共享</p>
-<li>**与 Grace Hopper 的关系**：GH200 Superchip 中，Page Migration 引擎使 CPU 和 GPU 能够高效共享统一内存空间</li>
-<br>
-<blockquote><p>来源：[NVIDIA Grace Hopper Superchip](https://www.nvidia.com/en-us/data-center/grace-cpu/)</p></blockquote>
-<br>
-<p>---</p>
-<br>
-<h2>4. 系统级存储架构</h2>
-<br>
-<h3>4.1 DGX 系统存储层级</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│                    DGX System Storage Stack                  │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 1: GPU HBM (80-192 GB, 3.35-8.0 TB/s)       │   │
-│  │  - 活跃计算数据                                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 2: CPU DRAM (512 GB - 2 TB)                  │   │
-│  │  - 通过 NVLink-C2C / PCIe 访问                      │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 3: Local NVMe SSDs (数 TB)                    │   │
-│  │  - 通过 GPUDirect Storage 直接访问                   │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 4: Networked Storage (NVMe-oF)               │   │
-│  │  - 通过 RDMA/NVMe-oF 访问                           │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 5: CMX (ICMS) G3.5 Context Memory            │   │
-│  │  - PB 级共享 KV Cache 存储                          │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Layer 6: Enterprise Object/File Storage            │   │
-│  │  - 冷数据、归档                                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
-<h3>4.2 GPUDirect Storage (GDS) 规格</h3>
-<br>
+<ul>
+<li><strong>功能</strong>：自动管理 CPU 和 GPU 之间的数据移动</li>
+<li><strong>优势</strong>：</li>
+<li>减少 CPU 开销</li>
+<li>支持更大的地址空间</li>
+<li>与 NVLink-C2C 配合实现高效内存共享</li>
+<li><strong>与 Grace Hopper 的关系</strong>：GH200 Superchip 中，Page Migration 引擎使 CPU 和 GPU 能够高效共享统一内存空间</li>
+</ul>
+<blockquote><p>来源：<a href="https://www.nvidia.com/en-us/data-center/grace-cpu/" target="_blank" rel="noopener">NVIDIA Grace Hopper Superchip</a></p></blockquote>
+<hr>
+<h2 id="4-系统级存储架构">4. 系统级存储架构</h2>
+<h3 id="41-dgx-系统存储层级">4.1 DGX 系统存储层级</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│                    DGX System Storage Stack                  │<br>│                                                             │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 1: GPU HBM (80-192 GB, 3.35-8.0 TB/s)       │   │<br>│  │  - 活跃计算数据                                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 2: CPU DRAM (512 GB - 2 TB)                  │   │<br>│  │  - 通过 NVLink-C2C / PCIe 访问                      │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 3: Local NVMe SSDs (数 TB)                    │   │<br>│  │  - 通过 GPUDirect Storage 直接访问                   │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 4: Networked Storage (NVMe-oF)               │   │<br>│  │  - 通过 RDMA/NVMe-oF 访问                           │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 5: CMX (ICMS) G3.5 Context Memory            │   │<br>│  │  - PB 级共享 KV Cache 存储                          │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Layer 6: Enterprise Object/File Storage            │   │<br>│  │  - 冷数据、归档                                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
+<h3 id="42-gpudirect-storage-gds-规格">4.2 GPUDirect Storage (GDS) 规格</h3>
 <p><strong>GPUDirect Storage</strong> 创建本地或远程存储（NVMe/NVMe-oF）与 GPU 内存之间的直接数据路径。</p>
-<br>
-<p>| 规格项 | 数值/描述 | 来源 |</p>
-<p>|--------|-----------|------|</p>
-<p>| 最新版本 | v1.14 (集成到 CUDA) | [NVIDIA Developer](https://developer.nvidia.com/gpudirect-storage) |</p>
-<p>| 支持平台 | Linux x86-64 (RHEL/Ubuntu) | 同上 |</p>
-<p>| 存储协议 | NVMe, NVMe-oF (RDMA/TCP) | 同上 |</p>
-<p>| 数据路径 | Storage → GPU Memory (直接 DMA) | 同上 |</p>
-<p>| 避免 | CPU bounce buffer | 同上 |</p>
-<p>| 关键特性 | GDS 用户级统计、P2PDMA 统计 | 同上 |</p>
-<p>| 内核支持 | 6.12+ | 同上 |</p>
-<br>
-<blockquote><p>来源：[NVIDIA GPUDirect Storage 官方页面](https://developer.nvidia.com/gpudirect-storage)</p></blockquote>
-<br>
-<h3>4.3 GPUDirect RDMA</h3>
-<br>
-<p>| 规格项 | 数值/描述 | 来源 |</p>
-<p>|--------|-----------|------|</p>
-<p>| 功能 | GPU 内存 ↔ 网络设备直接数据传输 | [NVIDIA Magnum IO](https://developer.nvidia.com/magnum-io) |</p>
-<p>| 网络支持 | InfiniBand, Ethernet (RoCE) | 同上 |</p>
-<p>| 延迟 | 数 μs | 同上 |</p>
-<p>| 与 GDS 关系 | GDS 使用 GPUDirect RDMA 进行远程存储访问 | 同上 |</p>
-<br>
-<h3>4.4 NVIDIA Magnum IO 架构</h3>
-<br>
+<table><thead><tr><th>规格项</th><th>数值/描述</th><th>来源</th></tr></thead><tbody>
+<tr><td>最新版本</td><td>v1.14 (集成到 CUDA)</td><td><a href="https://developer.nvidia.com/gpudirect-storage" target="_blank" rel="noopener">NVIDIA Developer</a></td></tr>
+<tr><td>支持平台</td><td>Linux x86-64 (RHEL/Ubuntu)</td><td>同上</td></tr>
+<tr><td>存储协议</td><td>NVMe, NVMe-oF (RDMA/TCP)</td><td>同上</td></tr>
+<tr><td>数据路径</td><td>Storage → GPU Memory (直接 DMA)</td><td>同上</td></tr>
+<tr><td>避免</td><td>CPU bounce buffer</td><td>同上</td></tr>
+<tr><td>关键特性</td><td>GDS 用户级统计、P2PDMA 统计</td><td>同上</td></tr>
+<tr><td>内核支持</td><td>6.12+</td><td>同上</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/gpudirect-storage" target="_blank" rel="noopener">NVIDIA GPUDirect Storage 官方页面</a></p></blockquote>
+<h3 id="43-gpudirect-rdma">4.3 GPUDirect RDMA</h3>
+<table><thead><tr><th>规格项</th><th>数值/描述</th><th>来源</th></tr></thead><tbody>
+<tr><td>功能</td><td>GPU 内存 ↔ 网络设备直接数据传输</td><td><a href="https://developer.nvidia.com/magnum-io" target="_blank" rel="noopener">NVIDIA Magnum IO</a></td></tr>
+<tr><td>网络支持</td><td>InfiniBand, Ethernet (RoCE)</td><td>同上</td></tr>
+<tr><td>延迟</td><td>数 μs</td><td>同上</td></tr>
+<tr><td>与 GDS 关系</td><td>GDS 使用 GPUDirect RDMA 进行远程存储访问</td><td>同上</td></tr>
+</tbody></table>
+<h3 id="44-nvidia-magnum-io-架构">4.4 NVIDIA Magnum IO 架构</h3>
 <p><strong>Magnum IO</strong> 是 NVIDIA 的 I/O 加速技术集合：</p>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│                    NVIDIA Magnum IO Stack                    │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Application Layer                                   │   │
-│  │  (AI Training, HPC, Analytics)                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  GPUDirect Storage (GDS)                            │   │
-│  │  - 存储 → GPU 内存直接路径                           │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  GPUDirect RDMA                                     │   │
-│  │  - GPU 内存 ↔ 网络设备直接传输                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  NCCL ( Collective Communications)                  │   │
-│  │  - GPU 间集合通信加速                                │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Hardware Layer                                      │   │
-│  │  - NVLink, NVSwitch, PCIe, InfiniBand, Ethernet     │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
-<blockquote><p>来源：[NVIDIA Magnum IO](https://developer.nvidia.com/magnum-io)</p></blockquote>
-<br>
-<p>---</p>
-<br>
-<h2>5. 缓存一致性</h2>
-<br>
-<h3>5.1 NVLink-C2C 的缓存一致性</h3>
-<br>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│                    NVIDIA Magnum IO Stack                    │<br>│                                                             │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Application Layer                                   │   │<br>│  │  (AI Training, HPC, Analytics)                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  GPUDirect Storage (GDS)                            │   │<br>│  │  - 存储 → GPU 内存直接路径                           │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  GPUDirect RDMA                                     │   │<br>│  │  - GPU 内存 ↔ 网络设备直接传输                       │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  NCCL ( Collective Communications)                  │   │<br>│  │  - GPU 间集合通信加速                                │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>│                         ▼                                   │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  Hardware Layer                                      │   │<br>│  │  - NVLink, NVSwitch, PCIe, InfiniBand, Ethernet     │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
+<blockquote><p>来源：<a href="https://developer.nvidia.com/magnum-io" target="_blank" rel="noopener">NVIDIA Magnum IO</a></p></blockquote>
+<hr>
+<h2 id="5-缓存一致性">5. 缓存一致性</h2>
+<h3 id="51-nvlink-c2c-的缓存一致性">5.1 NVLink-C2C 的缓存一致性</h3>
 <p><strong>NVLink-C2C (Chip-to-Chip)</strong> 是 NVIDIA 的芯片间互连技术：</p>
-<br>
-<p>| 规格项 | 数值/描述 | 来源 |</p>
-<p>|--------|-----------|------|</p>
-<p>| <strong>第一代 C2C</strong> | 900 GB/s 双向带宽 | [NVIDIA Grace CPU](https://www.nvidia.com/en-us/data-center/grace-cpu/) |</p>
-<p>| <strong>第二代 C2C</strong> | 1.8 TB/s 双向带宽 | 同上 |</p>
-<p>| 对比 PCIe Gen 6 | 7x 带宽 | 同上 |</p>
-<p>| 缓存一致性 | 支持 CPU-GPU 统一内存空间 | 同上 |</p>
-<p>| 应用 | GH200 Grace Hopper Superchip, GB200 | 同上 |</p>
-<br>
-<h3>5.2 Grace CPU 与 Blackwell GPU 之间的内存一致性</h3>
-<br>
-<pre><code>
-┌─────────────────────────────────────────────────────────────┐
-│              Grace Hopper / Grace Blackwell                  │
-│                   Unified Memory Architecture                │
-│                                                             │
-│  ┌─────────────────────┐      ┌─────────────────────┐      │
-│  │   Grace CPU          │      │   Hopper/Blackwell   │      │
-│  │   (Arm Neoverse V2)  │      │   GPU                │      │
-│  │                     │      │                     │      │
-│  │   LPDDR5X Memory    │      │   HBM3/HBM3e        │      │
-│  │   (up to 1 TB/s)    │      │   (3.35-8.0 TB/s)   │      │
-│  │                     │      │                     │      │
-│  │   ┌──────────────┐ │      │   ┌──────────────┐ │      │
-│  │   │ CPU Cache    │ │      │   │ GPU Cache   │ │      │
-│  │   │ Hierarchy    │ │      │   │ Hierarchy   │ │      │
-│  │   └──────┬───────┘ │      │   └──────┬───────┘ │      │
-│  └──────────┼─────────┘      └──────────┼─────────┘      │
-│             │                            │                 │
-│             └────────────┬───────────────┘                 │
-│                          │                                  │
-│                ┌─────────▼─────────┐                       │
-│                │   NVLink-C2C      │                       │
-│                │   (900 GB/s       │                       │
-│                │    1.8 TB/s Gen2) │                       │
-│                │                   │                       │
-│                │  ┌─────────────┐  │                       │
-│                │  │ Cache       │  │                       │
-│                │  │ Coherence   │  │                       │
-│                │  │ Engine      │  │                       │
-│                │  └─────────────┘  │                       │
-│                └───────────────────┘                       │
-│                                                             │
-│  统一虚拟地址空间 (Unified Virtual Address Space)            │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  CPU VA ◄──────────────────────────────────► GPU VA │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-</code></pre>
-<br>
+<table><thead><tr><th>规格项</th><th>数值/描述</th><th>来源</th></tr></thead><tbody>
+<tr><td><strong>第一代 C2C</strong></td><td>900 GB/s 双向带宽</td><td><a href="https://www.nvidia.com/en-us/data-center/grace-cpu/" target="_blank" rel="noopener">NVIDIA Grace CPU</a></td></tr>
+<tr><td><strong>第二代 C2C</strong></td><td>1.8 TB/s 双向带宽</td><td>同上</td></tr>
+<tr><td>对比 PCIe Gen 6</td><td>7x 带宽</td><td>同上</td></tr>
+<tr><td>缓存一致性</td><td>支持 CPU-GPU 统一内存空间</td><td>同上</td></tr>
+<tr><td>应用</td><td>GH200 Grace Hopper Superchip, GB200</td><td>同上</td></tr>
+</tbody></table>
+<h3 id="52-grace-cpu-与-blackwell-gpu-之间的内存一致性">5.2 Grace CPU 与 Blackwell GPU 之间的内存一致性</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐<br>│              Grace Hopper / Grace Blackwell                  │<br>│                   Unified Memory Architecture                │<br>│                                                             │<br>│  ┌─────────────────────┐      ┌─────────────────────┐      │<br>│  │   Grace CPU          │      │   Hopper/Blackwell   │      │<br>│  │   (Arm Neoverse V2)  │      │   GPU                │      │<br>│  │                     │      │                     │      │<br>│  │   LPDDR5X Memory    │      │   HBM3/HBM3e        │      │<br>│  │   (up to 1 TB/s)    │      │   (3.35-8.0 TB/s)   │      │<br>│  │                     │      │                     │      │<br>│  │   ┌──────────────┐ │      │   ┌──────────────┐ │      │<br>│  │   │ CPU Cache    │ │      │   │ GPU Cache   │ │      │<br>│  │   │ Hierarchy    │ │      │   │ Hierarchy   │ │      │<br>│  │   └──────┬───────┘ │      │   └──────┬───────┘ │      │<br>│  └──────────┼─────────┘      └──────────┼─────────┘      │<br>│             │                            │                 │<br>│             └────────────┬───────────────┘                 │<br>│                          │                                  │<br>│                ┌─────────▼─────────┐                       │<br>│                │   NVLink-C2C      │                       │<br>│                │   (900 GB/s       │                       │<br>│                │    1.8 TB/s Gen2) │                       │<br>│                │                   │                       │<br>│                │  ┌─────────────┐  │                       │<br>│                │  │ Cache       │  │                       │<br>│                │  │ Coherence   │  │                       │<br>│                │  │ Engine      │  │                       │<br>│                │  └─────────────┘  │                       │<br>│                └───────────────────┘                       │<br>│                                                             │<br>│  统一虚拟地址空间 (Unified Virtual Address Space)            │<br>│  ┌─────────────────────────────────────────────────────┐   │<br>│  │  CPU VA ◄──────────────────────────────────► GPU VA │   │<br>│  └─────────────────────────────────────────────────────┘   │<br>└─────────────────────────────────────────────────────────────┘</code></pre>
 <p><strong>关键特性</strong>：</p>
-<li>**统一内存空间**：CPU 和 GPU 共享统一的虚拟地址空间</li>
-<li>**硬件缓存一致性**：通过 NVLink-C2C 的 Cache Coherence Engine 实现</li>
-<li>**Page Migration 引擎**：Hopper 引入的硬件页面迁移，自动管理数据移动</li>
-<li>**Scalable Coherency Fabric (SCF)**：NVIDIA 的可扩展一致性 Fabric</li>
-<br>
-<blockquote><p>来源：[NVIDIA Grace CPU 官方页面](https://www.nvidia.com/en-us/data-center/grace-cpu/), [NVIDIA Hopper Architecture In-Depth](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/)</p></blockquote>
-<br>
-<h3>5.3 C2C 接口协议层</h3>
-<br>
-<p>| 协议层 | 功能 | 说明 |</p>
-<p>|--------|------|------|</p>
-<p>| <strong>物理层</strong> | 高速串行传输 | PAM4 调制, 50-100 GT/s |</p>
-<p>| <strong>链路层</strong> | 可靠传输 | CRC、重传、流控 |</p>
-<p>| <strong>协议层</strong> | 缓存一致性 | MESI/MOESI 类协议 |</p>
-<p>| <strong>传输层</strong> | 内存语义 | Load/Store、Atomic 操作 |</p>
-<p>| <strong>应用层</strong> | 统一编程模型 | CUDA Unified Memory |</p>
-<br>
-<h3>5.4 NVLink 代际规格</h3>
-<br>
-<p>| 版本 | 每 Link 带宽 | Link 数 (H100) | 总带宽 | 调制 | 应用 |</p>
-<p>|------|-------------|----------------|--------|------|------|</p>
-<p>| NVLink 1.0 | 40 GB/s | 4 | 160 GB/s | NRZ | Pascal |</p>
-<p>| NVLink 2.0 | 50 GB/s | 6 | 300 GB/s | NRZ | Volta |</p>
-<p>| NVLink 3.0 | 50 GB/s | 12 | 600 GB/s | NRZ | Ampere |</p>
-<p>| NVLink 4.0 | 50 GB/s | 18 | 900 GB/s | PAM4 | Hopper |</p>
-<p>| NVLink 5.0 | 100 GB/s | 18 | 1800 GB/s | PAM4 | Blackwell |</p>
-<br>
-<blockquote><p>来源：[Wikipedia - NVLink](https://en.wikipedia.org/wiki/NVLink), [NVIDIA Blackwell Architecture](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)</p></blockquote>
-<br>
-<h3>5.5 NVLink Switch System</h3>
-<br>
-<p>| 规格项 | 数值/描述 | 来源 |</p>
-<p>|--------|-----------|------|</p>
-<p>| NVLink 4.0 Switch | 全连接 64 端口 | [Wikipedia - NVLink](https://en.wikipedia.org/wiki/NVLink) |</p>
-<p>| NVSwitch for Hopper | 7200 GB/s 总带宽 | 同上 |</p>
-<p>| NVLink 5.0 Switch (Blackwell) | 130 TB/s (NVL72) | [NVIDIA Blackwell](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/) |</p>
-<p>| SHARP 支持 | FP8 in-network computing | 同上 |</p>
-<p>| 扩展能力 | 最多 576 GPUs (NVLink 5.0) | 同上 |</p>
-<br>
-<p>---</p>
-<br>
-<h2>6. 信息来源</h2>
-<br>
-<h3>6.1 访问成功的 URL</h3>
-<br>
-<p>| # | URL | 内容 | 状态 |</p>
-<p>|---|-----|------|------|</p>
-<p>| 1 | https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/ | NVIDIA CMX/ICMS 官方博客 | ✅ 成功 |</p>
-<p>| 2 | https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/ | Blackwell 架构官方页面 | ✅ 成功 |</p>
-<p>| 3 | https://www.nvidia.com/en-us/data-center/h100/ | H100 官方规格页面 | ✅ 成功 |</p>
-<p>| 4 | https://www.nvidia.com/en-us/data-center/h200/ | H200 官方规格页面 | ✅ 成功 |</p>
-<p>| 5 | https://www.nvidia.com/en-us/data-center/grace-cpu/ | Grace CPU 官方页面 | ✅ 成功 |</p>
-<p>| 6 | https://developer.nvidia.com/gpudirect-storage | GPUDirect Storage 官方页面 | ✅ 成功 |</p>
-<p>| 7 | https://en.wikipedia.org/wiki/NVLink | NVLink Wikipedia | ✅ 成功 |</p>
-<p>| 8 | https://www.glennklockwood.com/garden/icms | Glenn K. Lockwood CMX 分析 | ✅ 成功 (嵌入 Wikipedia) |</p>
-<br>
-<h3>6.2 访问失败/重定向的 URL</h3>
-<br>
-<p>| # | URL | 状态 | 说明 |</p>
-<p>|---|-----|------|------|</p>
-<p>| 1 | https://www.weka.io/article/nvidia-signals-an-infrastructure-shift-for-inference-systems-at-scale | ❌ 失败 | 网络错误 |</p>
-<p>| 2 | https://www.chiplog.io/p/analysis-of-nvidias-bluefield-4-dpu | ❌ 失败 | 网络错误 |</p>
-<p>| 3 | https://nvidianews.nvidia.com/news/nvidia-bluefield-4-powers-new-class-of-ai-native-storage-infrastructure-for-the-next-frontier-of-ai | ❌ 失败 | 网络错误 |</p>
-<p>| 4 | https://www.nvidia.com/en-us/data-center/ai-storage/cmx/ | ❌ 404 | 页面不存在 |</p>
-<p>| 5 | https://www.anandtech.com/show/20420/nvidia-hopper-h100-gpu-architecture-and-specs | ❌ 失败 | 网络错误 |</p>
-<p>| 6 | https://www.nvidia.com/en-us/data-center/technologies/magnum-io/ | ❌ 502 | 服务器错误 |</p>
-<p>| 7 | https://en.wikipedia.org/wiki/HBM | ⚠️ 重定向 | 被重定向到其他页面 |</p>
-<br>
-<h3>6.3 搜索关键词记录</h3>
-<br>
+<ul>
+<li><strong>统一内存空间</strong>：CPU 和 GPU 共享统一的虚拟地址空间</li>
+<li><strong>硬件缓存一致性</strong>：通过 NVLink-C2C 的 Cache Coherence Engine 实现</li>
+<li><strong>Page Migration 引擎</strong>：Hopper 引入的硬件页面迁移，自动管理数据移动</li>
+<li><strong>Scalable Coherency Fabric (SCF)</strong>：NVIDIA 的可扩展一致性 Fabric</li>
+</ul>
+<blockquote><p>来源：<a href="https://www.nvidia.com/en-us/data-center/grace-cpu/" target="_blank" rel="noopener">NVIDIA Grace CPU 官方页面</a>, <a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/" target="_blank" rel="noopener">NVIDIA Hopper Architecture In-Depth</a></p></blockquote>
+<h3 id="53-c2c-接口协议层">5.3 C2C 接口协议层</h3>
+<table><thead><tr><th>协议层</th><th>功能</th><th>说明</th></tr></thead><tbody>
+<tr><td><strong>物理层</strong></td><td>高速串行传输</td><td>PAM4 调制, 50-100 GT/s</td></tr>
+<tr><td><strong>链路层</strong></td><td>可靠传输</td><td>CRC、重传、流控</td></tr>
+<tr><td><strong>协议层</strong></td><td>缓存一致性</td><td>MESI/MOESI 类协议</td></tr>
+<tr><td><strong>传输层</strong></td><td>内存语义</td><td>Load/Store、Atomic 操作</td></tr>
+<tr><td><strong>应用层</strong></td><td>统一编程模型</td><td>CUDA Unified Memory</td></tr>
+</tbody></table>
+<h3 id="54-nvlink-代际规格">5.4 NVLink 代际规格</h3>
+<table><thead><tr><th>版本</th><th>每 Link 带宽</th><th>Link 数 (H100)</th><th>总带宽</th><th>调制</th><th>应用</th></tr></thead><tbody>
+<tr><td>NVLink 1.0</td><td>40 GB/s</td><td>4</td><td>160 GB/s</td><td>NRZ</td><td>Pascal</td></tr>
+<tr><td>NVLink 2.0</td><td>50 GB/s</td><td>6</td><td>300 GB/s</td><td>NRZ</td><td>Volta</td></tr>
+<tr><td>NVLink 3.0</td><td>50 GB/s</td><td>12</td><td>600 GB/s</td><td>NRZ</td><td>Ampere</td></tr>
+<tr><td>NVLink 4.0</td><td>50 GB/s</td><td>18</td><td>900 GB/s</td><td>PAM4</td><td>Hopper</td></tr>
+<tr><td>NVLink 5.0</td><td>100 GB/s</td><td>18</td><td>1800 GB/s</td><td>PAM4</td><td>Blackwell</td></tr>
+</tbody></table>
+<blockquote><p>来源：<a href="https://en.wikipedia.org/wiki/NVLink" target="_blank" rel="noopener">Wikipedia - NVLink</a>, <a href="https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/" target="_blank" rel="noopener">NVIDIA Blackwell Architecture</a></p></blockquote>
+<h3 id="55-nvlink-switch-system">5.5 NVLink Switch System</h3>
+<table><thead><tr><th>规格项</th><th>数值/描述</th><th>来源</th></tr></thead><tbody>
+<tr><td>NVLink 4.0 Switch</td><td>全连接 64 端口</td><td><a href="https://en.wikipedia.org/wiki/NVLink" target="_blank" rel="noopener">Wikipedia - NVLink</a></td></tr>
+<tr><td>NVSwitch for Hopper</td><td>7200 GB/s 总带宽</td><td>同上</td></tr>
+<tr><td>NVLink 5.0 Switch (Blackwell)</td><td>130 TB/s (NVL72)</td><td><a href="https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/" target="_blank" rel="noopener">NVIDIA Blackwell</a></td></tr>
+<tr><td>SHARP 支持</td><td>FP8 in-network computing</td><td>同上</td></tr>
+<tr><td>扩展能力</td><td>最多 576 GPUs (NVLink 5.0)</td><td>同上</td></tr>
+</tbody></table>
+<hr>
+<h2 id="6-信息来源">6. 信息来源</h2>
+<h3 id="61-访问成功的-url">6.1 访问成功的 URL</h3>
+<table><thead><tr><th>#</th><th>URL</th><th>内容</th><th>状态</th></tr></thead><tbody>
+<tr><td>1</td><td>https://developer.nvidia.com/blog/introducing-nvidia-bluefield-4-powered-inference-context-memory-storage-platform-for-the-next-frontier-of-ai/</td><td>NVIDIA CMX/ICMS 官方博客</td><td>✅ 成功</td></tr>
+<tr><td>2</td><td>https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/</td><td>Blackwell 架构官方页面</td><td>✅ 成功</td></tr>
+<tr><td>3</td><td>https://www.nvidia.com/en-us/data-center/h100/</td><td>H100 官方规格页面</td><td>✅ 成功</td></tr>
+<tr><td>4</td><td>https://www.nvidia.com/en-us/data-center/h200/</td><td>H200 官方规格页面</td><td>✅ 成功</td></tr>
+<tr><td>5</td><td>https://www.nvidia.com/en-us/data-center/grace-cpu/</td><td>Grace CPU 官方页面</td><td>✅ 成功</td></tr>
+<tr><td>6</td><td>https://developer.nvidia.com/gpudirect-storage</td><td>GPUDirect Storage 官方页面</td><td>✅ 成功</td></tr>
+<tr><td>7</td><td>https://en.wikipedia.org/wiki/NVLink</td><td>NVLink Wikipedia</td><td>✅ 成功</td></tr>
+<tr><td>8</td><td>https://www.glennklockwood.com/garden/icms</td><td>Glenn K. Lockwood CMX 分析</td><td>✅ 成功 (嵌入 Wikipedia)</td></tr>
+</tbody></table>
+<h3 id="62-访问失败重定向的-url">6.2 访问失败/重定向的 URL</h3>
+<table><thead><tr><th>#</th><th>URL</th><th>状态</th><th>说明</th></tr></thead><tbody>
+<tr><td>1</td><td>https://www.weka.io/article/nvidia-signals-an-infrastructure-shift-for-inference-systems-at-scale</td><td>❌ 失败</td><td>网络错误</td></tr>
+<tr><td>2</td><td>https://www.chiplog.io/p/analysis-of-nvidias-bluefield-4-dpu</td><td>❌ 失败</td><td>网络错误</td></tr>
+<tr><td>3</td><td>https://nvidianews.nvidia.com/news/nvidia-bluefield-4-powers-new-class-of-ai-native-storage-infrastructure-for-the-next-frontier-of-ai</td><td>❌ 失败</td><td>网络错误</td></tr>
+<tr><td>4</td><td>https://www.nvidia.com/en-us/data-center/ai-storage/cmx/</td><td>❌ 404</td><td>页面不存在</td></tr>
+<tr><td>5</td><td>https://www.anandtech.com/show/20420/nvidia-hopper-h100-gpu-architecture-and-specs</td><td>❌ 失败</td><td>网络错误</td></tr>
+<tr><td>6</td><td>https://www.nvidia.com/en-us/data-center/technologies/magnum-io/</td><td>❌ 502</td><td>服务器错误</td></tr>
+<tr><td>7</td><td>https://en.wikipedia.org/wiki/HBM</td><td>⚠️ 重定向</td><td>被重定向到其他页面</td></tr>
+</tbody></table>
+<h3 id="63-搜索关键词记录">6.3 搜索关键词记录</h3>
 <p>1. <code>NVIDIA ICMS Integrated Coherent Memory System architecture</code></p>
 <p>2. <code>HBM3e specifications per stack bandwidth capacity pin rate GB/s</code></p>
 <p>3. <code>NVIDIA H100 memory hierarchy L2 cache shared memory bandwidth latency specs</code></p>
 <p>4. <code>NVIDIA coherent memory</code></p>
 <p>5. <code>Grace memory architecture</code></p>
 <p>6. <code>Blackwell memory subsystem</code></p>
-<br>
-<h3>6.4 关键外部来源（未直接访问但通过搜索结果获取）</h3>
-<br>
-<p>| 来源 | 内容 | 引用方式 |</p>
-<p>|------|------|----------|</p>
-<p>| [Chips and Cheese](https://chipsandcheese.com/p/nvidias-h100-funny-l2-and-tons-of-bandwidth) | H100 L2 缓存深度分析 | Google AI Overview 引用 |</p>
-<p>| [Medium - GPU Memory Hierarchy](https://medium.com/@indiai/gpu-memory-hierarchy-how-ai-training-actually-works-24f00cc13050) | GPU 内存层次六层模型 | Google AI Overview 引用 |</p>
-<p>| [arXiv - Benchmarking Hopper GPU](https://arxiv.org/html/2402.13499v1) | Hopper GPU 基准测试 | Google 搜索结果 |</p>
-<p>| [Hot Chips 2022 - NVIDIA Hopper](http://hc34.hotchips.org/assets/program/conference/day1/GPU%20HPC/HC2022.NVIDIA.Choquette.vfinal01.pdf) | Hopper HC 论文 | Google 搜索结果 |</p>
-<p>| [NASA NAS - GPU Architecture](https://www.nas.nasa.gov/hecc/support/kb/basics-on-nvidia-gpu-hardware-architecture_704.html) | GPU 架构基础 | Google 搜索结果 |</p>
-<p>| [Emergent Mind - Hopper GPU](https://www.emergentmind.com/topics/hopper-gpu) | Hopper L2 延迟分析 | Google 搜索结果 |</p>
-<br>
-<p>---</p>
-<br>
-<h2>附录 A：关键术语表</h2>
-<br>
-<p>| 术语 | 全称 | 说明 |</p>
-<p>|------|------|------|</p>
-<p>| <strong>ICMS</strong> | Inference Context Memory Storage | NVIDIA 推理上下文内存存储平台 |</p>
-<p>| <strong>CMX</strong> | Context Memory Storage | ICMS 的别称 |</p>
-<p>| <strong>GDS</strong> | GPUDirect Storage | GPU 直接存储访问 |</p>
-<p>| <strong>C2C</strong> | Chip-to-Chip | 芯片间互连 |</p>
-<p>| <strong>SCF</strong> | Scalable Coherency Fabric | NVIDIA 可扩展一致性 Fabric |</p>
-<p>| <strong>HBM</strong> | High Bandwidth Memory | 高带宽内存 |</p>
-<p>| <strong>MIG</strong> | Multi-Instance GPU | 多实例 GPU |</p>
-<p>| <strong>SHARP</strong> | Scalable Hierarchical Aggregate Reduction Protocol | 分层聚合归约协议 |</p>
-<p>| <strong>NIXL</strong> | NVIDIA Inference Transfer Library | NVIDIA 推理传输库 |</p>
-<p>| <strong>STX</strong> | Storage Technology eXtended | CMX 参考架构 |</p>
-<br>
-<p>---</p>
-<br>
-<h2>附录 B：调研过程记录</h2>
-<br>
-<h3>B.1 关键发现</h3>
-<br>
+<h3 id="64-关键外部来源未直接访问但通过搜索结果获取">6.4 关键外部来源（未直接访问但通过搜索结果获取）</h3>
+<table><thead><tr><th>来源</th><th>内容</th><th>引用方式</th></tr></thead><tbody>
+<tr><td><a href="https://chipsandcheese.com/p/nvidias-h100-funny-l2-and-tons-of-bandwidth" target="_blank" rel="noopener">Chips and Cheese</a></td><td>H100 L2 缓存深度分析</td><td>Google AI Overview 引用</td></tr>
+<tr><td><a href="https://medium.com/@indiai/gpu-memory-hierarchy-how-ai-training-actually-works-24f00cc13050" target="_blank" rel="noopener">Medium - GPU Memory Hierarchy</a></td><td>GPU 内存层次六层模型</td><td>Google AI Overview 引用</td></tr>
+<tr><td><a href="https://arxiv.org/html/2402.13499v1" target="_blank" rel="noopener">arXiv - Benchmarking Hopper GPU</a></td><td>Hopper GPU 基准测试</td><td>Google 搜索结果</td></tr>
+<tr><td><a href="http://hc34.hotchips.org/assets/program/conference/day1/GPU%20HPC/HC2022.NVIDIA.Choquette.vfinal01.pdf" target="_blank" rel="noopener">Hot Chips 2022 - NVIDIA Hopper</a></td><td>Hopper HC 论文</td><td>Google 搜索结果</td></tr>
+<tr><td><a href="https://www.nas.nasa.gov/hecc/support/kb/basics-on-nvidia-gpu-hardware-architecture_704.html" target="_blank" rel="noopener">NASA NAS - GPU Architecture</a></td><td>GPU 架构基础</td><td>Google 搜索结果</td></tr>
+<tr><td><a href="https://www.emergentmind.com/topics/hopper-gpu" target="_blank" rel="noopener">Emergent Mind - Hopper GPU</a></td><td>Hopper L2 延迟分析</td><td>Google 搜索结果</td></tr>
+</tbody></table>
+<hr>
+<h2 id="附录-a关键术语表">附录 A：关键术语表</h2>
+<table><thead><tr><th>术语</th><th>全称</th><th>说明</th></tr></thead><tbody>
+<tr><td><strong>ICMS</strong></td><td>Inference Context Memory Storage</td><td>NVIDIA 推理上下文内存存储平台</td></tr>
+<tr><td><strong>CMX</strong></td><td>Context Memory Storage</td><td>ICMS 的别称</td></tr>
+<tr><td><strong>GDS</strong></td><td>GPUDirect Storage</td><td>GPU 直接存储访问</td></tr>
+<tr><td><strong>C2C</strong></td><td>Chip-to-Chip</td><td>芯片间互连</td></tr>
+<tr><td><strong>SCF</strong></td><td>Scalable Coherency Fabric</td><td>NVIDIA 可扩展一致性 Fabric</td></tr>
+<tr><td><strong>HBM</strong></td><td>High Bandwidth Memory</td><td>高带宽内存</td></tr>
+<tr><td><strong>MIG</strong></td><td>Multi-Instance GPU</td><td>多实例 GPU</td></tr>
+<tr><td><strong>SHARP</strong></td><td>Scalable Hierarchical Aggregate Reduction Protocol</td><td>分层聚合归约协议</td></tr>
+<tr><td><strong>NIXL</strong></td><td>NVIDIA Inference Transfer Library</td><td>NVIDIA 推理传输库</td></tr>
+<tr><td><strong>STX</strong></td><td>Storage Technology eXtended</td><td>CMX 参考架构</td></tr>
+</tbody></table>
+<hr>
+<h2 id="附录-b调研过程记录">附录 B：调研过程记录</h2>
+<h3 id="b1-关键发现">B.1 关键发现</h3>
 <p>1. <strong>ICMS 术语纠正</strong>：用户问题中的 "Integrated Coherent Memory System" 并非 NVIDIA 官方术语。实际术语是 <strong>Inference Context Memory Storage (ICMS)</strong>，也称为 <strong>CMX (Context Memory Storage)</strong>。</p>
-<br>
 <p>2. <strong>ICMS 的本质</strong>：ICMS 不是一个传统的"缓存一致性内存系统"，而是一个<strong>AI 原生存储层级</strong>，专为大规模推理场景下的 KV Cache 存储而设计。</p>
-<br>
 <p>3. <strong>架构创新</strong>：ICMS 在传统的 G1-G4 存储层级中引入了 <strong>G3.5 层级</strong>，填补了 GPU HBM 和企业级存储之间的空白。</p>
-<br>
-<h3>B.2 信息局限性说明</h3>
-<br>
+<h3 id="b2-信息局限性说明">B.2 信息局限性说明</h3>
 <p>1. <strong>HBM4 规格</strong>：目前公开信息有限，部分规格为行业预测</p>
 <p>2. <strong>NVLink-C2C 协议细节</strong>：NVIDIA 未公开完整的协议层细节</p>
 <p>3. <strong>CMX 详细带宽/延迟规格</strong>：NVIDIA 仅公布了相对提升倍数（5x TPS, 5x 能效），未公布绝对带宽和延迟数值</p>
 <p>4. <strong>SemiAnalysis 分析</strong>：由于网络限制，未能直接访问 SemiAnalysis 的深度分析文章</p>
-<br>
-<h3>B.3 后续调研建议</h3>
-<br>
+<h3 id="b3-后续调研建议">B.3 后续调研建议</h3>
 <p>1. 关注 NVIDIA GTC 2026 演讲中关于 CMX/ICMS 的更多技术细节</p>
 <p>2. 等待 BlueField-4 的详细技术白皮书发布</p>
 <p>3. 关注 DOCA Memos 框架的开源实现</p>
 <p>4. 跟踪 HBM4 标准的最终确定和 NVIDIA 的采用计划</p>
-<br>
-<p>---</p>
-<br>
-<blockquote><p>**报告完成时间**: 2026-07-31  </p></blockquote>
-<blockquote><p>**调研方法**: Playwright 浏览器自动化 + Web 搜索  </p></blockquote>
-<blockquote><p>**数据来源**: NVIDIA 官方博客、NVIDIA 产品页面、Wikipedia、技术分析报告</p></blockquote>
-<br>
+<hr>
+<blockquote><p><strong>报告完成时间</strong>: 2026-07-31</p></blockquote>
+<blockquote><p><strong>调研方法</strong>: Playwright 浏览器自动化 + Web 搜索</p></blockquote>
+<blockquote><p><strong>数据来源</strong>: NVIDIA 官方博客、NVIDIA 产品页面、Wikipedia、技术分析报告</p></blockquote>
     </div>
   </article>
 </div>
