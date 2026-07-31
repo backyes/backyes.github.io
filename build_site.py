@@ -139,7 +139,7 @@ SITE = {
     "title": "backyes — AI Infrastructure Insights",
     "description": "Research hub for AI infrastructure: chip architecture, inference systems, interconnects, and first-principles analysis.",
     "hero_eyebrow": "First-Principles Analysis of AI Infrastructure",
-    "hero_h1": "GPU microarchitecture, unified addressing, memory fabric, and the real cost of AI systems.",
+    "hero_h1": "Thoughts on AI infrastructure — from first principles, with data.",
     "hero_copy": "Hand-written deep dives from first principles — on GPU dataflow, NVLink topology, CXL memory, KV-cache economics, and the architecture decisions that shape AI infrastructure.",
     "hero_cta_primary": "Read the posts",
     "hero_cta_primary_url": "posts.html",
