@@ -29,7 +29,17 @@ Traditional autoregressive decode is the canonical memory-bound workload: minima
 
 **The acceptance rate caveat**: The $k\times$ compute growth is a *theoretical upper bound*. Realized gains depend on **acceptance rate** — the fraction of predicted tokens that pass verification. DSpark (DeepSeek + PKU, 2026) empirically shows that naive deep drafters (essentially stacked MTP) suffer from ==rapid acceptance decay== ("suffix decay"): deeper predictions have progressively lower acceptance rates <a id="ref-5"></a>[[5]](#ref-5). This is precisely why DeepSeek abandoned the "deeper MTP" route in favor of semi-autoregressive drafting with confidence-scheduled verification. In practice, production MTP deployments (DeepSeek-V3) use only 1-2 auxiliary depths with a 0.1 loss scaling factor <a id="ref-1"></a>[[1]](#ref-1) — the "large MTP (k=5+)" scenario remains theoretical, not production-validated.
 
-**Industry context**: NVIDIA's H100 (3.35 TB/s HBM3) → B200 (~8 TB/s HBM3E) → Rubin NVL72 (~22 TB/s HBM4) shows bandwidth growing ~6.5× across 3 generations, while compute (FP16) grew ~4× in the same window. MTP accelerates this divergence — compute demand outpaces memory supply.
+**Industry context**: NVIDIA's GPU roadmap shows memory bandwidth growing slower than compute across generations — the structural gap MTP exploits:
+
+| GPU | Architecture | Memory | BW | FP8 Dense | BW/Compute Ratio | Source |
+|---|---|---|---|---|---|---|
+| **H100 SXM** | Hopper | 80 GB HBM3 | 3.35 TB/s | 989 TFLOPS | 3.4 GB/s per TFLOP | [NVIDIA H100](https://www.nvidia.com/en-us/data-center/h100/) |
+| **H200 SXM** | Hopper | 141 GB HBM3e | 4.8 TB/s | 989 TFLOPS | 4.9 GB/s per TFLOP | [NVIDIA H200](https://www.nvidia.com/en-us/data-center/h200/) |
+| **B200** | Blackwell | 192 GB HBM3e | 8 TB/s | 2.25 PFLOPS | 3.6 GB/s per TFLOP | [NVIDIA Blackwell](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/) |
+| **B300 (NVL72)** | Blackwell | 288 GB HBM3e | 16 TB/s (2-die) | ~4.5 PFLOPS | 3.6 GB/s per TFLOP | [NVIDIA Blackwell](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/) |
+| **Rubin (R100)** | Rubin | HBM4 (TBD) | ~36 TB/s (est.) | TBD | TBD | [NVIDIA Rubin](https://www.nvidia.com/en-us/data-center/technologies/rubin/) |
+
+**The divergence is clear**: H100→B200 compute grew ~2.3× while bandwidth grew only ~2.4× — but the *arithmetic intensity ceiling* (max FLOPs per byte) is what matters for memory-bound inference. MTP directly attacks this ceiling: by reusing the same KV-Cache for k predictions, it effectively multiplies the compute-per-byte ratio by k×, pushing inference workloads into the compute-bound regime where bandwidth headroom exists.
 
 ---
 
