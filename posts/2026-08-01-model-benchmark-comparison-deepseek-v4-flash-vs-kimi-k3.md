@@ -1,49 +1,49 @@
 ---
-title: "DeepSeek-V4-Flash-0731 vs Kimi-K3: Benchmark 全景对比"
+title: "DeepSeek-V4-Flash-0731 vs Kimi-K3: Full Benchmark Comparison"
 date: 2026-08-01
 tags: ["DeepSeek", "Kimi", "Benchmark", "Model-Comparison", "MoE", "Agent", "Coding"]
-excerpt: "DeepSeek-V4-Flash-0731 与 Kimi-K3 的 benchmark 全景对比分析。5 项共有 benchmark Kimi 全面领先，但两者定位截然不同 — Flash 高效推理 vs 旗舰全能模型。"
+excerpt: "DeepSeek-V4-Flash-0731 vs Kimi-K3 benchmark comparison. Kimi leads on all 5 shared benchmarks, but the two models target different segments — Flash efficiency vs flagship all-rounder."
 ---
 
-# DeepSeek-V4-Flash-0731 vs Kimi-K3: Benchmark 全景对比
+# DeepSeek-V4-Flash-0731 vs Kimi-K3: Full Benchmark Comparison
 
-## 前言
+## Introduction
 
-2026 年 7 月底，两个来自中国的旗舰模型几乎同期发布 benchmark 数据：
+In late July 2026, two flagship Chinese models released benchmark data almost simultaneously:
 
-- **DeepSeek-V4-Flash-0731** — DeepSeek 家族的高效推理版本（推测解码增强）
-- **Kimi-K3** — Moonshot 的 MoE 旗舰（2.8T 总参数 / 104B 激活）
+- **DeepSeek-V4-Flash-0731** — DeepSeek's efficiency inference variant (speculative decoding enhanced)
+- **Kimi-K3** — Moonshot's MoE flagship (2.8T total params / 114B activated)
 
-> 数据来源: [DeepSeek-V4-Flash-0731 Model Card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) · [Kimi-K3 Model Card](https://huggingface.co/moonshotai/Kimi-K3) (2026-08-01 采集)
+> Data sources: [DeepSeek-V4-Flash-0731 Model Card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) · [Kimi-K3 Model Card](https://huggingface.co/moonshotai/Kimi-K3) (collected 2026-08-01)
 
 ---
 
-## Part 1: 深度对比分析
+## Part 1: In-Depth Comparison
 
-### 1.1 模型定位与架构差异
+### 1.1 Model Positioning & Architecture Differences
 
-这是理解 benchmark 差异的核心背景 — **两者并非同量级竞品**:
+This is the essential context — **these are not same-class competitors**:
 
-| 维度 | DeepSeek-V4-Flash-0731 | Kimi-K3 |
+| Dimension | DeepSeek-V4-Flash-0731 | Kimi-K3 |
 |---|---|---|
-| **定位** | 高效推理 Flash 版本 | 旗舰全能模型 |
-| **架构** | 推测解码增强 (DSpark) | MoE (1 Dense + 69 KDA + 24 Gated MLA) |
-| **总参数** | 未公开（Flash 版本，强调小激活） | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">2.8T</span> |
-| **激活参数** | 远小于 Pro 版本 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">104B</span> |
-| **专家数** | — | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">896 (top-16 + 2 shared)</span> |
-| **上下文** | — | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">1M tokens</span> |
-| **多模态** | 未在 benchmark 中体现 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">支持视觉 (Vision 类 benchmark)</span> |
-| **对比基线** | V4-Pro Preview, GLM-5.2, Opus-4.8 | Claude Fable 5, GPT-5.6 Sol, Opus-4.8, GPT-5.5 |
+| **Positioning** | Efficient inference Flash variant | Flagship all-rounder |
+| **Architecture** | Speculative decoding enhanced (DSpark) | MoE (1 Dense + 69 KDA + 24 Gated MLA) |
+| **Total params** | Undisclosed (Flash variant, emphasizes small activation) | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">2.8T</span> |
+| **Activated params** | Far smaller than Pro variant | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">104B</span> |
+| **Experts** | — | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">896 (top-16 + 2 shared)</span> |
+| **Context** | — | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">1M tokens</span> |
+| **Multimodal** | Not reflected in benchmarks | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">Vision benchmarks included</span> |
+| **Baselines** | V4-Pro Preview, GLM-5.2, Opus-4.8 | Claude Fable 5, GPT-5.6 Sol, Opus-4.8, GPT-5.5 |
 
-**核心差异**: DeepSeek-V4-Flash 是 "小而精" 的高效版，追求性价比；Kimi-K3 是 "大而全" 的旗舰版，覆盖推理/编码/Agent/视觉全场景。
+**Core difference**: DeepSeek-V4-Flash is the "small and refined" efficiency variant pursuing cost-performance; Kimi-K3 is the "large and comprehensive" flagship covering reasoning/coding/agent/vision.
 
 ---
 
-### 1.2 共有 Benchmark 直接对比
+### 1.2 Shared Benchmark Head-to-Head
 
-两模型在 5 个 benchmark 上有直接可比的评测结果。==**Kimi-K3 在全部 5 项上领先 DeepSeek-V4-Flash-0731**==。
+Both models have results on 5 shared benchmarks. ==**Kimi-K3 leads on all 5**==.
 
-| Benchmark | DeepSeek-V4-Flash-0731 | Kimi-K3 (max) | 差值 | 胜出方 |
+| Benchmark | DeepSeek-V4-Flash-0731 | Kimi-K3 (max) | Delta | Winner |
 |---|---|---|---|---|
 | Terminal Bench 2.1 | 82.7 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">88.3</span> | +5.6 | **Kimi-K3** |
 | DeepSWE | 54.4 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">67.5</span> | ==+13.1 🏆== | **Kimi-K3** |
@@ -51,25 +51,25 @@ excerpt: "DeepSeek-V4-Flash-0731 与 Kimi-K3 的 benchmark 全景对比分析。
 | Agents' Last Exam | 25.2 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">28.3</span> | +3.1 | **Kimi-K3** |
 | AutomationBench | 25.1 (Public) | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">30.8</span> | +5.7 | **Kimi-K3** |
 
-> 🏆 = 差距最大的 benchmark
+> 🏆 = largest gap
 
-**差距分层**:
+**Gap breakdown**:
 
-| 差距级别 | Benchmark | 差值 | 解读 |
+| Level | Benchmark | Delta | Interpretation |
 |---|---|---|---|
-| 🔴 **大幅领先** | DeepSWE | **+13.1** | Kimi 在 SWE 代码推理上优势最为显著 |
-| 🟡 **中等领先** | Terminal Bench | **+5.6** | 终端操作 Kimi 明显更强 |
-| 🟡 **中等领先** | Toolathlon-Verified | **+6.2** | 工具使用 Kimi 占优 |
-| 🟡 **中等领先** | AutomationBench | **+5.7** | 自动化任务 Kimi 占优 |
-| 🟢 **小幅领先** | Agents' Last Exam | +3.1 | 最小差距，但仍 Kimi 领先 |
+| 🔴 **Large lead** | DeepSWE | **+13.1** | Kimi dominates SWE code reasoning |
+| 🟡 **Medium lead** | Terminal Bench | **+5.6** | Kimi stronger at terminal operations |
+| 🟡 **Medium lead** | Toolathlon | **+6.2** | Kimi better at tool use |
+| 🟡 **Medium lead** | AutomationBench | **+5.7** | Kimi better at automation |
+| 🟢 **Small lead** | Agents' Last Exam | +3.1 | Smallest gap, still Kimi |
 
 ---
 
-### 1.3 通过 GLM-5.2 的间接对比锚点
+### 1.3 Indirect Comparison via GLM-5.2 Anchor
 
-两模型都评测了 GLM-5.2，可作为间接性能参照。注意两模型卡片中 GLM-5.2 的评测数值不完全一致（评测配置可能不同），仅供参考。
+Both models benchmarked GLM-5.2 as an indirect reference. Note that GLM-5.2 scores differ between cards (evaluation configs may vary).
 
-| Benchmark | DeepSeek-V4-Flash | Kimi-K3 | 胜出 | GLM-5.2 (DeepSeek表) | GLM-5.2 (Kimi表) |
+| Benchmark | DeepSeek-V4-Flash | Kimi-K3 | Winner | GLM-5.2 (DeepSeek card) | GLM-5.2 (Kimi card) |
 |---|---|---|---|---|---|
 | Terminal Bench 2.1 | 82.7 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">88.3</span> | **Kimi +5.6** | 81.0 | 82.7 |
 | DeepSWE | 54.4 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">67.5</span> | **Kimi +13.1** | 46.2 | 46.2 |
@@ -77,17 +77,17 @@ excerpt: "DeepSeek-V4-Flash-0731 与 Kimi-K3 的 benchmark 全景对比分析。
 | Agents' Last Exam | 25.2 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">28.3</span> | **Kimi +3.1** | 23.8 | 20.4 |
 | AutomationBench | 25.1 (Public) | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">30.8</span> | **Kimi +5.7** | 12.9 | 12.9 |
 
-**关键发现**:
+**Key findings**:
 
-- 在 DeepSeek 评测表中，==DeepSeek-V4-Flash-0731 在 Terminal Bench 2.1 (82.7) 上几乎与 GLM-5.2 (81.0) 持平==，而 Kimi-K3 (88.3) 远超两者
-- 在 DeepSWE 上，两模型均远超 GLM-5.2 (46.2)，但 Kimi (67.5) 比 DeepSeek (54.4) 高出 ==13.1 分==
-- Agents' Last Exam 存在数据不一致：DeepSeek 表 GLM-5.2 = 23.8，Kimi 表 GLM-5.2 = 20.4，可能评测配置不同
+- In DeepSeek's card, ==Flash-0731 (82.7) roughly ties GLM-5.2 (81.0) on Terminal Bench==, while Kimi (88.3) far exceeds both
+- On DeepSWE, both crush GLM-5.2 (46.2), but Kimi (67.5) beats DeepSeek (54.4) by ==13.1 points==
+- Agents' Last Exam has inconsistent GLM-5.2 scores across cards (23.8 vs 20.4)
 
 ---
 
-### 1.4 DeepSeek-V4-Flash-0731 独有 Benchmark 分析
+### 1.4 DeepSeek-V4-Flash-0731 Exclusive Benchmarks
 
-DeepSeek 在 Code Agent 任务上评测了更多独有 benchmark:
+DeepSeek evaluated additional Code Agent benchmarks:
 
 | Benchmark | Flash-0731 | Flash (Preview) | V4-Pro (Preview) | GLM-5.2 | Opus-4.8 | Flash vs Opus |
 |---|---|---|---|---|---|---|
@@ -96,101 +96,101 @@ DeepSeek 在 Code Agent 任务上评测了更多独有 benchmark:
 | DSBench-FullStack † | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">68.7</span> | 37.0 | 41.8 | 61.8 | 71.6 | **−2.9** |
 | DSBench-Hard † | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">59.6</span> | 25.8 | 31.1 | 54.5 | 71.7 | **−12.1** |
 
-> Flash-0731 在全部 4 项独有 benchmark 上均领先自家 Preview 版本，但全部落后于 Opus-4.8
+> Flash-0731 leads its own Preview on all 4 exclusive benchmarks, but trails Opus-4.8 on all of them
 
 ---
 
-### 1.5 Kimi-K3 独有 Benchmark 亮点
+### 1.5 Kimi-K3 Exclusive Benchmark Highlights
 
-Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉四大类。
+Kimi-K3 covers far more benchmarks across reasoning, coding, agent, and vision.
 
-### 推理 & 知识
+### Reasoning & Knowledge
 
-> **Kimi 优势**: AA-LCR · **Kimi 劣势**: CritPt (差距 8.9)
+> **Kimi strengths**: AA-LCR · **Kimi weaknesses**: CritPt (gap 8.9)
 
-| Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
+| Benchmark | Kimi-K3 | Top Competitor | Competitor Score | Result |
 |---|---|---|---|---|
-| GPQA Diamond | 93.5 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.1</span> | 🥈 惜败 0.6 |
-| CritPt | 23.4 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">32.3</span> | 🥉 差距 8.9 |
-| AA-LCR | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">74.7</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| HLE-Full | 43.5 / 56.0 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">53.3 / 63.0</span> | 🥈 惜败 9.8 |
+| GPQA Diamond | 93.5 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.1</span> | 🥈 Lost by 0.6 |
+| CritPt | 23.4 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">32.3</span> | 🥉 Gap 8.9 |
+| AA-LCR | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">74.7</span> | Kimi wins | — | 🏆 **Champion** |
+| HLE-Full | 43.5 / 56.0 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">53.3 / 63.0</span> | 🥈 Lost by 9.8 |
 
-### 编码
+### Coding
 
-> **Kimi 优势**: ProgramBench / SWE-Marathon · **Kimi 劣势**: DeepSWE / FrontierSWE
+> **Kimi strengths**: ProgramBench / SWE-Marathon · **Kimi weaknesses**: DeepSWE / FrontierSWE
 
-| Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
+| Benchmark | Kimi-K3 | Top Competitor | Competitor Score | Result |
 |---|---|---|---|---|
-| DeepSWE | 67.5 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">73.0</span> | 🥈 差距 5.5 |
-| ProgramBench | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">77.8</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| Terminal-Bench 2.1 | 88.3 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">88.8</span> | 🥈 惜败 0.5 |
-| FrontierSWE | 81.2 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">86.6</span> | 🥈 差距 5.4 |
-| SWE-Marathon | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">42.0</span> | Kimi 胜出 | — | 🏆 **冠军** (GPT-5.5 仅 14.0) |
+| DeepSWE | 67.5 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">73.0</span> | 🥈 Gap 5.5 |
+| ProgramBench | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">77.8</span> | Kimi wins | — | 🏆 **Champion** |
+| Terminal-Bench 2.1 | 88.3 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">88.8</span> | 🥈 Lost by 0.5 |
+| FrontierSWE | 81.2 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">86.6</span> | 🥈 Gap 5.4 |
+| SWE-Marathon | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">42.0</span> | Kimi wins | — | 🏆 **Champion** (GPT-5.5 only 14.0) |
 
 ### Agent
 
-> **Kimi 优势**: BrowseComp / MCPMark / DeepSearchQA / Harvey · **Kimi 劣势**: GDPval
+> **Kimi strengths**: BrowseComp / MCPMark / DeepSearchQA / Harvey · **Kimi weaknesses**: GDPval
 
-| Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
+| Benchmark | Kimi-K3 | Top Competitor | Competitor Score | Result |
 |---|---|---|---|---|
-| BrowseComp | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">91.2</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| MCPMark-Verified | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.5</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| DeepSearchQA F1 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">95.0</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| Harvey Lab-AA | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.6</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| GDPval-AA v2 (Elo) | 1686 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">1747</span> | 🥈 惜败 61 |
+| BrowseComp | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">91.2</span> | Kimi wins | — | 🏆 **Champion** |
+| MCPMark-Verified | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.5</span> | Kimi wins | — | 🏆 **Champion** |
+| DeepSearchQA F1 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">95.0</span> | Kimi wins | — | 🏆 **Champion** |
+| Harvey Lab-AA | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.6</span> | Kimi wins | — | 🏆 **Champion** |
+| GDPval-AA v2 (Elo) | 1686 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">1747</span> | 🥈 Lost by 61 |
 
-### 视觉
+### Vision
 
-> **Kimi 优势**: OmniDocBench / Video-MME / MMVU · **Kimi 劣势**: WorldVQA / BabyVision
+> **Kimi strengths**: OmniDocBench / Video-MME / MMVU · **Kimi weaknesses**: WorldVQA / BabyVision
 
-| Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
+| Benchmark | Kimi-K3 | Top Competitor | Competitor Score | Result |
 |---|---|---|---|---|
-| OmniDocBench | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">91.1</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| Video-MME (w. sub) | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">90.0</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| MathVision | 94.3 / 97.8 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">95.8</span> / 97.8 | 🥈 惜败 1.5 |
-| MMVU | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">82.1</span> | Kimi 胜出 | — | 🏆 **冠军** |
-| WorldVQA ForceAnswer | 51.0 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">56.7</span> | 🥈 差距 5.7 |
-| BabyVision w/ python | 85.7 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">90.5</span> | 🥈 差距 4.8 |
+| OmniDocBench | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">91.1</span> | Kimi wins | — | 🏆 **Champion** |
+| Video-MME (w. sub) | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">90.0</span> | Kimi wins | — | 🏆 **Champion** |
+| MathVision | 94.3 / 97.8 | GPT-5.6 Sol | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">95.8</span> / 97.8 | 🥈 Lost by 1.5 |
+| MMVU | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">82.1</span> | Kimi wins | — | 🏆 **Champion** |
+| WorldVQA ForceAnswer | 51.0 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">56.7</span> | 🥈 Gap 5.7 |
+| BabyVision w/ python | 85.7 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">90.5</span> | 🥈 Gap 4.8 |
 
 ---
 
-### 1.6 评测方法论差异（重要）
+### 1.6 Evaluation Methodology Differences (Important)
 
-> ⚠️ 两模型评测配置可能不一致，直接对比需谨慎。
+> ⚠️ Evaluation configs may differ between models — direct comparison requires caution.
 
-| 维度 | DeepSeek-V4-Flash-0731 | Kimi-K3 |
+| Dimension | DeepSeek-V4-Flash-0731 | Kimi-K3 |
 |---|---|---|
-| **推理 effort** | max (temperature=1.0, top_p=0.95) | max |
-| **Agent 框架** | DeepSeek Harness 最小模式 | 未公开具体细节 |
-| **AutomationBench 版本** | Public 子集 | 完整版 |
-| **评测集数量** | 9 项 | 40+ 项 |
+| **Reasoning effort** | max (temperature=1.0, top_p=0.95) | max |
+| **Agent framework** | DeepSeek Harness minimal mode | Undisclosed |
+| **AutomationBench version** | Public subset | Full version |
+| **Benchmark count** | 9 | 40+ |
 
 ---
 
-### 1.7 总结
+### 1.7 Summary
 
-| 维度 | 结论 | 数据支撑 |
+| Dimension | Conclusion | Evidence |
 |---|---|---|
-| **共有 benchmark** | Kimi-K3 5/5 全面领先 | DeepSWE +13.1 · Terminal +5.6 · Toolathlon +6.2 |
-| **模型量级** | 非对称对比 | Kimi 2.8T/104B vs Flash 未公开（强调小激活） |
-| **性价比** | ==Flash 以小博大== | Flash 在 Terminal Bench (82.7) ≈ GLM-5.2 (81.0) |
-| **全能性** | Kimi 覆盖推理+编码+Agent+视觉 | 40+ benchmark，15+ 项 🏆 冠军 |
-| **代码能力** | Kimi 优势最大 | DeepSWE 67.5 vs 54.4 (**+13.1**) |
-| **Agent 能力** | Kimi 工具使用更强 | Toolathlon +6.2 · AutomationBench +5.7 |
+| **Shared benchmarks** | Kimi-K3 leads 5/5 | DeepSWE +13.1 · Terminal +5.6 · Toolathlon +6.2 |
+| **Model scale** | Asymmetric comparison | Kimi 2.8T/104B vs Flash undisclosed (small activation) |
+| **Cost-performance** | ==Flash punches above its weight== | Flash Terminal Bench (82.7) ≈ GLM-5.2 (81.0) |
+| **Versatility** | Kimi covers reasoning+coding+agent+vision | 40+ benchmarks, 15+ 🏆 champions |
+| **Coding** | Kimi leads by largest margin | DeepSWE 67.5 vs 54.4 (**+13.1**) |
+| **Agent** | Kimi stronger at tool use | Toolathlon +6.2 · AutomationBench +5.7 |
 
-**一句话**: Kimi-K3 是当今最全面的多模态旗舰之一；DeepSeek-V4-Flash-0731 则证明了 ==**DSpark 推测解码模块能以极小激活量逼近旗舰水平的 Code Agent 能力**==。
+**One-liner**: Kimi-K3 is today's most versatile multimodal flagship; DeepSeek-V4-Flash-0731 proves that ==**DSpark speculative decoding can approach flagship-level Code Agent capability with minimal activation**==.
 
 ---
 
-## Part 2: 原始数据直呈
+## Part 2: Raw Benchmark Data
 
-以下为两模型 HuggingFace 卡片上的原始 benchmark 数据，未做任何加工处理。
+Below are the unprocessed benchmark figures from each model's HuggingFace card.
 
 ### 2.1 DeepSeek-V4-Flash-0731
 
-**模型定位**: 高效推理 Flash 版本，配备推测解码模块 (DeepSeek-V4-Flash-DSpark)
+**Positioning**: Efficient inference Flash variant with speculative decoding module (DeepSeek-V4-Flash-DSpark)
 
-**数据来源**: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731
+**Source**: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731
 
 | Benchmark | DeepSeek-V4-Flash-0731 | DeepSeek-V4-Flash (Preview) | DeepSeek-V4-Pro (Preview) | GLM-5.2 | Opus-4.8 |
 |---|---|---|---|---|---|
@@ -204,25 +204,25 @@ Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉�
 | DSBench-FullStack † | 68.7 | 37.0 | 41.8 | 61.8 | 71.6 |
 | DSBench-Hard † | 59.6 | 25.8 | 31.1 | 54.5 | 71.7 |
 
-> † 表示 DeepSeek 自建评测集
+> † DeepSeek internal benchmark
 
 ---
 
 ### 2.2 Kimi-K3
 
-**模型定位**: MoE 旗舰模型
+**Positioning**: MoE flagship model
 
-**架构规格**:
+**Architecture Specs**:
 
-| 规格项 | 数值 |
+| Spec | Value |
 |---|---|
-| 总参数 | 2.8T |
-| 激活参数 | 104B |
-| 层数 | 93 (1 Dense + 69 KDA + 24 Gated MLA) |
-| 专家数 | 896 (top-16 + 2 shared) |
-| 上下文长度 | 1M tokens |
+| Total params | 2.8T |
+| Activated params | 104B |
+| Layers | 93 (1 Dense + 69 KDA + 24 Gated MLA) |
+| Experts | 896 (top-16 + 2 shared) |
+| Context length | 1M tokens |
 
-**数据来源**: https://huggingface.co/moonshotai/Kimi-K3
+**Source**: https://huggingface.co/moonshotai/Kimi-K3
 
 ### Reasoning & Knowledge
 
@@ -291,13 +291,13 @@ Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉�
 
 ---
 
-## 数据来源
+## Data Sources
 
-| 来源 | URL | 采集时间 |
+| Source | URL | Collected |
 |---|---|---|
 | DeepSeek-V4-Flash-0731 Model Card | [https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) | 2026-08-01 |
 | Kimi-K3 Model Card | [https://huggingface.co/moonshotai/Kimi-K3](https://huggingface.co/moonshotai/Kimi-K3) | 2026-08-01 |
 
 ---
 
-> ⚠️ **免责声明**: 本文数据直接来自模型发布方 HuggingFace 卡片的 self-reported benchmark。两模型评测配置可能存在差异（Agent 框架、temperature、评测子集等），对比结论需结合具体评测条件审慎参考。建议读者点击上方链接查看原始 Model Card 获取完整评测细节。
+> ⚠️ **Disclaimer**: All data is self-reported from the models' HuggingFace cards. Evaluation configs may differ (agent framework, temperature, benchmark subsets). Interpret comparisons with caution. Click the links above for full model card details.
