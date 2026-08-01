@@ -104,7 +104,9 @@ DeepSeek 在 Code Agent 任务上评测了更多独有 benchmark:
 
 Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉四大类。
 
-###推理 & 知识 — Kimi 优势: AA-LCR; 劣势: CritPt
+### 推理 & 知识
+
+> **Kimi 优势**: AA-LCR · **Kimi 劣势**: CritPt (差距 8.9)
 
 | Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
 |---|---|---|---|---|
@@ -113,7 +115,9 @@ Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉�
 | AA-LCR | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">74.7</span> | Kimi 胜出 | — | 🏆 **冠军** |
 | HLE-Full | 43.5 / 56.0 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">53.3 / 63.0</span> | 🥈 惜败 9.8 |
 
-###编码 — Kimi 优势: ProgramBench / SWE-Marathon; 劣势: DeepSWE / FrontierSWE
+### 编码
+
+> **Kimi 优势**: ProgramBench / SWE-Marathon · **Kimi 劣势**: DeepSWE / FrontierSWE
 
 | Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
 |---|---|---|---|---|
@@ -123,7 +127,9 @@ Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉�
 | FrontierSWE | 81.2 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">86.6</span> | 🥈 差距 5.4 |
 | SWE-Marathon | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">42.0</span> | Kimi 胜出 | — | 🏆 **冠军** (GPT-5.5 仅 14.0) |
 
-###Agent — Kimi 优势: BrowseComp / MCPMark / DeepSearchQA / Harvey; 劣势: GDPval
+### Agent
+
+> **Kimi 优势**: BrowseComp / MCPMark / DeepSearchQA / Harvey · **Kimi 劣势**: GDPval
 
 | Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
 |---|---|---|---|---|
@@ -133,7 +139,9 @@ Kimi-K3 的评测覆盖远超 DeepSeek，涵盖推理、编码、Agent、视觉�
 | Harvey Lab-AA | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">94.6</span> | Kimi 胜出 | — | 🏆 **冠军** |
 | GDPval-AA v2 (Elo) | 1686 | Claude Fable 5 | <span style="background:#e8f5e9;font-weight:700;padding:2px 6px;border-radius:3px;">1747</span> | 🥈 惜败 61 |
 
-###视觉 — Kimi 优势: OmniDocBench / Video-MME / MMVU; 劣势: WorldVQA / BabyVision
+### 视觉
+
+> **Kimi 优势**: OmniDocBench / Video-MME / MMVU · **Kimi 劣势**: WorldVQA / BabyVision
 
 | Benchmark | Kimi-K3 | 最强对手 | 对手得分 | 结果 |
 |---|---|---|---|---|
