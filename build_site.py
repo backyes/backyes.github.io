@@ -120,7 +120,7 @@ REPORTS = [
      "tags":["DeepEP","MoE","AllToAll","专家并行","NVLink","RDMA","通信库","DeepSeek"]},
     {"dst":"deepepv2","entry":"html/index.html","visual":"DGEMM",
      "title":"DeepGEMM & DeepEP 三向对比 (Survey by AI)",
-     "desc":"36 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比10篇 + DeepEP独立分析11篇）· 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传",
+     "desc":"47 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比9篇 + DeepEP独立分析11篇 + 测试分析7篇 + 对称内存4篇 + V2弹性架构2篇）· 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传",
      "cat":"chip","priority":"p0",
      "tags":["DeepGEMM","DeepEP","MoE","Mega MoE","SymmBuffer","Warp Specialization","NVLink","RDMA","对称内存","博客验证","三向对比"]},
 ]
@@ -335,7 +335,7 @@ def gen_hero():
         '    <ul class="aside-list">',
         '      <li><span>Latest post</span><a href="posts/deepseek-mtp-wenyan.html">MTP 论 — 多符预测对算力、芯片、互连之结构性影响</a> — 文言文译 MTP 英文原文，提炼核心论点。</li>',
         '      <li><span>Latest survey</span><a href="nvidia-specs-research/nvidia-specs-report.html">NVIDIA 产品全规格深度调研</a> — GPU / CPU / 网络全产品线规格深度调研。</li>',
-        '      <li><span>Browse all</span><a href="posts.html">15 posts</a> on GPU, memory, CXL, MTP, and infrastructure economics · <a href="#survey">24 AI survey reports</a> with paper-level depth.</li>',
+        '      <li><span>Browse all</span><a href="posts.html">15 posts</a> on GPU, memory, CXL, MTP, and infrastructure economics · <a href="#survey">20 AI survey projects</a> with paper-level depth.</li>',
         '    </ul>',
         '  </aside>',
         '</section>',
