@@ -25,7 +25,7 @@ REPORT_DIRS = [
     "inference-community", "deep-ep", "umdk", "pd-separation", "vllm_research",
 ]
 
-EXCLUDE_HOSTS = [r"arxiv\.org", r"githubassets\.com", r"vllm\.ai"]
+EXCLUDE_HOSTS = r"arxiv\.org|githubassets\.com|vllm\.ai"
 
 
 def discover_files():
@@ -40,10 +40,11 @@ def discover_files():
 
 
 def should_exclude(content):
-    for host in EXCLUDE_HOSTS:
-        if re.search(r'href="https?://[^"]*' + host, content):
-            return True
-    return False
+    """Only exclude files with external stylesheet links (scraped pages)."""
+    return bool(re.search(
+        r'<link[^>]*rel=["\']stylesheet["\'][^>]*href="https?://[^"]*(?:' + EXCLUDE_HOSTS + ')',
+        content, re.I
+    ))
 
 
 def verify_file(fp):

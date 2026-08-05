@@ -1,161 +1,64 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
+  <link rel="stylesheet" href="../../../assets/css/notion-style.css">
+  <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>vLLM PD 分离 · Decode 端 KV Cache 内存容量分析</title>
-<style>
-  :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --panel-2: #1c2330;
-    --border: #30363d;
-    --fg: #e6edf3;
-    --muted: #8b949e;
-    --accent: #58a6ff;
-    --accent-2: #7ee787;
-    --accent-warn: #d29922;
-    --accent-danger: #f85149;
-    --code-bg: #0b1018;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                 "Noto Sans CJK SC", "PingFang SC", sans-serif;
-    line-height: 1.6;
-  }
-  header {
-    background: linear-gradient(135deg, #1a2138 0%, #0d1117 100%);
-    border-bottom: 1px solid var(--border);
-    padding: 28px 20px;
-    text-align: center;
-  }
-  header h1 { margin: 0 0 8px; font-size: 1.6rem; color: var(--accent); }
-  header .subtitle { color: var(--muted); font-size: 0.95rem; }
-  header .meta { margin-top: 10px; font-size: 0.85rem; color: var(--muted); }
-  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
-  section {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px 22px;
-    margin-bottom: 18px;
-  }
-  h2 {
-    color: var(--accent-2);
-    font-size: 1.25rem;
-    border-bottom: 1px dashed var(--border);
-    padding-bottom: 6px;
-    margin-top: 0;
-  }
-  h3 { color: var(--accent); font-size: 1.05rem; margin-top: 20px; }
-  p, li { font-size: 0.95rem; }
-  code {
-    background: var(--code-bg);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    border: 1px solid var(--border);
-  }
-  pre {
-    background: var(--code-bg);
-    padding: 14px;
-    border-radius: 8px;
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    font-size: 0.82rem;
-    line-height: 1.5;
-  }
-  pre code { background: transparent; padding: 0; border: 0; }
-  table {
-    width: 100%; border-collapse: collapse; margin: 12px 0;
-    font-size: 0.88rem;
-  }
-  th, td {
-    border: 1px solid var(--border);
-    padding: 8px 10px;
-    vertical-align: top;
-  }
-  th { background: var(--panel-2); color: var(--accent-2); }
-  tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-  .pill {
-    display: inline-block;
-    border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 0.78rem;
-    margin-right: 4px;
-  }
-  .pill-orange { background: rgba(210,153,34,.2); color: var(--accent-warn); border: 1px solid var(--accent-warn); }
-  .pill-green  { background: rgba(126,231,135,.15); color: var(--accent-2); border: 1px solid var(--accent-2); }
-  .pill-blue   { background: rgba(88,166,255,.15); color: var(--accent); border: 1px solid var(--accent); }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .badge {
-    display: inline-block;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 12px;
-    margin: 4px;
-    font-size: 0.82rem;
-  }
-  blockquote {
-    border-left: 3px solid var(--accent-warn);
-    background: rgba(210,153,34,.08);
-    padding: 10px 14px;
-    margin: 10px 0;
-    color: #f0e6d2;
-  }
-  .callout {
-    background: rgba(88,166,255,.08);
-    border-left: 3px solid var(--accent);
-    padding: 12px 14px;
-    margin: 12px 0;
-    border-radius: 0 6px 6px 0;
-    font-size: 0.9rem;
-  }
-  .number-huge {
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--accent-2);
-  }
-  .grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  @media (max-width: 680px) {
-    .grid-2 { grid-template-columns: 1fr; }
-    header h1 { font-size: 1.3rem; }
-  }
-  .toc { font-size: 0.88rem; columns: 2; column-gap: 20px; }
-  .toc a { display: block; padding: 3px 0; }
-  footer {
-    text-align: center;
-    color: var(--muted);
-    font-size: 0.78rem;
-    padding: 24px;
-    border-top: 1px solid var(--border);
-  }
-  .source-tag {
-    font-size: 0.72rem;
-    color: var(--muted);
-    margin-left: 6px;
-  }
-</style>
 </head>
 <body>
 
+
 <header>
   <h1>vLLM PD 分离 · Decode 端 KV Cache 内存容量分析</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#1-调研方法--目录" class="toc-h2">1. 调研方法 & 目录</a></li>
+<li><a href="#2-d-端-kv-cache-pool--block-manager-设计-paged_attent" class="toc-h2">2. D 端 KV Cache pool / Block Manager 设计 (paged_attention.md · hybrid_kv_cache_manager.md · prefix_caching.md)</a></li>
+<li><a href="#21-整体流程-scheduler--kvcachemanager--blockpool--gpu-" class="toc-h3">2.1 整体流程 (Scheduler → KVCacheManager → BlockPool → GPU tensor)</a></li>
+<li><a href="#22-谁是d-端的决定者" class="toc-h3">2.2 谁是"D 端"的决定者</a></li>
+<li><a href="#23-pd-分离后-d-端的-kv-cache-来源三种路径" class="toc-h3">2.3 PD 分离后 D 端的 KV Cache 来源（三种路径）</a></li>
+<li><a href="#3-block_size--gpu_memory_utilization--kv_cache_mem" class="toc-h2">3. block_size / gpu_memory_utilization / kv_cache_memory_bytes 默认值及影响 (vllm/config/cache.py 实测源码)</a></li>
+<li><a href="#31-关键参数默认值" class="toc-h3">3.1 关键参数默认值</a></li>
+<li><a href="#32-源码级证据cacheconfig" class="toc-h3">3.2 源码级证据（CacheConfig）</a></li>
+<li><a href="#33-各参数对-d-端容量的实际影响" class="toc-h3">3.3 各参数对 D 端容量的实际影响</a></li>
+<li><a href="#4-d-端-kv-cache-调度swap--eviction--prefix-cachingkv_" class="toc-h2">4. D 端 KV Cache 调度（swap / eviction / prefix caching）(kv_cache_manager.py · block_pool.py · prefix_caching.md)</a></li>
+<li><a href="#41-核心调度逻辑kvcachemanagerallocate_slots" class="toc-h3">4.1 核心调度逻辑（KVCacheManager.allocate_slots）</a></li>
+<li><a href="#42-请求生命周期内的-kv-cache-操作" class="toc-h3">4.2 请求生命周期内的 KV Cache 操作</a></li>
+<li><a href="#43-与-cpu-swap--offloadingconnector-的协同" class="toc-h3">4.3 与 CPU swap / OffloadingConnector 的协同</a></li>
+<li><a href="#44-swap--preemption-策略" class="toc-h3">4.4 Swap / Preemption 策略</a></li>
+<li><a href="#5-kv_cache_dtype-与精度对-d-端容量的影响-cachepy--conserving" class="toc-h2">5. kv_cache_dtype 与精度对 D 端容量的影响 (cache.py · conserving_memory.md)</a></li>
+<li><a href="#51-支持的-kv-cache-dtype-全量" class="toc-h3">5.1 支持的 KV Cache dtype 全量</a></li>
+<li><a href="#52-各-dtype-存储容量折算相对-fp16-baseline-的比值" class="toc-h3">5.2 各 dtype 存储容量折算（相对 fp16 baseline 的比值）</a></li>
+<li><a href="#53-对-d-端工程取舍" class="toc-h3">5.3 对 D 端工程取舍</a></li>
+<li><a href="#6-d-端-memory-profiling权重--kv-cache--激活--碎片-各占多少-gp" class="toc-h2">6. D 端 Memory Profiling：权重 + KV Cache + 激活 + 碎片 各占多少 (gpu_worker.py · mem_utils.py)</a></li>
+<li><a href="#61-核心函数-gpuworkerdetermine_available_memory" class="toc-h3">6.1 核心函数 GPUWorker.determine_available_memory()</a></li>
+<li><a href="#62-vllm-官方分类公式memory_profiling-docstringmem_utilsp" class="toc-h3">6.2 vLLM 官方分类公式（memory_profiling docstring，mem_utils.py L242-276）</a></li>
+<li><a href="#63-命名与公式速查" class="toc-h3">6.3 命名与公式速查</a></li>
+<li><a href="#64-典型-d-端-hbm-分布经验值-源自-conserving_memorymd--用户报告" class="toc-h3">6.4 典型 D 端 HBM 分布（经验值, 源自 conserving_memory.md + 用户报告）</a></li>
+<li><a href="#65-关键环境变量显存-profiling-细粒度控制" class="toc-h3">6.5 关键环境变量（显存 profiling 细粒度控制）</a></li>
+<li><a href="#7-长-context-1m-下-vllm-的-hbm-挑战-kv_cache_utilspy" class="toc-h2">7. 长 context (1M) 下 vLLM 的 HBM 挑战 (kv_cache_utils.py)</a></li>
+<li><a href="#71-单-token-kv-显存" class="toc-h3">7.1 单 token KV 显存</a></li>
+<li><a href="#72-1m-token-kv-cache-需求单个-request" class="toc-h3">7.2 1M token KV Cache 需求（单个 request）</a></li>
+<li><a href="#73-pd-分离对-d-端-1m-context-的影响" class="toc-h3">7.3 PD 分离对 D 端 1M context 的影响</a></li>
+<li><a href="#74-缓解路径" class="toc-h3">7.4 缓解路径</a></li>
+<li><a href="#8-pd-kv-transfer-的-d-端内存承诺lease--push--watchdognix" class="toc-h2">8. PD KV Transfer 的 D 端内存承诺（Lease / Push / Watchdog）(nixl_kv_cache_lease.md · nixl_kv_push_connector.md)</a></li>
+<li><a href="#81-关键参数与默认值" class="toc-h3">8.1 关键参数与默认值</a></li>
+<li><a href="#82-d-端三个内存事件push-模式-详见-nixl_kv_push_connectormd" class="toc-h3">8.2 D 端三个内存事件（push 模式, 详见 nixl_kv_push_connector.md）</a></li>
+<li><a href="#83-lease-renewal-对-d-端-kv-cache-的影响-nixl_kv_cache_" class="toc-h3">8.3 Lease renewal 对 D 端 KV Cache 的影响 (nixl_kv_cache_lease.md)</a></li>
+<li><a href="#84-lease-设计总结" class="toc-h3">8.4 Lease 设计总结</a></li>
+<li><a href="#9-引用--调研过程附件" class="toc-h2">9. 引用 & 调研过程附件</a></li>
+<li><a href="#91-主要引用来源" class="toc-h3">9.1 主要引用来源</a></li>
+<li><a href="#92-下载到本地的文件vllm_pd_decode_memory" class="toc-h3">9.2 下载到本地的文件（vllm_pd_decode_memory/）</a></li>
+<li><a href="#93-关键发现总结" class="toc-h3">9.3 关键发现总结</a></li>
+</ul>
+</details>
+
   <div class="subtitle">vLLM v1 架构下 D 实例（Decode Worker）KV Cache pool / 调度 / 容量定量剖析</div>
   <div class="meta">生成时间: 2026-07-15 · 数据源: vLLM 官方 GitHub raw + docs + 核心源码</div>
 </header>
 
-<div class="container">
+<div class="notion-page">
 
   <!-- ============= 1. 概要 ============= -->
   <section>
@@ -709,5 +612,6 @@ DeepSeek-V3 (fp16):   1M ×  1,408 bytes  =  1.3 GiB</code></pre>
   <div>© 2026 · vLLM PD 分离 KV Cache 容量分析 · 生成工具: Playwright + Python urllib</div>
   <div>所有数字与结论均溯源到 vLLM 官方 GitHub main 分支（2026-07-15 访问）；主观结论已标注为"经验值"</div>
 </footer>
+
 </body>
 </html>

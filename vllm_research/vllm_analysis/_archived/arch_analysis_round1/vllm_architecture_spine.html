@@ -1,40 +1,52 @@
 <!doctype html>
 <html lang="zh">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>vLLM 架构深度分析 · 第一性原理视角</title>
-<link rel="stylesheet" href="report.css">
-<style>
-/* spine-only accents */
-.s_diag{border:1px solid #2a3038;border-radius:8px;padding:10px;margin:14px 0;background:#fff}
-.s_diag img{mix-blend-mode:multiply}
-@media(prefers-color-scheme:light){.s_diag{background:#fff;}.s_diag img{mix-blend-mode:normal}}
-.inv{background:linear-gradient(90deg,#1b2330,#0e1116);border-left:4px solid #6ea8fe;
-  padding:10px 14px;margin:14px 0;font-style:italic}
-.tag{display:inline-block;background:#2563eb;color:#fff;font-size:70%;padding:2px 7px;border-radius:10px;margin-right:6px}
-.xref{font-size:.85em;color:var(--accent)}
-.figgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:640px){.figgrid{grid-template-columns:1fr}}
-</style>
-
-<style>
-@media(max-width:768px){
-  body{padding:16px!important;max-width:100%!important}
-  h1{font-size:1.3rem!important}
-  h2{font-size:1.1rem!important}
-  table{font-size:.82em!important; display:block; overflow-x:auto}
-  th,td{padding:5px 7px!important}
-  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
-  .archgrid,.grid,.shell{grid-template-columns:1fr!important}
-  nav,.nav{position:static!important;max-height:none!important}
-  img{max-width:100%!important}
-}
-</style>
 </head>
 <body>
+<div class="notion-page">
+
 <div class="topbar">📘 vLLM 架构分析 · <a href="index.html">返回索引</a> · 面向系统工程师 / 并行计算 / AI 算法 / 推理架构师</div>
 
 <h1>vLLM 架构深度分析：第一性原理视角</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#0-v0-已死v1-的诞生为什么-vllm-必须重构" class="toc-h2">0. v0 已死，v1 的诞生——为什么 vLLM 必须重构</a></li>
+<li><a href="#1-三条物理不变量vllm-架构的第一性原理" class="toc-h2">1. 三条物理不变量——vLLM 架构的"第一性原理"</a></li>
+<li><a href="#2-paged-kv-cache推理系统的页表" class="toc-h2">2. Paged KV-cache：推理系统的页表</a></li>
+<li><a href="#为什么整块分配会死" class="toc-h3">为什么整块分配会死</a></li>
+<li><a href="#数据结构的解剖" class="toc-h3">数据结构的解剖</a></li>
+<li><a href="#allocatorfree-list--content-hash-map" class="toc-h3">allocator：free-list + content hash map</a></li>
+<li><a href="#页表-indirection这条-kernel-就是页表-walk" class="toc-h3">"页表 indirection"——这条 kernel 就是页表 walk</a></li>
+<li><a href="#免费附赠为什么-paging-是三条需求的同时解" class="toc-h3">免费附赠为什么 paging 是三条需求的同时解</a></li>
+<li><a href="#3-单步调度器带宽墙被迫的-token-budget" class="toc-h2">3. 单步调度器：带宽墙被迫的 token-budget</a></li>
+<li><a href="#没有-prefill-阶段没有-decode-阶段" class="toc-h3">"没有 prefill 阶段，没有 decode 阶段"</a></li>
+<li><a href="#单循环-algorithm" class="toc-h3">单循环 algorithm</a></li>
+<li><a href="#chunked-prefill-是-roofline-的直接推论" class="toc-h3">chunked prefill 是 roofline 的直接推论</a></li>
+<li><a href="#admission--preemption-作为反馈控制器" class="toc-h3">admission / preemption 作为反馈控制器</a></li>
+<li><a href="#4-心脏-execute_modelschedule--prepare--forward--samp" class="toc-h2">4. 心脏 execute_model：schedule → prepare → forward → sample</a></li>
+<li><a href="#gpu-modelrunnerexecute_model-data-flow单步-1134-1374" class="toc-h3">GPU ModelRunner.execute_model data flow（单步 1134-1374, GPUModelRunner）</a></li>
+<li><a href="#5-python-前端--tritoncuda-kernel955-法则" class="toc-h2">5. Python 前端 + Triton/CUDA kernel：95/5 法则</a></li>
+<li><a href="#6-attentionbackend唯一的硬件相关算子" class="toc-h2">6. AttentionBackend：唯一的硬件相关算子</a></li>
+<li><a href="#6b-并行计算tp--pp--dp--ep-是如何合而不乱" class="toc-h2">6b. 并行计算：TP / PP / DP / EP 是如何合而不乱</a></li>
+<li><a href="#7-platform-抽象device-as-an-interface" class="toc-h2">7. Platform 抽象：device as an interface</a></li>
+<li><a href="#8-三种执行模式full--piecewise--eager-cuda-graph" class="toc-h2">8. 三种执行模式：FULL / PIECEWISE / eager CUDA Graph</a></li>
+<li><a href="#9-vllm-ascend一条完整的非-gpu-适配线" class="toc-h2">9. vLLM-Ascend：一条完整的非 GPU 适配线</a></li>
+<li><a href="#ascend-最醒眼的三个原创" class="toc-h3">Ascend 最醒眼的三个"原创"</a></li>
+<li><a href="#patch-层暴露面不足的诊断书" class="toc-h3">patch 层——"暴露面不足"的诊断书</a></li>
+<li><a href="#10-vllm-硬件适配通用方法论任何-dsa--gpu-厂商的-playbook" class="toc-h2">10. vLLM 硬件适配通用方法论（任何 DSA / GPU 厂商的 playbook）</a></li>
+<li><a href="#必做--应做--加分" class="toc-h3">必做 / 应做 / 加分</a></li>
+<li><a href="#fork-vs-plugin-vs-patch-决策" class="toc-h3">Fork vs plugin vs patch 决策</a></li>
+<li><a href="#11-给推理架构师的设计洞见" class="toc-h2">11. 给推理架构师的设计洞见</a></li>
+<li><a href="#附关键引用与路线图" class="toc-h2">附：关键引用与路线图</a></li>
+<li><a href="#必须读的官方文档" class="toc-h3">必须读的官方文档</a></li>
+<li><a href="#本分析版本锚点" class="toc-h3">本分析版本锚点</a></li>
+<li><a href="#vllm-架构变化路线时间线" class="toc-h3">vLLM 架构变化路线（时间线）</a></li>
+</ul>
+</details>
+
 <div class="callout"><strong>为什么这份报告</strong>。vLLM 源码 ~25 万行，分析容易滑向"文件目录 + 接口清单"。本文反向追问：给定 <em>transformer 的数学、GPU 的带宽墙、芯片的多样性</em> 这三条物理约束，推理系统的结构<strong>被迫</strong>会长成什么样？若一条设计是被物理"逼"出来的，它就是稳定的、跨硬件的；若是工程选择，它就是可替换的、也是昇腾这类适配最该动刀的地方。文末的「适配方法论」即由此展开。<br><br>
 👉 细节参考：这是 spine（脊柱），6 份 agent 分报告（含完整 file:line <code>path/file.py:N</code> 引用）在索引里，按需钻取：<a href="agent1_engine_orchestration.html">L1 引擎</a> · <a href="agent2_scheduler_kvcache.html">L2 调度/KV</a> · <a href="agent3_attention_model_platform.html">L3 注意力/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a>。</div>
 
@@ -404,5 +416,7 @@ set_device / get_attn_backend_cls / manual_seed_all</code></pre>
 </table>
 
 <div class="meta" style="margin-top:28px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18 · 本报告（spine）+ 6 份 agent HTML + 索引 <code>index.html</code>。</div>
+
+</div>
 </body>
 </html>

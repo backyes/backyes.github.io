@@ -1,41 +1,45 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
+  <link rel="stylesheet" href="../../../assets/css/notion-style.css">
+  <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PD 分离 D 端内存瓶颈 — 社区技术调研报告</title>
-<style>
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--warn:#f0883e;--green:#3fb950;--red:#f85149;--purple:#bc8cff;}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:16px;max-width:900px;margin:0 auto}
-h1{font-size:1.5em;color:var(--accent);margin:16px 0 8px;border-bottom:1px solid var(--border);padding-bottom:8px}
-h2{font-size:1.2em;color:var(--warn);margin:20px 0 8px}
-h3{font-size:1.05em;color:var(--purple);margin:14px 0 6px}
-.meta{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0;font-size:.85em}
-.meta span{display:inline-block;margin-right:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin:12px 0}
-.card.warn{border-left:4px solid var(--warn)}
-.card.info{border-left:4px solid var(--accent)}
-.card.ok{border-left:4px solid var(--green)}
-ul,ol{padding-left:22px;margin:6px 0}
-li{margin:4px 0}
-a{color:var(--accent);word-break:break-all}
-code{background:#1c2128;padding:2px 6px;border-radius:4px;font-size:.88em}
-.tag{display:inline-block;background:#1c2128;border:1px solid var(--border);border-radius:12px;padding:2px 10px;font-size:.78em;margin:2px}
-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.85em}
-th,td{border:1px solid var(--border);padding:6px 8px;text-align:left}
-th{background:#1c2128;color:var(--accent)}
-blockquote{border-left:3px solid var(--accent);padding-left:12px;color:#8b949e;margin:8px 0;font-style:italic}
-.src{font-size:.78em;color:#8b949e;margin-top:4px}
-.src a{color:#8b949e}
-.highlight{color:var(--warn);font-weight:600}
-.num{color:var(--green);font-weight:600}
-footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--border);font-size:.78em;color:#8b949e}
-</style>
 </head>
 <body>
+<div class="notion-page">
+
 
 <h1>PD 分离 D 端（Decode）内存瓶颈<br><span style="font-size:.7em;color:#8b949e">社区论坛 / GitHub Issue / 博客评论区 技术调研</span></h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#1-瓶颈定性decode-kv-bound-成为独立瓶颈类" class="toc-h2">1. 瓶颈定性：Decode-KV-bound 成为独立瓶颈类</a></li>
+<li><a href="#11-vllm-rfc-43470--首次正式定义-decode-kv-bound" class="toc-h3">1.1 vLLM RFC #43470 — 首次正式定义 "Decode-KV-bound"</a></li>
+<li><a href="#12-google-ai-overview-双重确认" class="toc-h3">1.2 Google AI Overview 双重确认</a></li>
+<li><a href="#2-实际部署数据d-端内存不够的具体案例" class="toc-h2">2. 实际部署数据：D 端内存不够的具体案例</a></li>
+<li><a href="#21-sglang-24523--pd-部署-input-length-被硬限-18432-toke" class="toc-h3">2.1 SGLang #24523 — PD 部署 input length 被硬限 18,432 Tokens（H200 140GB）</a></li>
+<li><a href="#32-sglang-30010--高并发-batch-下-decode-死锁gb300--kimi-" class="toc-h3">3.2 SGLang #30010 — 高并发 batch 下 Decode 死锁（GB300 / Kimi-K2.5-NVFP4）</a></li>
+<li><a href="#23-sglang-31252--hicache-draft-kv-pool-backup-在-pd" class="toc-h3">2.3 SGLang #31252 — HiCache draft KV pool backup 在 PD 模式 crash</a></li>
+<li><a href="#24-sglang-23022--多模态--dp--1--pd-共享内存过早释放" class="toc-h3">2.4 SGLang #23022 — 多模态 + DP > 1 + PD 共享内存过早释放</a></li>
+<li><a href="#3-学术前沿异构-pd-设计空间arxiv-260629708-2026-06-30" class="toc-h2">3. 学术前沿：异构 PD 设计空间（arXiv 2606.29708, 2026-06-30）</a></li>
+<li><a href="#四设计轴" class="toc-h3">四设计轴</a></li>
+<li><a href="#三边界决策与-d-端内存直接相关" class="toc-h3">三边界决策（与 D 端内存直接相关）</a></li>
+<li><a href="#4-工业实践d-端-kv-pool-规划与容量扩展" class="toc-h2">4. 工业实践：D 端 KV pool 规划与容量扩展</a></li>
+<li><a href="#41-vllm-单节点-pd--mori-io-解决-itl-尖峰2026-04-07-博客" class="toc-h3">4.1 vLLM 单节点 PD — MORI-IO 解决 ITL 尖峰（2026-04-07 博客）</a></li>
+<li><a href="#42-vllm--mooncake--分布式-kv-cache-pool-via-multiconn" class="toc-h3">4.2 vLLM × Mooncake — 分布式 KV cache pool via MultiConnector（2026-05-06）</a></li>
+<li><a href="#43-vllm-46107--moriio-异构-tpdp-并行mi300x-实测数据" class="toc-h3">4.3 vLLM #46107 — MoRIIO 异构 TP↔DP 并行（MI300X 实测数据）</a></li>
+<li><a href="#44-sglang-uni-pd--memory-semantic-pd-范式35263-2025-" class="toc-h3">4.4 SGLang Uni-PD — Memory-semantic PD 范式（#35263, 2025-12-09）</a></li>
+<li><a href="#5-kv-pool-sizing-方法论" class="toc-h2">5. KV pool sizing 方法论</a></li>
+<li><a href="#6-其他关键-issue-索引" class="toc-h2">6. 其他关键 Issue 索引</a></li>
+<li><a href="#7-社区讨论sglang-discussions" class="toc-h2">7. 社区讨论（SGLang Discussions）</a></li>
+<li><a href="#8-研判总结模型设计者视角" class="toc-h2">8. 研判总结（模型设计者视角）</a></li>
+<li><a href="#附录-a全部抓取来源-url" class="toc-h2">附录 A：全部抓取来源 URL</a></li>
+<li><a href="#主搜索6-项" class="toc-h3">主搜索（6 项）</a></li>
+<li><a href="#深度-issue--博客8-项" class="toc-h3">深度 Issue / 博客（8 项）</a></li>
+<li><a href="#访问失败" class="toc-h3">访问失败</a></li>
+</ul>
+</details>
+
 
 <div class="meta">
   <span>📅 调研日期：2026-07-15</span>
@@ -280,5 +284,7 @@ DSv4 pool sizes: full=186368, swa=18432, c4=46592, c128=1456, c4_state=1152, c12
 <footer>
 报告生成：2026-07-15 by Claude (LongCat-2.0) · 本地存档目录：research/decode-memory-bottleneck/ · 原始抓取文件 18 个共 82 KB
 </footer>
+
+</div>
 </body>
 </html>

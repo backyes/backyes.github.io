@@ -51,12 +51,9 @@ REPORT_DIRS = [
     "vllm_research",
 ]
 
-# External CSS hosts — files linking to these are scraped snapshots, skip them
-EXCLUDE_HOSTS = [
-    r"arxiv\.org",
-    r"githubassets\.com",
-    r"vllm\.ai",
-]
+# External CSS hosts — files with <link rel="stylesheet"> to these are scraped
+# NOTE: only match actual stylesheet links, NOT regular <a> content links
+EXCLUDE_HOSTS = r"arxiv\.org|githubassets\.com|vllm\.ai"
 
 # Wrapper class names that should be normalized to .notion-page
 WRAPPER_CLASSES = ["container", "wrap", "article-body", "content", "main-content"]
@@ -72,11 +69,12 @@ def relpath_to_css(file_rel: str) -> str:
 
 
 def should_exclude(content: str) -> bool:
-    """Return True if file links to external scraped-page CSS (keep as-is)."""
-    for host in EXCLUDE_HOSTS:
-        if re.search(r'href="https?://[^"]*' + host, content):
-            return True
-    return False
+    """Return True if file is a scraped external page (has <link rel="stylesheet">
+    pointing to arxiv/githubassets/vllm.ai). Regular <a> content links don't count."""
+    return bool(re.search(
+        r'<link[^>]*rel=["\']stylesheet["\'][^>]*href="https?://[^"]*(?:' + EXCLUDE_HOSTS + ')',
+        content, re.I
+    ))
 
 
 def extract_toc(body_inner: str) -> str:
