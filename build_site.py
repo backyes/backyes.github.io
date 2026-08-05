@@ -709,5 +709,19 @@ def main():
         open(out, 'w', encoding='utf-8').write(page)
         print(f"  ✓ 文章页: posts/{p['slug']}.html")
 
+    # ──── Auto-apply Notion style to all report files ────
+    # Runs after every build so rsync-overwritten reports are restyled automatically.
+    import subprocess
+    print("  ⟳ 自动应用 Notion 风格到所有报告 ...")
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO, 'scripts', 'restyle_reports.py')],
+        capture_output=True, text=True
+    )
+    # Print summary line only
+    for line in result.stdout.split('\n'):
+        if 'files restyled' in line or 'Total:' in line:
+            print(f"  {line.strip()}")
+
 if __name__ == '__main__':
+    import sys
     main()
