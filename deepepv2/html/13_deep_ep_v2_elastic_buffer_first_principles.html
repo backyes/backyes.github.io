@@ -1,0 +1,2191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP V2 ElasticBuffer 第一性原理深潜</title>
+<style>
+:root { --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef; --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97; --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe; --tag-bg: #f7f6f3; --tag-text: #6b7280; --orange-bg: #fef7e0; --orange-text: #b06000; }
+@media (prefers-color-scheme: dark) { :root { --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f; --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280; --border: #373737; --accent: #529cca; --accent-bg: #252525; --tag-bg: #2f2f2f; --tag-text: #9b9a97; --orange-bg: #3a301e; --orange-text: #fbbc04; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 15px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.header { background: var(--bg-secondary); border-bottom: 1px solid var(--border); padding: 40px 0 30px; margin-bottom: 30px; }
+.header-content { max-width: 960px; margin: 0 auto; padding: 0 40px; }
+.header h1 { font-size: 1.8em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+.header p { color: var(--text-secondary); font-size: 0.95em; }
+.container { max-width: 960px; margin: 0 auto; padding: 0 40px 80px; }
+h1 { font-size: 2em; font-weight: 700; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.5em; font-weight: 600; margin: 1.5em 0 0.5em; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-size: 1.2em; font-weight: 600; margin: 1.2em 0 0.4em; color: #1a5276; }
+h4 { font-size: 1.05em; font-weight: 600; margin: 1em 0 0.3em; color: var(--text-secondary); }
+p { margin: 0.8em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; font-family: "SF Mono", Menlo, monospace; }
+pre { background: var(--bg-secondary); padding: 16px 20px; border-radius: 8px; overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); }
+pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.6; }
+blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 1em 0; background: var(--accent-bg); border-radius: 0 4px 4px 0; }
+blockquote p { margin: 0.3em 0; color: var(--text-secondary); }
+table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.9em; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+th { background: var(--bg-secondary); font-weight: 600; }
+ul, ol { margin: 0.8em 0; padding-left: 24px; }
+li { margin: 0.4em 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+@media (max-width: 768px) { .header-content, .container { padding: 0 20px; } pre { padding: 12px 14px; } }
+</style>
+</head>
+<body>
+<div class="header"><div class="header-content">
+<h1>DeepEP V2 ElasticBuffer 第一性原理深潜</h1>
+<p>统一接口、SM 估算、Engram 与 0 SM 通信的全景分析 — 13 个核心问题的深度解答</p>
+</div></div>
+<div class="container">
+<h1 id="deepep-v2-elasticbuffer-sm-engram-0-sm">DeepEP V2 ElasticBuffer 第一性原理深潜：统一接口、SM 估算、Engram 与 0 SM 通信的全景分析</h1>
+<hr />
+<h2 id="13">📋 原始问题清单（13 问）</h2>
+<blockquote>
+<p>以下 13 个问题来源于对 DeepEP V2 架构的深度讨论，本报告基于源码逐一分析并给出答案。</p>
+</blockquote>
+<h3 id="q1-elasticbuffer-normal-low-latency">Q1: ElasticBuffer 为什么可以统一 Normal 和 Low-Latency 场景？</h3>
+<blockquote>
+<p>"In V2, all EP operations — high-throughput and low-latency — are unified under a single ElasticBuffer interface. The buffer can be initialized by specifying MoE settings directly, and the optimal SM and QP counts are calculated analytically."</p>
+<p>Normal 和 Low-Latency 的系统影响主要量化因素是什么？</p>
+</blockquote>
+<h3 id="q2-sm-moe">Q2: SM 自动估算的本质是什么，跟 MOE 哪些关键要素有关？</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">_num_comm_sms</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">get_theoretical_num_sms</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">)</span>
+</code></pre></div>
+
+<blockquote>
+<p>例如，这儿 <code>num_experts</code>, <code>num_topk</code> 两个变量，是否描述了通信 pairs 数量？为什么这里采用专家数，而不是卡数，是专家数，还是卡数？</p>
+</blockquote>
+<p><strong>用户推测</strong>：</p>
+<ul>
+<li>SM 要处理到所有专家/卡的连接，推测 deepep buffer 是一等公民，而 buffer 是 expert 专家粒度，所以要读写内存位置（buffer）数量是 expert 的函数，而不仅仅是卡数</li>
+<li>SM 处理逻辑里，要针对 token level 的处理，token level 有一个 topk 的复制数量，采用了 topk 粒度的发送控制逻辑，也可能 buffer 粒度没有 topk 概念，但是 buffer 间的数据搬移量跟 topk 相关</li>
+<li>每卡处理负载应该与卡数有关，每卡上的专家数量跟卡数有关，为什么不考虑卡数这个概念，来估算 SM</li>
+</ul>
+<h3 id="q3-dispatch_forward-topk-buffer">Q3: dispatch_forward 函数是否包含了 topk buffer 的生成？</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="o">=</span><span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_weights</span><span class="o">=</span><span class="n">topk_weights</span><span class="p">,</span>
+    <span class="n">num_experts</span><span class="o">=</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="o">=</span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span>
+    <span class="n">expert_alignment</span><span class="o">=</span><span class="n">expert_alignment</span><span class="p">,</span> <span class="n">num_sms</span><span class="o">=</span><span class="n">_num_comm_sms</span><span class="p">,</span>
+    <span class="n">async_with_compute_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+
+<blockquote>
+<p>Token 的复制过程，是否发生在 <code>buffer.dispatch</code> 内，且利用了 <code>topk_idx</code> 函数？</p>
+</blockquote>
+<h3 id="q4-cache-prefill-train">Q4: 解码是否都是走的低时延模式？为什么低时延模式下可以设置路由 cache，而 prefill 和 train 没有？</h3>
+<div class="codehilite"><pre><span></span><code><span class="k">if</span> <span class="n">cached_handle</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># Reuse cached handle: skip layout recomputation and CPU sync</span>
+    <span class="n">recv_x</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">handle</span><span class="o">=</span><span class="n">cached_handle</span><span class="p">,</span> <span class="n">num_sms</span><span class="o">=</span><span class="n">_num_comm_sms</span><span class="p">,</span>
+        <span class="n">async_with_compute_stream</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">recv_x</span><span class="p">,</span> <span class="n">cached_handle</span><span class="o">.</span><span class="n">topk_idx</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span>
+</code></pre></div>
+
+<blockquote>
+<p>为什么只需要 cache 设置的情况下，无需 topk 的信息了（难道 100% cache 了么？）？</p>
+<p>从第一性原理角度，低时延模式要优先使用 SM 来处理通信的控制和数据面，且建议减少中间通信算法的跳数以减低时延，DeepEP V2 的 ElasticBuffer 做了哪些优化，是 API 上统一了，还是通信算法上也做了统一？列出关键技术以及第一性原理，另外启发到 UB、URMA 和 UBMEM 的设计里去。</p>
+</blockquote>
+<h3 id="q5-deepep-v2-0-sm-v2">Q5: DeepEP V2 强调 0 SM，是否意味 V2 发现通信哪些先验知识了？</h3>
+<blockquote>
+<p>例如，0 SM 是通信数据面交给了 DMA，不需要 SM 参与么？难道抛弃了所有 SM 参与？</p>
+</blockquote>
+<h3 id="q6-engram-elasticbuffer-api">Q6: Engram 是否也服用了 ElasticBuffer API 设计？</h3>
+<h3 id="q7-elasticbuffer-use_fp8_dispatch-deepep-buffer-data-type-dispatch-combine">Q7: 从 ElasticBuffer 的 <code>use_fp8_dispatch</code> 配置，回溯分析 DeepEP Buffer 的 data type 以及 dispatch 和 combine 的区别？</h3>
+<blockquote>
+<p><strong>注意区分</strong>：ElasticBuffer 对象的 <code>dispatch</code> 和 <code>combine</code> API 不同于 EP 的 dispatch 和 combine，例如训练反向传播的时候 EP dispatch API 的反向是 ElasticBuffer combine 接口</p>
+</blockquote>
+<div class="codehilite"><pre><span></span><code><span class="n">ElasticBuffer</span><span class="o">.</span><span class="n">get_buffer_size_hint</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">hidden</span><span class="p">,</span>
+    <span class="n">num_topk</span><span class="o">=</span><span class="n">num_topk</span><span class="p">,</span> <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="n">use_fp8_dispatch</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="q8-elastic-buffer-async_with_compute_streamtrue-api-deepseek-v2">Q8: Elastic Buffer 均设置了 <code>async_with_compute_stream=True</code> API 参数，是否意味着 DeepSeek V2 放弃了指令集的通算融合的系统设计？</h3>
+<h3 id="q9-nv-gin">Q9: NV Gin 架构设计理念、关键软件架构、通信算法架构、软硬协同方面工作，性能数据评测对比？</h3>
+<blockquote>
+<p>DeepEP V1/V2 对 Gin 以及上一代设计思想的变化？对 UB 的启发有哪些？</p>
+</blockquote>
+<h3 id="q10-deepep-ep-ib-vlvirtual-lanedeepep-adaptive-routing">Q10: DeepEP 对流量隔离的建议（EP 独立运作），走 IB 的 VL（Virtual Lane），DeepEP 软件上有什么协同措施？Adaptive Routing？</h3>
+<h3 id="q11-deepep-vl-ib-ub">Q11: DeepEP 认为应该优先隔离流量，采用 VL，而不是开启 IB 的拥塞机制。这点对 UB 有什么启示？</h3>
+<blockquote>
+<p>UB 对应 VL 的技术是什么，UB 上拥塞和类"VL"技术的测试是否充分，性能如何？</p>
+</blockquote>
+<h3 id="q12-nv-token-compute-fabric-transport-cft">Q12: NV 针对小 token 的优化技术 Compute Fabric Transport (CFT) 是什么？</h3>
+<blockquote>
+<p>nvDev 分支跟近 CUDA CFT 特性中，建议进一步打开分析，洞察前沿。</p>
+</blockquote>
+<h3 id="q13">Q13: 其他规划特性</h3>
+<blockquote>
+<ol>
+<li><strong>Torch Zero Copy 技术</strong>：Tencent Network Platform Department 在贡献 PyTorch tensor 到网络报文之间的 100% zero copy，类似 2012 Network Lab 的 zero 技术</li>
+<li><strong>Eager 特性</strong>：如何进一步降低 RTT 时延影响，预期收益多大？<blockquote>
+<p>"Using a low-latency protocol removes the extra RTT latency introduced by RDMA atomic OPs"</p>
+</blockquote>
+</li>
+<li><strong>TMA</strong>：是在数据面，还是控制面，优化 SM 开销，以及 NVLink 通信域的？<blockquote>
+<p>"TMA instructions for minimal SM usage and larger NVLink domain support (Hybrid-EP branch)"</p>
+</blockquote>
+</li>
+</ol>
+</blockquote>
+<h3 id="q14-antgroup-deepep">Q14 (综合): 解读 AntGroup 团队对 DeepEP 的改进规划</h3>
+<blockquote>
+<p>解读相关技术：
+- <strong>Normal-SMFree</strong>：Eliminating SM from RDMA path
+- <strong>LL-SBO</strong>：Overlapping Down GEMM computation with Combine Send communication
+- <strong>LL-Layered</strong>：Optimizing cross-node LL operator communication using rail-optimized forwarding and data merging</p>
+<p><strong>All Together 建议</strong>：建议有一个 UB 的 EP offering 提供对客户 POC 的支持，强化对融合超节点总线/1825、池化 DDR（Engram）等的支持，当前 Tencent、AntGroup、ROCm/Mori-EP 的贡献。</p>
+</blockquote>
+<hr />
+<h2 id="_1">分析范围与源码索引</h2>
+<blockquote>
+<p><strong>核心源码文件</strong>：
+- <code>deep_ep/buffers/elastic.py</code> (1108 行) — ElasticBuffer Python 层
+- <code>csrc/elastic/buffer.hpp</code> (1382 行) — ElasticBuffer C++ 核心
+- <code>deep_ep/include/deep_ep/impls/dispatch.cuh</code> — Direct dispatch kernel
+- <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code> — Hybrid dispatch kernel
+- <code>deep_ep/include/deep_ep/impls/combine.cuh</code> — Combine kernel
+- <code>deep_ep/include/deep_ep/impls/engram_fetch.cuh</code> — Engram fetch kernel
+- <code>deep_ep/include/deep_ep/impls/dispatch_copy_epilogue.cuh</code> — Copy epilogue
+- <code>deep_ep/utils/event.py</code> — EventOverlap 机制
+- <code>DeepEP/README.md</code> — V2 官方文档
+- <code>DeepEP/docs/legacy.md</code> — V1 官方文档（含 FP8 dispatch + BF16 combine 配置）
+- <code>tests/elastic/test_ep.py</code> — V2 EP 测试（含 cached dispatch）</p>
+</blockquote>
+<hr />
+<h2 id="_2">目录</h2>
+<ol>
+<li><a href="#1-elasticbuffer-normal-low-latency">ElasticBuffer 为什么能统一 Normal 和 Low-Latency？</a></li>
+<li><a href="#2-sm">SM 自动估算的本质是什么？</a></li>
+<li><a href="#3-dispatch-topk">dispatch 内的 TopK 复制机制</a></li>
+<li><a href="#4-decode-low-latency">Decode 路由缓存：为什么只有 Low-Latency 模式支持？</a></li>
+<li><a href="#5-0-sm">0 SM 通信的先验知识</a></li>
+<li><a href="#6-engram-elasticbuffer-api">Engram 是否复用了 ElasticBuffer API？</a></li>
+<li><a href="#7-use_fp8_dispatch-dispatch-combine">use_fp8_dispatch 回溯：Dispatch 与 Combine 的数据类型差异</a></li>
+<li><a href="#8-async_with_compute_stream">async_with_compute_stream 的设计哲学</a></li>
+<li><a href="#9-nv-gin">NV Gin 架构设计理念与关键架构</a></li>
+<li><a href="#10-vl">流量隔离与 VL</a></li>
+<li><a href="#11-vl-vs-ub">VL vs 拥塞控制：对 UB 的启示</a></li>
+<li><a href="#12-cft-compute-fabric-transport">CFT (Compute Fabric Transport) 前沿分析</a></li>
+<li><a href="#13-zero-copyeagertma">其他规划特性：Zero Copy、Eager、TMA</a></li>
+<li><a href="#14-antgroup">AntGroup 优化规划解读</a></li>
+<li><a href="#_15">通信方式量化要素抽象</a></li>
+<li><a href="#_16">UB EP Offering 建议</a></li>
+</ol>
+<hr />
+<h2 id="1-elasticbuffer-normal-low-latency">1. ElasticBuffer 为什么能统一 Normal 和 Low-Latency？</h2>
+<h3 id="11-v1">1.1 V1 时代的割裂</h3>
+<p>在 DeepEP V1 中，Normal 和 Low-Latency 是<strong>两套完全独立的实现</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># V1 Normal: 3-phase forwarding (internode.cu)</span>
+<span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="o">=</span><span class="n">topk_idx</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+
+<span class="c1"># V1 Low-Latency: 完全不同的 API (internode_ll.cu)</span>
+<span class="n">recv_hidden_states</span><span class="p">,</span> <span class="n">recv_expert_count</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">hook</span> <span class="o">=</span> \
+    <span class="n">buffer</span><span class="o">.</span><span class="n">low_latency_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">num_max_dispatch_tokens_per_rank</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>关键问题</strong>：
+- 两个 API 使用不同的 buffer 分配策略
+- 不同的 kernel 文件
+- 不同的 handle 结构
+- Low-Latency 模式无法与 Normal 模式共享 buffer</p>
+<h3 id="12-v2">1.2 V2 的统一设计哲学</h3>
+<p>V2 的核心洞察：<strong>Normal 和 Low-Latency 的本质差异不是"通信协议"，而是"资源分配策略"</strong>。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># V2 统一 API</span>
+<span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="o">=</span><span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_weights</span><span class="o">=</span><span class="n">topk_weights</span><span class="p">,</span>
+    <span class="n">num_experts</span><span class="o">=</span><span class="n">num_experts</span><span class="p">,</span>
+    <span class="n">num_sms</span><span class="o">=</span><span class="n">num_sms</span><span class="p">,</span>  <span class="c1"># ← 关键参数：多=Normal, 少=Low-Latency</span>
+    <span class="o">...</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p><strong>统一的维度</strong>：
+1. <strong>同一个 Buffer</strong>：所有通信模式共享
+2. <strong>同一个 dispatch/combine API</strong>：参数控制行为
+3. <strong>SM 数量</strong>是主要区分因子（Normal 64-160 SMs, Low-Latency 4-8 SMs）</p>
+<h3 id="13_1">1.3 量化系统影响因素</h3>
+<h4 id="1token-replicated-token-volume">关键因子 1：Token 复制量（Replicated Token Volume）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:770-772</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_expected_topk</span><span class="p">(</span><span class="n">num_groups</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;计算单个 token 期望去多少个不同的 rank（去重后）&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">num_groups</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span> <span class="o">-</span> <span class="n">num_experts</span> <span class="o">//</span> <span class="n">num_groups</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">)</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">))</span>
+</code></pre></div>
+
+<p><strong>物理含义</strong>：一个 token 选择 <code>num_topk</code> 个 expert，这些 expert 分布在多少个<strong>不同的 rank</strong>上（去重后）。</p>
+<p><strong>示例</strong>：EP=256, experts=256, topk=8
+- 每个 rank 1 个 expert
+- 期望去重 rank 数 ≈ 8（因为 topk=8 很少碰撞）</p>
+<p><strong>示例</strong>：EP=256, experts=2048, topk=8
+- 每个 rank 8 个 expert
+- 期望去重 rank 数 ≈ 8 × (1 - C(2040,8)/C(2048,8)) ≈ 0.25
+- 大部分 token 都在本地 rank</p>
+<h4 id="2hbm-sm">关键因子 2：HBM 读写带宽（SM 侧）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:781-806</span>
+<span class="n">sm_read</span> <span class="o">+=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">num_expected_topk</span>   <span class="c1"># 每个 token 只需读一次</span>
+<span class="n">sm_write</span> <span class="o">+=</span> <span class="o">...</span>                      <span class="c1"># 写 send buffer + 发起 NVLink</span>
+</code></pre></div>
+
+<p><strong>单位</strong>：每 token 的 HBM 读写量（以 token 数据量为单位 1.0）</p>
+<h4 id="3nvlinkrdma">关键因子 3：NVLink/RDMA 通信带宽（网络侧）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Direct 模式</span>
+<span class="n">nvlink_traffic</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="mi">1</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span><span class="p">)</span>
+<span class="n">rdma_traffic</span> <span class="o">+=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_nvlink_ranks</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span>
+</code></pre></div>
+
+<h4 id="4">关键因子 4：瓶颈识别</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:809-812</span>
+<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_scaleout_ranks</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="p">(</span><span class="n">rdma_traffic</span> <span class="o">/</span> <span class="n">rdma_gbs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">nvlink_traffic</span> <span class="o">/</span> <span class="n">nvlink_gbs</span><span class="p">):</span>
+    <span class="n">bounded_traffic</span><span class="p">,</span> <span class="n">bounded_gbs</span> <span class="o">=</span> <span class="n">rdma_traffic</span><span class="p">,</span> <span class="n">rdma_gbs</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">bounded_traffic</span><span class="p">,</span> <span class="n">bounded_gbs</span> <span class="o">=</span> <span class="n">nvlink_traffic</span><span class="p">,</span> <span class="n">nvlink_gbs</span>
+</code></pre></div>
+
+<h3 id="14-normal-vs-low-latency">1.4 Normal vs Low-Latency 的统一解释</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal 场景</th>
+<th>Low-Latency 场景</th>
+<th>统一机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SM 数</strong></td>
+<td>多（64-160）</td>
+<td>少（4-8）</td>
+<td><code>num_sms</code> 参数控制</td>
+</tr>
+<tr>
+<td><strong>QP 数</strong></td>
+<td>多（SM×16）</td>
+<td>少（SM+1）</td>
+<td><code>get_theoretical_num_qps</code> 自动</td>
+</tr>
+<tr>
+<td><strong>prefer_overlap</strong></td>
+<td>False</td>
+<td>True</td>
+<td><code>prefer_overlap_with_compute</code></td>
+</tr>
+<tr>
+<td><strong>Buffer</strong></td>
+<td>相同</td>
+<td>相同</td>
+<td>同一 <code>ElasticBuffer</code></td>
+</tr>
+<tr>
+<td><strong>Kernel</strong></td>
+<td>相同</td>
+<td>相同</td>
+<td>同一 <code>dispatch_impl</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>在 V2 中，"Low-Latency" 不是独立模式，而是 Normal 在特定参数配置下的特例</strong>。</p>
+<p><strong>来源</strong>: <code>deep_ep/buffers/elastic.py</code> L728-834, <code>DeepEP/README.md</code> L115</p>
+<hr />
+<h2 id="2-sm">2. SM 自动估算的本质是什么？</h2>
+<h3 id="21">2.1 核心公式推导</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:818-825</span>
+<span class="n">num_sms</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+    <span class="n">bounded_gbs</span> <span class="o">/</span> <span class="n">bounded_traffic</span> <span class="o">*</span> <span class="n">sm_read</span> <span class="o">/</span> <span class="n">sm_read_gbs</span><span class="p">,</span>
+    <span class="n">bounded_gbs</span> <span class="o">/</span> <span class="n">bounded_traffic</span> <span class="o">*</span> <span class="n">sm_write</span> <span class="o">/</span> <span class="n">sm_write_gbs</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">num_sms</span> <span class="o">=</span> <span class="n">align</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">num_sms</span> <span class="o">*</span> <span class="mf">1.25</span><span class="p">)),</span> <span class="mi">2</span><span class="p">)</span>
+</code></pre></div>
+
+<h4 id="_3">物理含义</h4>
+<div class="codehilite"><pre><span></span><code>num_sms = max(
+    (网络瓶颈带宽 / 每token网络流量) × (每token HBM读量 / 每SM HBM读带宽),
+    (网络瓶颈带宽 / 每token网络流量) × (每token HBM写量 / 每SM HBM写带宽)
+)
+</code></pre></div>
+
+<p><strong>第一项</strong>：为了满足网络读取需求，需要多少 SM 来提供 HBM 读数据
+<strong>第二项</strong>：为了满足网络写入需求，需要多少 SM 来消费 HBM 写数据</p>
+<h4 id="roofline">为什么是这个公式？—— Roofline 模型</h4>
+<div class="codehilite"><pre><span></span><code>时间 = max(网络时间, HBM时间)
+     = max(流量/带宽, 数据量/(SM数 × 每SM带宽))
+</code></pre></div>
+
+<p>令 网络时间 = HBM时间（最优状态）：</p>
+<div class="codehilite"><pre><span></span><code>流量 / 网络带宽 = 数据量 / (SM数 × 每SM带宽)
+→ SM数 = (网络带宽 / 流量) × (数据量 / 每SM带宽)
+</code></pre></div>
+
+<h3 id="22-num_experts-num_topk">2.2 为什么用 num_experts 和 num_topk，而不是卡数？</h3>
+<h4 id="sm-bufferbuffer-expert">关键洞察：SM 处理的是 Buffer，Buffer 是 Expert 粒度的</h4>
+<p><strong>用户的推测完全正确</strong>：</p>
+<blockquote>
+<p>SM 要处理到所有专家/卡的连接，推测 deepep buffer 是一等公民，而 buffer 是 expert 专家粒度，所以要读写内存位置（buffer）数量是 expert 的函数，而不仅仅是卡数。</p>
+</blockquote>
+<p><strong>源码验证</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:770-772</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_expected_topk</span><span class="p">(</span><span class="n">num_groups</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">num_experts</span> <span class="o">%</span> <span class="n">num_groups</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="n">num_groups</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span> <span class="o">-</span> <span class="n">num_experts</span> <span class="o">//</span> <span class="n">num_groups</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">)</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">comb</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">num_topk</span><span class="p">))</span>
+</code></pre></div>
+
+<p><strong><code>num_expected_topk</code> 是 <code>num_experts</code> 和 <code>num_topk</code> 的函数</strong>，而不是直接依赖卡数。</p>
+<h4 id="expert">为什么 Expert 数比卡数更本质？</h4>
+<p><strong>原因 1：Token 复制量取决于 Expert 分布，而非卡数</strong></p>
+<p>考虑两种配置：
+- 配置 A：EP=64, experts=64, topk=8 → 每卡 1 expert
+- 配置 B：EP=64, experts=512, topk=8 → 每卡 8 expert</p>
+<p>虽然卡数相同，但配置 A 每个 token 期望去 8 个不同 rank（去重后），配置 B 可能只有 1-2 个 rank。</p>
+<p><strong>原因 2：Buffer 寻址是 Expert 粒度的</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:318-320</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">uncasted_dst_expert_idx</span><span class="p">);</span>
+<span class="n">stored_dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+</code></pre></div>
+
+<p><strong>TopK idx 直接给出 expert index</strong>，然后才转换为 rank index。SM 的负载取决于 <strong>需要访问多少个不同的 expert → 多少个不同的 buffer slot</strong>。</p>
+<p><strong>原因 3：卡数的影响已隐式包含</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:778</span>
+<span class="n">num_expected_topk</span> <span class="o">=</span> <span class="n">get_expected_topk</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span><span class="p">)</span>  <span class="c1"># num_ranks = num_scaleout_ranks × num_scaleup_ranks</span>
+</code></pre></div>
+
+<p><code>num_ranks</code> 就是卡数（总 EP 数）。但 <strong>卡数通过与 expert 分布的交互来影响流量</strong>，而非独立变量。</p>
+<h3 id="23-topk-buffer">2.3 TopK 的作用：Buffer 间数据搬移量</h3>
+<p>用户的第二个推测：</p>
+<blockquote>
+<p>SM 处理逻辑里，要针对 token level 的处理，token level 有一个 topk 的复制数量，采用了 topk 粒度的发送控制逻辑，也可能 buffer 粒度没有 topk 概念，但是 buffer 间的数据搬移量跟 topk 相关。</p>
+</blockquote>
+<p><strong>源码验证</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:315-328</span>
+<span class="n">EP_STATIC_ASSERT</span><span class="p">(</span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Insufficient lanes for loading top-k indices&quot;</span><span class="p">);</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">uncasted_dst_expert_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="n">stored_dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">    </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_idx_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">        </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_weights_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">copied_topk_idx</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">        </span><span class="n">copied_topk_idx</span><span class="p">[</span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>TopK 直接影响</strong>：
+1. <strong>每个 token 需要发送多少次</strong>：topk 个 expert → 去重后 N 个 rank → N 次发送
+2. <strong>Warp 内并行度</strong>：topk ≤ 32（一个 warp 的 lane 数），每个 lane 处理一个 expert 选择
+3. <strong>Buffer slot 分配</strong>：每个 topk 选择对应一个独立的 buffer slot</p>
+<h3 id="24">2.4 为什么不直接考虑卡数？</h3>
+<p>用户的第三个问题：</p>
+<blockquote>
+<p>每卡处理负载应该与卡数有关，每卡上的专家数量跟卡数有关，为什么不考虑卡数这个概念，来估算 sms？</p>
+</blockquote>
+<p><strong>回答</strong>：卡数 <strong>确实被考虑了</strong>，但它是通过 <code>num_expected_topk</code> 间接体现的：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:778</span>
+<span class="n">num_expected_topk</span> <span class="o">=</span> <span class="n">get_expected_topk</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_ranks</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>数学关系</strong>：
+- 固定 experts 和 topk 时，增加卡数 → 每卡 expert 数减少 → 去重后 rank 数增加 → 通信量增加 → 需要更多 SM
+- 固定卡数和 topk 时，增加 experts → 每卡 expert 数增加 → 去重后 rank 数减少 → 通信量减少 → 需要更少 SM</p>
+<p><strong>卡数本身不是独立变量</strong>，因为：
+- 如果 expert 数和卡数同比增加（保持每卡 expert 数不变），通信模式不变
+- 真正决定通信量的是 <strong>token 需要跨越多少边界</strong>，这由 expert 分布决定</p>
+<h3 id="25-sm">2.5 SM 估算的完整流程图</h3>
+<div class="codehilite"><pre><span></span><code>输入: num_experts, num_topk, num_ranks (卡数)
+         ↓
+    get_expected_topk(num_ranks)
+         ↓
+    num_expected_topk = num_ranks × (1 - C(E-E/R, k) / C(E, k))
+         ↓
+    ┌──────────────────────────────────────┐
+    │  sm_read = 1 / num_expected_topk     │  (每 token HBM 读)
+    │  sm_write = f(num_expected_topk, 卡数) │  (每 token HBM 写)
+    │  rdma_traffic = g(卡数, num_expected_topk) │
+    │  nvlink_traffic = h(卡数, num_expected_topk) │
+    └──────────────────────────────────────┘
+         ↓
+    bottleneck = max(rdma_traffic/rdma_gbs, nvlink_traffic/nvlink_gbs)
+         ↓
+    num_sms = bottleneck × max(sm_read/sm_read_gbs, sm_write/sm_write_gbs)
+         ↓
+    num_sms = align(max(4, ceil(num_sms × 1.25)), 2)
+</code></pre></div>
+
+<p><strong>来源</strong>: <code>deep_ep/buffers/elastic.py</code> L728-834</p>
+<hr />
+<h2 id="3-dispatch-topk">3. dispatch 内的 TopK 复制机制</h2>
+<h3 id="31">3.1 用户的三个问题</h3>
+<ol>
+<li><code>dispatch_forward</code> 函数是否包含了 topk buffer 的生成？</li>
+<li>Token 的复制过程，是否发生在 <code>buffer.dispatch</code> 内？</li>
+<li>是否利用了 <code>topk_idx</code> 函数？</li>
+</ol>
+<h3 id="32-bufferdispatch">3.2 答案：是的，全部在 buffer.dispatch 内完成</h3>
+<p><code>buffer.dispatch()</code> 是一个 <strong>多阶段 kernel pipeline</strong>，包含：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>Kernel</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Notify</td>
+<td><code>dispatch_impl</code> (notify warps)</td>
+<td>统计 expert → rank 映射</td>
+</tr>
+<tr>
+<td>2. Dispatch</td>
+<td><code>dispatch_impl</code> (dispatch warps)</td>
+<td>根据 topk_idx 复制 token 到 send buffer</td>
+</tr>
+<tr>
+<td>3. Barrier</td>
+<td>Gin barrier</td>
+<td>等待所有数据到达</td>
+</tr>
+<tr>
+<td>4. Epilogue</td>
+<td><code>dispatch_copy_epilogue_impl</code></td>
+<td>从 buffer 搬到 recv tensor</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 阶段详解</h3>
+<h4 id="1notify-warps-dispatchcuh79-258">阶段 1：Notify Warps 统计（<code>dispatch.cuh:79-258</code>）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:95-107</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">global_warp_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">global_warp_idx</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">kNumNotifyWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 每个 token 的 topk 选择</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">?</span>
+<span class="w">        </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">))</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">        </span><span class="n">atomicAdd_block</span><span class="p">(</span><span class="n">expert_count</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// Expert 维度计数</span>
+
+<span class="w">    </span><span class="c1">// Rank 维度需要去重</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">deduplicate</span><span class="p">(</span><span class="n">dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">)</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">        </span><span class="n">atomicAdd_block</span><span class="p">(</span><span class="n">rank_count</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// Rank 维度去重计数</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>关键</strong>：<code>ptx::deduplicate</code> 确保同一个 rank 只计数一次，即使多个 expert 都在该 rank。</p>
+<h4 id="2dispatch-warps-tokendispatchcuh259-395">阶段 2：Dispatch Warps 复制 Token（<code>dispatch.cuh:259-395</code>）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:278-394</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">token_start</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dispatch_warp_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">;</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">token_stride</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">token_start</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">token_stride</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 1. TMA load hidden data from global to shared memory</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_hidden_ptr</span><span class="p">(),</span>
+<span class="w">                     </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">token_i64_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">),</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="w">    </span><span class="c1">// 2. Load top-k indices and weights</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">uncasted_dst_expert_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="n">stored_dst_rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">kNumExpertsPerRank</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">        </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_idx_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← TopK idx 写入 smem buffer</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">            </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_weights_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">copied_topk_idx</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">            </span><span class="n">copied_topk_idx</span><span class="p">[</span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← 复制 topk_idx</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 3. Deduplicate ranks and assign slots</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ptx</span><span class="o">::</span><span class="n">deduplicate</span><span class="p">(</span><span class="n">stored_dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">)</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">        </span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">workspace_layout</span><span class="p">.</span><span class="n">get_scaleup_atomic_sender_counter</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 4. Write dst_buffer_slot_idx (for later combine)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span>
+<span class="w">            </span><span class="n">rank_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumMaxTokensPerRank</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">        </span><span class="n">dst_buffer_slot_idx</span><span class="p">[</span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">value</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← 生成 slot idx</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 5. TMA store to send buffer (NVLink)</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">?</span>
+<span class="w">        </span><span class="n">gin</span><span class="p">.</span><span class="n">get_sym_ptr</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">recv_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">:</span>
+<span class="w">        </span><span class="nb">nullptr</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">        </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">());</span>
+
+<span class="w">    </span><span class="c1">// 6. RDMA put to remote ranks</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">gin</span><span class="p">.</span><span class="n">put</span><span class="o">&lt;</span><span class="n">team_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">recv_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">                        </span><span class="n">send_buffer_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(),</span><span class="w"> </span><span class="n">stored_dst_rank_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>TopK 复制的核心机制</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="nl">token</span><span class="p">:</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">topk</span><span class="w"> </span><span class="n">selection</span><span class="w"> </span><span class="p">(</span><span class="n">lane_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumTopk</span><span class="p">)</span><span class="err">:</span>
+<span class="w">        </span><span class="n">expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topk_idx</span><span class="o">[</span><span class="n">token_idx</span><span class="o">][</span><span class="n">lane_idx</span><span class="o">]</span>
+<span class="w">        </span><span class="n">rank_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expert_idx</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">experts_per_rank</span>
+<span class="w">        </span><span class="n">slot_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">counter</span><span class="o">[</span><span class="n">rank_idx</span><span class="o">]</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">  </span><span class="err">#</span><span class="w"> </span><span class="n">原子分配</span><span class="w"> </span><span class="n">slot</span>
+
+<span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="n">写入</span><span class="w"> </span><span class="n">smem</span><span class="w"> </span><span class="n">TMA</span><span class="w"> </span><span class="n">buffer</span>
+<span class="w">        </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">topk_idx</span><span class="o">[</span><span class="n">lane_idx</span><span class="o">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expert_idx</span>
+<span class="w">        </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">topk_weights</span><span class="o">[</span><span class="n">lane_idx</span><span class="o">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topk_weights</span><span class="o">[</span><span class="n">token_idx</span><span class="o">][</span><span class="n">lane_idx</span><span class="o">]</span>
+
+<span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="n">发送数据到远端</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">rank_idx</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="n">NVLink</span><span class="o">-</span><span class="nl">accessible</span><span class="p">:</span>
+<span class="w">            </span><span class="n">TMA</span><span class="w"> </span><span class="n">store</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="k">symmetric</span><span class="w"> </span><span class="n">buffer</span>
+<span class="w">        </span><span class="k">else</span><span class="err">:</span>
+<span class="w">            </span><span class="n">RDMA</span><span class="w"> </span><span class="n">put</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="n">remote</span><span class="w"> </span><span class="n">buffer</span>
+</code></pre></div>
+
+<h4 id="3copy-epiloguedispatch_copy_epiloguecuh">阶段 3：Copy Epilogue（<code>dispatch_copy_epilogue.cuh</code>）</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch_copy_epilogue.cuh:70-81</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">global_warp_idx</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_recv_tokens</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">kNumWarps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumSMs</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 确定当前 token 来自哪个 rank</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">current_rank_end</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">current_rank_idx</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">        </span><span class="n">current_rank_start</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">current_rank_end</span><span class="p">;</span>
+<span class="w">        </span><span class="n">current_rank_end</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">psum_num_recv_tokens_per_scaleup_rank</span><span class="p">[</span><span class="n">current_rank_idx</span><span class="p">];</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">buffer_token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">scaleup_buffer</span><span class="p">.</span><span class="n">get_rank_buffer</span><span class="p">(</span><span class="n">current_rank_idx</span><span class="p">).</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">current_rank_start</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// TMA load from buffer to smem</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">buffer_token</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="w">    </span><span class="c1">// 确定目标位置</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">kDoExpand</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Expand mode: 按 expert 顺序排列</span>
+<span class="w">        </span><span class="n">dst_tensor_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">psum_num_recv_tokens_per_expert</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Non-expand mode: 保持到达顺序</span>
+<span class="w">        </span><span class="n">dst_tensor_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// TMA store to recv tensor</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">recv_x</span><span class="p">,</span><span class="w"> </span><span class="n">dst_tensor_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">),</span>
+<span class="w">                      </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_hidden_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="34-topk-buffer">3.4 TopK Buffer 的生成时机</h3>
+<p><strong>TopK buffer 在 dispatch kernel 内部生成</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:321-325</span>
+<span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_idx_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dst_expert_idx</span><span class="p">;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">    </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_topk_weights_ptr</span><span class="p">()[</span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__ldg</span><span class="p">(</span><span class="n">topk_weights</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">copied_topk_idx</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">)</span>
+<span class="w">    </span><span class="n">copied_topk_idx</span><span class="p">[</span><span class="n">token_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumTopk</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">lane_idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">uncasted_dst_expert_idx</span><span class="p">;</span>
+</code></pre></div>
+
+<p><strong>TMA buffer 的内存布局（TokenLayout）</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[hidden (TMA-aligned)] [sf (TMA-aligned)] [metadata (TMA-aligned)] [mbarrier]</span>
+<span class="w">                                    </span><span class="na">↓</span>
+<span class="w">                             </span><span class="na">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">topk_idx (num_topk * 4)</span>
+<span class="w">                                      </span><span class="na">+ topk_weights (num_topk * 4)</span>
+<span class="w">                                      </span><span class="na">+ src_token_global_idx (4)</span>
+<span class="w">                                      </span><span class="na">+ linked_list_idx (num_topk * 4)</span>
+</code></pre></div>
+
+<h3 id="35">3.5 完整数据流图</h3>
+<div class="codehilite"><pre><span></span><code><span class="k">input</span><span class="err">:</span><span class="w"> </span><span class="n">x</span><span class="o">[</span><span class="n">num_tokens, hidden</span><span class="o">]</span><span class="p">,</span><span class="w"> </span><span class="n">topk_idx</span><span class="o">[</span><span class="n">num_tokens, topk</span><span class="o">]</span><span class="p">,</span><span class="w"> </span><span class="n">topk_weights</span><span class="o">[</span><span class="n">num_tokens, topk</span><span class="o">]</span>
+<span class="w">                                    </span><span class="err">↓</span>
+<span class="w">                    </span><span class="err">┌───────────────────────────────────────┐</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">         </span><span class="n">dispatch_impl</span><span class="w"> </span><span class="n">kernel</span><span class="w">          </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">                                       </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">  </span><span class="n">Notify</span><span class="w"> </span><span class="nl">Warps</span><span class="p">:</span><span class="w">                        </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="nl">token</span><span class="p">:</span><span class="w">                    </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">topk</span><span class="w"> </span><span class="p">(</span><span class="n">lane</span><span class="p">)</span><span class="err">:</span><span class="w">            </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="n">expert</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topk_idx</span><span class="o">[</span><span class="n">token</span><span class="o">][</span><span class="n">lane</span><span class="o">]</span><span class="w"> </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="nf">rank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expert</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">E_per_rank</span><span class="w">     </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">expert_count</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">     </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">rank_count</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">  </span><span class="o">//</span><span class="w"> </span><span class="n">dedup</span><span class="w"> </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="k">prefix</span><span class="w"> </span><span class="nf">sum</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">psum_num_recv_tokens</span><span class="w"> </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">                                       </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">  </span><span class="n">Dispatch</span><span class="w"> </span><span class="nl">Warps</span><span class="p">:</span><span class="w">                      </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="nl">token</span><span class="p">:</span><span class="w">                    </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">TMA</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="n">hidden</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">smem</span><span class="w">          </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="k">load</span><span class="w"> </span><span class="n">topk_idx</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">smem</span><span class="w">            </span><span class="err">│</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="n">TopK</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="n">生成</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="k">load</span><span class="w"> </span><span class="n">topk_weights</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">smem</span><span class="w">        </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">topk</span><span class="w"> </span><span class="p">(</span><span class="n">lane</span><span class="p">)</span><span class="err">:</span><span class="w">            </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="n">slot</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">counter</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">   </span><span class="err">│</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="n">slot</span><span class="w"> </span><span class="n">分配</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nl">NVLink</span><span class="p">:</span><span class="w"> </span><span class="n">TMA</span><span class="w"> </span><span class="n">store</span><span class="w">           </span><span class="err">│</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="n">Token</span><span class="w"> </span><span class="n">复制</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="k">else</span><span class="err">:</span><span class="w"> </span><span class="n">RDMA</span><span class="w"> </span><span class="n">put</span><span class="w">                 </span><span class="err">│</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="n">Token</span><span class="w"> </span><span class="n">复制</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="err">→</span><span class="w"> </span><span class="k">trigger</span><span class="w"> </span><span class="n">PDL</span><span class="w"> </span><span class="p">(</span><span class="n">Programmatic</span><span class="w"> </span><span class="n">Launch</span><span class="p">)</span><span class="err">│</span>
+<span class="w">                    </span><span class="err">└───────────────────────────────────────┘</span>
+<span class="w">                                    </span><span class="err">↓</span>
+<span class="w">                    </span><span class="err">┌───────────────────────────────────────┐</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="n">dispatch_copy_epilogue_impl</span><span class="w"> </span><span class="n">kernel</span><span class="w"> </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">                                       </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">received</span><span class="w"> </span><span class="nl">token</span><span class="p">:</span><span class="w">           </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">TMA</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">smem</span><span class="w">     </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">determine</span><span class="w"> </span><span class="nl">dst_tensor_idx</span><span class="p">:</span><span class="w">        </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nl">expand</span><span class="p">:</span><span class="w"> </span><span class="n">atomicAdd</span><span class="p">(</span><span class="n">psum</span><span class="p">)</span><span class="w">     </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">        </span><span class="k">else</span><span class="err">:</span><span class="w"> </span><span class="n">dst</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">arrival</span><span class="w"> </span><span class="k">order</span><span class="w">      </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">TMA</span><span class="w"> </span><span class="n">store</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="n">recv_x</span><span class="o">[</span><span class="n">dst</span><span class="o">]</span><span class="w">        </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">store</span><span class="w"> </span><span class="n">recv_topk_idx</span><span class="o">[</span><span class="n">dst</span><span class="o">]</span><span class="w">        </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">│</span><span class="w">      </span><span class="n">store</span><span class="w"> </span><span class="n">recv_topk_weights</span><span class="o">[</span><span class="n">dst</span><span class="o">]</span><span class="w">    </span><span class="err">│</span>
+<span class="w">                    </span><span class="err">└───────────────────────────────────────┘</span>
+<span class="w">                                    </span><span class="err">↓</span>
+<span class="k">output</span><span class="err">:</span><span class="w"> </span><span class="n">recv_x</span><span class="o">[</span><span class="n">num_recv_tokens, hidden</span><span class="o">]</span><span class="p">,</span><span class="w"> </span><span class="n">recv_topk_idx</span><span class="p">,</span><span class="w"> </span><span class="n">recv_topk_weights</span><span class="p">,</span><span class="w"> </span><span class="n">handle</span>
+</code></pre></div>
+
+<h3 id="36-hybrid-dispatch">3.6 Hybrid Dispatch 的特殊性</h3>
+<p>在 Hybrid 模式下，token 复制分为两步：</p>
+<ol>
+<li><strong>Scaleout Warps</strong>：将 token 从本地 GPU → RDMA → 远端 scaleout rank 的 scaleout_recv_buffer</li>
+<li><strong>Forward Warps</strong>：将 token 从 scaleout_recv_buffer → NVLink → 目标 scaleup rank 的 scaleup_buffer</li>
+</ol>
+<div class="codehilite"><pre><span></span><code><span class="c1">// hybrid_dispatch.cuh:447-455 — Scaleout warps</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">stored_dst_scaleout_rank_idx</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">scaleout_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">gin</span><span class="p">.</span><span class="n">put</span><span class="o">&lt;</span><span class="n">ncclTeamTagRail</span><span class="o">&gt;</span><span class="p">(</span><span class="w">  </span><span class="c1">// RDMA put to remote scaleout rank</span>
+<span class="w">        </span><span class="n">scaleout_recv_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">scaleout_send_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">token_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">stored_dst_scaleout_rank_idx</span><span class="p">,</span>
+<span class="w">        </span><span class="n">ncclGinOptFlagsAggregateRequests</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// hybrid_dispatch.cuh:593-598 — Forward warps</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">dst_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gin</span><span class="p">.</span><span class="n">get_sym_ptr</span><span class="o">&lt;</span><span class="n">ncclTeamTagLsa</span><span class="o">&gt;</span><span class="p">(</span><span class="w">  </span><span class="c1">// NVLink TMA store</span>
+<span class="w">        </span><span class="n">scaleup_buffer</span><span class="p">.</span><span class="n">get_token_buffer</span><span class="p">(</span><span class="n">stored_dst_slot_idx</span><span class="p">).</span><span class="n">get_base_ptr</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">stored_dst_scaleup_rank_idx</span><span class="p">);</span>
+<span class="w">    </span><span class="n">ptx</span><span class="o">::</span><span class="n">tma_store_1d</span><span class="p">(</span><span class="n">dst_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_base_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_num_bytes</span><span class="o">&lt;</span><span class="nb">false</span><span class="o">&gt;</span><span class="p">());</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>来源</strong>: <code>deep_ep/include/deep_ep/impls/dispatch.cuh</code> L79-409, <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></p>
+<hr />
+<h2 id="4-decode-low-latency">4. Decode 路由缓存：为什么只有 Low-Latency 模式支持？</h2>
+<h3 id="41-ephandle">4.1 EPHandle 的定义</h3>
+<p><code>EPHandle</code> 是 <code>dispatch</code> 返回的<strong>路由元数据对象</strong>，包含所有用于后续 combine 的信息：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">EPHandle</span><span class="p">:</span>
+    <span class="n">do_expand</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">num_experts</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">expert_alignment</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">num_max_tokens_per_rank</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># dispatch 时使用的 SM 数, combine 时复用</span>
+    <span class="n">topk_idx</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># [num_tokens, num_topk], clone 的 expert indices</span>
+    <span class="n">psum_num_recv_tokens_per_scaleup_rank</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># [num_scaleup_ranks]</span>
+    <span class="n">psum_num_recv_tokens_per_expert</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># [num_local_experts]</span>
+    <span class="n">num_unaligned_recv_tokens_per_expert</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># [num_local_experts]</span>
+    <span class="n">num_recv_tokens_per_expert_list</span><span class="p">:</span> <span class="nb">list</span>  <span class="c1"># CPU-side per-expert counts</span>
+    <span class="n">recv_src_metadata</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># 源 token 元数据</span>
+    <span class="n">dst_buffer_slot_idx</span><span class="p">:</span> <span class="n">Tensor</span>  <span class="c1"># 目标 buffer slot 索引</span>
+    <span class="n">token_metadata_at_forward</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span>  <span class="c1"># Hybrid 模式</span>
+    <span class="n">channel_linked_list</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]</span>  <span class="c1"># Hybrid 模式</span>
+</code></pre></div>
+
+<p><strong>来源</strong>: <code>deep_ep/buffers/elastic.py</code> L25-98</p>
+<h3 id="42-cached-dispatch">4.2 Cached Dispatch 机制</h3>
+<p>当 <code>handle</code> 参数被传入 <code>dispatch</code> 时，进入 <strong>cached mode</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:937-944</span>
+<span class="k">if</span> <span class="n">handle</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">topk_idx</span> <span class="ow">is</span> <span class="kc">None</span>  <span class="c1"># 不再接受新的 topk_idx</span>
+    <span class="k">assert</span> <span class="n">do_cpu_sync</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">do_cpu_sync</span>  <span class="c1"># 禁止 CPU sync</span>
+    <span class="n">topk_idx</span> <span class="o">=</span> <span class="n">handle</span><span class="o">.</span><span class="n">topk_idx</span>  <span class="c1"># 复用缓存的 topk_idx</span>
+    <span class="n">num_max_tokens_per_rank</span> <span class="o">=</span> <span class="n">value_or</span><span class="p">(</span><span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">handle</span><span class="o">.</span><span class="n">num_max_tokens_per_rank</span><span class="p">)</span>
+    <span class="n">num_experts</span> <span class="o">=</span> <span class="n">value_or</span><span class="p">(</span><span class="n">num_experts</span><span class="p">,</span> <span class="n">handle</span><span class="o">.</span><span class="n">num_experts</span><span class="p">)</span>
+    <span class="n">do_cpu_sync</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># 关键：跳过 CPU sync</span>
+</code></pre></div>
+
+<p><strong>Cached mode 的关键行为</strong>：
+1. <strong>跳过 layout recomputation</strong>：<code>cached_num_recv_tokens</code>, <code>cached_psum_*</code> 直接传入 C++ kernel
+2. <strong>跳过 CPU sync</strong>：不需要等待 GPU→CPU 的信号
+3. <strong>跳过 topk_idx clone</strong>：<code>do_handle_copy</code> 仍会执行
+4. <strong>C++ 层行为</strong>：<code>cached_mode = cached_num_recv_tokens.has_value()</code>（<code>buffer.hpp</code> L734）</p>
+<h3 id="43">4.3 为什么需要路由缓存？</h3>
+<p><strong>Decode 场景的特殊性</strong>：
+- Batch size 小（128 tokens）
+- Routing decisions 在连续 decode step 之间<strong>可能不变</strong>（如果 gating 结果一致）
+- 每次重新计算 layout 有 CPU overhead
+- CPU sync 会引入 latency</p>
+<p><strong>使用方式</strong>（<code>README.md</code> L271-329）：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">decode_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_weights</span><span class="p">,</span> <span class="o">...</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">cached_handle</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Reuse cached handle: skip layout recomputation and CPU sync</span>
+        <span class="n">recv_x</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">,</span> <span class="n">handle</span><span class="o">=</span><span class="n">cached_handle</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">recv_x</span><span class="p">,</span> <span class="n">cached_handle</span><span class="o">.</span><span class="n">topk_idx</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span>
+
+    <span class="c1"># 首次：完整计算</span>
+    <span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_topk_idx</span><span class="p">,</span> <span class="n">recv_topk_weights</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span>
+</code></pre></div>
+
+<h3 id="44-cache-topk">4.4 为什么只需要 cache 设置的情况下，无需 topk 的信息了？</h3>
+<p><strong>回答</strong>：是的，<strong>100% cache 了</strong>。</p>
+<p>当 <code>cached_handle</code> 被传入时：
+1. <code>topk_idx</code> 直接从 <code>handle.topk_idx</code> 复用 —— <strong>不需要用户提供新的 topk_idx</strong>
+2. <code>psum_num_recv_tokens_per_scaleup_rank</code> —— 缓存了每个 scaleup rank 接收的 token 数前缀和
+3. <code>psum_num_recv_tokens_per_expert</code> —— 缓存了每个 expert 接收的 token 数前缀和
+4. <code>recv_src_metadata</code> —— 缓存了源 token 元数据
+5. <code>dst_buffer_slot_idx</code> —— 缓存了目标 buffer slot 索引
+6. <code>num_sms</code> —— 缓存了 SM 数量</p>
+<p><strong>这意味着</strong>：当 gating decisions 不变时，整个 dispatch 的 layout 计算可以完全跳过，只需要执行数据搬运。</p>
+<h3 id="45-prefill-train">4.5 为什么 Prefill 和 Train 没有路由缓存？</h3>
+<p><strong>Prefill 场景</strong>：
+- Batch size 大（4096-8192 tokens）
+- 每个 batch 的 routing decisions <strong>几乎不可能</strong>与上一个 batch 相同
+- Layout recomputation 的 overhead 被大 batch size 摊薄
+- CPU sync 的 latency 被大计算量隐藏</p>
+<p><strong>Train 场景</strong>：
+- 每个 training step 的 input data 不同
+- Routing decisions 每次都变化
+- 无法使用 cache</p>
+<p><strong>Decode 场景</strong>：
+- Batch size 小（64-256 tokens）
+- 连续 decode step 的 routing decisions <strong>可能不变</strong>（特别是 gating 结果稳定时）
+- Layout recomputation 的 CPU overhead 占比大
+- CPU sync 的 latency 直接影响 decode latency</p>
+<h3 id="46">4.6 从第一性原理看低时延模式的优化</h3>
+<p>用户的问题：</p>
+<blockquote>
+<p>从第一性原理角度，低时延模式要优先使用 sm 来处理通信的控制和数据面，且建议减少中间通信算法的跳数以减低时延，deepv2 的 elastic buffer 做了哪些优化，是 api 上统一了，还是通信算法上也做了统一？</p>
+</blockquote>
+<p><strong>V2 在两个层面都做了优化</strong>：</p>
+<h4 id="api">API 层统一</h4>
+<ol>
+<li><strong>统一 ElasticBuffer</strong>：所有通信模式共享同一个 Buffer 对象</li>
+<li><strong>统一 dispatch/combine API</strong>：参数控制行为，而非独立 API</li>
+<li><strong>统一 EPHandle</strong>：路由元数据结构统一</li>
+<li><strong>统一 EventOverlap</strong>：事件管理统一</li>
+</ol>
+<h4 id="_4">通信算法层统一</h4>
+<ol>
+<li><strong>统一 Kernel Pipeline</strong>：</li>
+<li>Notify Warps → Dispatch Warps → Barrier → Copy Epilogue</li>
+<li>Normal 和 Low-Latency 使用<strong>相同的 kernel 代码</strong></li>
+<li>
+<p>区别仅在于 <code>num_sms</code> 参数</p>
+</li>
+<li>
+<p><strong>统一 Buffer 模型</strong>：</p>
+</li>
+<li>V1 Normal：5 层 buffer（NVL Send/Recv + RDMA Send/Recv + Expert）</li>
+<li>V1 Low-Latency：2 层 buffer（ping-pong）</li>
+<li>
+<p>V2 Unified：统一 token layout</p>
+</li>
+<li>
+<p><strong>统一同步机制</strong>：</p>
+</li>
+<li>Gin barrier 替代 NVSHMEM 的复杂同步</li>
+<li>mbarrier FIFO 替代传统 barrier</li>
+</ol>
+<h4 id="_5">关键技术及第一性原理</h4>
+<table>
+<thead>
+<tr>
+<th>技术</th>
+<th>第一性原理</th>
+<th>启发到 UB/URMA/UBMem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer 一等公民</strong></td>
+<td>内存是通信的"尺子"，所有操作围绕 buffer 展开</td>
+<td>Buffer 设计应先于 kernel 设计</td>
+</tr>
+<tr>
+<td><strong>SM 解析式计算</strong></td>
+<td>Roofline 模型：带宽平衡决定最优 SM 数</td>
+<td>避免 auto-tuning，用模型驱动</td>
+</tr>
+<tr>
+<td><strong>TopK ≤ 32 约束</strong></td>
+<td>Warp lane 数 = 32，TopK 映射到 lane 并行</td>
+<td>控制TopK上限以匹配硬件并行度</td>
+</tr>
+<tr>
+<td><strong>Cached Dispatch</strong></td>
+<td>时间局部性：routing decisions 在时间上重复</td>
+<td>缓存路由元数据，跳过重复计算</td>
+</tr>
+<tr>
+<td><strong>EventOverlap</strong></td>
+<td>计算-通信 overlap 是隐藏延迟的唯一手段</td>
+<td>Stream 级 overlap 是基本设计模式</td>
+</tr>
+<tr>
+<td><strong>0 SM Engram</strong></td>
+<td>数据面与控制面分离：DMA 搬数据，SM 做控制</td>
+<td>数据面应尽量卸载到硬件 DMA</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-0-sm">5. 0 SM 通信的先验知识</h2>
+<h3 id="51-v1-hook-based-overlap">5.1 V1 的 Hook-Based Overlap</h3>
+<p>V1 Low-Latency 模式最引人注目的特性：<strong>0 SM occupation</strong> 通信。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># docs/legacy.md:264-272</span>
+<span class="n">recv_hidden_states</span><span class="p">,</span> <span class="n">recv_expert_count</span><span class="p">,</span> <span class="n">handle</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">hook</span> <span class="o">=</span> \
+    <span class="n">buffer</span><span class="o">.</span><span class="n">low_latency_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span>
+                                <span class="n">return_recv_hook</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># NOTES: the actual tensor will not be received only if you call `hook()`,</span>
+<span class="c1"># it is useful for double-batch overlapping, but **without any SM occupation**</span>
+</code></pre></div>
+
+<p><strong>机制</strong>：
+1. <code>return_recv_hook=True</code> 时，kernel 只<strong>发起 RDMA 请求</strong>，不等待完成
+2. 返回的 <code>hook</code> 是一个 callable，调用时阻塞等待数据到达
+3. RDMA 传输在<strong>网络硬件</strong>中进行，<strong>不占用 GPU SMs</strong></p>
+<h3 id="52-v2">5.2 V2 的变化</h3>
+<p><strong>重要</strong>: V2 README 明确说明：</p>
+<blockquote>
+<p>"<strong>Notes</strong>: ... 0 SM RDMA low-latency EP is no longer supported"</p>
+</blockquote>
+<p>V2 不再支持纯 0 SM 的 low-latency EP，但保留了：
+- <strong>0 SM Engram</strong>（RDMA one-sided get）
+- <strong>0 SM PP</strong>（RDMA send/recv）
+- <strong>0 SM CP</strong>（Copy Engine）</p>
+<h3 id="53-0-sm">5.3 0 SM 的本质：数据面与控制面分离</h3>
+<p><strong>V2 的先验知识</strong>：</p>
+<ol>
+<li><strong>数据面可以完全不需要 SM</strong>：</li>
+<li>RDMA NIC 有独立的 DMA engine</li>
+<li>GPU SM 只需发起请求（写 QP doorbell）</li>
+<li>
+<p>数据搬移由 NIC hardware 完成</p>
+</li>
+<li>
+<p><strong>控制面仍需少量 SM</strong>：</p>
+</li>
+<li>发起 Gin 请求（<code>gin.put</code>, <code>gin.get</code>）</li>
+<li>管理 QP（Queue Pair）状态</li>
+<li>
+<p>处理 completion notification</p>
+</li>
+<li>
+<p><strong>V2 的设计选择</strong>：</p>
+</li>
+<li>不再追求"纯 0 SM"的 EP 通信</li>
+<li>而是通过 <code>async_with_compute_stream=True</code> 实现<strong>计算-通信 overlap</strong></li>
+<li>少量 SM 用于通信控制，大部分 SM 用于计算</li>
+</ol>
+<h3 id="54-0-sm-engram">5.4 0 SM Engram 的实现</h3>
+<p>Engram 是 V2 中少数保留的 <strong>0 SM</strong> 功能：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:292-309</span>
+<span class="n">launch_engram_fetch</span><span class="p">(</span>
+<span class="w">    </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">window</span><span class="p">,</span>
+<span class="w">    </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_buffer_bytes</span><span class="p">),</span><span class="w">  </span><span class="c1">// CPU segment</span>
+<span class="w">    </span><span class="n">fetched</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">indices</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="p">);</span>
+</code></pre></div>
+
+<p><strong>机制</strong>：
+1. <code>engram_write</code> 将数据写入 CPU segment（<code>cudaMemcpyDeviceToDevice</code>）
+2. <code>engram_fetch</code> 发起 <strong>Gin RDMA get</strong> 请求
+3. 返回的 callable 在调用时等待完成
+4. 数据传输由 <strong>NIC hardware</strong> 完成，<strong>不占用 GPU SMs</strong></p>
+<h3 id="55-ub">5.5 对 UB 的启发</h3>
+<p><strong>核心洞察</strong>：0 SM 通信的本质是<strong>数据面与控制面分离</strong>。</p>
+<ul>
+<li><strong>数据面</strong>：NIC DMA engine 负责数据搬移，不需要 SM</li>
+<li><strong>控制面</strong>：SM 负责发起请求和管理状态</li>
+<li><strong>优化方向</strong>：最小化控制面的 SM 开销，最大化数据面的 DMA 效率</li>
+</ul>
+<p><strong>UB 设计建议</strong>：
+- 数据面采用 RDMA one-sided operations（get/put）
+- 控制面采用 minimal SM footprint（&lt; 4 SMs）
+- 通过 doorbell batching 减少 SM 干预频率</p>
+<hr />
+<h2 id="6-engram-elasticbuffer-api">6. Engram 是否复用了 ElasticBuffer API？</h2>
+<h3 id="61">6.1 回答：是的，完全复用</h3>
+<p>Engram 的方法直接定义在 <code>ElasticBuffer</code> 类上：</p>
+<div class="codehilite"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ElasticBuffer</span><span class="p">:</span>
+    <span class="c1"># ... dispatch/combine 方法 ...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">engram_write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">storage</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">sf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Write Engram storage data into the buffer.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">engram_write</span><span class="p">(</span><span class="n">storage</span><span class="p">,</span> <span class="n">sf</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">engram_fetch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_qps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                     <span class="n">use_tma_aligned_col_major_sf</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Fetch Engram entries from remote ranks via RDMA.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">engram_fetch</span><span class="p">(</span><span class="n">indices</span><span class="p">,</span> <span class="n">num_qps</span><span class="p">,</span> <span class="n">use_tma_aligned_col_major_sf</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>来源</strong>: <code>deep_ep/buffers/elastic.py</code> L569-604</p>
+<h3 id="62-engram-ep">6.2 Engram 与 EP 共享的底层资源</h3>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th>EP Dispatch/Combine</th>
+<th>Engram</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer</strong></td>
+<td>✅ 共享 GPU Buffer</td>
+<td>✅ 共享 CPU Buffer</td>
+</tr>
+<tr>
+<td><strong>NCCL Gin Context</strong></td>
+<td>✅ <code>nccl_context-&gt;dev_comm</code></td>
+<td>✅ <code>nccl_context-&gt;dev_comm</code></td>
+</tr>
+<tr>
+<td><strong>NCCL Window</strong></td>
+<td>✅ <code>nccl_context-&gt;window</code></td>
+<td>✅ <code>nccl_context-&gt;window</code></td>
+</tr>
+<tr>
+<td><strong>QP (Queue Pair)</strong></td>
+<td>✅ <code>num_allocated_qps</code></td>
+<td>✅ <code>num_allocated_qps</code></td>
+</tr>
+<tr>
+<td><strong>Comm Stream</strong></td>
+<td>✅ <code>comm_stream</code></td>
+<td>✅ <code>comm_stream</code></td>
+</tr>
+<tr>
+<td><strong>Barrier</strong></td>
+<td>✅ <code>barrier()</code></td>
+<td>✅ <code>barrier()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="63-engram">6.3 Engram 的内存布局</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:229-236</span>
+<span class="c1">// Write storage to CPU segment at back of buffer</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">cpu_write_offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">allow_hybrid_mode</span>
+<span class="w">    </span><span class="o">?</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">nccl_context</span><span class="o">-&gt;</span><span class="n">scaleup_rank_idx</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_cpu_buffer_bytes</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="n">CUDA_RUNTIME_CHECK</span><span class="p">(</span><span class="n">cudaMemcpyAsync</span><span class="p">(</span>
+<span class="w">    </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">num_gpu_buffer_bytes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">cpu_write_offset</span><span class="p">),</span>
+<span class="w">    </span><span class="n">storage</span><span class="p">.</span><span class="n">data_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">storage</span><span class="p">.</span><span class="n">nbytes</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">cudaMemcpyDeviceToDevice</span><span class="p">,</span><span class="w"> </span><span class="n">compute_stream</span><span class="p">));</span>
+</code></pre></div>
+
+<p><strong>Hybrid Elastic Symmetric Memory</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[ GPU VRAM | CPU rank0 | CPU rank1 | ... | CPU rank(N-1) ]</span>
+<span class="w">                       </span><span class="na">↑ Engram storage 写入这里</span>
+</code></pre></div>
+
+<h3 id="64-engram-dispatchcombine">6.4 Engram 与 Dispatch/Combine 的区别</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Dispatch/Combine</th>
+<th>Engram</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据方向</strong></td>
+<td>All-to-All（每个 rank 都发都收）</td>
+<td>One-sided（只读远端）</td>
+</tr>
+<tr>
+<td><strong>数据类型</strong></td>
+<td>BF16 或 FP8（dispatch）</td>
+<td>BF16 或 FP8</td>
+</tr>
+<tr>
+<td><strong>Buffer 位置</strong></td>
+<td>GPU Buffer</td>
+<td>CPU Buffer</td>
+</tr>
+<tr>
+<td><strong>SM 使用</strong></td>
+<td>多（4-160）</td>
+<td>0（RDMA one-sided get）</td>
+</tr>
+<tr>
+<td><strong>同步</strong></td>
+<td>Barrier + CPU sync</td>
+<td>Barrier only</td>
+</tr>
+<tr>
+<td><strong>使用场景</strong></td>
+<td>MoE token routing</td>
+<td>Remote KV cache fetch</td>
+</tr>
+</tbody>
+</table>
+<h3 id="65-engram-rec-emb">6.5 Engram 与 Rec Emb 查表过程的区别</h3>
+<p><strong>Rec Emb（推荐系统 Embedding 查表）</strong>：
+- 训练场景：需要 gradient update，使用 allreduce 或 parameter server
+- 推理场景：只读，可使用 Engram 类似的远端 fetch</p>
+<p><strong>Engram</strong>：
+- 只读（write 只在初始化时）
+- 通过 RDMA get 直接读取远端
+- 无需 CPU 介入，保持 GPU-centric</p>
+<p><strong>关键区别</strong>：
+- <strong>训练</strong>：Embedding 查表需要写操作（gradient update），不能用 Engram
+- <strong>推理</strong>：Embedding 查表是只读的，可以用 Engram 类似的机制</p>
+<hr />
+<h2 id="7-use_fp8_dispatch-dispatch-combine">7. use_fp8_dispatch 回溯：Dispatch 与 Combine 的数据类型差异</h2>
+<h3 id="71">7.1 官方文档的说明</h3>
+<p>V1 官方文档明确说明（<code>docs/legacy.md</code> L19, L30）：</p>
+<blockquote>
+<p>"FP8 dispatching and BF16 combining"</p>
+</blockquote>
+<p><strong>测试配置</strong>：
+- <strong>Training (Normal)</strong>: 4096 tokens, 7168 hidden, top-4 groups, top-8 experts, <strong>FP8 dispatching</strong>, <strong>BF16 combining</strong>
+- <strong>Inference (Low-Latency)</strong>: 128 tokens, 7168 hidden, top-8 experts, <strong>FP8 dispatching</strong>, <strong>BF16 combining</strong></p>
+<h3 id="72">7.2 源码验证</h3>
+<h4 id="dispatch-fp8">Dispatch 支持 FP8</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:882-885</span>
+<span class="n">x</span><span class="p">:</span> <span class="err">`</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="err">`</span> <span class="ow">or</span> <span class="nb">tuple</span> <span class="n">of</span> <span class="err">`</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="err">`</span><span class="p">,</span> <span class="k">for</span> <span class="n">the</span> <span class="n">first</span> <span class="nb">type</span><span class="p">,</span> <span class="n">the</span> <span class="n">shape</span> <span class="n">must</span> <span class="n">be</span>
+    <span class="err">`</span><span class="p">[</span><span class="n">num_tokens</span><span class="p">,</span> <span class="n">hidden</span><span class="p">]</span><span class="err">`</span><span class="p">,</span> <span class="ow">and</span> <span class="nb">type</span> <span class="n">must</span> <span class="n">be</span> <span class="err">`</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="err">`</span><span class="p">;</span> <span class="k">for</span> <span class="n">the</span> <span class="n">second</span> <span class="nb">type</span> <span class="p">(</span><span class="n">FP8</span> <span class="n">mode</span><span class="p">),</span>
+    <span class="n">the</span> <span class="n">first</span> <span class="n">element</span> <span class="n">of</span> <span class="n">the</span> <span class="nb">tuple</span> <span class="n">must</span> <span class="n">be</span> <span class="err">`</span><span class="p">[</span><span class="n">num_tokens</span><span class="p">,</span> <span class="n">hidden</span><span class="p">]</span><span class="err">`</span> <span class="k">with</span> <span class="nb">type</span> <span class="err">`</span><span class="n">torch</span><span class="o">.</span><span class="n">float8_e4m3fn</span><span class="err">`</span><span class="p">,</span>
+    <span class="n">the</span> <span class="n">second</span> <span class="ow">is</span> <span class="n">the</span> <span class="n">scale</span> <span class="n">factors</span><span class="o">.</span>
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:671-672</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">elem_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">use_fp8_dispatch</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">__nv_fp8_e4m3</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_sf_packs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">use_fp8_dispatch</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">ceil_div</span><span class="p">(</span><span class="n">hidden</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+</code></pre></div>
+
+<h4 id="combine-bf16">Combine 只支持 BF16</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:1203</span>
+<span class="n">EP_HOST_ASSERT</span><span class="p">(</span><span class="n">x</span><span class="p">.</span><span class="n">scalar_type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">kBFloat16</span><span class="p">);</span>
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="c1">// combine.cuh:29</span>
+<span class="n">combine_impl</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="o">*</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+</code></pre></div>
+
+<h3 id="73-fp8-dispatch-bf16-combine">7.3 为什么 FP8 Dispatch + BF16 Combine？</h3>
+<p><strong>第一性原理分析</strong>：</p>
+<ol>
+<li><strong>Dispatch 阶段</strong>：</li>
+<li>输入是 MoE 前的 hidden states</li>
+<li>精度要求不高（只需 routing 到 expert）</li>
+<li>FP8 可以节省 50% 通信带宽（1 byte vs 2 bytes）</li>
+<li>
+<p>每个 token 附带 scaling factors（SF），用于反量化</p>
+</li>
+<li>
+<p><strong>Combine 阶段</strong>：</p>
+</li>
+<li>输出是 MoE 后的 hidden states</li>
+<li>精度要求高（需要累加多个 expert 的输出）</li>
+<li>BF16 保证累加精度</li>
+<li>
+<p>避免 FP8 累加的精度损失</p>
+</li>
+<li>
+<p><strong>Buffer Size 计算</strong>：</p>
+</li>
+</ol>
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:671-672</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">elem_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">use_fp8_dispatch</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">__nv_fp8_e4m3</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">nv_bfloat16</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">num_sf_packs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">use_fp8_dispatch</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">ceil_div</span><span class="p">(</span><span class="n">hidden</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+</code></pre></div>
+
+<ul>
+<li>FP8 dispatch：elem_size = 1 byte，SF packs = hidden/32 × 4 bytes</li>
+<li>BF16 dispatch：elem_size = 2 bytes，SF packs = 0</li>
+</ul>
+<h3 id="74">7.4 训练反向传播的类型对应</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># README.md:239-252</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">combine_backward</span><span class="p">(</span><span class="n">grad_combined_x</span><span class="p">,</span> <span class="n">handle</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The backward pass of MoE combine is actually a dispatch.&quot;&quot;&quot;</span>
+    <span class="n">grad_x</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">event</span> <span class="o">=</span> <span class="n">_buffer</span><span class="o">.</span><span class="n">dispatch</span><span class="p">(</span>
+        <span class="n">grad_combined_x</span><span class="p">,</span>
+        <span class="n">handle</span><span class="o">=</span><span class="n">handle</span><span class="p">,</span>  <span class="c1"># ← 使用 dispatch API</span>
+        <span class="o">...</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">event</span>
+</code></pre></div>
+
+<p><strong>反向传播的类型对应</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>正向</th>
+<th>反向</th>
+<th>API</th>
+<th>数据类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dispatch_forward</code></td>
+<td><code>combine_backward</code></td>
+<td><code>dispatch</code></td>
+<td>BF16 → BF16（反向梯度）</td>
+</tr>
+<tr>
+<td><code>combine_forward</code></td>
+<td><code>dispatch_backward</code></td>
+<td><code>combine</code></td>
+<td>BF16 → BF16（反向梯度）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键</strong>：反向传播时，梯度是 BF16 类型，不走 FP8。</p>
+<h3 id="75-fp8-dispatch-buffer-size">7.5 FP8 Dispatch 的 Buffer Size 影响</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:380-406</span>
+<span class="nd">@staticmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_buffer_size_hint</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">num_max_tokens_per_rank</span><span class="p">,</span> <span class="n">hidden</span><span class="p">,</span>
+                         <span class="n">num_topk</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">...</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_C</span><span class="o">.</span><span class="n">calculate_elastic_buffer_size</span><span class="p">(</span>
+        <span class="o">...</span><span class="p">,</span> <span class="n">use_fp8_dispatch</span><span class="o">=</span><span class="n">use_fp8_dispatch</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>FP8 dispatch 的 buffer 影响</strong>：
+1. <strong>Token data 大小减半</strong>：FP8 = 1 byte/elem vs BF16 = 2 bytes/elem
+2. <strong>SF packs 增加</strong>：每 32 个 hidden 元素需要 4 bytes SF
+3. <strong>总体 buffer 略小</strong>：对于 hidden=7168，FP8 + SF ≈ 7168 + 7168/32×4 = 7168 + 896 = 8064 bytes/token vs BF16 = 14336 bytes/token</p>
+<hr />
+<h2 id="8-async_with_compute_stream">8. async_with_compute_stream 的设计哲学</h2>
+<h3 id="81-api">8.1 API 语义</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:902-903</span>
+<span class="n">async_with_compute_stream</span><span class="p">:</span> <span class="n">the</span> <span class="n">current</span> <span class="n">stream</span> <span class="n">will</span> <span class="ow">not</span> <span class="n">wait</span> <span class="k">for</span> <span class="n">the</span> <span class="n">communication</span> <span class="n">kernels</span> <span class="n">to</span> <span class="n">be</span>
+    <span class="n">finished</span> <span class="k">if</span> <span class="nb">set</span><span class="o">.</span>
+</code></pre></div>
+
+<p><strong>字面含义</strong>：设置后，当前 compute stream 不会等待通信 kernel 完成。</p>
+<h3 id="82">8.2 实现机制</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1">// buffer.hpp:526-584</span>
+<span class="n">torch</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">CUDAStream</span><span class="w"> </span><span class="nf">stream_control_prologue</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">EventHandle</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">previous_event</span><span class="p">,</span>
+<span class="w">                                                </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">allocate_on_comm_stream</span><span class="p">,</span>
+<span class="w">                                                </span><span class="k">const</span><span class="w"> </span><span class="kt">bool</span><span class="o">&amp;</span><span class="w"> </span><span class="n">async_with_compute_stream</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">compute_stream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">getCurrentCUDAStream</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">allocate_on_comm_stream</span><span class="p">)</span>
+<span class="w">        </span><span class="n">at</span><span class="o">::</span><span class="n">cuda</span><span class="o">::</span><span class="n">setCurrentCUDAStream</span><span class="p">(</span><span class="n">comm_stream</span><span class="p">);</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">event</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>EventOverlap 机制</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># deep_ep/utils/event.py</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">EventOverlap</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">current_stream_wait</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">release_handle</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The current stream waits for the event to be finished.&quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">event</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">current_stream_wait</span><span class="p">()</span>
+</code></pre></div>
+
+<h3 id="83">8.3 是否放弃了指令级的通算融合？</h3>
+<p><strong>回答</strong>：不是"放弃"，而是"分层"。</p>
+<p><strong>DeepSeek V2 的通信-计算 overlap 是分层的</strong>：</p>
+<ol>
+<li><strong>Stream 级别 Overlap</strong>：</li>
+<li><code>async_with_compute_stream=True</code> 实现</li>
+<li>Compute stream 和 Comm stream 并行</li>
+<li>通信 kernel 在 Comm stream 上执行</li>
+<li>计算 kernel 在 Compute stream 上执行</li>
+<li>
+<p>通过 <code>event.current_stream_wait()</code> 同步</p>
+</li>
+<li>
+<p><strong>Kernel 级别 Overlap</strong>：</p>
+</li>
+<li>在 dispatch kernel 内部，Notify Warps 和 Dispatch Warps 并行</li>
+<li>TMA store 和计算可以 overlap</li>
+<li>
+<p>这是硬件级别的 overlap（TMA engine 独立于 SM）</p>
+</li>
+<li>
+<p><strong>指令级别 Overlap</strong>：</p>
+</li>
+<li>PTX 指令级的并行（如 <code>wgmma</code> 与 <code>cp.async</code> overlap）</li>
+<li>这是 DeepGEMM 的特色，不是 DeepEP 的重点</li>
+</ol>
+<p><strong>关键区别</strong>：
+- <strong>DeepEP</strong> 关注<strong>通信-计算 overlap</strong>（stream 级别）
+- <strong>DeepGEMM</strong> 关注<strong>计算-计算 overlap</strong>（指令级别，wgmma 与 load overlap）</p>
+<h3 id="84-ub">8.4 对 UB 的启发</h3>
+<p><strong>分层 Overlap 设计</strong>：
+1. <strong>Stream 级别</strong>：通信与计算分离到不同 stream，通过 event 同步
+2. <strong>Kernel 级别</strong>：通知与数据搬运并行（Notify + Dispatch warps）
+3. <strong>硬件级别</strong>：TMA engine 独立于 SM，实现真正的异步</p>
+<p><strong>UB 设计建议</strong>：
+- 采用 stream-level overlap 作为基本设计模式
+- 通信 kernel 使用独立 comm_stream
+- 通过 event 机制实现精确同步
+- 避免指令级通算融合的复杂性</p>
+<hr />
+<h2 id="9-nv-gin">9. NV Gin 架构设计理念与关键架构</h2>
+<h3 id="91-gin">9.1 Gin 的定义</h3>
+<p><strong>NCCL Gin</strong> = <strong>GPU-Initiated Networking</strong></p>
+<p>核心思想：<strong>GPU SM 直接操作 NIC QP（Queue Pair），无需 CPU 介入</strong>。</p>
+<h3 id="92">9.2 关键软件架构</h3>
+<h4 id="921-gin">9.2.1 Gin 的核心抽象</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:69-71</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">qp_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sharing_mode</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">comm</span><span class="o">::</span><span class="n">get_qp_mode</span><span class="o">&lt;</span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumDispatchWarps</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">kNumNotifyWarps</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">warp_idx</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">kNumNotifyWarps</span><span class="p">,</span><span class="w"> </span><span class="n">warp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">kNumNotifyWarps</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">gin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">handle</span><span class="o">::</span><span class="n">NCCLGin</span><span class="p">(</span><span class="n">nccl_dev_comm</span><span class="p">,</span><span class="w"> </span><span class="n">nccl_window</span><span class="p">,</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sharing_mode</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>关键组件</strong>：
+- <code>ncclDevComm_t</code>：NCCL 设备端通信器
+- <code>ncclWindow_t</code>：对称内存窗口
+- <code>qp_idx</code>：Queue Pair 索引
+- <code>sharing_mode</code>：QP 共享模式（per-SM 或 per-CTA）</p>
+<h4 id="922-gin">9.2.2 Gin 的操作原语</h4>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>语义</th>
+<th>使用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gin.get&lt;team_t&gt;(dst, src, size, peer)</code></td>
+<td>RDMA one-sided read</td>
+<td>Engram fetch</td>
+</tr>
+<tr>
+<td><code>gin.put&lt;team_t&gt;(dst, src, size, peer)</code></td>
+<td>RDMA one-sided write</td>
+<td>Dispatch send</td>
+</tr>
+<tr>
+<td><code>gin.put_value&lt;team_t&gt;(dst, value, peer)</code></td>
+<td>RDMA write 64-bit value</td>
+<td>Notify count</td>
+</tr>
+<tr>
+<td><code>gin.flush_async&lt;team_t&gt;(peer, request)</code></td>
+<td>刷新 QP 请求</td>
+<td>确保数据发送</td>
+</tr>
+<tr>
+<td><code>gin.get_sym_ptr&lt;team_t&gt;(ptr, peer)</code></td>
+<td>获取远端对称内存指针</td>
+<td>NVLink TMA store</td>
+</tr>
+</tbody>
+</table>
+<h4 id="923-qp">9.2.3 QP 映射策略</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:836-853</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_theoretical_num_qps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_sms</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="c1"># For direct mode, we encourage less QPs to reduce DB ringing overhead</span>
+    <span class="n">num_qps</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">num_sms</span><span class="p">,</span> <span class="mi">8</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># For hybrid mode, we encourage every channel (and notify) to have an independent QP</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">allow_hybrid_mode</span><span class="p">:</span>
+        <span class="n">num_qps</span> <span class="o">=</span> <span class="n">num_sms</span> <span class="o">*</span> <span class="mi">16</span> <span class="o">+</span> <span class="mi">1</span>
+
+    <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="n">num_qps</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_allocated_qps</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>Direct 模式</strong>：<code>num_qps = min(num_sms, 9)</code> —— 少量 QP，减少 doorbell 开销
+<strong>Hybrid 模式</strong>：<code>num_qps = num_sms × 16 + 1</code> —— 每个 channel 独立 QP</p>
+<h3 id="93">9.3 通信算法架构</h3>
+<h4 id="931-symmetric-memory">9.3.1 Symmetric Memory 模型</h4>
+<div class="codehilite"><pre><span></span><code><span class="n">Rank</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="n">GPU</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="n">Local</span><span class="w"> </span><span class="n">Buffer</span><span class="w"> </span><span class="p">]</span><span class="w"> </span><span class="err">←→</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="n">Symmetric</span><span class="w"> </span><span class="n">Window</span><span class="w"> </span><span class="p">]</span>
+<span class="w">                                      </span><span class="err">↕</span><span class="w"> </span><span class="n">NVLink</span><span class="o">/</span><span class="n">RDMA</span>
+<span class="n">Rank</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="n">GPU</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="n">Local</span><span class="w"> </span><span class="n">Buffer</span><span class="w"> </span><span class="p">]</span><span class="w"> </span><span class="err">←→</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="n">Symmetric</span><span class="w"> </span><span class="n">Window</span><span class="w"> </span><span class="p">]</span>
+</code></pre></div>
+
+<p><strong>关键</strong>：每个 rank 的 symmetric window 映射到相同的虚拟地址，但实际访问远端内存。</p>
+<h4 id="932-barrier">9.3.2 Barrier 机制</h4>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:74-76</span>
+<span class="n">comm</span><span class="o">::</span><span class="n">gpu_barrier</span><span class="o">&lt;</span><span class="n">kIsScaleupNVLink</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">kNumRanks</span><span class="p">,</span>
+<span class="w">                  </span><span class="n">kNumSMs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumThreads</span><span class="p">,</span><span class="w"> </span><span class="n">kNumQPs</span><span class="p">,</span><span class="w"> </span><span class="n">kNumTimeoutCycles</span><span class="p">,</span><span class="w"> </span><span class="n">comm</span><span class="o">::</span><span class="n">kDispatchTag0</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">    </span><span class="n">gin</span><span class="p">,</span><span class="w"> </span><span class="n">workspace_layout</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">rank_idx</span><span class="p">,</span><span class="w"> </span><span class="n">sm_idx</span><span class="p">,</span><span class="w"> </span><span class="n">thread_idx</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>GPU-centric barrier</strong>：
+- 不使用 CPU 同步
+- 通过 Gin 的 <code>put_value</code> 和 <code>ld_volatile</code> 实现
+- 支持 timeout 检测死锁</p>
+<h3 id="94">9.4 软硬协同方面工作</h3>
+<table>
+<thead>
+<tr>
+<th>硬件特性</th>
+<th>DeepEP 利用方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NIC DMA Engine</strong></td>
+<td>RDMA one-sided get/put，无需 SM 参与</td>
+</tr>
+<tr>
+<td><strong>GPU TMA Engine</strong></td>
+<td>TMA store/load，异步数据搬运</td>
+</tr>
+<tr>
+<td><strong>NVLink Fabric</strong></td>
+<td>对称内存直传，无需 CPU 介入</td>
+</tr>
+<tr>
+<td><strong>PCIe Atomic</strong></td>
+<td><code>PCI_ATOMIC_MODE=4</code> 提升 RDMA atomic 性能</td>
+</tr>
+<tr>
+<td><strong>GPU Doorbell</strong></td>
+<td>SM 直接写 NIC doorbell，发起 RDMA 请求</td>
+</tr>
+</tbody>
+</table>
+<h3 id="95">9.5 性能数据评测对比</h3>
+<h4 id="v2-readmemd-l42-55">V2 官方性能（<code>README.md</code> L42-55）</h4>
+<table>
+<thead>
+<tr>
+<th>Arch</th>
+<th>NIC type</th>
+<th>Topo</th>
+<th>Dispatch Bottleneck Bandwidth</th>
+<th>Combine Bottleneck Bandwidth</th>
+<th>#SMs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8 × 2</td>
+<td>90 GB/s (RDMA)</td>
+<td>81 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8 × 4</td>
+<td>61 GB/s (RDMA)</td>
+<td>61 GB/s (RDMA)</td>
+<td>6</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>CX7</td>
+<td>EP 8 × 2</td>
+<td>90 GB/s (RDMA)</td>
+<td>91 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td>726 GB/s (NVLink)</td>
+<td>740 GB/s (NVLink)</td>
+<td>64 (Max perf)</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td>643 GB/s (NVLink)</td>
+<td>675 GB/s (NVLink)</td>
+<td>24 (Min #SM)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键</strong>：V2 achieves up to <strong>1.3x peak performance</strong>, while saving up to <strong>4x SM count</strong> compared to V1.</p>
+<h4 id="v1-docslegacymd-l17-39">V1 性能（<code>docs/legacy.md</code> L17-39）</h4>
+<p><strong>Normal kernels</strong>：
+- EP=16 internode: 43 GB/s, 4096 tokens
+- EP=64 internode: 51 GB/s</p>
+<p><strong>Low-Latency kernels</strong>：
+- EP=8: 77 μs latency, 98 GB/s
+- EP=64: 173 μs latency, 43 GB/s
+- EP=256: 194 μs latency, 39 GB/s</p>
+<h3 id="96-v1v2-gin">9.6 V1/V2 对 Gin 以及上一代设计思想的变化</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 (NVSHMEM)</th>
+<th>V2 (NCCL Gin)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信后端</strong></td>
+<td>NVSHMEM</td>
+<td>NCCL Gin</td>
+</tr>
+<tr>
+<td><strong>编译方式</strong></td>
+<td>预编译 NVSHMEM kernel</td>
+<td>Fully JIT</td>
+</tr>
+<tr>
+<td><strong>Buffer 模型</strong></td>
+<td>分离 NVL + RDMA buffer</td>
+<td>统一 symmetric memory</td>
+</tr>
+<tr>
+<td><strong>SM 控制</strong></td>
+<td>静态 <code>num_sms = 24</code></td>
+<td>解析式自动计算</td>
+</tr>
+<tr>
+<td><strong>QP 控制</strong></td>
+<td>手动 <code>num_qps_per_rank</code></td>
+<td>解析式自动计算</td>
+</tr>
+<tr>
+<td><strong>扩展规模</strong></td>
+<td>EP ≤ 128</td>
+<td>EP ≤ 2048</td>
+</tr>
+<tr>
+<td><strong>新增功能</strong></td>
+<td>无</td>
+<td>Engram, PP, CP, AGRS</td>
+</tr>
+</tbody>
+</table>
+<h3 id="97-ub">9.7 对 UB 的启发</h3>
+<ol>
+<li><strong>GPU-centric 设计</strong>：通信控制面在 GPU 上，无需 CPU 介入</li>
+<li><strong>Symmetric Memory</strong>：统一虚拟地址空间，简化编程模型</li>
+<li><strong>QP 映射优化</strong>：根据 SM 数和模式动态调整 QP 数量</li>
+<li><strong>Barrier 硬件化</strong>：利用 NIC 的原生 barrier 能力</li>
+<li><strong>TMA 卸载</strong>：数据搬运由 TMA engine 完成，释放 SM</li>
+</ol>
+<hr />
+<h2 id="10-vl">10. 流量隔离与 VL</h2>
+<h3 id="101-deepep">10.1 DeepEP 的官方建议</h3>
+<p><code>README.md</code> L377-392：</p>
+<blockquote>
+<p><strong>Traffic isolation</strong> is supported by InfiniBand through Virtual Lanes (VL).</p>
+<p>To prevent interference between different types of traffic, we recommend segregating workloads across different virtual lanes as follows:
+- expert-parallel workloads
+- other workloads</p>
+<p>For DeepEP V2, you can control the virtual lane assignment by setting the <code>sl_idx</code> argument or the <code>EP_OVERRIDE_RDMA_SL</code> environment variable.</p>
+</blockquote>
+<h3 id="102">10.2 软件上的协同措施</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># elastic.py:243</span>
+<span class="n">sl_idx</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>  <span class="c1"># RDMA service level index</span>
+
+<span class="c1"># elastic.py:323-324</span>
+<span class="k">if</span> <span class="s1">&#39;EP_OVERRIDE_RDMA_SL&#39;</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">:</span>
+    <span class="n">sl_idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s1">&#39;EP_OVERRIDE_RDMA_SL&#39;</span><span class="p">])</span>
+</code></pre></div>
+
+<p><strong>SL → VL 映射</strong>：
+- InfiniBand 的 Service Level (SL) 决定 Virtual Lane (VL)
+- 不同 VL 有不同的优先级和带宽分配
+- DeepEP 推荐 EP 流量使用独立 VL</p>
+<h3 id="103-adaptive-routing">10.3 Adaptive Routing</h3>
+<p><code>README.md</code> L388-389：</p>
+<blockquote>
+<p><strong>Adaptive routing</strong> is an advanced routing feature provided by InfiniBand switches that can evenly distribute traffic across multiple paths. Even though adaptive routing introduces additional latency, we still recommend enabling it under all network load conditions.</p>
+</blockquote>
+<p><strong>DeepEP 的建议</strong>：
+- <strong>开启 Adaptive Routing</strong>：即使引入额外延迟，也建议开启
+- 原因：在多路径拓扑中，AR 可以均衡负载，避免热点</p>
+<h3 id="104">10.4 软件协同措施总结</h3>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>实现方式</th>
+<th>目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>VL 隔离</strong></td>
+<td><code>sl_idx</code> 参数 / <code>EP_OVERRIDE_RDMA_SL</code> 环境变量</td>
+<td>EP 流量与其他流量分离</td>
+</tr>
+<tr>
+<td><strong>Adaptive Routing</strong></td>
+<td>IB 交换机配置</td>
+<td>多路径负载均衡</td>
+</tr>
+<tr>
+<td><strong>QP 分配</strong></td>
+<td><code>num_allocated_qps</code> 参数</td>
+<td>控制 RDMA 并发度</td>
+</tr>
+<tr>
+<td><strong>Traffic Class</strong></td>
+<td>DSCP / TOS 字段</td>
+<td>QoS 标记</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="11-vl-vs-ub">11. VL vs 拥塞控制：对 UB 的启示</h2>
+<h3 id="111-deepep">11.1 DeepEP 的官方建议</h3>
+<p><code>README.md</code> L390-392：</p>
+<blockquote>
+<p><strong>Congestion control</strong> is disabled because it hurts maximum bandwidth. If congestion is unavoidable in some scenarios, we recommend assigning those workloads to low-priority virtual lanes.</p>
+</blockquote>
+<p><strong>DeepEP 的立场</strong>：
+- <strong>禁用拥塞控制</strong>：因为会降低最大带宽
+- <strong>优先使用 VL 隔离</strong>：将拥塞流量分配到低优先级 VL</p>
+<h3 id="112-ub">11.2 对 UB 的启示</h3>
+<h4 id="ub-vl">UB 对应 VL 的技术</h4>
+<table>
+<thead>
+<tr>
+<th>IB 技术</th>
+<th>UB 对应</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Virtual Lane (VL)</strong></td>
+<td>Virtual Channel (VC)</td>
+<td>逻辑通道隔离</td>
+</tr>
+<tr>
+<td><strong>Service Level (SL)</strong></td>
+<td>Priority / QoS</td>
+<td>优先级标记</td>
+</tr>
+<tr>
+<td><strong>Adaptive Routing</strong></td>
+<td>Dynamic Routing</td>
+<td>动态路由</td>
+</tr>
+</tbody>
+</table>
+<h4 id="ub-vl_1">UB 上拥塞和类"VL"技术的测试</h4>
+<p><strong>关键问题</strong>：
+1. UB 是否支持多 VL/VC？
+2. UB 的拥塞控制机制是什么？
+3. VL 隔离在 UB 上的性能如何？</p>
+<p><strong>建议测试</strong>：
+- 多 VL 隔离下的 EP 吞吐量
+- 拥塞场景下的 VL 优先级调度
+- VL 数量对性能的影响</p>
+<h3 id="113">11.3 设计建议</h3>
+<p><strong>UB 流量隔离设计</strong>：
+1. <strong>优先 VL 隔离</strong>：EP 流量使用独立 VL，避免与其他流量竞争
+2. <strong>禁用拥塞控制</strong>：在数据中心内部，拥塞控制通常不必要
+3. <strong>Adaptive Routing</strong>：在多路径拓扑中开启 AR
+4. <strong>QoS 标记</strong>：使用 DSCP/TOS 标记 EP 流量</p>
+<hr />
+<h2 id="12-cft-compute-fabric-transport">12. CFT (Compute Fabric Transport) 前沿分析</h2>
+<h3 id="121-cft">12.1 CFT 的定义</h3>
+<p><strong>Compute Fabric Transport (CFT)</strong> 是 NVIDIA 针对<strong>小 token 优化</strong>的通信技术。</p>
+<p><code>README.md</code> L421-422：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/tree/nvDev">nvDev</a>
+V2-based branch with the latest CUDA features, such as Compute Fabric Transport (CFT) that brings better latency on small token sizes.</p>
+</blockquote>
+<h3 id="122-cft">12.2 CFT 的关键特性</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>目标场景</strong></td>
+<td>小 token（&lt; 128 tokens）的通信优化</td>
+</tr>
+<tr>
+<td><strong>优化方向</strong></td>
+<td>降低 latency（而非提高 throughput）</td>
+</tr>
+<tr>
+<td><strong>实现方式</strong></td>
+<td>CUDA 新特性，可能涉及 GPU 硬件加速</td>
+</tr>
+<tr>
+<td><strong>分支</strong></td>
+<td><code>nvDev</code> 分支</td>
+</tr>
+</tbody>
+</table>
+<h3 id="123-cft-deepep">12.3 CFT 与 DeepEP 的集成</h3>
+<p><strong>当前状态</strong>：
+- CFT 在 <code>nvDev</code> 分支中实验性支持
+- 基于 V2 架构
+- 目标是进一步优化小 token 场景的 latency</p>
+<h3 id="124-ub">12.4 对 UB 的启发</h3>
+<p><strong>CFT 的设计理念</strong>：
+1. <strong>小 token 优化</strong>：传统 RDMA 对大消息优化，小消息 latency 高
+2. <strong>硬件加速</strong>：利用 GPU 硬件特性降低通信延迟
+3. <strong>协议优化</strong>：可能涉及轻量级协议，减少 RTT</p>
+<p><strong>UB 设计建议</strong>：
+- 小 token 场景（decode）需要专门的通信优化
+- 考虑硬件加速的通信原语
+- 减少协议开销（header、doorbell 等）</p>
+<hr />
+<h2 id="13-zero-copyeagertma">13. 其他规划特性：Zero Copy、Eager、TMA</h2>
+<h3 id="131-torch-zero-copy">13.1 Torch Zero Copy</h3>
+<p><code>README.md</code> L403-406：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/pull/453">Zero-copy</a>
+Removing the copy between PyTorch tensors and communication buffers, which reduces the SM usages significantly for normal kernels
+This PR is authored by <strong>Tencent Network Platform Department</strong></p>
+</blockquote>
+<p><strong>核心思想</strong>：
+- 消除 PyTorch tensor 与 communication buffer 之间的拷贝
+- 直接在高层次 tensor 上操作
+- 显著减少 Normal kernel 的 SM 使用</p>
+<p><strong>类似技术</strong>：
+- 2012 Network Lab 的 Zero Copy 技术
+- GPU Direct RDMA（GDR）的扩展</p>
+<p><strong>对 UB 的启发</strong>：
+- 零拷贝是减少 SM 开销的关键
+- 需要 buffer 管理与 PyTorch tensor 生命周期对齐</p>
+<h3 id="132-eager-protocol">13.2 Eager Protocol</h3>
+<p><code>README.md</code> L407-408：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/pull/437">Eager</a>
+Using a low-latency protocol removes the extra RTT latency introduced by RDMA atomic OPs</p>
+</blockquote>
+<p><strong>核心思想</strong>：
+- 使用低延迟协议
+- 消除 RDMA atomic 操作引入的额外 RTT 延迟
+- 预期收益：降低 latency（特别是小消息场景）</p>
+<p><strong>RDMA Atomic 的 RTT 问题</strong>：
+- RDMA atomic（如 compare-and-swap）需要 2 RTT
+- Eager 协议可能使用 RDMA write + notification，只需 1 RTT</p>
+<h3 id="133-tma-tensor-memory-accelerator">13.3 TMA (Tensor Memory Accelerator)</h3>
+<p><code>README.md</code> L409-413：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep">Hybrid-EP</a>
+A new backend implementation using TMA instructions for minimal SM usage and larger NVLink domain support
+Fine-grained communication-computation overlap for single-batch scenarios
+PCIe kernel support for non-NVLink environments
+NVFP4 data type support</p>
+</blockquote>
+<p><strong>TMA 的关键特性</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据面 vs 控制面</strong></td>
+<td>TMA 在<strong>数据面</strong>，异步搬运数据，不需要 SM 参与</td>
+</tr>
+<tr>
+<td><strong>SM 开销</strong></td>
+<td>最小化 SM 使用（只需发起 TMA 描述符）</td>
+</tr>
+<tr>
+<td><strong>NVLink 域</strong></td>
+<td>支持更大的 NVLink 域（跨更多 GPU）</td>
+</tr>
+<tr>
+<td><strong>通信-计算 overlap</strong></td>
+<td>细粒度的单 batch 场景 overlap</td>
+</tr>
+<tr>
+<td><strong>PCIe 支持</strong></td>
+<td>非 NVLink 环境下的 PCIe kernel</td>
+</tr>
+<tr>
+<td><strong>FP4 支持</strong></td>
+<td>NVFP4 数据类型</td>
+</tr>
+</tbody>
+</table>
+<p><strong>TMA 在数据面还是控制面？</strong></p>
+<p><strong>回答</strong>：TMA 在<strong>数据面</strong>。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// dispatch.cuh:289-291</span>
+<span class="n">ptx</span><span class="o">::</span><span class="n">tma_load_1d</span><span class="p">(</span><span class="n">tma_buffer</span><span class="p">.</span><span class="n">get_hidden_ptr</span><span class="p">(),</span><span class="w"> </span><span class="n">math</span><span class="o">::</span><span class="n">advance_ptr</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">token_i64_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">),</span>
+<span class="w">                 </span><span class="n">mbarrier_ptr</span><span class="p">,</span><span class="w"> </span><span class="n">kNumHiddenBytes</span><span class="p">);</span>
+</code></pre></div>
+
+<p><strong>TMA 的工作方式</strong>：
+1. SM 发起 TMA 描述符（控制面，开销极小）
+2. TMA engine 异步搬运数据（数据面，不占 SM）
+3. mbarrier 通知完成</p>
+<p><strong>对 UB 的启发</strong>：
+- 数据面应尽量使用硬件加速（TMA、DMA engine）
+- 控制面只需发起请求，不参与数据搬运
+- TMA 描述符可以预计算，进一步减少 SM 开销</p>
+<hr />
+<h2 id="14-antgroup">14. AntGroup 优化规划解读</h2>
+<h3 id="141-normal-smfree">14.1 Normal-SMFree</h3>
+<p><code>README.md</code> L416：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/pull/347">Normal-SMFree</a> Eliminating SM from RDMA path by decoupling comm-kernel execution from NIC token transfer, freeing SMs for compute</p>
+</blockquote>
+<p><strong>核心思想</strong>：
+- 将通信 kernel 执行与 NIC token 传输解耦
+- 消除 RDMA 路径上的 SM 使用
+- 释放 SM 给计算任务</p>
+<p><strong>与 V1 的 0 SM Low-Latency 的关系</strong>：
+- V1 只有 Low-Latency 模式支持 0 SM
+- AntGroup 将 0 SM 扩展到 Normal 模式</p>
+<h3 id="142-ll-sbo">14.2 LL-SBO</h3>
+<p><code>README.md</code> L417：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/pull/483">LL-SBO</a> Overlapping Down GEMM computation with Combine Send communication via signaling mechanism to reduce end-to-end latency</p>
+</blockquote>
+<p><strong>核心思想</strong>：
+- 将 Down GEMM 计算与 Combine Send 通信 overlap
+- 通过 signaling 机制同步
+- 降低端到端延迟</p>
+<p><strong>SBO = Signaling-Based Overlap</strong></p>
+<h3 id="143-ll-layered">14.3 LL-Layered</h3>
+<p><code>README.md</code> L418：</p>
+<blockquote>
+<p><a href="https://github.com/deepseek-ai/DeepEP/pull/500">LL-Layered</a> Optimizing cross-node LL operator communication using rail-optimized forwarding and data merging to reduce latency</p>
+</blockquote>
+<p><strong>核心思想</strong>：
+- 优化跨节点 LL（Low-Latency）算子通信
+- Rail-optimized forwarding：利用多 rail（多网卡）优化转发
+- Data merging：合并小消息，减少通信次数</p>
+<h3 id="144">14.4 总结</h3>
+<table>
+<thead>
+<tr>
+<th>PR</th>
+<th>目标</th>
+<th>关键技术</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Normal-SMFree</strong></td>
+<td>Normal 模式 0 SM</td>
+<td>解耦 comm-kernel 与 NIC transfer</td>
+</tr>
+<tr>
+<td><strong>LL-SBO</strong></td>
+<td>LL 模式计算-通信 overlap</td>
+<td>Signaling-based overlap</td>
+</tr>
+<tr>
+<td><strong>LL-Layered</strong></td>
+<td>LL 模式跨节点优化</td>
+<td>Rail-optimized forwarding + data merging</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="15">15. 通信方式量化要素抽象</h2>
+<h3 id="151">15.1 通信方式的分类</h3>
+<p>基于 DeepEP V2 的分析，可以抽象出以下通信方式：</p>
+<table>
+<thead>
+<tr>
+<th>通信方式</th>
+<th>数据方向</th>
+<th>SM 使用</th>
+<th>数据类型</th>
+<th>优化目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>EP Dispatch (Normal)</strong></td>
+<td>All-to-All</td>
+<td>多（64-160）</td>
+<td>FP8/BF16</td>
+<td>Throughput</td>
+</tr>
+<tr>
+<td><strong>EP Dispatch (Low-Latency)</strong></td>
+<td>All-to-All</td>
+<td>少（4-8）</td>
+<td>FP8/BF16</td>
+<td>Latency</td>
+</tr>
+<tr>
+<td><strong>EP Combine</strong></td>
+<td>All-to-All</td>
+<td>多（64-160）</td>
+<td>BF16</td>
+<td>Throughput</td>
+</tr>
+<tr>
+<td><strong>Engram Fetch</strong></td>
+<td>One-sided Read</td>
+<td>0</td>
+<td>BF16/FP8</td>
+<td>Latency</td>
+</tr>
+<tr>
+<td><strong>PP Send/Recv</strong></td>
+<td>Point-to-Point</td>
+<td>0</td>
+<td>BF16</td>
+<td>Latency</td>
+</tr>
+<tr>
+<td><strong>AGRS</strong></td>
+<td>All-Gather/Reduce-Scatter</td>
+<td>多</td>
+<td>BF16</td>
+<td>Throughput</td>
+</tr>
+</tbody>
+</table>
+<h3 id="152">15.2 量化要素模型</h3>
+<h4 id="1521">15.2.1 延迟模型</h4>
+<div class="codehilite"><pre><span></span><code>Latency = max(Network_Time, HBM_Time) + Control_Overhead
+
+Network_Time = Data_Volume / Network_Bandwidth
+HBM_Time = HBM_Read_Write_Volume / (Num_SMs × Per_SM_HBM_Bandwidth)
+Control_Overhead = QP_Doorbell + Barrier + CPU_Sync
+</code></pre></div>
+
+<h4 id="1522">15.2.2 吞吐量模型</h4>
+<div class="codehilite"><pre><span></span><code>Throughput = Num_SMs × Per_SM_Efficiency × Network_Utilization
+
+Per_SM_Efficiency = f(TMA_Efficiency, Warp_Specialize_Overlap)
+Network_Utilization = f(VL_Isolation, AR_Enable, Congestion)
+</code></pre></div>
+
+<h4 id="1523-sm">15.2.3 SM 数量模型</h4>
+<div class="codehilite"><pre><span></span><code>Num_SMs = max(
+    (Network_Bandwidth / Per_Token_Network_Traffic) × (Per_Token_HBM_Read / Per_SM_HBM_Read_BW),
+    (Network_Bandwidth / Per_Token_Network_Traffic) × (Per_Token_HBM_Write / Per_SM_HBM_Write_BW)
+)
+× 1.25 (margin)
+</code></pre></div>
+
+<h3 id="153">15.3 关键量化参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>符号</th>
+<th>典型值</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>num_experts</strong></td>
+<td>E</td>
+<td>256</td>
+<td>决定 buffer 寻址粒度</td>
+</tr>
+<tr>
+<td><strong>num_topk</strong></td>
+<td>K</td>
+<td>8</td>
+<td>决定 token 复制量</td>
+</tr>
+<tr>
+<td><strong>num_ranks</strong></td>
+<td>R</td>
+<td>256</td>
+<td>决定通信范围</td>
+</tr>
+<tr>
+<td><strong>hidden</strong></td>
+<td>H</td>
+<td>7168</td>
+<td>决定 token 大小</td>
+</tr>
+<tr>
+<td><strong>num_max_tokens_per_rank</strong></td>
+<td>T</td>
+<td>4096/128</td>
+<td>决定 buffer 大小</td>
+</tr>
+<tr>
+<td><strong>rdma_gbs</strong></td>
+<td>B_rdma</td>
+<td>50 GB/s</td>
+<td>RDMA 带宽</td>
+</tr>
+<tr>
+<td><strong>nvlink_gbs</strong></td>
+<td>B_nvl</td>
+<td>160/726 GB/s</td>
+<td>NVLink 带宽</td>
+</tr>
+<tr>
+<td><strong>sm_read_gbs</strong></td>
+<td>B_sm_read</td>
+<td>200 GB/s</td>
+<td>每 SM HBM 读带宽</td>
+</tr>
+<tr>
+<td><strong>sm_write_gbs</strong></td>
+<td>B_sm_write</td>
+<td>50 GB/s</td>
+<td>每 SM HBM 写带宽</td>
+</tr>
+</tbody>
+</table>
+<h3 id="154">15.4 时延数据与代码分析</h3>
+<h4 id="1541-dispatch">15.4.1 Dispatch 时延分析</h4>
+<div class="codehilite"><pre><span></span><code>Dispatch_Time = Notify_Time + Dispatch_Time + Barrier_Time + Copy_Epilogue_Time
+
+Notify_Time = O(num_tokens × num_topk / (num_notify_warps × 32))
+Dispatch_Time = O(num_tokens / (num_dispatch_warps × num_sms))
+Barrier_Time = O(num_ranks × qp_latency)
+Copy_Epilogue_Time = O(num_recv_tokens / (num_sms × warp_efficiency))
+</code></pre></div>
+
+<h4 id="1542-combine">15.4.2 Combine 时延分析</h4>
+<div class="codehilite"><pre><span></span><code>Combine_Time = Push_Time + Reduce_Epilogue_Time
+
+Push_Time = O(num_combined_tokens / (num_warps × num_sms))
+Reduce_Epilogue_Time = O(num_combined_tokens / (num_sms × warp_efficiency))
+</code></pre></div>
+
+<h4 id="1543-cached-dispatch">15.4.3 Cached Dispatch 时延分析</h4>
+<div class="codehilite"><pre><span></span><code>Cached_Dispatch_Time = Dispatch_Time (skip Notify_Time, skip CPU_Sync)
+
+Speedup = (Notify_Time + CPU_Sync) / Total_Time
+</code></pre></div>
+
+<p>对于 Decode 场景（小 batch），Notify_Time 和 CPU_Sync 占比大，Cached Dispatch 收益显著。</p>
+<hr />
+<h2 id="16-ub-ep-offering">16. UB EP Offering 建议</h2>
+<h3 id="161-all-together">16.1 统一 All Together 方案</h3>
+<p>基于 DeepEP V2 的分析，建议 UB 提供以下 EP offering：</p>
+<h4 id="1611">16.1.1 核心能力</h4>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>描述</th>
+<th>对标 DeepEP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>EP Dispatch/Combine</strong></td>
+<td>All-to-All 通信</td>
+<td>DeepEP V2 ElasticBuffer</td>
+</tr>
+<tr>
+<td><strong>Engram</strong></td>
+<td>远端内存访问</td>
+<td>DeepEP V2 Engram</td>
+</tr>
+<tr>
+<td><strong>PP Send/Recv</strong></td>
+<td>Pipeline Parallel</td>
+<td>DeepEP V2 PP</td>
+</tr>
+<tr>
+<td><strong>AGRS</strong></td>
+<td>All-Gather/Reduce-Scatter</td>
+<td>DeepEP V2 AGRS</td>
+</tr>
+</tbody>
+</table>
+<h4 id="1612">16.1.2 差异化能力</h4>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>描述</th>
+<th>对 POC 的价值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>融合超节点总线/1825</strong></td>
+<td>支持 UB 超节点拓扑</td>
+<td>客户 POC 关键需求</td>
+</tr>
+<tr>
+<td><strong>池化 DDR (NGRAM)</strong></td>
+<td>支持池化内存</td>
+<td>与 Engram 类似，支持远程 KV cache</td>
+</tr>
+<tr>
+<td><strong>SM-Free 通信</strong></td>
+<td>0 SM 通信</td>
+<td>AntGroup Normal-SMFree</td>
+</tr>
+<tr>
+<td><strong>Eager Protocol</strong></td>
+<td>低延迟协议</td>
+<td>消除 RTT</td>
+</tr>
+<tr>
+<td><strong>CFT 支持</strong></td>
+<td>小 token 优化</td>
+<td>Decode 场景</td>
+</tr>
+</tbody>
+</table>
+<h3 id="162">16.2 对主要客户的支持</h3>
+<table>
+<thead>
+<tr>
+<th>客户</th>
+<th>需求</th>
+<th>UB 对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tencent</strong></td>
+<td>Zero Copy 技术</td>
+<td>集成 Tencent Zero Copy PR</td>
+</tr>
+<tr>
+<td><strong>AntGroup</strong></td>
+<td>SM-Free、SBO、Layered</td>
+<td>集成 AntGroup 优化 PR</td>
+</tr>
+<tr>
+<td><strong>ROCm/Mori-EP</strong></td>
+<td>AMD GPU 支持</td>
+<td>支持 Mori 后端</td>
+</tr>
+</tbody>
+</table>
+<h3 id="163">16.3 建议路线图</h3>
+<ol>
+<li><strong>Phase 1</strong>：实现 EP Dispatch/Combine（对标 DeepEP V2）</li>
+<li><strong>Phase 2</strong>：实现 Engram + PP + AGRS</li>
+<li><strong>Phase 3</strong>：集成 Zero Copy、Eager、CFT</li>
+<li><strong>Phase 4</strong>：支持超节点拓扑和池化 DDR</li>
+<li><strong>Phase 5</strong>：SM-Free 通信和细粒度 overlap</li>
+</ol>
+<hr />
+<h2 id="_6">总结</h2>
+<h3 id="q1-elasticbuffer-normallow-latency">Q1: ElasticBuffer 统一 Normal/Low-Latency 的量化因素</h3>
+<table>
+<thead>
+<tr>
+<th>因子</th>
+<th>公式</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>num_expected_topk</code></td>
+<td><code>num_ranks × (1 - C(E-E/R, k)/C(E, k))</code></td>
+<td>每 token 期望去重 rank 数</td>
+</tr>
+<tr>
+<td><code>sm_read</code></td>
+<td><code>1 / num_expected_topk</code></td>
+<td>每 token HBM 读量</td>
+</tr>
+<tr>
+<td><code>sm_write</code></td>
+<td><code>f(num_expected_topk, 卡数)</code></td>
+<td>每 token HBM 写量</td>
+</tr>
+<tr>
+<td><code>rdma_traffic</code></td>
+<td><code>g(卡数, num_expected_topk)</code></td>
+<td>每 token RDMA 流量</td>
+</tr>
+<tr>
+<td><code>nvlink_traffic</code></td>
+<td><code>h(卡数, num_expected_topk)</code></td>
+<td>每 token NVLink 流量</td>
+</tr>
+<tr>
+<td><strong>瓶颈</strong></td>
+<td><code>max(rdma_traffic/rdma_gbs, nvlink_traffic/nvlink_gbs)</code></td>
+<td>时间瓶颈</td>
+</tr>
+</tbody>
+</table>
+<h3 id="q2-sm">Q2: SM 估算本质</h3>
+<div class="codehilite"><pre><span></span><code>num_sms = bottleneck_ratio × max(sm_read_per_token/sm_read_bw, sm_write_per_token/sm_write_bw)
+</code></pre></div>
+
+<p><strong>为什么用 experts/topk 而非卡数</strong>：
+- Buffer 寻址是 expert 粒度的
+- Token 复制量取决于 expert 分布（topk 选择）
+- 卡数通过 <code>num_expected_topk</code> 间接体现</p>
+<h3 id="q3-topk">Q3: TopK 复制机制</h3>
+<ul>
+<li><strong>是的</strong>，<code>dispatch_forward</code>（即 <code>dispatch_impl</code>）包含 TopK buffer 生成</li>
+<li><strong>是的</strong>，token 复制发生在 <code>buffer.dispatch</code> 内</li>
+<li><strong>是的</strong>，利用 <code>topk_idx</code> 进行：</li>
+<li>目标 rank 计算：<code>rank = expert_idx / experts_per_rank</code></li>
+<li>Slot 分配：<code>atomicAdd(counter[rank], 1)</code></li>
+<li>数据路由：NVLink TMA store 或 RDMA put</li>
+</ul>
+<h3 id="q4-decode">Q4: Decode 路由缓存</h3>
+<ul>
+<li><strong>是的</strong>，100% cache 了（routing decisions 不变时）</li>
+<li><strong>只有 Decode 支持</strong>：因为 Decode 的 routing decisions 在连续 step 之间可能不变</li>
+<li><strong>Prefill/Train 不支持</strong>：因为每个 batch 的 routing decisions 都不同</li>
+<li><strong>V2 的统一优化</strong>：API 层统一 + 通信算法层统一</li>
+</ul>
+<h3 id="q5-0-sm">Q5: 0 SM 先验知识</h3>
+<ul>
+<li><strong>数据面与控制面分离</strong>：NIC DMA 搬数据，SM 做控制</li>
+<li><strong>V2 不再支持 0 SM EP</strong>：但保留 0 SM Engram/PP/CP</li>
+<li><strong>AntGroup 扩展</strong>：Normal-SMFree 将 0 SM 扩展到 Normal 模式</li>
+</ul>
+<h3 id="q6-engram-elasticbuffer">Q6: Engram 复用 ElasticBuffer</h3>
+<ul>
+<li><strong>是的</strong>，完全复用 ElasticBuffer API</li>
+<li><strong>共享底层资源</strong>：Buffer、NCCL Gin Context、QP、Comm Stream</li>
+<li><strong>区别</strong>：Engram 使用 CPU Buffer，EP 使用 GPU Buffer</li>
+</ul>
+<h3 id="q7-fp8-dispatch-vs-bf16-combine">Q7: FP8 Dispatch vs BF16 Combine</h3>
+<ul>
+<li><strong>FP8 Dispatch</strong>：节省 50% 通信带宽，每 token 附带 SF</li>
+<li><strong>BF16 Combine</strong>：保证累加精度</li>
+<li><strong>Buffer Size</strong>：FP8 + SF &lt; BF16</li>
+</ul>
+<h3 id="q8-async_with_compute_stream">Q8: async_with_compute_stream</h3>
+<ul>
+<li><strong>不是放弃指令级融合</strong>，而是分层设计</li>
+<li><strong>Stream 级别 Overlap</strong>：通信与计算分离到不同 stream</li>
+<li><strong>Kernel 级别 Overlap</strong>：Notify + Dispatch warps 并行</li>
+<li><strong>硬件级别 Overlap</strong>：TMA engine 独立于 SM</li>
+</ul>
+<h3 id="q9-nv-gin_1">Q9: NV Gin 架构</h3>
+<ul>
+<li><strong>GPU-Initiated Networking</strong>：SM 直接操作 NIC QP</li>
+<li><strong>Symmetric Memory</strong>：统一虚拟地址空间</li>
+<li><strong>QP 映射</strong>：根据 SM 数和模式动态调整</li>
+<li><strong>性能</strong>：V2 1.3x 峰值带宽，4x SM 节省</li>
+</ul>
+<h3 id="q10">Q10: 流量隔离</h3>
+<ul>
+<li><strong>优先 VL 隔离</strong>：EP 流量使用独立 VL</li>
+<li><strong>开启 Adaptive Routing</strong>：多路径负载均衡</li>
+<li><strong>软件协同</strong>：<code>sl_idx</code> 参数 / <code>EP_OVERRIDE_RDMA_SL</code> 环境变量</li>
+</ul>
+<h3 id="q11-vl-vs">Q11: VL vs 拥塞控制</h3>
+<ul>
+<li><strong>禁用拥塞控制</strong>：因为会降低最大带宽</li>
+<li><strong>优先 VL 隔离</strong>：将拥塞流量分配到低优先级 VL</li>
+<li><strong>UB 启示</strong>：需要支持多 VL/VC，测试 VL 隔离性能</li>
+</ul>
+<h3 id="q12-cft">Q12: CFT</h3>
+<ul>
+<li><strong>Compute Fabric Transport</strong>：针对小 token 优化</li>
+<li><strong>nvDev 分支</strong>：实验性支持</li>
+<li><strong>目标</strong>：降低小 token 场景的 latency</li>
+</ul>
+<h3 id="q13_1">Q13: 其他特性</h3>
+<ul>
+<li><strong>Zero Copy</strong>：消除 PyTorch tensor 与 buffer 之间的拷贝</li>
+<li><strong>Eager Protocol</strong>：消除 RDMA atomic 的 RTT 延迟</li>
+<li><strong>TMA</strong>：数据面异步搬运，最小化 SM 使用</li>
+</ul>
+<h3 id="q14-antgroup">Q14: AntGroup 优化</h3>
+<ul>
+<li><strong>Normal-SMFree</strong>：Normal 模式 0 SM</li>
+<li><strong>LL-SBO</strong>：Down GEMM 与 Combine Send overlap</li>
+<li><strong>LL-Layered</strong>：跨节点 rail-optimized forwarding</li>
+</ul>
+<hr />
+<blockquote>
+<p><strong>分析方法论</strong>：本报告基于源码实证，关键结论均有代码行号标注。核心洞察是：V2 通过将 Buffer 提升为一等公民、SM/QP 解析式计算、以及统一的 Kernel Pipeline，实现了 Normal 和 Low-Latency 的统一——差异仅在于参数配置，而非架构设计。这一设计哲学对 UB EP offering 有重要的启发意义。</p>
+</blockquote>
+</div>
+</body>
+</html>
