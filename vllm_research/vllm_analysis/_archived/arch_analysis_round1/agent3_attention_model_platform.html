@@ -1,21 +1,37 @@
-<!doctype html><html lang="head"><head><meta charset="utf-8">
+<!doctype html><html lang="head"><head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>L3 注意力/模型/平台/编译 · vLLM Arch</title><link rel="stylesheet" href="report.css">
-<style>
-@media(max-width:768px){
-  body{padding:16px!important;max-width:100%!important}
-  h1{font-size:1.3rem!important}
-  h2{font-size:1.1rem!important}
-  table{font-size:.82em!important; display:block; overflow-x:auto}
-  th,td{padding:5px 7px!important}
-  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
-  .archgrid,.grid,.shell{grid-template-columns:1fr!important}
-  nav,.nav{position:static!important;max-height:none!important}
-  img{max-width:100%!important}
-}
-</style>
+<title>L3 注意力/模型/平台/编译 · vLLM Arch</title>
 </head>
-<body><div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>L3 注意力/模型/平台/编译</h1><div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
+<body>
+<div class="notion-page">
+<div class="topbar">📘 vLLM 分析报告集 · <a href="index.html">返回索引</a></div><h1>L3 注意力/模型/平台/编译</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#1-the-attention-abstraction-stack" class="toc-h2">1. The Attention abstraction stack</a></li>
+<li><a href="#11-how-a-backend-is-resolved-the-init-time-contrac" class="toc-h3">1.1 How a backend is resolved (the init-time contract)</a></li>
+<li><a href="#12-paged-attention-reads-kv-by-block-id" class="toc-h3">1.2 Paged attention reads KV by block id</a></li>
+<li><a href="#2-modelexecutor--modelrunner-contract" class="toc-h2">2. ModelExecutor / ModelRunner contract</a></li>
+<li><a href="#3-platform-device-abstraction" class="toc-h2">3. Platform device abstraction</a></li>
+<li><a href="#31-minimal-mandatory-interface-raise-notimplemente" class="toc-h3">3.1 Minimal-mandatory interface (raise NotImplementedError)</a></li>
+<li><a href="#32-memorymodel--capability-methods" class="toc-h3">3.2 Memory‑model + capability methods</a></li>
+<li><a href="#33-ascends-implementation-of-the-interface" class="toc-h3">3.3 Ascend's implementation of the interface</a></li>
+<li><a href="#4-compilation--graph-capture" class="toc-h2">4. Compilation / Graph capture</a></li>
+<li><a href="#41-upstream-cuda-graphs--torchcompile" class="toc-h3">4.1 Upstream CUDA Graphs + torch.compile</a></li>
+<li><a href="#42-ascends-acl-graph-substitute--why-cuda-graphs-a" class="toc-h3">4.2 Ascend's ACL-graph substitute — why CUDA graphs are unusable</a></li>
+<li><a href="#43-ascends-torch-compile-fork" class="toc-h3">4.3 Ascend's Torch-compile fork</a></li>
+<li><a href="#5-ops-amp-kernels-layer" class="toc-h2">5. Ops &amp; kernels layer</a></li>
+<li><a href="#51-upstream-_custom_opspy" class="toc-h3">5.1 Upstream _custom_ops.py</a></li>
+<li><a href="#52-ascends-backfill-of-cann-kernels" class="toc-h3">5.2 Ascend's backfill of CANN kernels</a></li>
+<li><a href="#6-design-insights-for-an-inference-architect-ranke" class="toc-h2">6. Design insights for an inference architect (ranked by adaptation cost)</a></li>
+<li><a href="#61-attentionbackend--the-raison-dêtre-of-vllms-mul" class="toc-h3">6.1 AttentionBackend — the raison d'être of vLLM's multi-hardware portability</a></li>
+<li><a href="#62-why-ascends-overlay-works--a-taxonomic-view" class="toc-h3">6.2 Why Ascend's overlay works — a taxonomic view</a></li>
+<li><a href="#63-one-subtle-trap-for-dsa-architects-forwarded-fr" class="toc-h3">6.3 One subtle trap for DSA architects forwarded from Ascend's experience</a></li>
+<li><a href="#key-file-reference-map" class="toc-h2">Key file reference map</a></li>
+</ul>
+</details>
+<div class="meta" style="display:flex;flex-wrap:wrap;gap:10px;border-top:1px solid #2a3038;border-bottom:1px solid #2a3038;padding:6px 0">📑 <a href="agent1_engine_orchestration.html">L1 引擎/编排</a> · <a href="agent2_scheduler_kvcache.html">L2 调度器/KV缓存</a> · <a href="agent3_attention_model_platform.html">L3 注意力/模型/平台/编译</a> · <a href="agent4_ascend_adaptation_methodology.html">L4 昇腾适配+通用方法论</a> · <a href="first_principles_vllm.html">第一性原理 vLLM</a> · <a href="first_principles_ascend.html">第一性原理 Ascend</a></div>
 <article><h1 id="layer-3-attention-backends-modelexecutor-platform-device-abstraction-compilationgraph-capture">Layer 3 — Attention Backends, ModelExecutor, Platform Device Abstraction, Compilation/Graph Capture</h1>
 <blockquote>
 <p>Companion note to the vLLM architecture series. Audience: inference architects, systems/parallel-computing engineers, DSA engineers.
@@ -435,4 +451,6 @@ vllm_ascend/ops/ (layernorm,linear,rope,mla,fused_moe,triton/)   CANN/Triton/asc
 vllm_ascend/worker/model_runner_v1.py       AscendGPUModelRunner overrides (~NPU branches in execute_model)
 vllm_ascend/device_allocator/camem.py       NPU pinned/ cumem-compatible allocator
 </code></pre></article>
-<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div></body></html>
+<div class="meta" style="margin-top:22px">git vLLM 2db39c704 · Ascend b266da5d · 2026-07-18</div>
+</div>
+</body></html>

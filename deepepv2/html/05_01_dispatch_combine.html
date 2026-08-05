@@ -1,67 +1,56 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
+  <link rel="stylesheet" href="../../assets/css/notion-style.css">
+  <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dispatch/Combine 在 DeepGEMM Mega MoE 内核中的实现与融合</title>
-<style>
 
-:root {
-  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
-  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
-  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
-  --code-bg: #f7f6f3; --code-text: #eb5757;
-  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
-    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
-    --border: #373737; --accent: #529cca; --accent-bg: #252525;
-    --code-bg: #2f2f2f; --code-text: #ff7b72;
-    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
-  }
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
-.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
-h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
-h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
-h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
-p { margin: 0.5em 0; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
-li { margin: 0.25em 0; }
-blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
-code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
-pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
-pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
-table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
-th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
-td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
-strong { font-weight: 600; }
-.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
-.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
-.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
-.toc ul { margin: 0; padding-left: 1.2em; }
-.toc li { margin: 0.15em 0; }
-.toc a { color: var(--text-secondary); }
-.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
-.nav a { color: var(--text-secondary); }
-@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
-
-</style>
 <script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 </script>
 </head>
 <body>
-<div class="container">
+
+<div class="notion-page">
 <h1 id="dispatchcombine-deepgemm-mega-moe">Dispatch/Combine 在 DeepGEMM Mega MoE 内核中的实现与融合</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#概述" class="toc-h2">概述</a></li>
+<li><a href="#1-博客概念回顾dispatch--combine-三步变换" class="toc-h2">1. 博客概念回顾：Dispatch / Combine 三步变换</a></li>
+<li><a href="#2-mega-moe-内核整体架构三组-warp-role" class="toc-h2">2. Mega MoE 内核整体架构：三组 Warp Role</a></li>
+<li><a href="#3-dispatch-在哪里融合进-dispatch-warps" class="toc-h2">3. Dispatch 在哪里？——融合进 Dispatch Warps</a></li>
+<li><a href="#31-结论dispatch-不是独立步骤而是-kernel-内的前半段" class="toc-h3">3.1 结论：Dispatch 不是独立步骤，而是 kernel 内的前半段</a></li>
+<li><a href="#32-dispatch-的数据流坍缩版本" class="toc-h3">3.2 Dispatch 的数据流（坍缩版本）</a></li>
+<li><a href="#4-token--expert--destination-变换的具体实现" class="toc-h2">4. Token → Expert → Destination 变换的具体实现</a></li>
+<li><a href="#41-topk_idx-的双重作用" class="toc-h3">4.1 topk_idx 的双重作用</a></li>
+<li><a href="#42-topk_weights-的作用" class="toc-h3">4.2 topk_weights 的作用</a></li>
+<li><a href="#5-combine-在哪里融合进-epilogue-warps" class="toc-h2">5. Combine 在哪里？——融合进 Epilogue Warps</a></li>
+<li><a href="#51-combine-的两阶段实现" class="toc-h3">5.1 Combine 的两阶段实现</a></li>
+<li><a href="#52-combine-数据流" class="toc-h3">5.2 Combine 数据流</a></li>
+<li><a href="#6-symmetric-memory-如何替代显式通信" class="toc-h2">6. Symmetric Memory 如何替代显式通信</a></li>
+<li><a href="#61-核心机制" class="toc-h3">6.1 核心机制</a></li>
+<li><a href="#62-对比-deepep-的通信模型" class="toc-h3">6.2 对比 DeepEP 的通信模型</a></li>
+<li><a href="#63-三次-nvlink-同步点" class="toc-h3">6.3 三次 NVLink 同步点</a></li>
+<li><a href="#7-博客-3-step-变换的坍缩分析" class="toc-h2">7. 博客 3-step 变换的坍缩分析</a></li>
+<li><a href="#71-变换路径对比" class="toc-h3">7.1 变换路径对比</a></li>
+<li><a href="#72-为什么可以坍缩" class="toc-h3">7.2 为什么可以坍缩？</a></li>
+<li><a href="#73-坍缩后的代价转移" class="toc-h3">7.3 坍缩后的代价转移</a></li>
+<li><a href="#8-什么被融合了mega-moe-vs-deepep-对比" class="toc-h2">8. 什么被融合了？Mega MoE vs DeepEP 对比</a></li>
+<li><a href="#81-融合全景图" class="toc-h3">8.1 融合全景图</a></li>
+<li><a href="#82-详细功能对照" class="toc-h3">8.2 详细功能对照</a></li>
+<li><a href="#83-关键代码位置索引" class="toc-h3">8.3 关键代码位置索引</a></li>
+<li><a href="#9-核心结论" class="toc-h2">9. 核心结论</a></li>
+<li><a href="#91-dispatchcombine-的命运" class="toc-h3">9.1 Dispatch/Combine 的命运</a></li>
+<li><a href="#92-融合的本质" class="toc-h3">9.2 融合的本质</a></li>
+<li><a href="#93-与博客论点的呼应" class="toc-h3">9.3 与博客论点的呼应</a></li>
+<li><a href="#附录关键数据结构布局" class="toc-h2">附录：关键数据结构布局</a></li>
+<li><a href="#a1-symmetric-buffer-布局每个-rank-一份" class="toc-h3">A.1 Symmetric Buffer 布局（每个 rank 一份）</a></li>
+<li><a href="#a2-expert-pool-内部布局" class="toc-h3">A.2 Expert Pool 内部布局</a></li>
+</ul>
+</details>
+
 <h2 id="_1">概述</h2>
 <blockquote>
 <p><em>"Every MoE Layer must perform a dynamic data layout transformation."</em><br />
@@ -593,7 +582,8 @@ comm<span style="color: #666">::</span>nvlink_barrier<span style="color: #666">&
 
 <hr />
 <p><em>分析基于 DeepGEMM 源码（commit 待确认）与博客《Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles》</em></p>
-<div class="nav"><a href="index.html">← 返回索引</a></div>
+<nav class="notion-nav"><a href="index.html">← 返回索引</a></nav>
 </div>
+
 </body>
 </html>
