@@ -17,14 +17,19 @@ status: draft
 I came across AI-generated videos. A few seconds long each. That's all it took.
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/cI1llLxiG38" title="AI Generated Video 1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/7dpc52KQ7SI" title="AI Generated Video 2" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/k6p1hSsIDXg" title="AI Generated Video 3" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/4UXftgvahRc" title="AI Generated Video 4" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/SOQQldSZdJI" title="AI Generated Video 5" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 ---
 
