@@ -22,29 +22,6 @@ I came across a handful of AI-generated short videos. A few seconds long each. T
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/7dpc52KQ7SI" title="AI Generated Video 2" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
 <p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/k6p1hSsIDXg" title="AI Generated Video 3" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/4UXftgvahRc" title="AI Generated Video 4" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/SOQQldSZdJI" title="AI Generated Video 5" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/rjoKIpn7cQ4" title="AI Generated Video 6" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/HpkUvjhukx8" title="AI Generated Video 7" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/q280QGYBDfE" title="AI Generated Video 8" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/LRH3Z6ZP4_k" title="AI Generated Video 9" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
-
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/j1WVSLUGMOI" title="AI Generated Video 10" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
-<p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
 
 ---
 
@@ -71,13 +48,5 @@ This is the first installment. More to come — benchmarks, model comparisons, a
 > Video sources:
 > - [YouTube — cI1llLxiG38](https://www.youtube.com/watch?v=cI1llLxiG38)
 > - [YouTube Shorts — 7dpc52KQ7SI](https://www.youtube.com/shorts/7dpc52KQ7SI)
-> - [YouTube Shorts — k6p1hSsIDXg](https://www.youtube.com/shorts/k6p1hSsIDXg)
-> - [YouTube Shorts — 4UXftgvahRc](https://www.youtube.com/shorts/4UXftgvahRc)
-> - [YouTube Shorts — SOQQldSZdJI](https://www.youtube.com/shorts/SOQQldSZdJI)
-> - [YouTube — rjoKIpn7cQ4](https://www.youtube.com/watch?v=rjoKIpn7cQ4)
-> - [YouTube — HpkUvjhukx8](https://www.youtube.com/watch?v=HpkUvjhukx8)
-> - [YouTube — q280QGYBDfE](https://www.youtube.com/watch?v=q280QGYBDfE)
-> - [YouTube Shorts — LRH3Z6ZP4_k](https://www.youtube.com/shorts/LRH3Z6ZP4_k)
-> - [YouTube Shorts — j1WVSLUGMOI](https://www.youtube.com/shorts/j1WVSLUGMOI)
 >
 > **Disclaimer:** These videos are embedded for commentary and criticism purposes under fair use. If any copyright owner believes this usage infringes your rights, please contact me and I will remove it promptly.
