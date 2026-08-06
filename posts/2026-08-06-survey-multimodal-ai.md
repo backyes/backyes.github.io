@@ -14,9 +14,11 @@ status: draft
 
 ## First Contact
 
-I came across an AI-generated short video. A few seconds long. That's all it took.
+I came across AI-generated videos. A few seconds long each. That's all it took.
 
-<iframe width="100%" height="560" src="https://www.youtube.com/embed/7dpc52KQ7SI" title="AI Generated Video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+<iframe width="100%" height="560" src="https://www.youtube.com/embed/cI1llLxiG38" title="AI Generated Video 1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+
+<iframe width="100%" height="560" src="https://www.youtube.com/embed/7dpc52KQ7SI" title="AI Generated Video 2" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
 
 ---
 
@@ -40,6 +42,8 @@ More to come.
 
 ---
 
-> Video source: [YouTube Shorts — 7dpc52KQ7SI](https://www.youtube.com/shorts/7dpc52KQ7SI)
+> Video sources:
+> - [YouTube — cI1llLxiG38](https://www.youtube.com/watch?v=cI1llLxiG38)
+> - [YouTube Shorts — 7dpc52KQ7SI](https://www.youtube.com/shorts/7dpc52KQ7SI)
 >
-> **Disclaimer:** This video is embedded for commentary and criticism purposes under fair use. If the copyright owner believes this usage infringes your rights, please contact me and I will remove it promptly.
+> **Disclaimer:** These videos are embedded for commentary and criticism purposes under fair use. If any copyright owner believes this usage infringes your rights, please contact me and I will remove it promptly.
