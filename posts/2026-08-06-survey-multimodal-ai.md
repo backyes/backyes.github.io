@@ -20,6 +20,12 @@ I came across AI-generated videos. A few seconds long each. That's all it took.
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/7dpc52KQ7SI" title="AI Generated Video 2" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
 
+<iframe width="100%" height="560" src="https://www.youtube.com/embed/k6p1hSsIDXg" title="AI Generated Video 3" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+
+<iframe width="100%" height="560" src="https://www.youtube.com/embed/4UXftgvahRc" title="AI Generated Video 4" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+
+<iframe width="100%" height="560" src="https://www.youtube.com/embed/SOQQldSZdJI" title="AI Generated Video 5" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
+
 ---
 
 ## What Hit Me
@@ -45,5 +51,8 @@ More to come.
 > Video sources:
 > - [YouTube — cI1llLxiG38](https://www.youtube.com/watch?v=cI1llLxiG38)
 > - [YouTube Shorts — 7dpc52KQ7SI](https://www.youtube.com/shorts/7dpc52KQ7SI)
+> - [YouTube Shorts — k6p1hSsIDXg](https://www.youtube.com/shorts/k6p1hSsIDXg)
+> - [YouTube Shorts — 4UXftgvahRc](https://www.youtube.com/shorts/4UXftgvahRc)
+> - [YouTube Shorts — SOQQldSZdJI](https://www.youtube.com/shorts/SOQQldSZdJI)
 >
 > **Disclaimer:** These videos are embedded for commentary and criticism purposes under fair use. If any copyright owner believes this usage infringes your rights, please contact me and I will remove it promptly.
