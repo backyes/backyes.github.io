@@ -313,20 +313,6 @@ def gen_hero():
         f'      <a class="button button-primary" href="{SITE["hero_cta_primary_url"]}">{SITE["hero_cta_primary"]}</a>',
         f'      <a class="button button-secondary" href="{SITE["hero_cta_browse_url"]}">{SITE["hero_cta_browse"]}</a>',
         '    </div>',
-        '    <div class="hero-metrics">',
-        '      <div class="metric">',
-        '        <span class="metric-label">System Architecture</span>',
-        '        <strong>Inference frameworks, KV-cache routing, P/D disaggregation, and distributed serving patterns.</strong>',
-        '      </div>',
-        '      <div class="metric">',
-        '        <span class="metric-label">Chip &amp; Interconnect</span>',
-        '        <strong>GPU microarchitecture, NVLink/NVL72, CXL memory fabric, and packaging technology deep dives.</strong>',
-        '      </div>',
-        '      <div class="metric">',
-        '        <span class="metric-label">Industry Insight</span>',
-        '        <strong>First-principles analysis of hyperscaler strategy, vendor roadmaps, and infrastructure economics.</strong>',
-        '      </div>',
-        '    </div>',
         '  </div>',
         '  <aside class="hero-aside" aria-label="How to use this site">',
         '    <p class="aside-kicker">Use This Page</p>',
@@ -342,16 +328,7 @@ def gen_hero():
     ])
 
 def gen_signal_grid():
-    cards = [
-        ("AI system design, without hand-waving", "Inference architectures, KV-cache management, scheduling, and distributed serving — from first principles."),
-        ("Chip & interconnect deep dives", "GPU microarchitecture, NVLink topology, CXL memory, and packaging technology analyzed quantitatively."),
-        ("Infrastructure economics", "Cost models, utilization analysis, and TCO projections for AI hardware at scale."),
-        ("Research synthesis", "Cross-paper analysis of MLSys/OSDI/SOSP findings, with critical evaluation and source tracing."),
-    ]
-    items = ""
-    for title, desc in cards:
-        items += f'<article class="signal-card"><strong>{title}</strong><p>{desc}</p></article>\n'
-    return f'<section class="signal-grid" aria-label="What this site covers">\n{items}</section>'
+    return ""
 
 def gen_featured_reports():
     p0_reports = [r for r in REPORTS if r["priority"] == "p0"][:6]
