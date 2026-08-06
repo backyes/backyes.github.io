@@ -41,3 +41,5 @@ More to come.
 ---
 
 > Video source: [YouTube Shorts — 7dpc52KQ7SI](https://www.youtube.com/shorts/7dpc52KQ7SI)
+>
+> **Disclaimer:** This video is embedded for commentary and criticism purposes under fair use. If the copyright owner believes this usage infringes your rights, please contact me and I will remove it promptly.
