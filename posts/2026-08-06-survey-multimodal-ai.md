@@ -14,7 +14,7 @@ status: draft
 
 ## First Contact
 
-I came across a handful of AI-generated short videos. A few seconds long each. That's all it took to reset my mental model of what synthetic media can do — today, not in some distant future.
+I came across a handful of AI-generated short videos. A few seconds long each. That's all it took to completely change my understanding of what synthetic media can do — today, not in some distant future.
 
 <iframe width="100%" height="560" src="https://www.youtube.com/embed/cI1llLxiG38" title="AI Generated Video 1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:block;margin:24px auto;max-width:100%;border-radius:8px;"></iframe>
 <p style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:-12px">📹 来源：抖音抓取。若侵犯版权，请联系删除。</p>
@@ -35,7 +35,7 @@ I came across a handful of AI-generated short videos. A few seconds long each. T
 
 ## What Hit Me
 
-Not "wow, cool." Something deeper — a visceral recalibration of what I thought synthetic media looked like.
+Not "wow, cool." Something deeper — I had to rethink everything I thought I knew about synthetic video.
 
 **Fidelity that crosses the threshold.** The resolution isn't just high; it's past the point where my brain can reliably flag it as synthetic. Skin texture with visible pores. Subsurface scattering across a cheekbone. Motion blur that obeys real camera physics. Micro-expressions that don't loop or stutter.
 
