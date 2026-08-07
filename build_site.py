@@ -302,7 +302,20 @@ def visual_placeholder(visual, cat):
 def _join(lines):
     return "\n".join(lines)
 
-def gen_hero():
+def gen_hero(posts=None):
+    # ── 动态生成 aside 内容 ──
+    aside_dynamic = gen_hero_aside(posts) if posts is not None else _join([
+        '  <aside class="hero-aside" aria-label="How to use this site">',
+        '    <p class="aside-kicker">Use This Page</p>',
+        '    <h2 class="aside-title">Two kinds of content, one through-line: first-principles thinking.</h2>',
+        '    <p class="aside-text">Posts are hand-written deep dives. Survey reports are AI-generated with full source tracing. Both aim to make tradeoffs explicit and claims quantifiable.</p>',
+        '    <ul class="aside-list">',
+        '      <li><span>Latest post</span><a href="posts/deepseek-mtp-wenyan.html">MTP 论 — 多符预测对算力、芯片、互连之结构性影响</a> — 文言文译 MTP 英文原文，提炼核心论点。</li>',
+        '      <li><span>Latest survey</span><a href="nvidia-specs-research/nvidia-specs-report.html">NVIDIA 产品全规格深度调研</a> — GPU / CPU / 网络全产品线规格深度调研。</li>',
+        '      <li><span>Browse all</span><a href="posts.html">15 posts</a> on GPU, memory, CXL, MTP, and infrastructure economics · <a href="#survey">20 AI survey projects</a> with paper-level depth.</li>',
+        '    </ul>',
+        '  </aside>',
+    ])
     return _join([
         '<section class="hero" aria-labelledby="hero-title">',
         '  <div class="hero-panel">',
@@ -314,17 +327,36 @@ def gen_hero():
         f'      <a class="button button-secondary" href="{SITE["hero_cta_browse_url"]}">{SITE["hero_cta_browse"]}</a>',
         '    </div>',
         '  </div>',
+        aside_dynamic,
+        '</section>',
+    ])
+
+
+def gen_hero_aside(posts):
+    """动态生成 Use This Page aside: 最新文章 + 正确计数"""
+    latest_post = posts[0] if posts else None
+    latest_report = REPORTS[0] if REPORTS else None
+    posts_count = len(posts)
+    reports_count = len(REPORTS)
+
+    items = []
+    if latest_post:
+        excerpt = latest_post["excerpt"][:120]
+        items.append(f'      <li><span>Latest post</span><a href="{latest_post["url"]}">{latest_post["title"]}</a> — {excerpt}…</li>')
+    if latest_report:
+        desc = latest_report["desc"][:120]
+        items.append(f'      <li><span>Latest survey</span><a href="{latest_report["dst"]}/{latest_report["entry"]}">{latest_report["title"]}</a> — {desc}…</li>')
+    items.append(f'      <li><span>Browse all</span><a href="posts.html">{posts_count} posts</a> on GPU, memory, CXL, MTP, and infrastructure economics · <a href="#survey">{reports_count} AI survey projects</a> with paper-level depth.</li>')
+
+    return _join([
         '  <aside class="hero-aside" aria-label="How to use this site">',
         '    <p class="aside-kicker">Use This Page</p>',
         '    <h2 class="aside-title">Two kinds of content, one through-line: first-principles thinking.</h2>',
         '    <p class="aside-text">Posts are hand-written deep dives. Survey reports are AI-generated with full source tracing. Both aim to make tradeoffs explicit and claims quantifiable.</p>',
         '    <ul class="aside-list">',
-        '      <li><span>Latest post</span><a href="posts/deepseek-mtp-wenyan.html">MTP 论 — 多符预测对算力、芯片、互连之结构性影响</a> — 文言文译 MTP 英文原文，提炼核心论点。</li>',
-        '      <li><span>Latest survey</span><a href="nvidia-specs-research/nvidia-specs-report.html">NVIDIA 产品全规格深度调研</a> — GPU / CPU / 网络全产品线规格深度调研。</li>',
-        '      <li><span>Browse all</span><a href="posts.html">15 posts</a> on GPU, memory, CXL, MTP, and infrastructure economics · <a href="#survey">20 AI survey projects</a> with paper-level depth.</li>',
+        _join(items),
         '    </ul>',
         '  </aside>',
-        '</section>',
     ])
 
 def gen_signal_grid():
@@ -633,7 +665,7 @@ def main():
     print(f"  解析到 {len(posts)} 篇手写文章")
 
     # Generate all sections
-    hero = gen_hero()
+    hero = gen_hero(posts)
     signal_grid = gen_signal_grid()
     featured_reports = gen_featured_reports()
     recent_posts_band = gen_recent_posts_band(posts)

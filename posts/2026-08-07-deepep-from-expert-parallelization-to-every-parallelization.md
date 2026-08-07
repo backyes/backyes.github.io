@@ -144,51 +144,33 @@ Historically, a unified abstraction layer was too expensive — the overhead of 
 
 ---
 
-## 5. The Competitive Landscape: AMD vs. NVIDIA vs. ICMS
+## 5. AMD and NVIDIA's Communication Infra: Diverging Philosophies
 
-The "every parallelization" space is not uncontested. Three distinct approaches are emerging:
+As DeepEP expands toward "every parallelization," it's worth contextualizing how AMD and NVIDIA — the two dominant GPU vendors — approach the communication infrastructure layer. Their historical paths and current strategies reveal different philosophies about where the abstraction should live.
 
-### 5.1 AMD's Branch: ROCm + Custom Fabric
+### 5.1 AMD: A Separate Branch
 
-AMD is pursuing a ==vertically-integrated but separate branch==:
+AMD has essentially ==pulled its own branch== in communication infra, vertically integrated but vendor-specific:
 
-- **ROCm's RCCL** (ROCm Communication Collective Library) is the NCCL equivalent
-- **Infinity Fabric** provides the intra- and inter-node fabric
-- **Strategy**: Tight coupling between AMD GPUs, AMD CPUs, and AMD networking — a closed but coherent stack
+- **RCCL** (ROCm Communication Collective Library) is AMD's NCCL equivalent, tightly coupled to AMD's GPU and CPU ecosystem
+- **Infinity Fabric** serves as both intra-chip (chiplet-to-chiplet) and inter-node fabric — a unified physical layer across scales
+- **Historical pattern**: AMD's approach mirrors its broader strategy — build a coherent, self-consistent stack that works optimally within AMD's own ecosystem
 
-**Limitation**: AMD's approach is ==vendor-locked by design==. Multi-vendor environments (common in cloud and enterprise) face friction.
+**The trade-off**: AMD's branch is ==self-consistent but isolated==. It works well for all-AMD deployments, but multi-vendor environments (common in cloud and enterprise) face friction. AMD is essentially betting that ecosystem coherence beats openness.
 
-### 5.2 NVIDIA's Open-Ended Approach: Lower-Level Primitives
+### 5.2 NVIDIA: Open at the Lower Level
 
-NVIDIA is taking a ==more open but lower-level== strategy:
+NVIDIA has taken a ==more open but lower-level== approach:
 
-- **NCCL remains the collective standard** — but NVIDIA is exposing more lower-level primitives
-- **NVLink-C2C, NVSwitch** provide open-ish chip-to-chip interfaces
-- **Strategy**: Define the *building blocks* (transport, memory semantics) and let ecosystem layers (like DeepEP) build abstractions on top
+- **NCCL** remains the de facto collective communication standard, but NVIDIA increasingly exposes *lower-level primitives* (NVLink-C2C, NVSwitch, GPUDirect RDMA) rather than only high-level collective APIs
+- **Historical pattern**: NVIDIA's communication strategy evolved from absorbing Baidu's intra-node invention → acquiring Mellanox for inter-node IB → integrating NVLink/NVSwitch for supernode fabrics. Each step exposed more of the underlying transport to ecosystem builders
+- **Current direction**: NVIDIA is ==opening the lower layers== — providing building blocks (transport, memory semantics, chip-to-chip interfaces) and letting ecosystem layers build abstractions on top
 
-**The bet**: NVIDIA wins regardless of which abstraction layer wins, because it owns the underlying transport. DeepEP on NVIDIA hardware is complementary, not competitive.
+**The strategic logic**: NVIDIA wins regardless of which higher-level abstraction wins, because it owns the underlying transport fabric. DeepEP on NVIDIA hardware is complementary — it builds *on top of* NVIDIA's primitives rather than competing with them.
 
-### 5.3 ICMS and Emerging Infra: Compatible or Distinct?
+### 5.3 The ICMS Factor
 
-**ICMS (Inter-Chiplet Mesh Standard)** and similar initiatives represent a third path:
-
-- **Goal**: Standardize die-to-die and chiplet-to-chiplet communication
-- **Relevance to DeepEP**: If ICMS defines the *physical/link layer* of future rack-scale fabrics, DeepEP's abstraction layer would sit *above* it
-- **Risk**: ICMS could define its own data-movement semantics, creating a competing abstraction
-
-**Assessment**: ICMS is currently focused on the physical/interconnect layer (analogous to PCIe or IB specifications). The *scheduling, QoS, and operator abstraction* layer that DeepEP targets is above ICMS's scope — for now. But if ICMS expands upward, it could become a competitor.
-
-```
-┌──────────────────────────────────────────────────┐
-│  Application Layer (Training / Inference / Agent) │
-├──────────────────────────────────────────────────┤
-│  Abstraction Layer (DeepEP / NCCL / Future)       │  ← Battleground
-├──────────────────────────────────────────────────┤
-│  Transport Layer (IB / RoCE / NVLink / CXL)       │
-├──────────────────────────────────────────────────┤
-│  Physical Layer (ICMS / PCIe / SerDes / CPO)      │
-└──────────────────────────────────────────────────┘
-```
+Beyond the two giants, **ICMS (Inter-Chiplet Mesh Standard)** and similar initiatives are emerging. ICMS currently targets the physical/interconnect layer (die-to-die, chiplet-to-chiplet) — analogous to where PCIe or IB specifications live. Whether ICMS remains at that layer or expands upward into data-movement semantics will shape the landscape. If it expands, it could offer an open-standard alternative to both AMD's and NVIDIA's proprietary physical layers — potentially becoming the neutral ground that a unified abstraction like DeepEP sits above.
 
 ---
 
