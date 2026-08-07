@@ -9,9 +9,9 @@ excerpt: "DeepEP began as an EP acceleration library for MoE models. Its rebrand
 
 ## Thesis
 
-**DeepEP's repositioning from "Expert Parallelization" to "Every Parallelization" is not marketing — it is a structural claim about where the infrastructure stack is heading.** The thin data-transfer layer that once served MoE all-to-all is evolving into a rack- and cluster-scale abstraction that unifies operators, QoS, and direct-drive capabilities for *all* parallelism strategies: data, pipeline, tensor, memory-pooling, and beyond.
+**DeepEP was built for Expert Parallelization. Now it aims to accelerate *every* parallelism.** That shift — from a single-purpose EP library to a unified data-movement layer for all parallelism strategies — signals where AI infrastructure is heading: the data-transfer layer is becoming the central abstraction.
 
-> The center of gravity is shifting: from "EP needs fast all-to-all" to "every parallelism needs a unified data-movement fabric."
+> From "EP needs fast all-to-all" to "every parallelism needs a unified fabric."
 
 ---
 
@@ -35,7 +35,12 @@ This was a *point solution* — brilliant, but narrow.
 
 ## 2. The Pivot: "Every Parallelization" as Infrastructure
 
-The rebranding to **DeepEP = "Deep Every Parallelization"** reveals a fundamentally different ambition. The new positioning targets:
+The rebranding to **DeepEP = "DeepEveryParallel"** reveals a fundamentally different ambition. The project's own words:
+
+> *"DeepEP (DeepEveryParallel) is a high-performance communication library for modern machine learning training and inference. The library currently focuses on expert parallelism (EP) — providing high-throughput and low-latency all-to-all GPU kernels (MoE dispatch and combine) with low-precision support including FP8 — while also offering experimental primitives for pipeline parallelism (PP), context parallelism (CP), and remote memory access (Engram), all designed for zero or minimal SM occupation."*
+> — [DeepEP GitHub README](https://github.com/deepseek-ai/DeepEP)
+
+The new positioning targets:
 
 - **Low-latency, high-bandwidth Pod-scale fabrics** (IB and RoCE domains)
 - **Rack-scale compute infrastructure** (NVL72-class and beyond)
@@ -63,35 +68,21 @@ This is the difference between a *library* and a *framework*. A library solves o
 
 ---
 
-## 3. The NCCL Parallel: From Baidu to Cluster-Scale Dominance
+## 3. The NCCL Parallel: Same Destination, Opposite Direction
 
 DeepEP's trajectory has a striking historical parallel — **NCCL itself**.
 
-### 3.1 NCCL Was Not Born at NVIDIA
+NCCL (NVIDIA Collective Communications Library) began as NVIDIA's intra-node multi-GPU communication primitive, then expanded across scale boundaries via the Mellanox IB acquisition (2019) and architectural integration (NVLink → NVSwitch → NVL72). Today it is the de facto cluster-wide collective standard.
 
-NCCL (NVIDIA Collective Communications Library) was ==originally invented by Baidu's US research lab== in 2015-2016, not by NVIDIA. Baidu developed the first optimized multi-GPU collective communication primitives for their internal PaddlePaddle framework, recognizing that GPU-to-GPU data movement was becoming the binding constraint for distributed training.
+**The pattern**: A communication primitive born at one scale (intra-node) was ==extended across scale boundaries== through acquisition and integration, eventually unifying the full cluster stack under a single abstraction.
 
-NVIDIA's response was swift and strategic:
-
-| Phase | Timeline | Action | Scope |
-|---|---|---|---|
-| **Internal** | 2015-2016 | Baidu invents optimized collective comms | Single machine, multi-GPU |
-| **Absorption** | 2017-2018 | NVIDIA launches NCCL 1.x/2.x | Intra-node (PCIe/NVLink) |
-| **Expansion** | 2019 | NVIDIA acquires Mellanox (IB) | Inter-node, cluster-scale |
-| **Dominance** | 2020-2024 | NCCL becomes de facto standard | Full cluster stack |
-| **Convergence** | 2025+ | Supernode / rack-scale integration | NVL72, NVSwitch fabrics |
-
-**The pattern**: A communication primitive invented for one scale (intra-node) was absorbed, productized, and then ==extended across scale boundaries== via acquisition (Mellanox IB) and architectural integration (NVLink → NVSwitch → NVL72).
-
-### 3.2 The Structural Similarity
-
-DeepEP is following the same playbook — but starting from the *opposite end* of the stack:
+DeepEP is running the same playbook — but in the *opposite direction*:
 
 | Dimension | NCCL Trajectory | DeepEP Trajectory |
 |---|---|---|
-| Origin | Intra-node (Baidu) | EP-specific (MoE) |
-| First expansion | Inter-node via IB | Pod/rack-scale fabrics |
-| Acquisition/integration | Mellanox IB | — (organic growth) |
+| Origin | Intra-node collective | EP-specific (MoE) |
+| Expansion logic | Up through scale (node → cluster) | Outward through parallelism (EP → all) |
+| Key enabler | Mellanox IB acquisition | V2 primitive expansion (Engram, PP, AGRS) |
 | End state | Cluster-wide collective standard | ==Every-parallelization abstraction== |
 
 **The key difference**: NCCL expanded *up* from intra-node to cluster. DeepEP is expanding *outward* from a specific parallelism (EP) to all parallelisms. Both converge on the same destination: ==a unified data-movement layer that abstracts the underlying fabric==.
@@ -122,16 +113,22 @@ New workload patterns are creating ==multi-tier, heterogeneous data-movement dem
 
 **The common thread**: These are all ==tightly-coupled, latency-sensitive, multi-media data-movement problems== that share the same underlying fabric (IB/RoCE) but have radically different semantic requirements. A unified abstraction layer can optimize across them — a point solution cannot.
 
-**DeepEP V2: the shift is already happening.** DeepEP's evolution from V1 to V2 demonstrates this expansion in practice — the library has already moved well beyond EP-specific all-to-all:
+**DeepEP V2: the shift is already happening.** The project's V2 release notes state:
 
-| DeepEP V2 Primitive | Target Parallelism | What It Does |
+> *"A complete refactoring of Expert Parallelism — achieving extreme performance with several times fewer SM resources compared to V1, while supporting significantly larger scale-up and scale-out domains. V2 has also switched from the NVSHMEM backend to the more lightweight NCCL Gin backend."*
+> — [DeepEP GitHub README](https://github.com/deepseek-ai/DeepEP)
+
+The concrete primitives bear this out:
+
+| DeepEP V2 Primitive | Target Parallelism | What It Does (from README) |
 |---|---|---|
-| **Engram** | KV-Cache access | ==Zero-SM RDMA remote KV-Cache read== — bypasses GPU compute units entirely for KV retrieval, freeing SMs for compute |
-| **pp_send / pp_recv** | Pipeline Parallelism | Dedicated pipeline-parallel send/recv primitives, optimizing the inter-stage tensor handoff pattern |
-| **AGRS** (All-Gather Reduce-Scatter) | Data / Tensor Parallelism | Unified all-gather + reduce-scatter for data-parallel and tensor-parallel communication patterns |
-| **NCCL Gin backend** | All patterns | V2 switched from NVSHMEM to ==NCCL Gin backend==, reducing ==SM occupancy by up to 4×** — the same primitives, drastically lower overhead |
+| **Engram** | KV-Cache access | *"0 SM Engram (with RDMA)"* — remote memory access with ==zero SM occupation== |
+| **PP** | Pipeline Parallelism | *"0 SM PP (with RDMA)"* — pipeline-parallel send/recv, zero SM |
+| **CP** | Context Parallelism | *"0 SM CP (with Copy Engine)"* — context parallelism without SM cost |
+| **AGRS** | Data / Tensor Parallelism | *"All-gather updates and reduce-scatter implementations for DP & TP"* (listed as on-going) |
+| **NCCL Gin backend** | All patterns | Switched from NVSHMEM; *"V2 achieves up to 1.3x peak performance, while saving up to 4x SM count"* |
 
-**The significance**: DeepEP V2 is not merely "EP library plus some extras." The addition of Engram (KV-Cache), PP primitives (pipeline), and AGRS (data/tensor) means DeepEP already covers ==all four major parallelism strategies== (EP, PP, data, tensor) plus KV-Cache storage access. The "Every Parallelization" rebranding reflects what the codebase already does — it is a retrospective acknowledgment, not aspirational marketing.
+**The significance**: DeepEP V2 is not merely "EP library plus some extras." The addition of Engram (KV-Cache), PP (pipeline), CP (context), and AGRS (data/tensor) means DeepEP already covers ==all major parallelism strategies== plus KV-Cache storage access. The "Every Parallelization" rebranding reflects what the codebase already does — it is a retrospective acknowledgment, not aspirational marketing.
 
 ### 4.3 The "Bus Load" Problem
 
@@ -232,7 +229,7 @@ This service would:
 
 DeepEP's journey from "Expert Parallelization" to "Every Parallelization" mirrors the industry's broader trajectory: **the data-movement layer is becoming the central abstraction of AI infrastructure**.
 
-The NCCL story — from Baidu's intra-node invention to NVIDIA's cluster-scale standard — shows how communication primitives absorb upward through scale. DeepEP is running the same playbook in reverse: starting from a specific parallelism and expanding outward to all parallelisms.
+The NCCL story — from NVIDIA's intra-node primitive to cluster-scale standard — shows how communication primitives absorb upward through scale. DeepEP is running the same playbook in reverse: starting from a specific parallelism and expanding outward to all parallelisms.
 
 The structural forces are aligned: rack-scale compute convergence, multi-media memory movement, bus-load competition, and falling abstraction costs all point toward a ==unified memory-data-movement service layer==.
 
@@ -247,8 +244,7 @@ The question is not *whether* this layer will exist, but *who* will define it �
 - DeepEP: Efficient Expert Parallelism for MoE Training and Inference (DeepSeek, 2024-2025)
 - DeepEP V2 — DeepEP (DeepEveryParallel): Engram (zero-SM RDMA KV read), pp_send/pp_recv (Pipeline Parallelism), AGRS (All-Gather Reduce-Scatter), NCCL Gin backend — [https://github.com/deepseek-ai/DeepEP](https://github.com/deepseek-ai/DeepEP)
 - NCCL: NVIDIA Collective Communications Library — [https://developer.nvidia.com/nccl](https://developer.nvidia.com/nccl)
-- Baidu's early collective communication work (PaddlePaddle, 2015-2016)
-- NVIDIA Mellanox acquisition (2019) — [https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion](https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion)
+ NVIDIA Mellanox acquisition (2019) — [https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion](https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion)
 - NVLink-C2C and NVSwitch architecture (NVIDIA, 2024-2025)
 - ICMS / CMX (Inference Context Memory Storage → Context Memory eXtension) — NVIDIA pod-level KV-Cache storage based on BlueField-4, announced at CES 2026
 - Prefill-Decode disaggregation: vLLM, SGLang, Mooncake (2025-2026)
