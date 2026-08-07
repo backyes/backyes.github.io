@@ -122,6 +122,17 @@ New workload patterns are creating ==multi-tier, heterogeneous data-movement dem
 
 **The common thread**: These are all ==tightly-coupled, latency-sensitive, multi-media data-movement problems== that share the same underlying fabric (IB/RoCE) but have radically different semantic requirements. A unified abstraction layer can optimize across them — a point solution cannot.
 
+**DeepEP V2: the shift is already happening.** DeepEP's evolution from V1 to V2 demonstrates this expansion in practice — the library has already moved well beyond EP-specific all-to-all:
+
+| DeepEP V2 Primitive | Target Parallelism | What It Does |
+|---|---|---|
+| **Engram** | KV-Cache access | ==Zero-SM RDMA remote KV-Cache read== — bypasses GPU compute units entirely for KV retrieval, freeing SMs for compute |
+| **pp_send / pp_recv** | Pipeline Parallelism | Dedicated pipeline-parallel send/recv primitives, optimizing the inter-stage tensor handoff pattern |
+| **AGRS** (All-Gather Reduce-Scatter) | Data / Tensor Parallelism | Unified all-gather + reduce-scatter for data-parallel and tensor-parallel communication patterns |
+| **NCCL Gin backend** | All patterns | V2 switched from NVSHMEM to ==NCCL Gin backend==, reducing ==SM occupancy by up to 4×** — the same primitives, drastically lower overhead |
+
+**The significance**: DeepEP V2 is not merely "EP library plus some extras." The addition of Engram (KV-Cache), PP primitives (pipeline), and AGRS (data/tensor) means DeepEP already covers ==all four major parallelism strategies== (EP, PP, data, tensor) plus KV-Cache storage access. The "Every Parallelization" rebranding reflects what the codebase already does — it is a retrospective acknowledgment, not aspirational marketing.
+
 ### 4.3 The "Bus Load" Problem
 
 As these patterns multiply, the ==bus itself becomes the shared bottleneck==. Every data-movement pattern competes for the same IB/RoCE bandwidth and latency budget. Without a unified layer:
@@ -211,7 +222,7 @@ This service would:
 |---|---|
 | **Will NVIDIA absorb DeepEP's abstraction into NCCL?** | Possible — but NCCL's bulk-transfer DNA may resist the low-latency, fine-grained semantics DeepEP requires |
 | **Can DeepEP remain hardware-agnostic?** | Critical for adoption — but deep kernel optimizations are often vendor-specific |
-| **Does ICMS define a competing abstraction?** | Unlikely in the near term — ICMS is physical-layer focused |
+| **Does ICMS/CMX define a competing abstraction?** | Open question — currently KV-Cache storage-specific, but could expand into a broader memory-data-movement layer |
 | **Will AMD build a competing "every parallelization" layer?** | RCCL's current scope is narrower — but the strategic logic is the same |
 | **Is the abstraction layer a library, a daemon, or a service?** | The trend is toward a ==daemon/service model== (persistent state, cross-workload scheduling) |
 
@@ -234,10 +245,11 @@ The question is not *whether* this layer will exist, but *who* will define it �
 ## References
 
 - DeepEP: Efficient Expert Parallelism for MoE Training and Inference (DeepSeek, 2024-2025)
+- DeepEP V2 — DeepEP (DeepEveryParallel): Engram (zero-SM RDMA KV read), pp_send/pp_recv (Pipeline Parallelism), AGRS (All-Gather Reduce-Scatter), NCCL Gin backend — [https://github.com/deepseek-ai/DeepEP](https://github.com/deepseek-ai/DeepEP)
 - NCCL: NVIDIA Collective Communications Library — [https://developer.nvidia.com/nccl](https://developer.nvidia.com/nccl)
 - Baidu's early collective communication work (PaddlePaddle, 2015-2016)
 - NVIDIA Mellanox acquisition (2019) — [https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion](https://nvidianews.nvidia.com/news/nvidia-to-acquire-mellanox-for-6-9-billion)
 - NVLink-C2C and NVSwitch architecture (NVIDIA, 2024-2025)
-- ICMS (Inter-Chiplet Mesh Standard) — Universal Chiplet Interconnect Express
+- ICMS / CMX (Inference Context Memory Storage → Context Memory eXtension) — NVIDIA pod-level KV-Cache storage based on BlueField-4, announced at CES 2026
 - Prefill-Decode disaggregation: vLLM, SGLang, Mooncake (2025-2026)
 - CXL memory pooling and fabric-attached memory (2025-2026)
