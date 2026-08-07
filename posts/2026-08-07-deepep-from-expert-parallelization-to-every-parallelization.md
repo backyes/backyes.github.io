@@ -168,13 +168,13 @@ NVIDIA has taken a ==more open but lower-level== approach:
 
 **The strategic logic**: NVIDIA wins regardless of which higher-level abstraction wins, because it owns the underlying transport fabric. DeepEP on NVIDIA hardware is complementary — it builds *on top of* NVIDIA's primitives rather than competing with them.
 
-### 5.3 NVIDIA's ICMS: KV-Cache-Optimized Interconnect
+### 5.3 NVIDIA's ICMS: KV-Cache Storage Infrastructure
 
-NVIDIA has also developed **ICMS (Inter-Chiplet Mesh Standard)** — a specialized interconnect targeting KV-Cache movement specifically. Unlike general-purpose fabrics (IB, RoCE, NVLink), ICMS is designed with the access patterns of KV-Cache in mind: streaming, persistent state with fine-grained, latency-sensitive transfers between chiplets.
+NVIDIA has also developed **ICMS (Inference Context Memory Storage)** — a storage platform specifically built for LLM inference scenarios, designed as ==dedicated KV-Cache/context storage infrastructure==. Unlike general-purpose storage or memory fabrics, ICMS targets the unique demands of inference workloads: massive KV-Cache capacity, high-bandwidth streaming access, and tight coupling with the compute fabric.
 
-**The significance**: ICMS represents NVIDIA's recognition that ==KV-Cache data movement is distinct enough from general collective communication to warrant its own optimized fabric==. This is the same structural force driving DeepEP's expansion — the realization that different data-movement patterns (EP dispatch vs. KV-Cache streaming vs. gradient AllReduce) have fundamentally different requirements, and a one-size-fits-all fabric leaves performance on the table.
+**The significance**: ICMS represents NVIDIA's recognition that ==KV-Cache storage is distinct enough from general memory hierarchies to warrant its own optimized infrastructure==. This is the same structural force driving DeepEP's expansion — the realization that different data-movement patterns (EP dispatch vs. KV-Cache storage/retrieval vs. gradient AllReduce) have fundamentally different requirements, and a one-size-fits-all approach leaves performance on the table.
 
-**The open question**: Will ICMS remain a KV-Cache-specific optimization, or will it expand into a broader "every parallelization" fabric? If NVIDIA opens ICMS semantics upward, it could absorb the abstraction layer that DeepEP is building toward. If it stays KV-Cache-specific, it becomes one more specialized fabric that a unified abstraction layer (like DeepEP) would need to subsume.
+**The open question**: Will ICMS remain a KV-Cache-specific storage tier, or will it expand into a broader "every parallelization" memory-data-movement platform? If NVIDIA opens ICMS semantics upward, it could absorb the abstraction layer that DeepEP is building toward. If it stays KV-Cache-specific, it becomes one more specialized tier that a unified abstraction layer (like DeepEP) would need to subsume and optimize across.
 
 ---
 
@@ -186,7 +186,7 @@ This service would:
 
 1. **Unify operators** — all-to-all, all-gather, reduce-scatter, KV-dispatch, memory-pool access behind a single API
 2. **Enforce cross-workload QoS** — EP latency vs. gradient throughput vs. KV-cache bandwidth, all scheduled against a shared policy
-3. **Abstract the fabric** — IB, RoCE, NVLink, CXL, and specialized fabrics like NVIDIA's ICMS (KV-Cache-optimized) — behind a single transport interface
+3. **Abstract the fabric** — IB, RoCE, NVLink, CXL, and specialized storage infra like NVIDIA's ICMS (Inference Context Memory Storage) — behind a single transport interface
 4. **Enable multi-media data movement** — HBM, DDR, CXL memory, storage — as a unified tiered space
 
 **Why this is inevitable**:
