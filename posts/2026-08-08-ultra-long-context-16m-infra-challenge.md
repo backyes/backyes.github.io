@@ -287,6 +287,7 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 - Compute time grows sublinearly (1 + 10% of length ratio) → bandwidth growth 3.9-4.1×
 - 10M requires ~156 GB/s, 16M requires ~164 GB/s per request
 - CPU DRAM is insufficient even for a single request; **new storage tier mandatory**
+- **Orthogonal scaling**: Linear compute growth linearly increases prefill bandwidth (per 1P @ FP4 → ~40 GB/s), partially offsetting the storage bandwidth bottleneck. Compute and storage bandwidth scale orthogonally — more compute brings more bandwidth "for free."
 
 > **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. On a 4P @ FP4 platform, storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
 
