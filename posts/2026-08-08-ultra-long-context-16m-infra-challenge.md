@@ -249,6 +249,8 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 |---|---|---|---|
 | 4P @ FP4 | ~160 GB/s @ 1M equivalent | ~156 GB/s (≈1P) | ~164 GB/s (≈1P) |
 
+**Scaling with compute**: Prefill bandwidth scales linearly with compute power (per 1P @ FP4 → ~40 GB/s @ 1M baseline). If compute density doubles (8P @ FP4), available bandwidth doubles to ~320 GB/s, easing the storage bandwidth pressure.
+
 **Conclusion**: On a 4P @ FP4 platform, a single 10M request consumes ~1P of the storage bandwidth budget; 16M consumes ~1P. **Storage bandwidth (not compute) becomes the bottleneck for ultra-long context.**
 
 ### 6.3 Storage Hierarchy Gap
