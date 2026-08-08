@@ -270,9 +270,11 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 |---|---|---|---|---|
 | **Current** | 1M | $4.32 GB$ | 40 GB/s | GPU HBM + CPU DRAM |
 | **Near-term** | 4M | ~14 GB | ~100 GB/s | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **New storage tier required** |
-| **Target** | 16M | ~46 GB | ==~164 GB/s== | **New storage tier required** |
+| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **CXL 3.0 pooled memory** |
+| **Target** | 16M | ~46 GB | ==~164 GB/s== | **CXL 3.0 pooled memory** |
 | **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Optical/CXL 3.0 pooled |
+
+**Alternative path — Compute-as-Cache**: As compute density increases, an emerging approach is to use on-chip compute to regenerate KV cache on-the-fly rather than storing and loading it from external memory. This trades compute for I/O bandwidth — when compute becomes cheaper relative to memory bandwidth, recomputing KV entries can be more economical than fetching them from DRAM. This paradigm could fundamentally alter the storage bandwidth bottleneck for ultra-long context.
 
 ---
 
