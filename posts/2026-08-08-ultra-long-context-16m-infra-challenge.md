@@ -289,6 +289,16 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 > **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. On a 4P @ FP4 platform, storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
 
+---
+
+## 8. Limitations & Open Questions
+
+**8.1 Algorithmic deficiency feedback to infrastructure**: The MRCR failure (76% → 48%) reveals that current sparse indexers lose information on dense global memory tasks. If precision requirements force "dynamic dense fallback" or "multi-level hybrid attention," prefill bandwidth pressure worsens further. Infrastructure must provision redundancy bandwidth for this algorithmic worst case — but how much remains an open question.
+
+**8.2 Prefill chunk-sharing and kernel-level optimization**: Our analysis assumes the union of per-token retrievals approaches dense. In practice, adjacent tokens exhibit high overlap in retrieved chunks (spatial locality). Techniques like hierarchical aggregation, tile-based prefill, or chunk-level prefix caching could reduce union inflation. Software/kernel-layer mitigations may meaningfully lower effective bandwidth demand.
+
+**8.3 Crossover point: Storage-for-Compute vs Compute-as-Cache**: The choice between provisioning new storage media (HBF/CXL) and recomputing KV on-the-fly depends on the relative cost trajectory of compute vs. memory bandwidth. A quantitative crossover model — at context length $L$ with append delta $\Delta L$, when does recompute become cheaper than load? — would provide sharper engineering guidance. This remains a promising direction for future analysis.
+
 
 
 [^1]: [Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319) — Ant Group & Westlake Univ., 2025
