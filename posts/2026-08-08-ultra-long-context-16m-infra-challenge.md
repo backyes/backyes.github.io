@@ -302,16 +302,3 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 | [4] | [RULER Benchmark](https://arxiv.org/abs/2404.06654) | Standard long-context evaluation suite |
 | [5] | [MRCR Benchmark](https://arxiv.org/abs/2409.12640) | Multi-Range Context Retrieval — tests dense memory dependency |
 
----
-
-## Appendix: Key Data & Sources
-
-| Source | Key Data Point |
-|---|---|
-| [HSA-UltraLong](https://arxiv.org/abs/2511.23319) | 8B MoE, 8K→16M extrapolation, HSA architecture |
-| [DeepSeek-V4 Pro](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) | 4.8 GB KV cache @ 1M (MLA compressed) |
-| [FlashMemory-DS-V4](https://arxiv.org/abs/2606.09079) | 90% KV reduction, MRCR failure, PD-disaggregated |
-| Compute platform | 4P @ FP4 (4 PetaFLOPS, FP4 precision) |
-| User-provided baseline | 20 GB/s @ 512K, 40 GB/s @ 1M prefill bandwidth |
-| User-provided sparsity | 1M@90%, 10M@70%, 16M@60% |
-| User-provided compute model | 1 + 10% of length ratio (10M=2X, 16M=2.6X) |
