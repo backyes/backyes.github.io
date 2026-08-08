@@ -11,7 +11,7 @@ excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchi
 
 **16M ultra-long context is real — but it demands sparse attention architecture. The catch: sparsity dilutes during prefill. When sequences grow 10×, current storage hierarchies break. A new tier with TB capacity and 500GB–1TB bandwidth is not optional — it is mandatory.**
 
-> Sparse attention enables ultra-long context in model architecture. But sparsity itself is not a solved problem — it requires continued micro-architecture optimization. And system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill.
+> Sparse attention enables ultra-long context in model architecture. But sparsity itself is not a solved problem — it requires continued micro-architecture optimization. And system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill. Two complementary approaches can address this: **storage-for-compute** (new media like HBF that trade storage density for bandwidth) and **compute-as-cache** (recomputing KV on-the-fly when agentic AI's short-append patterns make it cheaper than loading from memory).
 
 ---
 
@@ -270,11 +270,15 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 |---|---|---|---|---|
 | **Current** | 1M | $4.32 GB$ | 40 GB/s | GPU HBM + CPU DRAM |
 | **Near-term** | 4M | ~14 GB | ~100 GB/s | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **CXL 3.0 pooled memory** |
-| **Target** | 16M | ~46 GB | ==~164 GB/s== | **CXL 3.0 pooled memory** |
+| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **HBF / CXL 3.0 pooled memory** |
+| **Target** | 16M | ~46 GB | ==~164 GB/s== | **HBF / CXL 3.0 pooled memory** |
 | **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Optical/CXL 3.0 pooled |
 
-**Alternative path — Compute-as-Cache**: As compute density increases, an emerging approach is to use on-chip compute to regenerate KV cache on-the-fly rather than storing and loading it from external memory. This trades compute for I/O bandwidth — when compute becomes cheaper relative to memory bandwidth, recomputing KV entries can be more economical than fetching them from DRAM. This paradigm could fundamentally alter the storage bandwidth bottleneck for ultra-long context.
+**Two complementary approaches**:
+
+1. **Storage-for-Compute (以存换算)**: Develop new storage media like ==HBF (High-Bandwidth Flash)== that offer TB-scale capacity with ~160 GB/s sustained read bandwidth. This trades storage density for bandwidth, providing a new tier between DRAM and SSD.
+
+2. **Compute-as-Cache (以算缓存)**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
 
 ---
 
