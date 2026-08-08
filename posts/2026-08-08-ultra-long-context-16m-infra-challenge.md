@@ -247,17 +247,7 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 
 **System direction judgment**: The ~160 GB/s per-request bandwidth at 10-16M exceeds CPU DRAM capability (~50-100 GB/s) and approaches HBM bandwidth density. The future system architecture must either (1) introduce a new storage tier (HBF, CXL pooled memory) between DRAM and SSD, or (2) exploit compute-as-cache to trade increasingly cheap compute for scarce I/O bandwidth. The choice depends on the relative cost trajectory of compute vs. memory bandwidth.
 
-### 6.2 4P @ FP4 Platform Bandwidth Budget
-
-| Platform | Available Bandwidth | 10M Consumption | 16M Consumption |
-|---|---|---|---|
-| 4P @ FP4 | ~160 GB/s @ 1M equivalent | ~156 GB/s (≈1P) | ~164 GB/s (≈1P) |
-
-**Scaling with compute**: Prefill bandwidth scales linearly with compute power (per 1P @ FP4 → ~40 GB/s @ 1M baseline). If compute density doubles (8P @ FP4), available bandwidth doubles to ~320 GB/s, easing the storage bandwidth pressure.
-
-**Conclusion**: On a 4P @ FP4 platform, a single 10M request consumes ~1P of the storage bandwidth budget; 16M consumes ~1P. **Storage bandwidth (not compute) becomes the bottleneck for ultra-long context.**
-
-### 6.3 Storage Hierarchy Gap
+### 6.2 Storage Hierarchy Gap
 
 | Storage Tier | Capacity | Sustained Read Bandwidth | Can Serve 10M Prefill? |
 |---|---|---|---|
@@ -268,7 +258,7 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 
 **The missing tier**: A new storage medium with TB-scale capacity + ~160 GB/s sustained read bandwidth.
 
-### 6.4 Addressing the System Challenge
+### 6.3 Addressing the System Challenge
 
 **Two complementary approaches**:
 
