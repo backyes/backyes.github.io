@@ -247,18 +247,16 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 
 **System direction judgment**: The ~160 GB/s per-request bandwidth at 10-16M exceeds CPU DRAM capability (~50-100 GB/s) and approaches HBM bandwidth density. The future system architecture must either (1) introduce a new storage tier (HBF, CXL pooled memory) between DRAM and SSD, or (2) exploit compute-as-cache to trade increasingly cheap compute for scarce I/O bandwidth. The choice depends on the relative cost trajectory of compute vs. memory bandwidth.
 
-### 6.2 Storage Hierarchy Gap
+### 6.2 Thinking on System for Ultra-Long Context
+
+**Current storage hierarchy breaks at 10M+**:
 
 | Storage Tier | Capacity | Sustained Read Bandwidth | Can Serve 10M Prefill? |
 |---|---|---|---|
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient |
 | **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ Bandwidth insufficient (~156 GB/s needed) |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
-| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Single request borderline |
-
-**The missing tier**: A new storage medium with TB-scale capacity + ~160 GB/s sustained read bandwidth.
-
-### 6.3 Addressing the System Challenge
+| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Can meet requirement, but high cost |
 
 **Two complementary approaches**:
 
