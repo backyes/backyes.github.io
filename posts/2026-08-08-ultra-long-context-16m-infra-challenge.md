@@ -194,14 +194,16 @@ Prefill bandwidth scales **linearly** with compute power. The baseline **1X = 4P
 
 **Compute scaling vs context length coverage**:
 
-| Compute Available BW | 1M (need 40 GB/s) | 10M (need 156 GB/s) | 16M (need 164 GB/s) |
-|---|---|---|---|
-| **1X**: 40 GB/s (4P@FP4) | ✅ | ❌ | ❌ |
-| **2X**: 80 GB/s (8P@FP4) | ✅ | ❌ | ❌ |
-| **4X**: 160 GB/s (16P@FP4) | ✅ | ✅ | ⚠️ borderline |
-| **8X**: 320 GB/s (32P@FP4) | ✅ | ✅ | ✅ |
+带宽需求随上下文长度递增：1M (40 GB/s) → 10M (156 GB/s) → 16M (164 GB/s)。对每一级算力，需覆盖所有更短上下文累加带宽。
 
-> **The compute-bandwidth coupling**: At 10M, 4X compute (16P@FP4) provides enough bandwidth (160 GB/s ≥ 156 GB/s). At 16M, 4X is borderline (160 GB/s ≈ 164 GB/s), requiring 8X (32P@FP4) for comfortable headroom. Compute scaling can partially offset the storage bandwidth challenge — but only at the cost of massive compute over-provisioning for a single request. For concurrency, the bandwidth deficit multiplies: 2× concurrent 10M requests need 8X compute (32P@FP4), 4× concurrent need 16X (64P@FP4).
+| Compute Available BW | 1M 需求 | 10M 需求 | 16M 需求 | 累加总需求 | 能否覆盖 |
+|---|---|---|---|---|---|
+| **1X**: 40 GB/s (4P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ❌ 仅覆盖 1M |
+| **2X**: 80 GB/s (8P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ❌ 仅覆盖 1M |
+| **4X**: 160 GB/s (16P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ⚠️ 覆盖 1M+10M，16M 边界 |
+| **8X**: 320 GB/s (32P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ✅ 全覆盖 |
+
+> **The compute-bandwidth coupling**: 1X 算力 (40 GB/s) 仅能满足单个 1M 请求。10M 单请求需 156 GB/s → 需 4X (16P@FP4, 160 GB/s)。16M 单请求需 164 GB/s → 4X 边界，需 8X (32P@FP4, 320 GB/s) 才能舒适覆盖。若需同时服务 1M+10M+16M 混合负载，总带宽需求 360+ GB/s → 需 8X 以上。算力翻倍确实带来带宽翻倍，但随上下文长度递增，累加需求使得单纯算力扩展经济上不可行。
 
 ---
 
