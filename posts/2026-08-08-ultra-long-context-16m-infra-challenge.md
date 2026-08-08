@@ -139,10 +139,10 @@ Prefill bandwidth is determined by **two forces**: (1) sparsity determines how m
 | Context Length | Full KV Cache | Sparsity (fraction queried) | Data to Access | Compute Time (vs 1M) |
 |---|---|---|---|---|
 | 1M | $4.8 GB$ | 90% | $4.32 GB$ | 1× (baseline) |
-| 10M | ~48 GB | 70% | ~33.6 GB | 10% × 10X = **1×** |
-| 16M | ~77 GB | 60% | ~46.2 GB | 10% × 16X = **1.6×** |
+| 10M | ~48 GB | 70% | ~33.6 GB | 1 + 10%×10 = **2×** |
+| 16M | ~77 GB | 60% | ~46.2 GB | 1 + 10%×16 = **2.6×** |
 
-**Compute time model**: Compute time scales at 10% of the context length ratio. At 10M (10× length), compute grows only 10% × 10X = 1× (no change). At 16M, 10% × 16X = 1.6×. This reflects that sparse attention makes compute sublinear to sequence length.
+**Compute time model**: Baseline 1X + 10% of length ratio as *incremental*. At 10M (10× length), compute = 1 + 0.1×10 = 2×. At 16M, compute = 1 + 0.1×16 = 2.6×. This reflects that sparse attention makes compute sublinear to sequence length.
 
 **Bandwidth calculation**: `Bandwidth = Data to Access / Compute Time`
 
@@ -153,8 +153,8 @@ From the 1M baseline:
 | Context Length | Data to Access | Compute Time | Prefill Bandwidth | Bandwidth Growth (vs 1M) |
 |---|---|---|---|---|
 | 1M | $4.32 GB$ | 0.108 s (1×) | ==40 GB/s** | 1× (baseline) |
-| 10M | ~33.6 GB | 0.108 s (1×) | ~33.6 / 0.108 = ==~311 GB/s== | 7.8× |
-| 16M | ~46.2 GB | 0.173 s (1.6×) | ~46.2 / 0.173 = ==~267 GB/s== | 6.7× |
+| 10M | ~33.6 GB | 0.216 s (2×) | ~33.6 / 0.216 = ==~156 GB/s== | 3.9× |
+| 16M | ~46.2 GB | 0.281 s (2.6×) | ~46.2 / 0.281 = ==~164 GB/s== | 4.1× |
 
 **The two forces**:
 
@@ -163,25 +163,25 @@ Force 1 — Data growth (sparsity dilution):
   1M → 10M: 4.32 GB → 33.6 GB = 7.8× more data
   1M → 16M: 4.32 GB → 46.2 GB = 10.7× more data
 
-Force 2 — Compute time growth (10% of length ratio):
-  1M → 10M: 10% × 10× = 1× (no change!)
-  1M → 16M: 10% × 16× = 1.6×
+Force 2 — Compute time growth (10% incremental):
+  1M → 10M: 1 + 10%×10 = 2×
+  1M → 16M: 1 + 10%×16 = 2.6×
 
 Result — Bandwidth = Data / Time:
-  1M → 10M: 7.8× / 1× = 7.8× bandwidth growth
-  1M → 16M: 10.7× / 1.6× = 6.7× bandwidth growth
+  1M → 10M: 7.8× / 2× = 3.9× bandwidth growth
+  1M → 16M: 10.7× / 2.6× = 4.1× bandwidth growth
 ```
 
-**Key insight**: Because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. At 10M, data grows 7.8× but compute time is unchanged — bandwidth must grow 7.8×. At 16M, the 1.6× compute time increase absorbs some growth, yielding 6.7× bandwidth. This is **nearly linear scaling** driven by sparsity dilution.
+**Key insight**: Data volume grows ~7-10× from 1M to 10-16M, and compute time grows 2-2.6× (10% incremental model). The compute time increase absorbs some data growth, yielding 3.9-4.1× bandwidth growth. This is **sublinear scaling** — bandwidth grows slower than context length.
 
 | Metric | 1M → 10M | 1M → 16M |
 |---|---|---|
 | Context length | 10× | 16× |
 | Data to access (sparsity) | 7.8× | 10.7× |
-| Compute time (10% model) | 1× | 1.6× |
-| **Bandwidth required** | **7.8×** | **6.7×** |
+| Compute time (10% incremental) | 2× | 2.6× |
+| **Bandwidth required** | **3.9×** | **4.1×** |
 
-> **The key insight**: With ==sparse attention==, compute time scales sublinearly (10% of length ratio), so bandwidth growth is driven primarily by data volume growth (sparsity dilution). At 10M, compute time doesn't increase at all — all data growth translates directly to bandwidth demand. The infrastructure must deliver ~311 GB/s per request at 10M.
+> **The key insight**: With ==sparse attention==, compute time grows sublinearly (1 + 10% of length ratio), so bandwidth growth is moderated by compute time absorption. The infrastructure must deliver ~156 GB/s per request at 10M.
 
 ---
 
@@ -238,31 +238,31 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 | Context Length | Full KV Cache | Sparsity | Data to Access | Compute Time | Prefill Bandwidth | vs 1M |
 |---|---|---|---|---|---|---|
 | **1M** | $4.8 GB$ | 90% | $4.32 GB$ | 1× | **40 GB/s** | 1× |
-| **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~311 GB/s**== | 7.8× |
-| **16M** | ~77 GB | 60% | ~46.2 GB | 3× | ==**~267 GB/s**== | 6.7× |
+| **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~156 GB/s**== | 3.9× |
+| **16M** | ~77 GB | 60% | ~46.2 GB | 2.6× | ==**~164 GB/s**== | 4.1× |
 
 **关键比例**：
-- 1M → 10M: 上下文长度 10×，数据量 7.8×，计算时间 2×，**带宽 7.8×**
-- 1M → 16M: 上下文长度 16×，数据量 10.7×，计算时间 3×，**带宽 6.7×**
+- 1M → 10M: 上下文长度 10×，数据量 7.8×，计算时间 2×，**带宽 3.9×**
+- 1M → 16M: 上下文长度 16×，数据量 10.7×，计算时间 2.6×，**带宽 4.1×**
 
 ### 6.2 4P @ FP4 平台带宽预算
 
 | 平台 | 可用带宽 | 10M 占用 | 16M 占用 |
 |---|---|---|---|
-| 4P @ FP4 | ~160 GB/s @ 1M 等效 | ~311 GB/s (≈2P) | ~267 GB/s (≈1.7P) |
+| 4P @ FP4 | ~160 GB/s @ 1M 等效 | ~156 GB/s (≈1P) | ~164 GB/s (≈1P) |
 
-**结论**：在 4P @ FP4 平台上，10M 单请求占用 ~2P 的存储带宽预算，16M 占用 ~1.7P。**存储带宽（而非算力）成为 ultra-long context 的瓶颈。**
+**结论**：在 4P @ FP4 平台上，10M 单请求占用 ~1P 的存储带宽预算，16M 占用 ~1P。**存储带宽（而非算力）成为 ultra-long context 的瓶颈。**
 
 ### 6.3 存储层级断裂
 
 | 存储层级 | 容量 | 持续读带宽 | 能否满足 10M Prefill |
 |---|---|---|---|
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ 容量不足 |
-| **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ 带宽不足（需 ~311 GB/s） |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ 带宽不足（需 ~156 GB/s） |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ 带宽严重不足 |
-| **CXL/Pooled Memory** | TB 级 | 100-200 GB/s | ❌ 单请求带宽不足 |
+| **CXL/Pooled Memory** | TB 级 | 100-200 GB/s | ⚠️ 单请求带宽临界 |
 
-**缺失的层级**：需要 TB 级容量 + ~300 GB/s 级别持续读带宽的新存储介质。
+**缺失的层级**：需要 TB 级容量 + ~160 GB/s 级别持续读带宽的新存储介质。
 
 ### 6.4 发展路线图
 
@@ -284,8 +284,8 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 **Frontier 2 — System Architecture**: 开放问题
 - Prefill 阶段稀疏稀释 → 数据量增长 7.8×（1M→10M）
-- 计算时间次线性增长（10% 长度比）→ 带宽增长 ≈ 数据增长
-- 10M 需 ~311 GB/s，16M 需 ~267 GB/s 每请求
+- 计算时间次线性增长（1+10% 长度比）→ 带宽增长 3.9-4.1×
+- 10M 需 ~156 GB/s，16M 需 ~164 GB/s 每请求
 - CPU DRAM 即使单请求也不够，**新存储层级 mandatory**
 
 > **核心结论**：16M ultra-long context 的瓶颈不再是模型，而是基础设施。稀疏注意力解决了计算复杂度，但无法绕过 prefill 的带宽需求。在 4P @ FP4 平台上，存储带宽（而非算力）成为制约 ultra-long context 的关键资源。
