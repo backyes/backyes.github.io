@@ -19,12 +19,12 @@ excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchi
 
 The community is converging on ultra-long context as a critical engineering challenge. Two recent works highlight this trend:
 
-- **Ant Group** — *[Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319)* (arXiv:2511.23319): 8B MoE with Hierarchical Sparse Attention (HSA), extrapolating from 8K training to 16M inference — a ==500× extrapolation==.
-- **Tencent / Tsinghua** — *[FlashMemory-DeepSeek-V4: Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079)* (arXiv:2606.09079): LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
+- **Ant Group** — *Every Token Counts: Generalizing 16M Ultra-Long Context*[^1]: 8B MoE with Hierarchical Sparse Attention (HSA), extrapolating from 8K training to 16M inference — a ==500× extrapolation==.
+- **Tencent / Tsinghua** — *FlashMemory-DeepSeek-V4: Lookahead Sparse Attention*[^2]: LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
 
 Both demonstrate that sparse attention is the architectural path to ultra-long context — but neither fully solves the infrastructure cost of prefill.
 
-**The sparsity challenge remains open**. FlashMemory-DS-V4 exposes a critical failure mode on MRCR (Multi-Range Context Retrieval): accuracy drops from 76% to 48%. MRCR requires dense global memory — even providing 50% of true golden chunks still causes 2% accuracy drop. This reveals that sparsity is not a solved problem: micro-architecture innovations (better indexers, retrieval mechanisms, attention patterns) are still needed to handle dense workloads. Infrastructure alone cannot fix what the model cannot retrieve.
+**The sparsity challenge remains open**[^2][^5]. FlashMemory-DS-V4 exposes a critical failure mode on MRCR (Multi-Range Context Retrieval): accuracy drops from 76% to 48%. MRCR requires dense global memory — even providing 50% of true golden chunks still causes 2% accuracy drop. This reveals that sparsity is not a solved problem: micro-architecture innovations (better indexers, retrieval mechanisms, attention patterns) are still needed to handle dense workloads. Infrastructure alone cannot fix what the model cannot retrieve.
 
 ### 1.1 HSA-UltraLong: 500× Extrapolation
 
@@ -290,15 +290,11 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 
 > **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. On a 4P @ FP4 platform, storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
 
----
 
-## References
 
-| # | Source | Key Data |
-|---|---|---|
-| [1] | [Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319) — Ant Group & Westlake Univ. | HSA architecture, 8B MoE, 16M extrapolation, 90%+ NIAH accuracy |
-| [2] | [FlashMemory-DeepSeek-V4: LSA](https://arxiv.org/abs/2606.09079) — Tencent & THU | KV cache scaling data, 90% reduction, MRCR failure, PD-disaggregated serving |
-| [3] | [DeepSeek-V4 Technical Report](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf) | DSA+HCA+CSA hybrid attention, MLA compression |
-| [4] | [RULER Benchmark](https://arxiv.org/abs/2404.06654) | Standard long-context evaluation suite |
-| [5] | [MRCR Benchmark](https://arxiv.org/abs/2409.12640) | Multi-Range Context Retrieval — tests dense memory dependency |
+[^1]: [Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319) — Ant Group & Westlake Univ., 2025
+[^2]: [FlashMemory-DeepSeek-V4: Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079) — Tencent & Tsinghua, 2025
+[^3]: [DeepSeek-V4 Technical Report](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf) — DeepSeek-AI, 2026
+[^4]: [RULER Benchmark](https://arxiv.org/abs/2404.06654)
+[^5]: [MRCR Benchmark](https://arxiv.org/abs/2409.12640)
 
