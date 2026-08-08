@@ -231,7 +231,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 Based on the quantitative analysis, ultra-long context infrastructure requirements are summarized as follows:
 
-### 6.1 Quantitative Analysis Challenge
+### 6.1 Quantitative Analysis & System Direction
 
 | Context Length | Full KV Cache | Sparsity | Data to Access | Compute Time | Prefill Bandwidth | vs 1M |
 |---|---|---|---|---|---|---|
@@ -244,6 +244,8 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 - 1M → 16M: Context length 16×, data volume 10.7×, compute time 2.6×, **bandwidth 4.1×**
 
 **Compute-bandwidth coupling**: Prefill bandwidth scales linearly with compute power (per 1P @ FP4 → ~40 GB/s @ 1M baseline). Doubling compute density (e.g., 4P → 8P) doubles available prefill bandwidth, directly alleviating the storage bandwidth bottleneck. This coupling means compute advances partially offset the bandwidth challenge — but the ~160 GB/s requirement at 10M still demands dedicated storage tier innovation.
+
+**System direction judgment**: The ~160 GB/s per-request bandwidth at 10-16M exceeds CPU DRAM capability (~50-100 GB/s) and approaches HBM bandwidth density. The future system architecture must either (1) introduce a new storage tier (HBF, CXL pooled memory) between DRAM and SSD, or (2) exploit compute-as-cache to trade increasingly cheap compute for scarce I/O bandwidth. The choice depends on the relative cost trajectory of compute vs. memory bandwidth.
 
 ### 6.2 4P @ FP4 Platform Bandwidth Budget
 
@@ -266,7 +268,15 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 
 **The missing tier**: A new storage medium with TB-scale capacity + ~160 GB/s sustained read bandwidth.
 
-### 6.4 Development Roadmap
+### 6.4 Addressing the System Challenge
+
+**Two complementary approaches**:
+
+1. **Storage-for-Compute (以存换算)**: Develop new storage media like ==HBF (High-Bandwidth Flash)== that offer TB-scale capacity with ~160 GB/s sustained read bandwidth. This trades storage density for bandwidth, providing a new tier between DRAM and SSD. CXL 3.0 pooled memory is another option for the medium-term.
+
+2. **Compute-as-Cache (以算缓存)**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
+
+**Roadmap**:
 
 | Phase | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
 |---|---|---|---|---|
@@ -274,13 +284,7 @@ Based on the quantitative analysis, ultra-long context infrastructure requiremen
 | **Near-term** | 4M | ~14 GB | ~100 GB/s | CPU DRAM (borderline) |
 | **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **HBF / CXL 3.0 pooled memory** |
 | **Target** | 16M | ~46 GB | ==~164 GB/s== | **HBF / CXL 3.0 pooled memory** |
-| **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Optical/CXL 3.0 pooled |
-
-**Two complementary approaches**:
-
-1. **Storage-for-Compute (以存换算)**: Develop new storage media like ==HBF (High-Bandwidth Flash)== that offer TB-scale capacity with ~160 GB/s sustained read bandwidth. This trades storage density for bandwidth, providing a new tier between DRAM and SSD.
-
-2. **Compute-as-Cache (以算缓存)**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
+| **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Optical/CXL 3.0 pooled + compute-as-cache |
 
 ---
 
