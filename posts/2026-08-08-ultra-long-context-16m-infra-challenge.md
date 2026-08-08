@@ -194,7 +194,7 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient (need ~34GB effective per request, TB for concurrency) |
 | **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~156 GB/s needed) |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
-| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Bandwidth borderline for single request |
+| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ✅ Can meet requirement, but high cost |
 
 **The gap**: We need a storage tier with:
 - **Capacity**: TB-scale (10M context × 34 GB effective × multiple concurrent requests)
@@ -203,12 +203,9 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 
 **Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~156 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
 
-**4P @ FP4 projection**: On a 4P @ FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~156 GB/s, consuming the storage bandwidth budget of ~1P @ FP4; 16M needs ~164 GB/s, consuming ~1P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding independent storage tier innovation.
+**4P @ FP4 projection**: On a 4P @ FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~156 GB/s, consuming the storage bandwidth budget of ~1P @ FP4; 16M needs ~164 GB/s, consuming ~1P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding storage tier innovation.
 
-This is not an incremental improvement. It is a **new medium** — potentially:
-- CXL 3.0 pooled memory with GPU-direct access
-- HBM-connected near-memory processing units
-- Optical interconnects to dense storage pools
+CXL 3.0 pooled memory is the development target that can meet these requirements (TB-scale capacity + ~160 GB/s bandwidth), but at significant cost.
 
 ### 5.1 The DeepSeek-V4 Evidence
 
