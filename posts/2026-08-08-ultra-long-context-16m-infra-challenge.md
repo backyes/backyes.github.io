@@ -289,25 +289,13 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 
 ---
 
-## Appendix: URLs Visited
+## Appendix: Key Data & Sources
 
-| URL | Status | Content |
-|---|---|---|
-| https://arxiv.org/abs/2511.23319 | ✅ Success | HSA-UltraLong paper |
-| https://arxiv.org/abs/2511.XXXX | ✅ Success | FlashMemory-DS-V4 (LSA) |
-| https://github.com/ant-research/long-context-modeling | ✅ Success | HSA code repository |
-| https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro | ✅ Success | DeepSeek V4 technical report |
-
-## Appendix: Key Reasoning Process
-
-1. **Located HSA-UltraLong paper** on arXiv (2511.23319), extracted full text via PyPDF2
-2. **Downloaded FlashMemory-DS-V4** paper via web search, confirmed KV cache scaling numbers
-3. **Distinguished storage vs bandwidth**: 60GB/s @ 1M is *prefill read bandwidth*, not storage capacity
-4. **Used DS-V4 Pro baseline**: 4.8GB KV cache storage @ 1M context (MLA compressed)
-5. **Introduced sparsity as query ratio**: 1M@90%, 10M@70%, 16M@60% — fraction of KV cache accessed
-6. **Compute time model**: 10% of length ratio → 10M=1X, 16M=1.6X vs 1M
-7. **Calculated bandwidth**: Bandwidth = Data/Time
-   - 10M: (48GB×70%) / (1×base_time) = ~467 GB/s (7.8× from 1M)
-   - 16M: (77GB×60%) / (1.6×base_time) = ~401 GB/s (6.7× from 1M)
-8. **Cross-referenced MRCR failure**: Confirmed that some tasks are inherently dense
-9. **Mapped storage hierarchy gap**: CPU DRAM insufficient for single-request 10M; new tier required
+| Source | Key Data Point |
+|---|---|
+| [HSA-UltraLong](https://arxiv.org/abs/2511.23319) | 8B MoE, 8K→16M extrapolation, HSA architecture |
+| [DeepSeek-V4 Pro](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) | 4.8 GB KV cache @ 1M (MLA compressed) |
+| [FlashMemory-DS-V4](https://arxiv.org/abs/2511.XXXX) | 90% KV reduction, MRCR failure, PD-disaggregated |
+| User-provided baseline | 60 GB/s prefill bandwidth @ 1M |
+| User-provided sparsity | 1M@90%, 10M@70%, 16M@60% |
+| User-provided compute model | 10% of length ratio (10M=1X, 16M=1.6X) |
