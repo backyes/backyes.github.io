@@ -110,19 +110,18 @@ Let's trace the bandwidth scaling from concrete numbers. **Critical distinction*
 
 **DeepSeek-V4 Pro baseline** (KV cache compression frontier):
 - 1M context KV cache (full, no sparsity): ==4.8 GB== (with MLA compression)
-- Per-token KV cache: ~5.04 KB/token
+- Per-token KV cache: ~4.8 KB/token
 
-**Compute platform**: ==4P @ FP4== (4 PetaFLOPS at FP4 precision)
+**Compute platform**: ==4P@FP4== (4 PetaFLOPS at FP4 precision)
 
 **Prefill read bandwidth baseline** (per 1P @ FP4, not theoretical):
-- 512K context: ~==20 GB/s== prefill read bandwidth per 1P @ FP4
-- 1M context: ~==40 GB/s== prefill read bandwidth per 1P @ FP4
-- 4P @ FP4 aggregate: ~==160 GB/s== available at 1M
+- 4P@FP4算力估算 1M context: ~==40 GB/s== prefill read bandwidth per 1P @ FP4
+- 4P@FP4 aggregate: ~==160 GB/s== available at 1M
 - This is the data volume that must be moved/processed during prefill per unit time
 
 **The overhead ratio**:
 ```
-Prefill bandwidth / Storage capacity = 20 GB/s / 2.5 GB ≈ 8×
+Prefill bandwidth / Storage capacity = 40 GB/s / 4.8 GB ≈ 8×
 ```
 This 8× factor captures: chunk-level retrieval scanning, multi-head KV expansion, attention score computation staging, and burst transfer granularity.
 
@@ -203,7 +202,7 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 
 **Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~156 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
 
-**4P @ FP4 projection**: On a 4P @ FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~156 GB/s, consuming the storage bandwidth budget of ~1P @ FP4; 16M needs ~164 GB/s, consuming ~1P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding storage tier innovation.
+**4P@FP4 projection**: On a 4P@FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~156 GB/s, consuming the storage bandwidth budget of ~1P @ FP4; 16M needs ~164 GB/s, consuming ~1P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding storage tier innovation.
 
 CXL 3.0 pooled memory is the development target that can meet these requirements (TB-scale capacity + ~160 GB/s bandwidth), but at significant cost.
 
@@ -223,7 +222,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
 
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s — consuming ~1P of a 4P @ FP4 platform's storage bandwidth budget.
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s — consuming ~1P of a 4P@FP4 platform's storage bandwidth budget.
 
 ---
 
