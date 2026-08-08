@@ -126,20 +126,20 @@ Prefill bandwidth grows sublinearly because **two forces work together**: (1) sp
 | Context Length | Full KV Cache | Sparsity (fraction queried) | Data to Access | Compute Time (vs 1M) |
 |---|---|---|---|---|
 | 1M | $4.8 GB$ | 90% | $4.32 GB$ | 1× (baseline) |
-| 10M | ~48 GB | 70% | ~33.6 GB | 3× |
-| 16M | ~77 GB | 60% | ~46.2 GB | 4× |
+| 10M | ~48 GB | 70% | ~33.6 GB | 2× |
+| 16M | ~77 GB | 60% | ~46.2 GB | 3× |
 
 **Bandwidth calculation**: `Bandwidth = Data to Access / Compute Time`
 
 From the 1M baseline:
-- 1M bandwidth = 20 GB/s (given)
-- 1M compute time = Data / Bandwidth = 4.32 GB / 20 GB/s = 0.216 s
+- 1M bandwidth = 60 GB/s (given)
+- 1M compute time = Data / Bandwidth = 4.32 GB / 60 GB/s = 0.072 s
 
 | Context Length | Data to Access | Compute Time | Prefill Bandwidth | Bandwidth Growth (vs 1M) |
 |---|---|---|---|---|
-| 1M | $4.32 GB$ | 0.216 s (1×) | ==20 GB/s** | 1× (baseline) |
-| 10M | ~33.6 GB | 0.648 s (3×) | ~33.6 / 0.648 = ==~52 GB/s== | 2.6× |
-| 16M | ~46.2 GB | 0.864 s (4×) | ~46.2 / 0.864 = ==~53 GB/s== | 2.7× |
+| 1M | $4.32 GB$ | 0.072 s (1×) | ==60 GB/s** | 1× (baseline) |
+| 10M | ~33.6 GB | 0.144 s (2×) | ~33.6 / 0.144 = ==~233 GB/s== | 3.9× |
+| 16M | ~46.2 GB | 0.216 s (3×) | ~46.2 / 0.216 = ==~214 GB/s== | 3.6× |
 
 **Why sublinear? The two forces**:
 
@@ -149,24 +149,24 @@ Force 1 — Data growth (sparsity dilution):
   1M → 16M: 4.32 GB → 46.2 GB = 10.7× more data
 
 Force 2 — Compute time growth:
-  1M → 10M: 3× more time
-  1M → 16M: 4× more time
+  1M → 10M: 2× more time
+  1M → 16M: 3× more time
 
 Result — Bandwidth = Data / Time:
-  1M → 10M: 7.8× / 3× = 2.6× bandwidth growth
-  1M → 16M: 10.7× / 4× = 2.7× bandwidth growth
+  1M → 10M: 7.8× / 2× = 3.9× bandwidth growth
+  1M → 16M: 10.7× / 3× = 3.6× bandwidth growth
 ```
 
-**Key insight**: Data volume grows ~7-10× from 1M to 10-16M, but compute time also grows 3-4×. The compute time increase absorbs much of the data growth, resulting in only 2.6-2.7× bandwidth growth. This is the **sublinear scaling** — bandwidth grows much slower than context length.
+**Key insight**: Data volume grows ~7-10× from 1M to 10-16M, but compute time also grows 2-3×. The compute time increase absorbs some of the data growth, resulting in 3.6-3.9× bandwidth growth. This is the **sublinear scaling** — bandwidth grows much slower than context length (10-16×).
 
 | Metric | 1M → 10M | 1M → 16M |
 |---|---|---|
 | Context length | 10× | 16× |
 | Data to access (sparsity) | 7.8× | 10.7× |
-| Compute time | 3× | 4× |
-| **Bandwidth required** | **2.6×** | **2.7×** |
+| Compute time | 2× | 3× |
+| **Bandwidth required** | **3.9×** | **3.6×** |
 
-> **The key insight**: Prefill bandwidth grows sublinearly because compute time scales with sequence length. Even though sparsity dilutes (more KV cache must be accessed), the increased compute time absorbs much of the data growth. At 16M, you access 10.7× more data but have 4× more time to do it — net result is only 2.7× bandwidth demand over 1M.
+> **The key insight**: Prefill bandwidth grows sublinearly because compute time scales with sequence length. Even though sparsity dilutes (more KV cache must be accessed), the increased compute time absorbs some of the data growth. At 16M, you access 10.7× more data but have 3× more time to do it — net result is only 3.6× bandwidth demand over 1M.
 
 ---
 
@@ -177,18 +177,18 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 | Tier | Capacity | Sustainable Read Bandwidth | Verdict for 10M Prefill |
 |---|---|---|---|
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient (need ~34GB effective per request, TB for concurrency) |
-| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ⚠️ Bandwidth borderline for single request (~52 GB/s), insufficient for concurrency |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~233 GB/s needed) |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
-| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Bandwidth OK for single request, insufficient for production concurrency |
+| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Bandwidth borderline for single request, insufficient for production concurrency |
 
 **The gap**: We need a storage tier with:
 - **Capacity**: TB-scale (10M context × 34 GB effective × multiple concurrent requests)
-- **Prefill Bandwidth**: ~52 GB/s per request at 10M, ~53 GB/s at 16M (sublinear scaling)
+- **Prefill Bandwidth**: ~233 GB/s per request at 10M, ~214 GB/s at 16M (sublinear scaling)
 - **Position**: Between GPU HBM and CPU DRAM in the memory hierarchy
 
-**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~52 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is borderline for a *single* request. Production concurrency (10 simultaneous 10M requests) demands ==~520 GB/s aggregate bandwidth== — far beyond CPU DRAM.
+**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~233 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request. Production concurrency (10 simultaneous 10M requests) demands ==~2.3 TB/s aggregate bandwidth== — far beyond CPU DRAM.
 
-**Sublinear scaling is the saving grace**: Without it, 10M prefill would need ~200 GB/s per request (linear). The combination of sparsity + compute time growth reduces this to ~52 GB/s — a ==~4× reduction==. But it still exceeds what CPU DRAM can sustain for production concurrency.
+**Sublinear scaling is the saving grace**: Without it, 10M prefill would need ~600 GB/s per request (linear). The combination of sparsity + compute time growth reduces this to ~233 GB/s — a ==~2.6× reduction==. But it still exceeds what CPU DRAM can sustain, demanding a new storage tier.
 
 This is not an incremental improvement. It is a **new medium** — potentially:
 - CXL 3.0 pooled memory with GPU-direct access
@@ -207,12 +207,12 @@ At 1M context, the KV cache is 3.73 GB (DS-V4-Flash) / 4.8 GB (DS-V4-Pro). The r
 Scale to 10M context (with sublinear bandwidth scaling via sparsity + compute time):
 - Full KV cache storage: ~48 GB
 - Effective storage (70% sparsity): ~34 GB
-- **Prefill read bandwidth**: ~52 GB/s (2.6× from 1M's 20 GB/s, due to 7.8× data / 3× time)
+- **Prefill read bandwidth**: ~233 GB/s (3.9× from 1M's 60 GB/s, due to 7.8× data / 2× time)
 - During prefill on P-server: must process all 10M tokens with sublinear-but-heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
-- With 10 concurrent requests: 52 GB/s × 10 = ~520 GB/s aggregate bandwidth
+- With 10 concurrent requests: 233 GB/s × 10 = ~2.3 TB/s aggregate bandwidth
 
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and the KV transfer between P and D servers scales sublinearly. The 20 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. Even with sublinear scaling, production concurrency at 10M demands ~520 GB/s aggregate bandwidth.
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and the KV transfer between P and D servers scales sublinearly. The 60 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. Even with sublinear scaling, production concurrency at 10M demands ~2.3 TB/s aggregate bandwidth.
 
 ---
 
@@ -234,11 +234,11 @@ This reveals a deeper truth: **not all workloads are sparse**. The infrastructur
 
 | Milestone | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
 |---|---|---|---|---|
-| **Current** | 1M | $4.32 GB$ (90% sparsity) | 20 GB/s | GPU HBM + CPU DRAM |
-| **Near-term** | 4M | ~14 GB (80% sparsity) | ~35 GB/s | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB (70% sparsity) | ==~52 GB/s== | **CXL pooled memory** |
-| **Target** | 16M | ~46 GB (60% sparsity) | ==~53 GB/s== | **CXL 3.0 / New tier** |
-| **Long-term** | 100M+ | ~350 GB (35% sparsity) | ~80 GB/s | Optical/CXL 3.0 pooled |
+| **Current** | 1M | $4.32 GB$ (90% sparsity) | 60 GB/s | GPU HBM + CPU DRAM |
+| **Near-term** | 4M | ~14 GB (80% sparsity) | ~100 GB/s | CPU DRAM (borderline) |
+| **Medium-term** | 10M | ~34 GB (70% sparsity) | ==~233 GB/s== | **New storage tier required** |
+| **Target** | 16M | ~46 GB (60% sparsity) | ==~214 GB/s== | **New storage tier required** |
+| **Long-term** | 100M+ | ~350 GB (35% sparsity) | ~600 GB/s | Optical/CXL 3.0 pooled |
 
 **The hardware-software co-design challenge**:
 
@@ -262,15 +262,15 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 - Length generalization from 8K training → 16M inference is proven
 - NoPE + chunk-based retrieval is the architectural path
 
-**Frontier 2 — System Architecture**: Challenging but more tractable
+**Frontier 2 — System Architecture**: Hard, but sublinear scaling keeps it feasible
 - Prefill sparsity dilution is real, but bandwidth grows sublinearly due to compute time absorption
-- 10M context requires ~52 GB/s prefill bandwidth per request (2.6× from 1M, not 10×)
-- 16M context requires ~53 GB/s per request (2.7× from 1M)
-- Current CPU DRAM (~50-100 GB/s) is borderline for single-request 10M prefill
-- Production concurrency demands CXL 3.0 pooled memory or similar new tier
-- **A new storage tier is needed, but sublinear scaling makes it achievable sooner than linear extrapolation suggested**
+- 10M context requires ~233 GB/s prefill bandwidth per request (3.9× from 1M's 60 GB/s, not 10×)
+- 16M context requires ~214 GB/s per request (3.6× from 1M)
+- Current CPU DRAM (~50-100 GB/s) is *insufficient* even for single-request 10M prefill
+- Production concurrency demands a new storage tier (CXL 3.0 pooled memory or beyond)
+- **A new storage tier is mandatory. Sublinear scaling reduces the requirement from ~600 GB/s to ~233 GB/s — a 2.6× saving — but it's still beyond CPU DRAM.**
 
-> The bottleneck for 16M context is no longer the model. It is the infrastructure. Sublinear bandwidth scaling (via sparsity + compute time) is the saving grace — without it, the storage wall would be insurmountable. With it, CXL 3.0 pooled memory may bridge the gap.
+> The bottleneck for 16M context is no longer the model. It is the infrastructure. Sublinear bandwidth scaling (via sparsity + compute time) is the saving grace — without it, the storage wall would be insurmountable. With it, a new storage tier (CXL 3.0 pooled memory or optical interconnects) becomes feasible.
 
 ---
 
@@ -299,12 +299,12 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 
 1. **Located HSA-UltraLong paper** on arXiv (2511.23319), extracted full text via PyPDF2
 2. **Downloaded FlashMemory-DS-V4** paper via web search, confirmed KV cache scaling numbers
-3. **Distinguished storage vs bandwidth**: 20GB/s @ 1M is *prefill read bandwidth*, not storage capacity
+3. **Distinguished storage vs bandwidth**: 60GB/s @ 1M is *prefill read bandwidth*, not storage capacity
 4. **Used DS-V4 Pro baseline**: 4.8GB KV cache storage @ 1M context (MLA compressed)
 5. **Introduced sparsity as query ratio**: 1M@90%, 10M@70%, 16M@60% — fraction of KV cache accessed
-6. **Combined with compute time scaling**: 10M=3X, 16M=4X vs 1M
+6. **Combined with compute time scaling**: 10M=2X, 16M=3X vs 1M
 7. **Calculated sublinear bandwidth**: Bandwidth = Data/Time
-   - 10M: (48GB×70%) / (3×base_time) = ~52 GB/s (2.6× from 1M)
-   - 16M: (77GB×60%) / (4×base_time) = ~53 GB/s (2.7× from 1M)
+   - 10M: (48GB×70%) / (2×base_time) = ~233 GB/s (3.9× from 1M)
+   - 16M: (77GB×60%) / (3×base_time) = ~214 GB/s (3.6× from 1M)
 8. **Cross-referenced MRCR failure**: Confirmed that some tasks are inherently dense
-9. **Mapped storage hierarchy gap**: CPU DRAM borderline for single-request 10M; CXL 3.0 needed for concurrency
+9. **Mapped storage hierarchy gap**: CPU DRAM insufficient for single-request 10M; new tier required
