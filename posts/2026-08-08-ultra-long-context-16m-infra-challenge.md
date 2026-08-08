@@ -127,15 +127,17 @@ Prefill Bandwidth(L) = Baseline × √(L / L_baseline)
 Where: Baseline = 20 GB @ 512K
 ```
 
-| Context Length | Full KV Cache | Sparsity | Effective Storage | Prefill Bandwidth (√N scaling) |
+| Context Length | Full KV Cache | Sparsity (% needs access) | Effective Storage | Prefill Bandwidth (√N) |
 |---|---|---|---|---|
-| 512K | ~2.5 GB | ~90% | ~0.25 GB | ~20 GB (baseline) |
-| 1M | $4.8 GB$ | 90% | ==$0.48 GB$== | 20 × √1.95 = ==~28 GB== |
+| 512K | ~2.5 GB | ~10% | ~0.25 GB | ~20 GB (baseline) |
+| 1M | $4.8 GB$ | 10% | ==$0.48 GB$== | 20 × √1.95 = ==~28 GB== |
 | 10M | ~48 GB | 50% | ==~24 GB== | 20 × √19.5 = ==~88 GB== |
 | 16M | ~77 GB | 50% | ==~38 GB== | 20 × √31.3 = ==~112 GB== |
 
+**Sparsity semantics**: "Sparsity" here means the fraction of KV cache that must be accessed/queried during prefill. At 1M, only 10% of the full KV cache needs to be resident (0.48 GB). At 10M, sparsity dilutes to 50% — half the KV cache must be accessible (24 GB).
+
 **Key observations**:
-1. **Effective KV cache storage** = Full KV cache × (1 − sparsity). At 1M with 90% sparsity, only 0.48 GB needs storage. At 10M with 50% sparsity, 24 GB.
+1. **Effective KV cache storage** = Full KV cache × sparsity_ratio. At 1M with 10% sparsity, only 0.48 GB needs storage. At 10M with 50% sparsity, 24 GB.
 2. **Prefill bandwidth grows sublinearly (√N)**, not linearly. At 10M (19.5× from 512K), bandwidth only grows √19.5 ≈ 4.4× to ~88 GB — not 19.5×.
 3. **Storage grows faster than bandwidth** at long contexts: At 10M, effective storage is 24 GB (96× from 512K's 0.25 GB) but bandwidth is only 88 GB (4.4×). The √N scaling is the saving grace.
 
@@ -155,7 +157,7 @@ Scaling factor: √(L / 512K)
   Prefill bandwidth: 20 GB × √(16M/512K) = 20 × 5.59 = ~112 GB
 ```
 
-> **The key insight**: The 20 GB @ 512K is *read bandwidth during prefill*, not storage capacity. Sparsity reduces *storage* (you only keep a subset resident). Prefill bandwidth grows sublinearly (√N) because different tokens' retrieved chunks increasingly overlap at longer contexts. **Storage grows ~linearly with sparsity dilution; bandwidth grows with √N.**
+> **The key insight**: The 20 GB @ 512K is *read bandwidth during prefill*, not storage capacity. Sparsity determines *storage* (you only keep a subset resident). Prefill bandwidth grows sublinearly (√N) because different tokens' retrieved chunks increasingly overlap at longer contexts. **Storage grows with sparsity dilution; bandwidth grows with √N.**
 
 ---
 
