@@ -11,7 +11,7 @@ excerpt: "The Ant Group's HSA-UltraLong demonstrates 16M token context via Hiera
 
 **16M ultra-long context is real — but it demands sparse attention architecture. The catch: sparsity dilutes during prefill. When sequences grow 10×, current storage hierarchies break. A new tier with TB capacity and 500GB–1TB bandwidth is not optional — it is mandatory.**
 
-> Sparse attention enables ultra-long context in model architecture. But system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill.
+> Sparse attention enables ultra-long context in model architecture. But sparsity itself is not a solved problem — it requires continued micro-architecture optimization. And system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill.
 
 ---
 
@@ -23,6 +23,8 @@ The community is converging on ultra-long context as a critical engineering chal
 - **Tencent / Tsinghua** — *[FlashMemory-DeepSeek-V4: Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079)* (arXiv:2606.09079): LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
 
 Both demonstrate that sparse attention is the architectural path to ultra-long context — but neither fully solves the infrastructure cost of prefill.
+
+**The sparsity challenge remains open**. FlashMemory-DS-V4 exposes a critical failure mode on MRCR (Multi-Range Context Retrieval): accuracy drops from 76% to 48%. MRCR requires dense global memory — even providing 50% of true golden chunks still causes 2% accuracy drop. This reveals that sparsity is not a solved problem: micro-architecture innovations (better indexers, retrieval mechanisms, attention patterns) are still needed to handle dense workloads. Infrastructure alone cannot fix what the model cannot retrieve.
 
 ### 1.1 HSA-UltraLong: 500× Extrapolation
 
@@ -227,21 +229,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 ---
 
-## 6. The MRCR Failure: When Sparsity Breaks Completely
-
-FlashMemory-DS-V4 exposes a critical failure mode: **MRCR (Multi-Range Context Retrieval)**. On this benchmark, LSA's accuracy drops from 76.0% (baseline) to 48.0% — a catastrophic failure.
-
-**Why**: MRCR requires dense global memory dependency. Even providing 50% of the true golden chunks causes a 2% accuracy drop. The task fundamentally requires attending to most of the context — there is no sparsity to exploit.
-
-This reveals a deeper truth: **not all workloads are sparse**. The infrastructure must handle both:
-1. **Sparse workloads** (90%+ of requests): Only need recent context → LSA works beautifully
-2. **Dense workloads** (MRCR-like): Need full context → must load the entire KV cache
-
-> The storage tier must be provisioned for the dense case, even if most workloads are sparse. Infrastructure is built for the tail, not the average.
-
----
-
-## 7. Infrastructure Implications: The Roadmap to 16M
+## 6. Infrastructure Implications: The Roadmap to 16M
 
 | Milestone | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
 |---|---|---|---|---|
