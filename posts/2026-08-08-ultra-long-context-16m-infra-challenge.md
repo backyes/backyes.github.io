@@ -20,7 +20,7 @@ excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchi
 The community is converging on ultra-long context as a critical engineering challenge. Two recent works highlight this trend:
 
 - **Ant Group** — *Every Token Counts: Generalizing 16M Ultra-Long Context*[^1]: 8B MoE with Hierarchical Sparse Attention (HSA), extrapolating from 8K training to 16M inference — a ==500× extrapolation==.
-- **Tencent / Tsinghua** — *FlashMemory-DeepSeek-V4: Lookahead Sparse Attention*[^2]: LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
+- **Tencent / Tsinghua** — *FlashMemory-DeepSeek-V4: Lightning Index Ultra-Long Context via Lookahead Sparse Attention*[^2]: LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
 
 Both demonstrate that sparse attention is the architectural path to ultra-long context — but neither fully solves the infrastructure cost of prefill.
 
@@ -302,7 +302,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 
 [^1]: [Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319) — Ant Group & Westlake Univ., 2025
-[^2]: [FlashMemory-DeepSeek-V4: Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079) — Tencent & Tsinghua, 2025
+[^2]: [FlashMemory-DeepSeek-V4: Lightning Index Ultra-Long Context via Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079) — Tencent & Tsinghua, 2025
 [^3]: [DeepSeek-V4 Technical Report](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf) — DeepSeek-AI, 2026
 [^4]: [RULER Benchmark](https://arxiv.org/abs/2404.06654)
 [^5]: [MRCR Benchmark](https://arxiv.org/abs/2409.12640)
