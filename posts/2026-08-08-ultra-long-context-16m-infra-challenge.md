@@ -103,13 +103,16 @@ Let's trace the bandwidth scaling from concrete numbers. **Critical distinction*
 - 1M context KV cache (full, no sparsity): ==4.8 GB== (with MLA compression)
 - Per-token KV cache: ~5.04 KB/token
 
-**Prefill read bandwidth baseline** (measured, not theoretical):
-- 512K context: ~==20 GB== prefill read bandwidth (not storage capacity!)
-- This is the data volume that must be moved/processed during prefill
+**Compute platform**: ==1P @ PF4== (1 PetaFLOPS at FP4 precision)
+
+**Prefill read bandwidth baseline** (measured on 1P @ FP4, not theoretical):
+- 512K context: ~==20 GB/s== prefill read bandwidth (not storage capacity!)
+- 1M context: ~==60 GB/s== prefill read bandwidth
+- This is the data volume that must be moved/processed during prefill per unit time
 
 **The overhead ratio**:
 ```
-Prefill bandwidth / Storage capacity = 20 GB / 2.5 GB ≈ 8×
+Prefill bandwidth / Storage capacity = 20 GB/s / 2.5 GB ≈ 8×
 ```
 This 8× factor captures: chunk-level retrieval scanning, multi-head KV expansion, attention score computation staging, and burst transfer granularity.
 
@@ -296,6 +299,7 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 | [HSA-UltraLong](https://arxiv.org/abs/2511.23319) | 8B MoE, 8K→16M extrapolation, HSA architecture |
 | [DeepSeek-V4 Pro](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) | 4.8 GB KV cache @ 1M (MLA compressed) |
 | [FlashMemory-DS-V4](https://arxiv.org/abs/2511.XXXX) | 90% KV reduction, MRCR failure, PD-disaggregated |
-| User-provided baseline | 60 GB/s prefill bandwidth @ 1M |
+| Compute platform | 1P @ FP4 (1 PetaFLOPS, FP4 precision) |
+| User-provided baseline | 20 GB/s @ 512K, 60 GB/s @ 1M prefill bandwidth |
 | User-provided sparsity | 1M@90%, 10M@70%, 16M@60% |
 | User-provided compute model | 10% of length ratio (10M=1X, 16M=1.6X) |
