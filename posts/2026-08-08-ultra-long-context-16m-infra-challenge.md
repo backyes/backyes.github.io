@@ -114,9 +114,8 @@ Let's trace the bandwidth scaling from concrete numbers. **Critical distinction*
 
 **Compute platform**: ==4P@FP4== (4 PetaFLOPS at FP4 precision)
 
-**Prefill read bandwidth baseline** (4P@FP4 platform):
-- 1M context: ~==160 GB/s== aggregate prefill read bandwidth (4P@FP4)
-- Per 1P@FP4 unit: ~40 GB/s
+**Prefill read bandwidth baseline** (1X = 4P@FP4):
+- 1M context: ~==40 GB/s== prefill read bandwidth (at 4P@FP4, defined as 1X)
 - This is the data volume that must be moved/processed during prefill per unit time
 
 **The overhead ratio**:
@@ -184,25 +183,25 @@ Result — Bandwidth = Data / Time:
 
 ### Compute Scaling: Bandwidth Scales Linearly with Compute
 
-Prefill bandwidth scales **linearly** with compute power. The 4P@FP4 → 160 GB/s baseline means doubling compute doubles available bandwidth:
+Prefill bandwidth scales **linearly** with compute power. The baseline **1X = 4P@FP4 = 40 GB/s** means doubling compute doubles available bandwidth:
 
-| Compute Scaling | Platform | Available Prefill BW | vs 1P@FP4 unit |
+| Compute Scaling | Platform | Available Prefill BW | vs 1X baseline |
 |---|---|---|---|
-| **1X** | 1P@FP4 | 40 GB/s | 1× |
-| **2X** | 2P@FP4 | 80 GB/s | 2× |
-| **4X** | 4P@FP4 | 160 GB/s | 4× |
-| **8X** | 8P@FP4 | 320 GB/s | 8× |
+| **1X** | 4P@FP4 | 40 GB/s | 1× |
+| **2X** | 8P@FP4 | 80 GB/s | 2× |
+| **4X** | 16P@FP4 | 160 GB/s | 4× |
+| **8X** | 32P@FP4 | 320 GB/s | 8× |
 
 **Compute scaling vs context length coverage**:
 
 | Compute Available BW | 1M (need 40 GB/s) | 10M (need 156 GB/s) | 16M (need 164 GB/s) |
 |---|---|---|---|
-| **1X**: 40 GB/s (1P@FP4) | ✅ | ❌ | ❌ |
-| **2X**: 80 GB/s (2P@FP4) | ✅ | ❌ | ❌ |
-| **4X**: 160 GB/s (4P@FP4) | ✅ | ✅ | ⚠️ borderline |
-| **8X**: 320 GB/s (8P@FP4) | ✅ | ✅ | ✅ |
+| **1X**: 40 GB/s (4P@FP4) | ✅ | ❌ | ❌ |
+| **2X**: 80 GB/s (8P@FP4) | ✅ | ❌ | ❌ |
+| **4X**: 160 GB/s (16P@FP4) | ✅ | ✅ | ⚠️ borderline |
+| **8X**: 320 GB/s (32P@FP4) | ✅ | ✅ | ✅ |
 
-> **The compute-bandwidth coupling**: At 10M, 4X compute (4P@FP4) provides exactly enough bandwidth (160 GB/s ≥ 156 GB/s). At 16M, 4X is borderline (160 GB/s ≈ 164 GB/s), requiring 8X for comfortable headroom. Compute scaling can partially offset the storage bandwidth challenge — but only at the cost of massive compute over-provisioning for a single request. For concurrency, the bandwidth deficit multiplies: 2× concurrent 10M requests need 8X compute (8P@FP4), 4× concurrent need 16X (16P@FP4).
+> **The compute-bandwidth coupling**: At 10M, 4X compute (16P@FP4) provides enough bandwidth (160 GB/s ≥ 156 GB/s). At 16M, 4X is borderline (160 GB/s ≈ 164 GB/s), requiring 8X (32P@FP4) for comfortable headroom. Compute scaling can partially offset the storage bandwidth challenge — but only at the cost of massive compute over-provisioning for a single request. For concurrency, the bandwidth deficit multiplies: 2× concurrent 10M requests need 8X compute (32P@FP4), 4× concurrent need 16X (64P@FP4).
 
 ---
 
@@ -224,10 +223,11 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 
 **Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~156 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
 
-**Compute scaling projection**: On a 4P@FP4 platform (4X, 160 GB/s aggregate bandwidth):
-- A single 10M request needs ~156 GB/s → consumes ~100% of 4P@FP4 (4X) bandwidth budget
-- A single 16M request needs ~164 GB/s → exceeds 4P@FP4 capacity, needs 8X (8P@FP4, 320 GB/s)
-- **Concurrency killer**: 4X compute can serve only ONE 10M request at a time. Two concurrent 10M requests need 8X compute (8P@FP4).
+**Compute scaling projection**: On a 4P@FP4 platform (1X, 40 GB/s aggregate bandwidth):
+- A single 1M request needs ~40 GB/s → consumes 100% of 1X bandwidth budget
+- A single 10M request needs ~156 GB/s → needs 4X (16P@FP4, 160 GB/s)
+- A single 16M request needs ~164 GB/s → needs 4X-8X (16-32P@FP4)
+- **Concurrency killer**: 4X compute can serve only ONE 10M request at a time. Two concurrent 10M requests need 8X compute (32P@FP4).
 
 This means compute scaling alone cannot solve the problem — it merely shifts the bottleneck from "bandwidth insufficient" to "compute massively over-provisioning". **Storage tier innovation (HBF/CXL) is mandatory** to provide both capacity AND bandwidth without linearly scaling compute.
 
@@ -249,7 +249,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
 
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s per 1P@FP4 @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s — consuming the entire bandwidth budget of a 4P@FP4 (4X) platform, leaving zero headroom for concurrency. At 16M, even 4X is insufficient, demanding 8X compute (8P@FP4) for a single request.
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline (1X = 4P@FP4) already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s — requiring 4X compute (16P@FP4) for a single request, leaving zero headroom for concurrency. At 16M, 4X is borderline (160 GB/s ≈ 164 GB/s), demanding 8X compute (32P@FP4) for comfortable headroom.
 
 ---
 
@@ -259,22 +259,22 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 | Context Length | Full KV Cache | Sparsity | Data to Access | Compute Time | Prefill Bandwidth | vs 1M |
 |---|---|---|---|---|---|---|
-| **1M** | $4.8 GB$ | 90% | $4.32 GB$ | 1× | **40 GB/s** (1X, 1P@FP4) | 1× |
-| **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~156 GB/s**== (4X, 4P@FP4) | 3.9× |
-| **16M** | ~77 GB | 60% | ~46.2 GB | 2.6× | ==**~164 GB/s**== (4X, 4P@FP4) | 4.1× |
+| **1M** | $4.8 GB$ | 90% | $4.32 GB$ | 1× | **40 GB/s** (1X, 4P@FP4) | 1× |
+| **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~156 GB/s**== (4X, 16P@FP4) | 3.9× |
+| **16M** | ~77 GB | 60% | ~46.2 GB | 2.6× | ==**~164 GB/s**== (4X, 16P@FP4) | 4.1× |
 
 **Key ratios**:
 - 1M → 10M: Context length 10×, data volume 7.8×, compute time 2×, **bandwidth 3.9×**
 - 1M → 16M: Context length 16×, data volume 10.7×, compute time 2.6×, **bandwidth 4.1×**
 
-**Compute-bandwidth coupling**: Prefill bandwidth scales linearly with compute power (per 1X = 1P@FP4 → ~40 GB/s @ 1M baseline). Doubling compute doubles available bandwidth. But the coupling is a double-edged sword:
+**Compute-bandwidth coupling**: Prefill bandwidth scales linearly with compute power (per **1X = 4P@FP4 → ~40 GB/s** @ 1M baseline). Doubling compute doubles available bandwidth. But the coupling is a double-edged sword:
 
 | Scenario | Compute Needed | Problem |
 |---|---|---|
-| Single 10M request | 4X (4P@FP4) → 160 GB/s | ✅ Feasible, but 100% bandwidth utilization |
-| Single 16M request | 8X (8P@FP4) → 320 GB/s | ⚠️ Massive compute over-provisioning |
-| 2× concurrent 10M | 8X (8P@FP4) → 320 GB/s | ❌ Compute scales linearly with concurrency |
-| 4× concurrent 10M | 16X (16P@FP4) | ❌ Economically unviable |
+| Single 10M request | 4X (16P@FP4) → 160 GB/s | ✅ Feasible, but 100% bandwidth utilization |
+| Single 16M request | 4X-8X (16-32P@FP4) | ⚠️ Massive compute over-provisioning |
+| 2× concurrent 10M | 8X (32P@FP4) → 320 GB/s | ❌ Compute scales linearly with concurrency |
+| 4× concurrent 10M | 16X (64P@FP4) | ❌ Economically unviable |
 
 **The fundamental tension**: Compute scaling can provide bandwidth "for free" (linear coupling), but it scales linearly with both context length AND concurrency. At 10M+, the compute cost of sustaining prefill bandwidth becomes prohibitive for multi-tenant serving.
 
@@ -297,16 +297,16 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 2. **Compute-as-Cache (以算缓存)**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
 
-3. **Compute-Bandwidth Coupling (算力带宽耦合)**: Leverage the linear relationship between compute and prefill bandwidth (1X = 1P@FP4 → 40 GB/s, 4X = 4P@FP4 → 160 GB/s, 8X = 8P@FP4 → 320 GB/s) for headroom. But recognize its limit: compute scales linearly with concurrency, so it cannot be the sole solution for multi-tenant serving.
+3. **Compute-Bandwidth Coupling (算力带宽耦合)**: Leverage the linear relationship between compute and prefill bandwidth (1X = 4P@FP4 → 40 GB/s, 4X = 16P@FP4 → 160 GB/s, 8X = 32P@FP4 → 320 GB/s) for headroom. But recognize its limit: compute scales linearly with concurrency, so it cannot be the sole solution for multi-tenant serving.
 
 **Roadmap**:
 
 | Phase | Context Length | Effective KV Storage | Prefill Bandwidth | Compute Needed | Enabling Technology |
 |---|---|---|---|---|---|
-| **Current** | 1M | $4.32 GB$ | 40 GB/s | 1X (1P@FP4) | GPU HBM + CPU DRAM |
-| **Near-term** | 4M | ~14 GB | ~100 GB/s | 2-3X (2-3P@FP4) | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | 4X (4P@FP4) | **HBF / CXL 3.0 pooled memory** + compute coupling |
-| **Target** | 16M | ~46 GB | ==~164 GB/s== | 4-8X (4-8P@FP4) | **HBF / CXL 3.0 pooled memory** + compute coupling |
+| **Current** | 1M | $4.32 GB$ | 40 GB/s | 1X (4P@FP4) | GPU HBM + CPU DRAM |
+| **Near-term** | 4M | ~14 GB | ~100 GB/s | 2-3X (8-12P@FP4) | CPU DRAM (borderline) |
+| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | 4X (16P@FP4) | **HBF / CXL 3.0 pooled memory** + compute coupling |
+| **Target** | 16M | ~46 GB | ==~164 GB/s== | 4-8X (16-32P@FP4) | **HBF / CXL 3.0 pooled memory** + compute coupling |
 | **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | 40X+ (unviable alone) | **Storage tier mandatory** + compute-as-cache |
 
 ---
@@ -322,7 +322,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - Compute time grows sublinearly (1 + 10% of length ratio) → bandwidth growth 3.9-4.1×
 - 10M requires ~156 GB/s, 16M requires ~164 GB/s per request
 - CPU DRAM is insufficient even for a single request; **new storage tier mandatory**
-- **Compute-bandwidth coupling**: Linear compute growth linearly increases prefill bandwidth (1X = 1P@FP4 → 40 GB/s, 4X = 4P@FP4 → 160 GB/s, 8X = 8P@FP4 → 320 GB/s). This provides headroom but scales linearly with concurrency — 4X serves one 10M request, but 8X is needed for two. Compute alone cannot solve multi-tenant ultra-long context serving.
+- **Compute-bandwidth coupling**: Linear compute growth linearly increases prefill bandwidth (1X = 4P@FP4 → 40 GB/s, 4X = 16P@FP4 → 160 GB/s, 8X = 32P@FP4 → 320 GB/s). This provides headroom but scales linearly with concurrency — 4X serves one 10M request, but 8X is needed for two. Compute alone cannot solve multi-tenant ultra-long context serving.
 - **Three-pronged solution**: (1) Storage tier innovation (HBF/CXL) for capacity + bandwidth, (2) compute-as-cache for append-heavy workloads, (3) compute-bandwidth coupling for headroom — all three are necessary because no single approach scales economically.
 
 > **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. Storage bandwidth (not compute) becomes the critical resource, and compute-bandwidth coupling alone cannot scale economically for concurrency. A new storage tier (HBF/CXL) is mandatory, complemented by compute-as-cache and strategic compute over-provisioning.
