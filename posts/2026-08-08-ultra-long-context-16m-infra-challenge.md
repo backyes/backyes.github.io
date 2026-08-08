@@ -1,5 +1,5 @@
 ---
-title: "Does Ultra-Long Context Exist? How Infrastructure Responds (1) — At 16M Context, Can Sparse Attention Scale Inference Cost and Performance?"
+title: "[Under Review] Does Ultra-Long Context Exist? How Infrastructure Responds (1) — At 16M Context, Can Sparse Attention Scale Inference Cost and Performance?"
 date: 2026-08-08
 tags: ["Ultra-Long-Context", "Sparse-Attention", "HSA", "DeepSeek-V4", "KV-Cache", "Prefill", "Memory-Wall", "Infrastructure", "16M-Token"]
 excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchical Sparse Attention. But sparsity dilutes during prefill — when sequence length grows 10×, a new storage tier with TB capacity and 500GB–1TB bandwidth becomes mandatory. This post analyzes the infra implications."
