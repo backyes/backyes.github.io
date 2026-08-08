@@ -227,9 +227,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 ---
 
-## 6. Infrastructure Implications: Summary
-
-Based on the quantitative analysis, ultra-long context infrastructure requirements are summarized as follows:
+## 6. How System Addresses the Ultra-Long Context Challenge
 
 ### 6.1 Quantitative Analysis & System Direction
 
