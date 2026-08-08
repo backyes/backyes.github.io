@@ -183,27 +183,21 @@ Result — Bandwidth = Data / Time:
 
 ### Compute Scaling: Bandwidth Scales Linearly with Compute
 
-Prefill bandwidth scales **linearly** with compute power. The baseline **1X = 4P@FP4 = 40 GB/s** means doubling compute doubles available bandwidth:
+算力翻倍 → **所有序列长度的带宽都翻倍**。基线 **1X = 4P@FP4** 下，1M/10M/16M 的带宽分别为 40/156/164 GB/s。算力翻倍后，每个序列长度的带宽同比例翻倍：
 
-| Compute Scaling | Platform | Available Prefill BW | vs 1X baseline |
-|---|---|---|---|
-| **1X** | 4P@FP4 | 40 GB/s | 1× |
-| **2X** | 8P@FP4 | 80 GB/s | 2× |
-| **4X** | 16P@FP4 | 160 GB/s | 4× |
-| **8X** | 32P@FP4 | 320 GB/s | 8× |
+| Compute Scaling | Platform | 1M 带宽 | 10M 带宽 | 16M 带宽 |
+|---|---|---|---|---|
+| **1X** | 4P@FP4 | 40 GB/s | 156 GB/s | 164 GB/s |
+| **2X** | 8P@FP4 | 80 GB/s | 312 GB/s | 328 GB/s |
+| **4X** | 16P@FP4 | 160 GB/s | 624 GB/s | 656 GB/s |
+| **8X** | 32P@FP4 | 320 GB/s | 1.25 TB/s | 1.31 TB/s |
 
-**Compute scaling vs context length coverage**:
+**解读**：
+- 1X 算力下，16M 单请求需 164 GB/s → 仅能提供 164 GB/s
+- 2X 算力下，16M 单请求带宽翻倍到 **328 GB/s**（算力翻倍 → 带宽翻倍）
+- 4X 算力下，16M 单请求带宽翻到 **656 GB/s**
 
-带宽需求随上下文长度递增：1M (40 GB/s) → 10M (156 GB/s) → 16M (164 GB/s)。对每一级算力，需覆盖所有更短上下文累加带宽。
-
-| Compute Available BW | 1M 需求 | 10M 需求 | 16M 需求 | 累加总需求 | 能否覆盖 |
-|---|---|---|---|---|---|
-| **1X**: 40 GB/s (4P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ❌ 仅覆盖 1M |
-| **2X**: 80 GB/s (8P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ❌ 仅覆盖 1M |
-| **4X**: 160 GB/s (16P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ⚠️ 覆盖 1M+10M，16M 边界 |
-| **8X**: 320 GB/s (32P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s | **360+ GB/s** | ✅ 全覆盖 |
-
-> **The compute-bandwidth coupling**: 1X 算力 (40 GB/s) 仅能满足单个 1M 请求。10M 单请求需 156 GB/s → 需 4X (16P@FP4, 160 GB/s)。16M 单请求需 164 GB/s → 4X 边界，需 8X (32P@FP4, 320 GB/s) 才能舒适覆盖。若需同时服务 1M+10M+16M 混合负载，总带宽需求 360+ GB/s → 需 8X 以上。算力翻倍确实带来带宽翻倍，但随上下文长度递增，累加需求使得单纯算力扩展经济上不可行。
+> **The compute-bandwidth coupling**: 算力翻倍直接导致所有序列长度带宽翻倍。16M @ 1X 需 164 GB/s，@ 2X 则需 328 GB/s，@ 4X 则需 656 GB/s。这意味着**更长上下文 + 更高算力 = 带宽需求呈乘法级增长**，单纯算力扩展无法经济地满足超长上下文场景。
 
 ---
 
