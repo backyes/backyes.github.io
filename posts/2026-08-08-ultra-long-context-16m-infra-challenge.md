@@ -171,7 +171,7 @@ Result — Bandwidth = Data / Time:
 | Compute time (10% model) | 1× | 1.6× |
 | **Bandwidth required** | **7.8×** | **6.7×** |
 
-> **The key insight**: When compute time scales sublinearly (10% of length ratio), bandwidth growth is driven primarily by data volume growth (sparsity dilution). At 10M, compute time doesn't increase at all — all data growth translates directly to bandwidth demand. The infrastructure must deliver ~311 GB/s per request at 10M.
+> **The key insight**: With ==sparse attention==, compute time scales sublinearly (10% of length ratio), so bandwidth growth is driven primarily by data volume growth (sparsity dilution). At 10M, compute time doesn't increase at all — all data growth translates directly to bandwidth demand. The infrastructure must deliver ~311 GB/s per request at 10M.
 
 ---
 
