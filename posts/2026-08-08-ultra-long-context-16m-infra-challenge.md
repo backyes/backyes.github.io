@@ -1,11 +1,11 @@
 ---
-title: "Does Ultra-Long Context Exist? How Infrastructure Responds (1) — 16M and the Sparsity Dilution Wall"
+title: "Does Ultra-Long Context Exist? How Infrastructure Responds (1) — At 16M Context, Can Sparse Attention Scale Inference Cost and Performance?"
 date: 2026-08-08
 tags: ["Ultra-Long-Context", "Sparse-Attention", "HSA", "DeepSeek-V4", "KV-Cache", "Prefill", "Memory-Wall", "Infrastructure", "16M-Token"]
 excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchical Sparse Attention. But sparsity dilutes during prefill — when sequence length grows 10×, a new storage tier with TB capacity and 500GB–1TB bandwidth becomes mandatory. This post analyzes the infra implications."
 ---
 
-# Does Ultra-Long Context Exist? How Infrastructure Responds (1) — 16M and the Sparsity Dilution Wall
+# Does Ultra-Long Context Exist? How Infrastructure Responds (1) — At 16M Context, Can Sparse Attention Scale Inference Cost and Performance?
 
 ## Thesis
 
@@ -287,7 +287,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - CPU DRAM is insufficient even for a single request; **new storage tier mandatory**
 - **Orthogonal scaling**: Linear compute growth linearly increases prefill bandwidth (per 1P @ FP4 → ~40 GB/s), partially offsetting the storage bandwidth bottleneck. Compute and storage bandwidth scale orthogonally — more compute brings more bandwidth "for free."
 
-> **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. On a 4P @ FP4 platform, storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
+> **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. Storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
 
 ---
 
