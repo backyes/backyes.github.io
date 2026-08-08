@@ -107,7 +107,7 @@ Let's trace the bandwidth scaling from concrete numbers. **Critical distinction*
 
 **Prefill read bandwidth baseline** (measured on 1P @ FP4, not theoretical):
 - 512K context: ~==20 GB/s== prefill read bandwidth (not storage capacity!)
-- 1M context: ~==60 GB/s== prefill read bandwidth
+- 1M context: ~==40 GB/s== prefill read bandwidth
 - This is the data volume that must be moved/processed during prefill per unit time
 
 **The overhead ratio**:
@@ -137,14 +137,14 @@ Prefill bandwidth is determined by **two forces**: (1) sparsity determines how m
 **Bandwidth calculation**: `Bandwidth = Data to Access / Compute Time`
 
 From the 1M baseline:
-- 1M bandwidth = 60 GB/s (given)
-- 1M compute time = Data / Bandwidth = 4.32 GB / 60 GB/s = 0.072 s
+- 1M bandwidth = 40 GB/s (given)
+- 1M compute time = Data / Bandwidth = 4.32 GB / 40 GB/s = 0.108 s
 
 | Context Length | Data to Access | Compute Time | Prefill Bandwidth | Bandwidth Growth (vs 1M) |
 |---|---|---|---|---|
-| 1M | $4.32 GB$ | 0.072 s (1×) | ==60 GB/s** | 1× (baseline) |
-| 10M | ~33.6 GB | 0.072 s (1×) | ~33.6 / 0.072 = ==~467 GB/s== | 7.8× |
-| 16M | ~46.2 GB | 0.115 s (1.6×) | ~46.2 / 0.115 = ==~401 GB/s== | 6.7× |
+| 1M | $4.32 GB$ | 0.108 s (1×) | ==40 GB/s** | 1× (baseline) |
+| 10M | ~33.6 GB | 0.108 s (1×) | ~33.6 / 0.108 = ==~311 GB/s== | 7.8× |
+| 16M | ~46.2 GB | 0.173 s (1.6×) | ~46.2 / 0.173 = ==~267 GB/s== | 6.7× |
 
 **The two forces**:
 
@@ -171,7 +171,7 @@ Result — Bandwidth = Data / Time:
 | Compute time (10% model) | 1× | 1.6× |
 | **Bandwidth required** | **7.8×** | **6.7×** |
 
-> **The key insight**: When compute time scales sublinearly (10% of length ratio), bandwidth growth is driven primarily by data volume growth (sparsity dilution). At 10M, compute time doesn't increase at all — all data growth translates directly to bandwidth demand. The infrastructure must deliver ~467 GB/s per request at 10M.
+> **The key insight**: When compute time scales sublinearly (10% of length ratio), bandwidth growth is driven primarily by data volume growth (sparsity dilution). At 10M, compute time doesn't increase at all — all data growth translates directly to bandwidth demand. The infrastructure must deliver ~311 GB/s per request at 10M.
 
 ---
 
@@ -182,16 +182,16 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 | Tier | Capacity | Sustainable Read Bandwidth | Verdict for 10M Prefill |
 |---|---|---|---|
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient (need ~34GB effective per request, TB for concurrency) |
-| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~467 GB/s needed) |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~311 GB/s needed) |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
 | **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ❌ Bandwidth insufficient for single request |
 
 **The gap**: We need a storage tier with:
 - **Capacity**: TB-scale (10M context × 34 GB effective × multiple concurrent requests)
-- **Prefill Bandwidth**: ~467 GB/s per request at 10M, ~401 GB/s at 16M
+- **Prefill Bandwidth**: ~311 GB/s per request at 10M, ~267 GB/s at 16M
 - **Position**: Between GPU HBM and CPU DRAM in the memory hierarchy
 
-**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~467 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request. Production concurrency (10 simultaneous 10M requests) demands ==~4.7 TB/s aggregate bandwidth== — far beyond CPU DRAM.
+**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~311 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request. Production concurrency (10 simultaneous 10M requests) demands ==~3.1 TB/s aggregate bandwidth== — far beyond CPU DRAM.
 
 **The bottleneck is severe**: Because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. At 10M, bandwidth must be ~467 GB/s per request — requiring a new storage tier with TB/s-class sustained read bandwidth.
 
@@ -212,10 +212,10 @@ At 1M context, the KV cache is 3.73 GB (DS-V4-Flash) / 4.8 GB (DS-V4-Pro). The r
 Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth):
 - Full KV cache storage: ~48 GB
 - Effective storage (70% sparsity): ~34 GB
-- **Prefill read bandwidth**: ~467 GB/s (7.8× from 1M's 60 GB/s, due to 7.8× data / 1× time)
+- **Prefill read bandwidth**: ~311 GB/s (7.8× from 1M's 40 GB/s, due to 7.8× data / 1× time)
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
-- With 10 concurrent requests: 467 GB/s × 10 = ~4.7 TB/s aggregate bandwidth
+- With 10 concurrent requests: 311 GB/s × 10 = ~3.1 TB/s aggregate bandwidth
 
 > **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. The 60 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, production concurrency demands ~4.7 TB/s aggregate bandwidth.
 
@@ -239,11 +239,11 @@ This reveals a deeper truth: **not all workloads are sparse**. The infrastructur
 
 | Milestone | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
 |---|---|---|---|---|
-| **Current** | 1M | $4.32 GB$ (90% sparsity) | 60 GB/s | GPU HBM + CPU DRAM |
-| **Near-term** | 4M | ~14 GB (80% sparsity) | ~150 GB/s | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB (70% sparsity) | ==~467 GB/s== | **New storage tier required** |
-| **Target** | 16M | ~46 GB (60% sparsity) | ==~401 GB/s== | **New storage tier required** |
-| **Long-term** | 100M+ | ~350 GB (35% sparsity) | ~2.4 TB/s | Optical/CXL 3.0 pooled |
+| **Current** | 1M | $4.32 GB$ (90% sparsity) | 40 GB/s | GPU HBM + CPU DRAM |
+| **Near-term** | 4M | ~14 GB (80% sparsity) | ~100 GB/s | CPU DRAM (borderline) |
+| **Medium-term** | 10M | ~34 GB (70% sparsity) | ==~311 GB/s== | **New storage tier required** |
+| **Target** | 16M | ~46 GB (60% sparsity) | ==~267 GB/s== | **New storage tier required** |
+| **Long-term** | 100M+ | ~350 GB (35% sparsity) | ~1.6 TB/s | Optical/CXL 3.0 pooled |
 
 **The hardware-software co-design challenge**:
 
@@ -270,11 +270,11 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 **Frontier 2 — System Architecture**: Hard, with bandwidth nearly tracking data growth
 - Prefill sparsity dilution drives data volume growth (7.8× from 1M to 10M)
 - Compute time barely grows (10% of length ratio), so bandwidth ≈ data growth
-- 10M context requires ~467 GB/s prefill bandwidth per request (7.8× from 1M's 60 GB/s)
-- 16M context requires ~401 GB/s per request (6.7× from 1M)
+- 10M context requires ~311 GB/s prefill bandwidth per request (7.8× from 1M's 40 GB/s)
+- 16M context requires ~267 GB/s per request (6.7× from 1M)
 - Current CPU DRAM (~50-100 GB/s) is *insufficient* even for single-request 10M prefill
 - Production concurrency demands a fundamentally new storage tier
-- **A new storage tier is mandatory. The ~467 GB/s per-request requirement at 10M far exceeds CPU DRAM, demanding TB/s-class sustained read bandwidth.**
+- **A new storage tier is mandatory. The ~311 GB/s per-request requirement at 10M far exceeds CPU DRAM, demanding TB/s-class sustained read bandwidth.**
 
 > The bottleneck for 16M context is no longer the model. It is the infrastructure. Because compute time scales sublinearly (10% of length ratio), bandwidth growth nearly tracks data growth from sparsity dilution. A new storage tier with TB/s-class read bandwidth is mandatory for production-scale 10M+ context.
 
@@ -300,6 +300,6 @@ The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challe
 | [DeepSeek-V4 Pro](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) | 4.8 GB KV cache @ 1M (MLA compressed) |
 | [FlashMemory-DS-V4](https://arxiv.org/abs/2511.XXXX) | 90% KV reduction, MRCR failure, PD-disaggregated |
 | Compute platform | 1P @ FP4 (1 PetaFLOPS, FP4 precision) |
-| User-provided baseline | 20 GB/s @ 512K, 60 GB/s @ 1M prefill bandwidth |
+| User-provided baseline | 20 GB/s @ 512K, 40 GB/s @ 1M prefill bandwidth |
 | User-provided sparsity | 1M@90%, 10M@70%, 16M@60% |
 | User-provided compute model | 10% of length ratio (10M=1X, 16M=1.6X) |
