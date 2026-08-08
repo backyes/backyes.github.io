@@ -42,6 +42,8 @@
 <li><a href="#4-the-prefill-problem-why-sparsity-dilutes" class="toc-h2">4. The Prefill Problem: Why Sparsity Dilutes</a></li>
 <li><a href="#41-single-token-decode-vs-multi-token-prefill" class="toc-h3">4.1 Single-Token Decode vs. Multi-Token Prefill</a></li>
 <li><a href="#42-the-bandwidth-calculation" class="toc-h3">4.2 The Bandwidth Calculation</a></li>
+<li><a href="#introducing-sparsity-into-kv-cache-storage" class="toc-h3">Introducing Sparsity into KV Cache Storage</a></li>
+<li><a href="#prefill-bandwidth-sublinear-n-growth" class="toc-h3">Prefill Bandwidth: Sublinear (√N) Growth</a></li>
 <li><a href="#5-the-storage-hierarchy-breaks" class="toc-h2">5. The Storage Hierarchy Breaks</a></li>
 <li><a href="#51-the-deepseek-v4-evidence" class="toc-h3">5.1 The DeepSeek-V4 Evidence</a></li>
 <li><a href="#6-the-mrcr-failure-when-sparsity-breaks-completely" class="toc-h2">6. The MRCR Failure: When Sparsity Breaks Completely</a></li>
@@ -115,7 +117,7 @@
 <p>Let's trace the bandwidth scaling from concrete numbers. <strong>Critical distinction</strong>: KV cache <em>storage capacity</em> ≠ prefill <em>read bandwidth</em>. The latter includes chunk retrieval overhead, multi-head expansion, and burst transfer amplification.</p>
 <p><strong>DeepSeek-V4 Pro baseline</strong> (KV cache compression frontier):</p>
 <ul>
-<li>1M context KV cache storage: <mark>4.8 GB</mark> (with MLA compression)</li>
+<li>1M context KV cache (full, no sparsity): <mark>4.8 GB</mark> (with MLA compression)</li>
 <li>Per-token KV cache: ~5.04 KB/token</li>
 </ul>
 <p><strong>Prefill read bandwidth baseline</strong> (measured, not theoretical):</p>
@@ -126,33 +128,42 @@
 <p><strong>The overhead ratio</strong>:</p>
 <pre><code>Prefill bandwidth / Storage capacity = 20 GB / 2.5 GB ≈ 8×</code></pre>
 <p>This 8× factor captures: chunk-level retrieval scanning, multi-head KV expansion, attention score computation staging, and burst transfer granularity.</p>
-<p><strong>Extrapolation to 10M context (20× from 512K):</strong></p>
-<pre><code>Storage capacity: 4.8 GB × 10 = 48 GB<br>Prefill read bandwidth: 20 GB × 20 = 400 GB</code></pre>
-<p>Or calculated from per-token:</p>
-<pre><code>10M tokens × 5.04 KB/token × 8× overhead ≈ 400 GB effective prefill bandwidth</code></pre>
-<table><thead><tr><th>Context Length</th><th>KV Cache Storage</th><th>Prefill Read Bandwidth</th><th>Notes</th></tr></thead><tbody>
-<tr><td>512K</td><td>~2.5 GB</td><td>~20 GB</td><td>Measured baseline</td></tr>
-<tr><td>1M</td><td>$4.8 GB$</td><td>~40 GB</td><td>DS-V4 Pro with MLA</td></tr>
-<tr><td>10M</td><td>~48 GB</td><td><mark>~400 GB</mark></td><td>20× extrapolation</td></tr>
-<tr><td>16M</td><td>~77 GB</td><td><mark>~640 GB</mark></td><td>HSA-UltraLong target</td></tr>
+<h3 id="introducing-sparsity-into-kv-cache-storage">Introducing Sparsity into KV Cache Storage</h3>
+<p>Sparsity is not uniform — it dilutes as context grows. At short contexts, most tokens can be skipped. At long contexts, the union of per-token retrievals covers more of the history.</p>
+<h3 id="prefill-bandwidth-sublinear-n-growth">Prefill Bandwidth: Sublinear (√N) Growth</h3>
+<p>Crucially, <strong>prefill read bandwidth grows sublinearly</strong> — with the square root of sequence length, not linearly. As sequence grows, the overlap between different tokens' retrieved chunks increases, so the union grows slower than N.</p>
+<p><strong>Sublinear scaling formula</strong>:</p>
+<pre><code>Prefill Bandwidth(L) = Baseline × √(L / L_baseline)<br>Where: Baseline = 20 GB @ 512K</code></pre>
+<table><thead><tr><th>Context Length</th><th>Full KV Cache</th><th>Sparsity</th><th>Effective Storage</th><th>Prefill Bandwidth (√N scaling)</th></tr></thead><tbody>
+<tr><td>512K</td><td>~2.5 GB</td><td>~90%</td><td>~0.25 GB</td><td>~20 GB (baseline)</td></tr>
+<tr><td>1M</td><td>$4.8 GB$</td><td>90%</td><td><mark>$0.48 GB$</mark></td><td>20 × √1.95 = <mark>~28 GB</mark></td></tr>
+<tr><td>10M</td><td>~48 GB</td><td>50%</td><td><mark>~24 GB</mark></td><td>20 × √19.5 = <mark>~88 GB</mark></td></tr>
+<tr><td>16M</td><td>~77 GB</td><td>50%</td><td><mark>~38 GB</mark></td><td>20 × √31.3 = <mark>~112 GB</mark></td></tr>
 </tbody></table>
-<blockquote><p><strong>The key insight</strong>: The 20 GB @ 512K is <em>read bandwidth during prefill</em>, not storage capacity. It already includes the ~8× overhead of sparse retrieval mechanics. During prefill, multi-token processing makes each token retrieve different chunks — the union of all retrieved chunks approaches the full KV cache. You cannot exploit sparsity to skip loading; bandwidth scales with the <strong>full</strong> KV cache size.</p></blockquote>
+<p><strong>Key observations</strong>:</p>
+<p>1. <strong>Effective KV cache storage</strong> = Full KV cache × (1 − sparsity). At 1M with 90% sparsity, only 0.48 GB needs storage. At 10M with 50% sparsity, 24 GB.</p>
+<p>2. <strong>Prefill bandwidth grows sublinearly (√N)</strong>, not linearly. At 10M (19.5× from 512K), bandwidth only grows √19.5 ≈ 4.4× to ~88 GB — not 19.5×.</p>
+<p>3. <strong>Storage grows faster than bandwidth</strong> at long contexts: At 10M, effective storage is 24 GB (96× from 512K's 0.25 GB) but bandwidth is only 88 GB (4.4×). The √N scaling is the saving grace.</p>
+<p><strong>Extrapolation calculation</strong>:</p>
+<pre><code>Baseline: 20 GB @ 512K<br>Scaling factor: √(L / 512K)<br><br>10M context:<br>  Full KV cache: 10M × 5.04 KB = 48 GB<br>  Effective storage (50% sparsity): 48 GB × 50% = 24 GB<br>  Prefill bandwidth: 20 GB × √(10M/512K) = 20 × 4.42 = ~88 GB<br><br>16M context (HSA-UltraLong target):<br>  Full KV cache: 16M × 5.04 KB = 77 GB<br>  Effective storage (50% sparsity): 77 GB × 50% = 38 GB<br>  Prefill bandwidth: 20 GB × √(16M/512K) = 20 × 5.59 = ~112 GB</code></pre>
+<blockquote><p><strong>The key insight</strong>: The 20 GB @ 512K is <em>read bandwidth during prefill</em>, not storage capacity. Sparsity reduces <em>storage</em> (you only keep a subset resident). Prefill bandwidth grows sublinearly (√N) because different tokens' retrieved chunks increasingly overlap at longer contexts. <strong>Storage grows ~linearly with sparsity dilution; bandwidth grows with √N.</strong></p></blockquote>
 <hr>
 <h2 id="5-the-storage-hierarchy-breaks">5. The Storage Hierarchy Breaks</h2>
-<p>Current GPU-CPU-SSD hierarchy cannot deliver 400 GB prefill bandwidth:</p>
-<table><thead><tr><th>Tier</th><th>Capacity</th><th>Prefill Bandwidth</th><th>Can Serve 10M Prefill?</th></tr></thead><tbody>
-<tr><td><strong>GPU HBM</strong> (H800)</td><td>80 GB</td><td>3.35 TB/s</td><td>❌ Capacity insufficient (need ~50GB per request, TB for concurrency)</td></tr>
-<tr><td><strong>CPU DRAM</strong></td><td>1-2 TB</td><td>50-100 GB/s (per socket)</td><td>❌ Bandwidth insufficient (need 400GB+)</td></tr>
+<p>Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth for 10M+ prefill:</p>
+<table><thead><tr><th>Tier</th><th>Capacity</th><th>Sustainable Read Bandwidth</th><th>Verdict for 10M Prefill</th></tr></thead><tbody>
+<tr><td><strong>GPU HBM</strong> (H800)</td><td>80 GB</td><td>3.35 TB/s</td><td>❌ Capacity insufficient (need ~24GB per request, TB for concurrency)</td></tr>
+<tr><td><strong>CPU DRAM</strong></td><td>1-2 TB</td><td>50-100 GB/s (per socket)</td><td>⚠️ Bandwidth borderline for single request (~88 GB), insufficient for concurrency</td></tr>
 <tr><td><strong>NVMe SSD</strong></td><td>10+ TB</td><td>10-14 GB/s</td><td>❌ Bandwidth far insufficient</td></tr>
-<tr><td><strong>CXL/Pooled Memory</strong></td><td>TB-scale</td><td>100-200 GB/s</td><td>❌ Still insufficient for 400GB+</td></tr>
+<tr><td><strong>CXL/Pooled Memory</strong></td><td>TB-scale</td><td>100-200 GB/s</td><td>⚠️ Bandwidth OK for 1-2 requests, insufficient for production concurrency</td></tr>
 </tbody></table>
 <p><strong>The gap</strong>: We need a storage tier with:</p>
 <ul>
-<li><strong>Capacity</strong>: TB-scale (16M tokens × ~5 KB/token × multiple concurrent requests)</li>
-<li><strong>Prefill Bandwidth</strong>: 500 GB – 1 TB/s (driven by sparsity dilution, not storage size)</li>
+<li><strong>Capacity</strong>: TB-scale (10M context × 24 GB effective × multiple concurrent requests)</li>
+<li><strong>Prefill Bandwidth</strong>: ~90 GB per request at 10M, ~112 GB at 16M (√N scaling)</li>
 <li><strong>Position</strong>: Between GPU HBM and CPU DRAM in the memory hierarchy</li>
 </ul>
-<p><strong>Why bandwidth ≫ storage</strong>: A single 10M request needs ~48 GB storage but ~400 GB prefill bandwidth. The 8× ratio means the storage medium must sustain reads at <mark>50 GB/s per request</mark> — and a production system must handle dozens of concurrent 10M-context requests.</p>
+<p><strong>Why this is hard</strong>: A single 10M request needs ~24 GB effective storage (50% sparsity) and ~88 GB prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is borderline for a <em>single</em> request. Production concurrency (10-100 simultaneous 10M requests) demands <mark>880 GB – 8.8 TB/s aggregate bandwidth</mark> — far beyond CPU DRAM.</p>
+<p><strong>The √N scaling is the saving grace</strong>: Without it, 10M prefill would need ~400 GB per request (linear). The √N overlap of retrieved chunks reduces this to ~88 GB — a <mark>4.5× reduction</mark>. But it still exceeds what CPU DRAM can sustain for production concurrency.</p>
 <p>This is not an incremental improvement. It is a <strong>new medium</strong> — potentially:</p>
 <ul>
 <li>CXL 3.0 pooled memory with GPU-direct access</li>
@@ -167,15 +178,16 @@
 <li><strong>Hardware</strong>: 8×H20 GPUs, PD-disaggregated serving</li>
 </ul>
 <p>At 1M context, the KV cache is 3.73 GB (DS-V4-Flash) / 4.8 GB (DS-V4-Pro). The recall mechanism transfers chunks from CPU DRAM to GPU HBM every τ=64 decode steps. The bandwidth for this transfer is manageable because only ~10% of chunks are recalled at each step — <strong>but this is decode, not prefill</strong>.</p>
-<p>Scale to 10M context:</p>
+<p>Scale to 10M context (with √N sublinear bandwidth scaling):</p>
 <ul>
 <li>Full KV cache storage: ~48 GB</li>
-<li><strong>Prefill read bandwidth</strong>: ~400 GB (20× from the 512K baseline of 20 GB)</li>
-<li>During prefill on P-server: must process all 10M tokens with dense KV access</li>
-<li>KV transfer from P-server to D-server: 48 GB storage + burst bandwidth for prefill computation</li>
-<li>With multiple concurrent requests: 400 GB × N requests = TB-scale aggregate bandwidth</li>
+<li>Effective storage (50% sparsity): ~24 GB</li>
+<li><strong>Prefill read bandwidth</strong>: ~88 GB (√19.5 ≈ 4.4× from 20 GB baseline)</li>
+<li>During prefill on P-server: must process all 10M tokens with sublinear-but-heavy KV access</li>
+<li>KV transfer from P-server to D-server: 24 GB effective + burst bandwidth for prefill computation</li>
+<li>With 10 concurrent requests: 88 GB × 10 = 880 GB aggregate bandwidth</li>
 </ul>
-<blockquote><p><strong>The P-server becomes the bottleneck.</strong> Prefill requires dense KV computation (sparsity is diluted by multi-token processing), and the KV transfer between P and D servers scales linearly with context length. The 20 GB @ 512K baseline already proves that prefill bandwidth far exceeds storage capacity — at 10M, this ratio persists.</p></blockquote>
+<blockquote><p><strong>The P-server becomes the bottleneck.</strong> Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and the KV transfer between P and D servers scales with √N. The 20 GB @ 512K baseline already proves that prefill bandwidth far exceeds storage capacity. Even with √N scaling, production concurrency at 10M demands near-TB/s aggregate bandwidth.</p></blockquote>
 <hr>
 <h2 id="6-the-mrcr-failure-when-sparsity-breaks-completely">6. The MRCR Failure: When Sparsity Breaks Completely</h2>
 <p>FlashMemory-DS-V4 exposes a critical failure mode: <strong>MRCR (Multi-Range Context Retrieval)</strong>. On this benchmark, LSA's accuracy drops from 76.0% (baseline) to 48.0% — a catastrophic failure.</p>
@@ -186,12 +198,12 @@
 <blockquote><p>The storage tier must be provisioned for the dense case, even if most workloads are sparse. Infrastructure is built for the tail, not the average.</p></blockquote>
 <hr>
 <h2 id="7-infrastructure-implications-the-roadmap-to-16m">7. Infrastructure Implications: The Roadmap to 16M</h2>
-<table><thead><tr><th>Milestone</th><th>Context Length</th><th>KV Cache Storage</th><th>Prefill Read Bandwidth</th><th>Enabling Technology</th></tr></thead><tbody>
-<tr><td><strong>Current</strong></td><td>1M</td><td>$4.8 GB$ (GPU HBM)</td><td>~40 GB</td><td>GPU HBM + CPU DRAM</td></tr>
-<tr><td><strong>Near-term</strong></td><td>4M</td><td>~20 GB (GPU HBM + CPU DRAM)</td><td>~160 GB</td><td>CXL memory pooling</td></tr>
-<tr><td><strong>Medium-term</strong></td><td>10M</td><td>~48 GB (new tier)</td><td><mark>~400 GB</mark></td><td><strong>New storage medium required</strong></td></tr>
-<tr><td><strong>Target</strong></td><td>16M</td><td>~77 GB (new tier)</td><td><mark>~640 GB</mark></td><td><strong>New storage medium required</strong></td></tr>
-<tr><td><strong>Long-term</strong></td><td>100M+</td><td>~500 GB – 1 TB</td><td>2+ TB/s</td><td>Optical/CXL 3.0 pooled</td></tr>
+<table><thead><tr><th>Milestone</th><th>Context Length</th><th>Effective KV Storage</th><th>Prefill Bandwidth (√N)</th><th>Enabling Technology</th></tr></thead><tbody>
+<tr><td><strong>Current</strong></td><td>1M</td><td>$0.48 GB$ (90% sparsity)</td><td>~28 GB</td><td>GPU HBM + CPU DRAM</td></tr>
+<tr><td><strong>Near-term</strong></td><td>4M</td><td>~2.4 GB (75% sparsity)</td><td>~45 GB</td><td>CPU DRAM (borderline)</td></tr>
+<tr><td><strong>Medium-term</strong></td><td>10M</td><td>~24 GB (50% sparsity)</td><td><mark>~88 GB</mark></td><td><strong>CXL pooled memory</strong></td></tr>
+<tr><td><strong>Target</strong></td><td>16M</td><td>~38 GB (50% sparsity)</td><td><mark>~112 GB</mark></td><td><strong>CXL 3.0 / New tier</strong></td></tr>
+<tr><td><strong>Long-term</strong></td><td>100M+</td><td>~250 GB – 500 GB (50% sparsity)</td><td>~450 GB</td><td>Optical/CXL 3.0 pooled</td></tr>
 </tbody></table>
 <p><strong>The hardware-software co-design challenge</strong>:</p>
 <p>1. <strong>Model side</strong>: HSA proves sparse attention enables 16M generalization. But the sparse-dense transition during prefill is an inherent algorithmic property, not a bug to be optimized away.</p>
@@ -211,14 +223,16 @@
 <li>Length generalization from 8K training → 16M inference is proven</li>
 <li>NoPE + chunk-based retrieval is the architectural path</li>
 </ul>
-<p><strong>Frontier 2 — System Architecture</strong>: Open problem</p>
+<p><strong>Frontier 2 — System Architecture</strong>: Challenging but more tractable</p>
 <ul>
-<li>Prefill sparsity dilution means dense KV bandwidth is unavoidable</li>
-<li>10M+ context requires <mark>400 GB – 1 TB/s</mark> storage bandwidth</li>
-<li>Current hierarchy (HBM → DRAM → SSD) has no tier that delivers this</li>
-<li><strong>A new storage medium is mandatory, not optional</strong></li>
+<li>Prefill sparsity dilution is real, but bandwidth grows sublinearly (√N) due to chunk retrieval overlap</li>
+<li>10M context requires ~88 GB prefill bandwidth per request (√N scaling, not linear 400 GB)</li>
+<li>16M context requires ~112 GB per request</li>
+<li>Current CPU DRAM (~50-100 GB/s) is borderline for single-request 10M prefill</li>
+<li>Production concurrency demands CXL 3.0 pooled memory or similar new tier</li>
+<li><strong>A new storage tier is needed, but √N scaling makes it achievable sooner than linear extrapolation suggested</strong></li>
 </ul>
-<blockquote><p>The bottleneck for 16M context is no longer the model. It is the infrastructure. We know how to build the attention mechanism — we do not yet know how to feed it.</p></blockquote>
+<blockquote><p>The bottleneck for 16M context is no longer the model. It is the infrastructure. The √N sublinear bandwidth scaling is the saving grace — without it, the storage wall would be insurmountable. With it, CXL 3.0 pooled memory may bridge the gap.</p></blockquote>
 <hr>
 <h2 id="references">References</h2>
 <table><thead><tr><th>#</th><th>Source</th><th>Key Data</th></tr></thead><tbody>
@@ -239,12 +253,17 @@
 <h2 id="appendix-key-reasoning-process">Appendix: Key Reasoning Process</h2>
 <p>1. <strong>Located HSA-UltraLong paper</strong> on arXiv (2511.23319), extracted full text via PyPDF2</p>
 <p>2. <strong>Downloaded FlashMemory-DS-V4</strong> paper via web search, confirmed KV cache scaling numbers</p>
-<p>3. <strong>Distinguished storage vs bandwidth</strong>: 20GB @ 512K is <em>prefill read bandwidth</em>, not storage capacity — the 8× overhead factor is critical</p>
+<p>3. <strong>Distinguished storage vs bandwidth</strong>: 20GB @ 512K is <em>prefill read bandwidth</em>, not storage capacity</p>
 <p>4. <strong>Used DS-V4 Pro baseline</strong>: 4.8GB KV cache storage @ 1M context (MLA compressed)</p>
-<p>5. <strong>Calculated bandwidth extrapolation</strong>: 512K→10M is 20×, prefill bandwidth 20GB→~400GB</p>
-<p>6. <strong>Identified prefill sparsity dilution</strong>: Multi-token prefill → union of sparse retrievals → dense</p>
-<p>7. <strong>Cross-referenced MRCR failure</strong>: Confirmed that some tasks are inherently dense</p>
-<p>8. <strong>Mapped storage hierarchy gap</strong>: Current tiers cannot deliver 500GB-1TB/s at TB capacity</p>
+<p>5. <strong>Introduced sparsity</strong>: 1M@90%, 10M@50% — sparsity dilutes as context grows</p>
+<p>6. <strong>Applied √N sublinear bandwidth scaling</strong>: Prefill bandwidth grows as √(L/L_baseline), not linearly</p>
+<ul>
+<li>10M: 20GB × √19.5 ≈ 88 GB (not 400 GB linear)</li>
+<li>16M: 20GB × √31.3 ≈ 112 GB</li>
+</ul>
+<p>7. <strong>Identified prefill sparsity dilution</strong>: Multi-token prefill → union of sparse retrievals → denser, but √N overlap mitigates</p>
+<p>8. <strong>Cross-referenced MRCR failure</strong>: Confirmed that some tasks are inherently dense</p>
+<p>9. <strong>Mapped storage hierarchy gap</strong>: CPU DRAM borderline for single-request 10M; CXL 3.0 needed for concurrency</p>
     </div>
   </article>
 </div>
