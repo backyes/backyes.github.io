@@ -103,11 +103,12 @@ Let's trace the bandwidth scaling from concrete numbers. **Critical distinction*
 - 1M context KV cache (full, no sparsity): ==4.8 GB== (with MLA compression)
 - Per-token KV cache: ~5.04 KB/token
 
-**Compute platform**: ==1P @ PF4== (1 PetaFLOPS at FP4 precision)
+**Compute platform**: ==4P @ FP4== (4 PetaFLOPS at FP4 precision)
 
-**Prefill read bandwidth baseline** (measured on 1P @ FP4, not theoretical):
-- 512K context: ~==20 GB/s== prefill read bandwidth (not storage capacity!)
-- 1M context: ~==40 GB/s== prefill read bandwidth
+**Prefill read bandwidth baseline** (per 1P @ FP4, not theoretical):
+- 512K context: ~==20 GB/s== prefill read bandwidth per 1P @ FP4
+- 1M context: ~==40 GB/s== prefill read bandwidth per 1P @ FP4
+- 4P @ FP4 aggregate: ~==160 GB/s== available at 1M
 - This is the data volume that must be moved/processed during prefill per unit time
 
 **The overhead ratio**:
@@ -191,9 +192,9 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 - **Prefill Bandwidth**: ~311 GB/s per request at 10M, ~267 GB/s at 16M
 - **Position**: Between GPU HBM and CPU DRAM in the memory hierarchy
 
-**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~311 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request. Production concurrency (10 simultaneous 10M requests) demands ==~3.1 TB/s aggregate bandwidth== — far beyond CPU DRAM.
+**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~311 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
 
-**The bottleneck is severe**: Because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. At 10M, bandwidth must be ~467 GB/s per request — requiring a new storage tier with TB/s-class sustained read bandwidth.
+**4P @ FP4 推算**：在 4P @ FP4 平台上，1M context 可用带宽 ~160 GB/s。10M 单请求需 ~311 GB/s，占满 ~2P @ FP4 的存储带宽预算；16M 需 ~267 GB/s，占满 ~1.7P。这意味着 ultra-long context 场景下，存储带宽（而非算力）成为瓶颈，需要独立的存储层级创新。
 
 This is not an incremental improvement. It is a **new medium** — potentially:
 - CXL 3.0 pooled memory with GPU-direct access
