@@ -2,7 +2,7 @@
 title: "Does Ultra-Long Context Exist? How Infrastructure Responds (1) — 16M and the Sparsity Dilution Wall"
 date: 2026-08-08
 tags: ["Ultra-Long-Context", "Sparse-Attention", "HSA", "DeepSeek-V4", "KV-Cache", "Prefill", "Memory-Wall", "Infrastructure", "16M-Token"]
-excerpt: "The Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchical Sparse Attention. But sparsity dilutes during prefill — when sequence length grows 10×, a new storage tier with TB capacity and 500GB–1TB bandwidth becomes mandatory. This post analyzes the infra implications."
+excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchical Sparse Attention. But sparsity dilutes during prefill — when sequence length grows 10×, a new storage tier with TB capacity and 500GB–1TB bandwidth becomes mandatory. This post analyzes the infra implications."
 ---
 
 # Does Ultra-Long Context Exist? How Infrastructure Responds (1) — 16M and the Sparsity Dilution Wall
@@ -192,18 +192,18 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 | Tier | Capacity | Sustainable Read Bandwidth | Verdict for 10M Prefill |
 |---|---|---|---|
 | **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient (need ~34GB effective per request, TB for concurrency) |
-| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~311 GB/s needed) |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s (per socket) | ❌ Bandwidth insufficient for single request (~156 GB/s needed) |
 | **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
-| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ❌ Bandwidth insufficient for single request |
+| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Bandwidth borderline for single request |
 
 **The gap**: We need a storage tier with:
 - **Capacity**: TB-scale (10M context × 34 GB effective × multiple concurrent requests)
-- **Prefill Bandwidth**: ~311 GB/s per request at 10M, ~267 GB/s at 16M
+- **Prefill Bandwidth**: ~156 GB/s per request at 10M, ~164 GB/s at 16M
 - **Position**: Between GPU HBM and CPU DRAM in the memory hierarchy
 
-**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~311 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
+**Why this is hard**: A single 10M request needs ~34 GB effective storage (70% sparsity) and ~156 GB/s prefill bandwidth. CPU DRAM bandwidth (~50-100 GB/s) is *insufficient* even for a *single* request.
 
-**4P @ FP4 projection**: On a 4P @ FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~311 GB/s, consuming the storage bandwidth budget of ~2P @ FP4; 16M needs ~267 GB/s, consuming ~1.7P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding independent storage tier innovation.
+**4P @ FP4 projection**: On a 4P @ FP4 platform, 1M context has ~160 GB/s aggregate bandwidth available. A single 10M request needs ~156 GB/s, consuming the storage bandwidth budget of ~1P @ FP4; 16M needs ~164 GB/s, consuming ~1P. This means in ultra-long context scenarios, **storage bandwidth (not compute) becomes the bottleneck**, demanding independent storage tier innovation.
 
 This is not an incremental improvement. It is a **new medium** — potentially:
 - CXL 3.0 pooled memory with GPU-direct access
@@ -222,18 +222,19 @@ At 1M context, the KV cache is 3.73 GB (DS-V4-Flash) / 4.8 GB (DS-V4-Pro). The r
 Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth):
 - Full KV cache storage: ~48 GB
 - Effective storage (70% sparsity): ~34 GB
-- **Prefill read bandwidth**: ~311 GB/s (7.8× from 1M's 40 GB/s, due to 7.8× data / 1× time)
+- **Prefill read bandwidth**: ~156 GB/s (3.9× from 1M's 40 GB/s, due to 7.8× data / 2× time)
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. The 40 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~311 GB/s — consuming most of a 4P @ FP4 platform's storage bandwidth budget.
+
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s — consuming ~1P of a 4P @ FP4 platform's storage bandwidth budget.
 
 ---
 
 ## 6. Infrastructure Implications: Summary
 
-基于全文量化推演，ultra-long context 对基础设施的需求可总结如下：
+Based on the quantitative analysis, ultra-long context infrastructure requirements are summarized as follows:
 
-### 6.1 量化数据总表
+### 6.1 Quantitative Data Summary
 
 | Context Length | Full KV Cache | Sparsity | Data to Access | Compute Time | Prefill Bandwidth | vs 1M |
 |---|---|---|---|---|---|---|
@@ -241,54 +242,54 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 | **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~156 GB/s**== | 3.9× |
 | **16M** | ~77 GB | 60% | ~46.2 GB | 2.6× | ==**~164 GB/s**== | 4.1× |
 
-**关键比例**：
-- 1M → 10M: 上下文长度 10×，数据量 7.8×，计算时间 2×，**带宽 3.9×**
-- 1M → 16M: 上下文长度 16×，数据量 10.7×，计算时间 2.6×，**带宽 4.1×**
+**Key ratios**:
+- 1M → 10M: Context length 10×, data volume 7.8×, compute time 2×, **bandwidth 3.9×**
+- 1M → 16M: Context length 16×, data volume 10.7×, compute time 2.6×, **bandwidth 4.1×**
 
-### 6.2 4P @ FP4 平台带宽预算
+### 6.2 4P @ FP4 Platform Bandwidth Budget
 
-| 平台 | 可用带宽 | 10M 占用 | 16M 占用 |
+| Platform | Available Bandwidth | 10M Consumption | 16M Consumption |
 |---|---|---|---|
-| 4P @ FP4 | ~160 GB/s @ 1M 等效 | ~156 GB/s (≈1P) | ~164 GB/s (≈1P) |
+| 4P @ FP4 | ~160 GB/s @ 1M equivalent | ~156 GB/s (≈1P) | ~164 GB/s (≈1P) |
 
-**结论**：在 4P @ FP4 平台上，10M 单请求占用 ~1P 的存储带宽预算，16M 占用 ~1P。**存储带宽（而非算力）成为 ultra-long context 的瓶颈。**
+**Conclusion**: On a 4P @ FP4 platform, a single 10M request consumes ~1P of the storage bandwidth budget; 16M consumes ~1P. **Storage bandwidth (not compute) becomes the bottleneck for ultra-long context.**
 
-### 6.3 存储层级断裂
+### 6.3 Storage Hierarchy Gap
 
-| 存储层级 | 容量 | 持续读带宽 | 能否满足 10M Prefill |
+| Storage Tier | Capacity | Sustained Read Bandwidth | Can Serve 10M Prefill? |
 |---|---|---|---|
-| **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ 容量不足 |
-| **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ 带宽不足（需 ~156 GB/s） |
-| **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ 带宽严重不足 |
-| **CXL/Pooled Memory** | TB 级 | 100-200 GB/s | ⚠️ 单请求带宽临界 |
+| **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ Capacity insufficient |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ Bandwidth insufficient (~156 GB/s needed) |
+| **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ Bandwidth far insufficient |
+| **CXL/Pooled Memory** | TB-scale | 100-200 GB/s | ⚠️ Single request borderline |
 
-**缺失的层级**：需要 TB 级容量 + ~160 GB/s 级别持续读带宽的新存储介质。
+**The missing tier**: A new storage medium with TB-scale capacity + ~160 GB/s sustained read bandwidth.
 
-### 6.4 发展路线图
+### 6.4 Development Roadmap
 
-| 阶段 | Context 长度 | 有效 KV 存储 | Prefill 带宽 | 关键技术 |
+| Phase | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
 |---|---|---|---|---|
-| **当前** | 1M | $4.32 GB$ | 40 GB/s | GPU HBM + CPU DRAM |
-| **近期** | 4M | ~14 GB | ~100 GB/s | CPU DRAM（极限） |
-| **中期** | 10M | ~34 GB | ==~311 GB/s== | **需要新存储层级** |
-| **目标** | 16M | ~46 GB | ==~267 GB/s== | **需要新存储层级** |
-| **远期** | 100M+ | ~350 GB | ~1.6 TB/s | 光互联 / CXL 3.0 池化 |
+| **Current** | 1M | $4.32 GB$ | 40 GB/s | GPU HBM + CPU DRAM |
+| **Near-term** | 4M | ~14 GB | ~100 GB/s | CPU DRAM (borderline) |
+| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | **New storage tier required** |
+| **Target** | 16M | ~46 GB | ==~164 GB/s== | **New storage tier required** |
+| **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Optical/CXL 3.0 pooled |
 
 ---
 
 ## 7. Conclusion: The Two Frontiers of Ultra-Long Context
 
-**Frontier 1 — Model Architecture**: 部分解决
-- Sparse attention (HSA, LSA) 使 16M 外推成为可能（500×）
-- 但稀疏本身仍有挑战（MRCR 失败），需要持续微架构优化
+**Frontier 1 — Model Architecture**: Partially solved
+- Sparse attention (HSA, LSA) enables 16M extrapolation (500×)
+- But sparsity itself remains challenging (MRCR failure), requiring continued micro-architecture optimization
 
-**Frontier 2 — System Architecture**: 开放问题
-- Prefill 阶段稀疏稀释 → 数据量增长 7.8×（1M→10M）
-- 计算时间次线性增长（1+10% 长度比）→ 带宽增长 3.9-4.1×
-- 10M 需 ~156 GB/s，16M 需 ~164 GB/s 每请求
-- CPU DRAM 即使单请求也不够，**新存储层级 mandatory**
+**Frontier 2 — System Architecture**: Open problem
+- Prefill sparsity dilution drives data volume growth (7.8× from 1M to 10M)
+- Compute time grows sublinearly (1 + 10% of length ratio) → bandwidth growth 3.9-4.1×
+- 10M requires ~156 GB/s, 16M requires ~164 GB/s per request
+- CPU DRAM is insufficient even for a single request; **new storage tier mandatory**
 
-> **核心结论**：16M ultra-long context 的瓶颈不再是模型，而是基础设施。稀疏注意力解决了计算复杂度，但无法绕过 prefill 的带宽需求。在 4P @ FP4 平台上，存储带宽（而非算力）成为制约 ultra-long context 的关键资源。
+> **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. On a 4P @ FP4 platform, storage bandwidth (not compute) becomes the critical resource constraining ultra-long context.
 
 ---
 
@@ -297,7 +298,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 | # | Source | Key Data |
 |---|---|---|
 | [1] | [Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319) — Ant Group & Westlake Univ. | HSA architecture, 8B MoE, 16M extrapolation, 90%+ NIAH accuracy |
-| [2] | [FlashMemory-DeepSeek-V4: LSA](https://arxiv.org/abs/2511.XXXX) — Tencent & THU | KV cache scaling data, 90% reduction, MRCR failure, PD-disaggregated serving |
+| [2] | [FlashMemory-DeepSeek-V4: LSA](https://arxiv.org/abs/2606.09079) — Tencent & THU | KV cache scaling data, 90% reduction, MRCR failure, PD-disaggregated serving |
 | [3] | [DeepSeek-V4 Technical Report](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf) | DSA+HCA+CSA hybrid attention, MLA compression |
 | [4] | [RULER Benchmark](https://arxiv.org/abs/2404.06654) | Standard long-context evaluation suite |
 | [5] | [MRCR Benchmark](https://arxiv.org/abs/2409.12640) | Multi-Range Context Retrieval — tests dense memory dependency |
@@ -310,8 +311,8 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 |---|---|
 | [HSA-UltraLong](https://arxiv.org/abs/2511.23319) | 8B MoE, 8K→16M extrapolation, HSA architecture |
 | [DeepSeek-V4 Pro](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) | 4.8 GB KV cache @ 1M (MLA compressed) |
-| [FlashMemory-DS-V4](https://arxiv.org/abs/2511.XXXX) | 90% KV reduction, MRCR failure, PD-disaggregated |
-| Compute platform | 1P @ FP4 (1 PetaFLOPS, FP4 precision) |
+| [FlashMemory-DS-V4](https://arxiv.org/abs/2606.09079) | 90% KV reduction, MRCR failure, PD-disaggregated |
+| Compute platform | 4P @ FP4 (4 PetaFLOPS, FP4 precision) |
 | User-provided baseline | 20 GB/s @ 512K, 40 GB/s @ 1M prefill bandwidth |
 | User-provided sparsity | 1M@90%, 10M@70%, 16M@60% |
-| User-provided compute model | 10% of length ratio (10M=1X, 16M=1.6X) |
+| User-provided compute model | 1 + 10% of length ratio (10M=2X, 16M=2.6X) |
