@@ -229,48 +229,66 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 ---
 
-## 6. Infrastructure Implications: The Roadmap to 16M
+## 6. Infrastructure Implications: Summary
 
-| Milestone | Context Length | Effective KV Storage | Prefill Bandwidth | Enabling Technology |
+基于全文量化推演，ultra-long context 对基础设施的需求可总结如下：
+
+### 6.1 量化数据总表
+
+| Context Length | Full KV Cache | Sparsity | Data to Access | Compute Time | Prefill Bandwidth | vs 1M |
+|---|---|---|---|---|---|---|
+| **1M** | $4.8 GB$ | 90% | $4.32 GB$ | 1× | **40 GB/s** | 1× |
+| **10M** | ~48 GB | 70% | ~33.6 GB | 2× | ==**~311 GB/s**== | 7.8× |
+| **16M** | ~77 GB | 60% | ~46.2 GB | 3× | ==**~267 GB/s**== | 6.7× |
+
+**关键比例**：
+- 1M → 10M: 上下文长度 10×，数据量 7.8×，计算时间 2×，**带宽 7.8×**
+- 1M → 16M: 上下文长度 16×，数据量 10.7×，计算时间 3×，**带宽 6.7×**
+
+### 6.2 4P @ FP4 平台带宽预算
+
+| 平台 | 可用带宽 | 10M 占用 | 16M 占用 |
+|---|---|---|---|
+| 4P @ FP4 | ~160 GB/s @ 1M 等效 | ~311 GB/s (≈2P) | ~267 GB/s (≈1.7P) |
+
+**结论**：在 4P @ FP4 平台上，10M 单请求占用 ~2P 的存储带宽预算，16M 占用 ~1.7P。**存储带宽（而非算力）成为 ultra-long context 的瓶颈。**
+
+### 6.3 存储层级断裂
+
+| 存储层级 | 容量 | 持续读带宽 | 能否满足 10M Prefill |
+|---|---|---|---|
+| **GPU HBM** (H800) | 80 GB | 3.35 TB/s | ❌ 容量不足 |
+| **CPU DRAM** | 1-2 TB | 50-100 GB/s | ❌ 带宽不足（需 ~311 GB/s） |
+| **NVMe SSD** | 10+ TB | 10-14 GB/s | ❌ 带宽严重不足 |
+| **CXL/Pooled Memory** | TB 级 | 100-200 GB/s | ❌ 单请求带宽不足 |
+
+**缺失的层级**：需要 TB 级容量 + ~300 GB/s 级别持续读带宽的新存储介质。
+
+### 6.4 发展路线图
+
+| 阶段 | Context 长度 | 有效 KV 存储 | Prefill 带宽 | 关键技术 |
 |---|---|---|---|---|
-| **Current** | 1M | $4.32 GB$ (90% sparsity) | 40 GB/s | GPU HBM + CPU DRAM |
-| **Near-term** | 4M | ~14 GB (80% sparsity) | ~100 GB/s | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB (70% sparsity) | ==~311 GB/s== | **New storage tier required** |
-| **Target** | 16M | ~46 GB (60% sparsity) | ==~267 GB/s== | **New storage tier required** |
-| **Long-term** | 100M+ | ~350 GB (35% sparsity) | ~1.6 TB/s | Optical/CXL 3.0 pooled |
-
-**The hardware-software co-design challenge**:
-
-1. **Model side**: HSA proves sparse attention enables 16M generalization. But the sparse-dense transition during prefill is an inherent algorithmic property, not a bug to be optimized away.
-
-2. **System side**: The "CPU cold mirror" architecture (FlashMemory-DS-V4) works at 1M because CPU DRAM bandwidth (~100 GB/s) suffices for sparse recall. At 16M prefill, you need ==5-10× the bandwidth== — beyond what CPU DRAM can deliver.
-
-3. **The missing tier**: A new storage medium with:
-   - TB-scale capacity (for multi-request concurrency at 16M)
-   - 500 GB – 1 TB/s bandwidth (for dense prefill loading)
-   - GPU-direct access (bypassing CPU for KV cache transfers)
+| **当前** | 1M | $4.32 GB$ | 40 GB/s | GPU HBM + CPU DRAM |
+| **近期** | 4M | ~14 GB | ~100 GB/s | CPU DRAM（极限） |
+| **中期** | 10M | ~34 GB | ==~311 GB/s== | **需要新存储层级** |
+| **目标** | 16M | ~46 GB | ==~267 GB/s== | **需要新存储层级** |
+| **远期** | 100M+ | ~350 GB | ~1.6 TB/s | 光互联 / CXL 3.0 池化 |
 
 ---
 
-## 8. Conclusion: The Two Frontiers of Ultra-Long Context
+## 7. Conclusion: The Two Frontiers of Ultra-Long Context
 
-The HSA-UltraLong paper and FlashMemory-DeepSeek-V4 together map the dual challenge of 16M ultra-long context:
+**Frontier 1 — Model Architecture**: 部分解决
+- Sparse attention (HSA, LSA) 使 16M 外推成为可能（500×）
+- 但稀疏本身仍有挑战（MRCR 失败），需要持续微架构优化
 
-**Frontier 1 — Model Architecture**: Solved (mostly)
-- Sparse attention (HSA, LSA, NSA) enables sub-quadratic computation
-- Length generalization from 8K training → 16M inference is proven
-- NoPE + chunk-based retrieval is the architectural path
+**Frontier 2 — System Architecture**: 开放问题
+- Prefill 阶段稀疏稀释 → 数据量增长 7.8×（1M→10M）
+- 计算时间次线性增长（10% 长度比）→ 带宽增长 ≈ 数据增长
+- 10M 需 ~311 GB/s，16M 需 ~267 GB/s 每请求
+- CPU DRAM 即使单请求也不够，**新存储层级 mandatory**
 
-**Frontier 2 — System Architecture**: Hard, with bandwidth nearly tracking data growth
-- Prefill sparsity dilution drives data volume growth (7.8× from 1M to 10M)
-- Compute time barely grows (10% of length ratio), so bandwidth ≈ data growth
-- 10M context requires ~311 GB/s prefill bandwidth per request (7.8× from 1M's 40 GB/s)
-- 16M context requires ~267 GB/s per request (6.7× from 1M)
-- Current CPU DRAM (~50-100 GB/s) is *insufficient* even for single-request 10M prefill
-- Production concurrency demands a fundamentally new storage tier
-- **A new storage tier is mandatory. The ~311 GB/s per-request requirement at 10M far exceeds CPU DRAM, demanding TB/s-class sustained read bandwidth.**
-
-> The bottleneck for 16M context is no longer the model. It is the infrastructure. Because compute time scales sublinearly (10% of length ratio), bandwidth growth nearly tracks data growth from sparsity dilution. A new storage tier with TB/s-class read bandwidth is mandatory for production-scale 10M+ context.
+> **核心结论**：16M ultra-long context 的瓶颈不再是模型，而是基础设施。稀疏注意力解决了计算复杂度，但无法绕过 prefill 的带宽需求。在 4P @ FP4 平台上，存储带宽（而非算力）成为制约 ultra-long context 的关键资源。
 
 ---
 
