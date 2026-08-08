@@ -216,9 +216,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - **Prefill read bandwidth**: ~311 GB/s (7.8× from 1M's 40 GB/s, due to 7.8× data / 1× time)
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
-- With 10 concurrent requests: 311 GB/s × 10 = ~3.1 TB/s aggregate bandwidth
-
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. The 60 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, production concurrency demands ~4.7 TB/s aggregate bandwidth.
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time barely grows (10% of length ratio), bandwidth growth nearly tracks data growth. The 40 GB/s @ 1M baseline already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~311 GB/s — consuming most of a 4P @ FP4 platform's storage bandwidth budget.
 
 ---
 
