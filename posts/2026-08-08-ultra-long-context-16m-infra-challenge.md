@@ -11,7 +11,7 @@ excerpt: "Ant Group's HSA-UltraLong demonstrates 16M token context via Hierarchi
 
 **16M ultra-long context is real — but it demands sparse attention architecture. The catch: sparsity dilutes during prefill. When sequences grow 10×, current storage hierarchies break. A new tier with TB capacity and 500GB–1TB bandwidth is not optional — it is mandatory.**
 
-> Sparse attention enables ultra-long context in model architecture. But sparsity itself is not a solved problem — it requires continued micro-architecture optimization. And system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill. Two complementary approaches can address this: **storage-for-compute** (new media like HBF that trade storage density for bandwidth) and **compute-as-cache** (recomputing KV on-the-fly when agentic AI's short-append patterns make it cheaper than loading from memory).
+> Sparse attention enables ultra-long context in model architecture. But sparsity itself is not a solved problem — it requires continued micro-architecture optimization. And system architecture must pay the bandwidth bill that sparsity cannot dodge during prefill. Three complementary approaches can address this: **storage-for-compute** (new media like HBF that trade storage density for bandwidth), **compute-as-cache** (recomputing KV on-the-fly when agentic AI's short-append patterns make it cheaper than loading from memory), and **compute-bandwidth coupling** (leveraging the linear relationship between compute and prefill bandwidth — while recognizing its multiplicative scaling limit).
 
 ---
 
@@ -192,12 +192,12 @@ Result — Bandwidth = Data / Time:
 | **4X** | 16P@FP4 | 160 GB/s | 624 GB/s | 656 GB/s |
 | **8X** | 32P@FP4 | 320 GB/s | 1.25 TB/s | 1.31 TB/s |
 
-**解读**：
-- 1X 算力下，16M 单请求需 164 GB/s → 仅能提供 164 GB/s
-- 2X 算力下，16M 单请求带宽翻倍到 **328 GB/s**（算力翻倍 → 带宽翻倍）
-- 4X 算力下，16M 单请求带宽翻到 **656 GB/s**
+**Interpretation**:
+- At 1X compute, a single 16M request needs 164 GB/s → only 164 GB/s available
+- At 2X compute, a single 16M request bandwidth doubles to **328 GB/s** (compute doubles → bandwidth doubles)
+- At 4X compute, a single 16M request bandwidth doubles to **656 GB/s**
 
-> **The compute-bandwidth coupling**: 算力翻倍直接导致所有序列长度带宽翻倍。16M @ 1X 需 164 GB/s，@ 2X 则需 328 GB/s，@ 4X 则需 656 GB/s。这意味着**更长上下文 + 更高算力 = 带宽需求呈乘法级增长**，单纯算力扩展无法经济地满足超长上下文场景。
+> **The compute-bandwidth coupling**: Doubling compute directly doubles bandwidth at ALL context lengths. 16M @ 1X needs 164 GB/s, @ 2X needs 328 GB/s, @ 4X needs 656 GB/s. This means **longer context + higher compute = multiplicative bandwidth growth** — compute scaling alone cannot economically serve ultra-long context scenarios.
 
 ---
 
@@ -221,16 +221,16 @@ Current GPU-CPU-SSD hierarchy cannot deliver the combined capacity + bandwidth f
 
 **Compute scaling projection**:
 
-| Compute | 可用带宽 | 可服务上下文 | 说明 |
+| Compute | Available BW | Servable Context | Notes |
 |---|---|---|---|
-| **1X** (4P@FP4) | 40 GB/s | 仅 1M | 10M 需 156 GB/s，超出 1X 能力 |
-| **2X** (8P@FP4) | 80 GB/s | 仅 1M | 10M 需 312 GB/s（156×2），仍超出 |
-| **4X** (16P@FP4) | 160 GB/s | 1M + 10M 边界 | 10M 需 624 GB/s（156×4），超出 |
-| **8X** (32P@FP4) | 320 GB/s | 1M + 10M | 16M 需 1.31 TB/s（164×8），超出 |
+| **1X** (4P@FP4) | 40 GB/s | 1M only | 10M needs 156 GB/s, exceeds 1X capacity |
+| **2X** (8P@FP4) | 80 GB/s | 1M only | 10M needs 312 GB/s (156×2), still exceeds |
+| **4X** (16P@FP4) | 160 GB/s | 1M + 10M borderline | 10M needs 624 GB/s (156×4), exceeds |
+| **8X** (32P@FP4) | 320 GB/s | 1M + 10M | 16M needs 1.31 TB/s (164×8), exceeds |
 
-**关键洞察**：算力翻倍 → 可用带宽翻倍，但**每个序列长度的带宽需求也同步翻倍**。10M @ 1X 需 156 GB/s，@ 4X 则需 624 GB/s。这意味着算力升级无法"积累"优势——更高算力下，长上下文带宽需求同比例放大。
+**Key insight**: Doubling compute doubles available bandwidth, but **bandwidth demand at every context length also doubles proportionally**. 10M @ 1X needs 156 GB/s, @ 4X needs 624 GB/s. This means compute upgrades cannot "accumulate" advantage — at higher compute levels, long-context bandwidth demand scales proportionally.
 
-**Concurrency killer**: 2× 并发 10M 请求 @ 2X 算力 = 624 GB/s 总需求 → 需 8X 算力。单纯算力扩展无法经济地满足并发超长上下文服务。**存储层级创新 (HBF/CXL) 是必选项**。
+**Concurrency killer**: 2× concurrent 10M requests @ 2X compute = 624 GB/s total demand → needs 8X compute. Compute scaling alone cannot economically serve concurrent ultra-long context requests. **Storage tier innovation (HBF/CXL) is mandatory**.
 
 CXL 3.0 pooled memory is the development target that can meet these requirements (TB-scale capacity + ~160 GB/s bandwidth), but at significant cost.
 
@@ -250,7 +250,7 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - During prefill on P-server: must process all 10M tokens with heavy KV access
 - KV transfer from P-server to D-server: 34 GB effective + burst bandwidth for prefill computation
 
-> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline (1X = 4P@FP4) already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s @ 1X — 且随算力翻倍同步放大（@ 4X 需 624 GB/s）。At 16M, @ 1X 需 164 GB/s，@ 2X 需 328 GB/s，@ 4X 需 656 GB/s。**算力翻倍无法积累带宽优势，因为长上下文带宽需求同步翻倍。**
+> **The P-server becomes the bottleneck.** Prefill requires heavy KV computation (sparsity dilutes with multi-token processing), and because compute time grows sublinearly (1 + 10% of length ratio), bandwidth growth is moderated but still substantial. The 40 GB/s @ 1M baseline (1X = 4P@FP4) already proves that prefill bandwidth far exceeds storage capacity. At 10M, a single request needs ~156 GB/s @ 1X — and scales proportionally with compute doubling (@ 4X needs 624 GB/s). At 16M, @ 1X needs 164 GB/s, @ 2X needs 328 GB/s, @ 4X needs 656 GB/s. **Compute doubling cannot accumulate bandwidth advantage, because long-context bandwidth demand doubles in tandem.**
 
 ---
 
@@ -268,18 +268,18 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 - 1M → 10M: Context length 10×, data volume 7.8×, compute time 2×, **bandwidth 3.9×**
 - 1M → 16M: Context length 16×, data volume 10.7×, compute time 2.6×, **bandwidth 4.1×**
 
-**Compute-bandwidth coupling**: 算力翻倍 → 所有序列长度带宽翻倍。基线 **1X = 4P@FP4**：
+**Compute-bandwidth coupling**: Doubling compute doubles bandwidth at ALL context lengths. Baseline **1X = 4P@FP4**:
 
-| Compute Scaling | 1M 带宽 | 10M 带宽 | 16M 带宽 |
+| Compute Scaling | 1M BW | 10M BW | 16M BW |
 |---|---|---|---|
 | **1X** (4P@FP4) | 40 GB/s | 156 GB/s | 164 GB/s |
 | **2X** (8P@FP4) | 80 GB/s | 312 GB/s | 328 GB/s |
 | **4X** (16P@FP4) | 160 GB/s | 624 GB/s | 656 GB/s |
 | **8X** (32P@FP4) | 320 GB/s | 1.25 TB/s | 1.31 TB/s |
 
-**关键洞察**：算力翻倍无法"积累"带宽优势。10M @ 1X 需 156 GB/s，@ 4X 则需 624 GB/s（156×4）。更高算力下，长上下文带宽需求同比例放大。
+**Key insight**: Compute doubling cannot "accumulate" bandwidth advantage. 10M @ 1X needs 156 GB/s, @ 4X needs 624 GB/s (156×4). At higher compute levels, long-context bandwidth demand scales proportionally.
 
-**The fundamental tension**: 算力扩展随上下文长度和并发数呈乘法级增长。10M 单请求 @ 1X 需 156 GB/s，2× 并发 @ 2X 需 624 GB/s 总带宽。存储层级创新是必选项。
+**The fundamental tension**: Compute scaling grows multiplicatively with both context length AND concurrency. A single 10M request @ 1X needs 156 GB/s; 2× concurrent requests @ 2X need 624 GB/s total. Storage tier innovation is mandatory.
 
 **System direction judgment**: The ~160 GB/s per-request bandwidth at 10-16M exceeds CPU DRAM capability (~50-100 GB/s) and approaches HBM bandwidth density. The future system architecture needs a **three-pronged approach**: (1) introduce a new storage tier (HBF, CXL pooled memory) for capacity + bandwidth, (2) exploit compute-as-cache to trade increasingly cheap compute for scarce I/O bandwidth, and (3) leverage compute-bandwidth coupling for headroom — but recognize its linear scaling limit for concurrency.
 
@@ -296,21 +296,21 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 
 **Three complementary approaches**:
 
-1. **Storage-for-Compute (以存换算)**: Develop new storage media like ==HBF (High-Bandwidth Flash)== that offer TB-scale capacity with ~160 GB/s sustained read bandwidth. This trades storage density for bandwidth, providing a new tier between DRAM and SSD. CXL 3.0 pooled memory is another option for the medium-term. **This is the primary solution** for capacity + bandwidth that doesn't scale linearly with compute.
+1. **Storage-for-Compute**: Develop new storage media like ==HBF (High-Bandwidth Flash)== that offer TB-scale capacity with ~160 GB/s sustained read bandwidth. This trades storage density for bandwidth, providing a new tier between DRAM and SSD. CXL 3.0 pooled memory is another option for the medium-term. **This is the primary solution** for capacity + bandwidth that doesn't scale linearly with compute.
 
-2. **Compute-as-Cache (以算缓存)**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
+2. **Compute-as-Cache**: For agentic AI's short-append patterns (where only a small context delta is added per turn), recompute KV cache on-the-fly using on-chip compute rather than loading from external memory. When compute becomes cheaper relative to memory bandwidth, this can be more economical than fetching from DRAM.
 
-3. **Compute-Bandwidth Coupling (算力带宽耦合)**: 算力翻倍 → 所有序列长度带宽翻倍（1X=4P@FP4: 1M=40, 10M=156, 16M=164 GB/s；2X=8P@FP4: 1M=80, 10M=312, 16M=328 GB/s）。**但算力翻倍无法积累优势——长上下文带宽需求同步翻倍。** 仅适用于余量扩展，无法作为多租户超长上下文的主要方案。
+3. **Compute-Bandwidth Coupling**: Doubling compute doubles bandwidth at ALL context lengths (1X=4P@FP4: 1M=40, 10M=156, 16M=164 GB/s; 2X=8P@FP4: 1M=80, 10M=312, 16M=328 GB/s). **But compute doubling cannot accumulate advantage — long-context bandwidth demand doubles in tandem.** Only suitable for headroom scaling, cannot be the primary solution for multi-tenant ultra-long context serving.
 
 **Roadmap**:
 
-| Phase | Context Length | Effective KV Storage | Prefill Bandwidth (1X) | 说明 | Enabling Technology |
+| Phase | Context Length | Effective KV Storage | Prefill Bandwidth (1X) | Notes | Enabling Technology |
 |---|---|---|---|---|---|
-| **Current** | 1M | $4.32 GB$ | 40 GB/s | 单请求 @ 1X 可服务 | GPU HBM + CPU DRAM |
-| **Near-term** | 4M | ~14 GB | ~100 GB/s | 单请求 @ 1X 边界 | CPU DRAM (borderline) |
-| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | 单请求 @ 1X 需 156 GB/s，@ 2X 需 312 GB/s | **HBF / CXL 3.0 pooled memory** |
-| **Target** | 16M | ~46 GB | ==~164 GB/s== | 单请求 @ 1X 需 164 GB/s，@ 2X 需 328 GB/s | **HBF / CXL 3.0 pooled memory** |
-| **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | 需存储层级创新 + 以算缓存 | **Storage tier mandatory** + compute-as-cache |
+| **Current** | 1M | $4.32 GB$ | 40 GB/s | Single request @ 1X servable | GPU HBM + CPU DRAM |
+| **Near-term** | 4M | ~14 GB | ~100 GB/s | Single request @ 1X borderline | CPU DRAM (borderline) |
+| **Medium-term** | 10M | ~34 GB | ==~156 GB/s== | Single request @ 1X needs 156 GB/s, @ 2X needs 312 GB/s | **HBF / CXL 3.0 pooled memory** |
+| **Target** | 16M | ~46 GB | ==~164 GB/s== | Single request @ 1X needs 164 GB/s, @ 2X needs 328 GB/s | **HBF / CXL 3.0 pooled memory** |
+| **Long-term** | 100M+ | ~350 GB | ~1.6 TB/s | Requires storage tier innovation + compute-as-cache | **Storage tier mandatory** + compute-as-cache |
 
 ---
 
@@ -323,9 +323,9 @@ Scale to 10M context (with bandwidth driven by sparsity + minimal compute growth
 **Frontier 2 — System Architecture**: Open problem
 - Prefill sparsity dilution drives data volume growth (7.8× from 1M to 10M)
 - Compute time grows sublinearly (1 + 10% of length ratio) → bandwidth growth 3.9-4.1×
-- 10M requires ~156 GB/s @ 1X, 16M requires ~164 GB/s @ 1X — 且随算力翻倍同步放大
+- 10M requires ~156 GB/s @ 1X, 16M requires ~164 GB/s @ 1X — and scales proportionally with compute doubling
 - CPU DRAM is insufficient even for a single request; **new storage tier mandatory**
-- **Compute-bandwidth coupling**: 算力翻倍 → 所有序列长度带宽翻倍（1X: 1M=40, 10M=156, 16M=164 GB/s；2X: 1M=80, 10M=312, 16M=328 GB/s）。**关键限制：算力翻倍无法积累带宽优势，长上下文带宽需求同步翻倍。**
+- **Compute-bandwidth coupling**: Doubling compute doubles bandwidth at ALL context lengths (1X: 1M=40, 10M=156, 16M=164 GB/s; 2X: 1M=80, 10M=312, 16M=328 GB/s). **Key limitation: compute doubling cannot accumulate bandwidth advantage — long-context bandwidth demand doubles in tandem.**
 - **Three-pronged solution**: (1) Storage tier innovation (HBF/CXL) for capacity + bandwidth — **primary solution**; (2) compute-as-cache for append-heavy workloads; (3) compute-bandwidth coupling for headroom — but recognize its multiplicative scaling limit.
 
 > **The bottom line**: The bottleneck for 16M context is no longer the model — it is the infrastructure. Sparse attention solves computational complexity but cannot dodge the prefill bandwidth demand. Storage bandwidth (not compute) becomes the critical resource. **Compute-bandwidth coupling has a fundamental limit: doubling compute doubles bandwidth capacity, but also doubles the bandwidth demand at every context length — so compute scaling alone cannot economically serve ultra-long context at scale. A new storage tier (HBF/CXL) is mandatory.**
