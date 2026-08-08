@@ -15,9 +15,16 @@ excerpt: "The Ant Group's HSA-UltraLong demonstrates 16M token context via Hiera
 
 ---
 
-## 1. The Paper: 16M Context Is No Longer Theoretical
+## 1. The Papers: Ultra-Long Context Is an Active Frontier
 
-Ant Group's recent work, *[Every Token Counts: Generalizing 16M Ultra-Long Context in Large Language Models](https://arxiv.org/abs/2511.23319)* (arXiv:2511.23319), provides the strongest evidence yet that ultra-long context is an active engineering frontier — not a distant research curiosity.
+The community is converging on ultra-long context as a critical engineering challenge. Two recent works highlight this trend:
+
+- **Ant Group** — *[Every Token Counts: Generalizing 16M Ultra-Long Context](https://arxiv.org/abs/2511.23319)* (arXiv:2511.23319): 8B MoE with Hierarchical Sparse Attention (HSA), extrapolating from 8K training to 16M inference — a ==500× extrapolation==.
+- **Tencent / Tsinghua** — *[FlashMemory-DeepSeek-V4: Lookahead Sparse Attention](https://arxiv.org/abs/2606.09079)* (arXiv:2606.09079): LSA on DeepSeek-V4, achieving 90% KV cache reduction via predictive lookahead indexing.
+
+Both demonstrate that sparse attention is the architectural path to ultra-long context — but neither fully solves the infrastructure cost of prefill.
+
+### 1.1 HSA-UltraLong: 500× Extrapolation
 
 | Property | HSA-UltraLong | Notes |
 |---|---|---|
