@@ -1,11 +1,11 @@
 ---
-title: "DeepEP × DualPipe : Deepdive into the hidden synchronization and Parallelization in EP Parallelization system"
+title: "[Under Review] DeepEP × DualPipe : Deepdive into the hidden synchronization and Parallelization in EP Parallelization system"
 date: 2026-08-09
 tags: ["DeepEP", "DualPipe", "Expert-Parallelism", "Synchronization", "RDMA", "NVLink", "MoE", "Pipeline-Parallelism", "Microarchitecture", "CUDA"]
 excerpt: "Re-examining DeepSeek's MoE communication stack across five layers — from the physical network fabric up to global algorithmic scheduling — reveals that 'lock-free' and 'fully overlapped compute-communication' never actually eliminate synchronization. They redistribute it across physical-link queuing, microarchitectural bus arbitration, hardware-level memory-consistency fences, and algorithmic data-dependency waits."
 ---
 
-# DeepEP × DualPipe : Deepdive into the hidden synchronization and Parallelization in EP Parallelization system
+# [Under Review] DeepEP × DualPipe : Deepdive into the hidden synchronization and Parallelization in EP Parallelization system
 
 ## Thesis
 
