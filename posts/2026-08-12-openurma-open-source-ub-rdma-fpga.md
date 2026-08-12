@@ -1,63 +1,61 @@
 ---
-title: "OpenURMA：UB 类 RDMA 传输的开源 FPGA 实现"
+title: "OpenURMA: Open-Source FPGA Implementation of a UB-class RDMA Transport"
 date: 2026-08-12
 tags: ["RDMA", "FPGA", "OpenURMA", "UB", "SmartNIC", "Interconnect", "Open-Source", "Load-Store"]
-excerpt: "OpenURMA 是 UB（Ultra-Bus）连接式 RDMA 传输的开源 FPGA 实现，在 Alveo U50 上实现 500ns 级远程 load/store 延迟（对比 RoCE 的 2236ns，快 4.47×），同时完整实现了 UB-Base-Specification 2.0.1 的事务层与传输层。"
+excerpt: "OpenURMA is an open-source FPGA implementation of the UB (Ultra-Bus) connectionless RDMA transport, achieving ≈500ns remote load/store latency on Alveo U50 (vs 2236ns on RoCE, 4.47× faster), while fully implementing the UB-Base-Specification 2.0.1 transaction and transport layers."
 ---
 
-# OpenURMA：UB 类 RDMA 传输的开源 FPGA 实现
+# OpenURMA: Open-Source FPGA Implementation of a UB-class RDMA Transport
 
-## 这是什么
+> **Links:**
+> - Paper: [arXiv:2605.28717](https://arxiv.org/abs/2605.28717)
+> - Code: [github.com/bojieli/OpenURMA](https://github.com/bojieli/OpenURMA)
+> - Architecture Guide: [docs/architecture.md](https://github.com/bojieli/OpenURMA/blob/main/docs/architecture.md)
+> - Evaluation: [EVAL.md](https://github.com/bojieli/OpenURMA/blob/main/EVAL.md)
 
-[OpenURMA](https://github.com/bojieli/OpenURMA) 是 [UB（Ultra-Bus）](https://www.ub.org/) 连接式 RDMA 传输协议的**开源 FPGA 实现**，构建在 [OpenClickNP](https://github.com/OpenClickNP) 之上。它完整实现了 *UB-Base-Specification 2.0.1* 定义的：
+## What Is This
 
-- **事务层**（Transaction Layer）：BTAH/ATAH 头部、18 个事务 opcode、四种服务模式（ROI/ROT/ROL/UNO）、三种执行序标签（NO/RO/SO）、Fence、两种完成序模式
-- **传输层**（Transport Layer）：RTP（PSN/GoBackN 重传）、UNO 模式下的 UTP、简化 CETPH echo
+[OpenURMA](https://github.com/bojieli/OpenURMA) is an **open-source FPGA implementation** of the [UB (Ultra-Bus)](https://www.ub.org/) connectionless RDMA transport protocol, built as `.clnp` elements on top of [OpenClickNP](https://github.com/OpenClickNP). It fully implements what *UB-Base-Specification 2.0.1* defines:
 
-上层 `libopenurma` 暴露 *UB-Software-Reference-Design-for-OS-2.0* §5.3 定义的 URMA verb 接口。
+- **Transaction Layer**: BTAH/ATAH headers, 18 transaction opcodes, all four service modes (ROI/ROT/ROL/UNO), all three execution-order tags (NO/RO/SO), application Fence, and both completion-order modes.
+- **Transport Layer**: RTP (PSN/GoBackN retransmission), UTP for UNO mode, simplified CETPH echo.
 
-## 三个架构支柱
+On top of that, `libopenurma` exposes the URMA verb surface from *UB-Software-Reference-Design-for-OS-2.0* §5.3.
 
-OpenURMA 的论文（[arXiv:2605.28717](https://arxiv.org/abs/2605.28717)）用一张图概括了 UB 协议栈的设计哲学——三个相互支撑的支柱：
+## Three Architectural Pillars
 
-1. **Transport / Transaction 分离**：状态复杂度为 O(本地 Jetties) + O(远程 endpoints)，而非两者的乘积。这使得控制器可以放在片上总线上（而非 PCIe 后面）。
+The OpenURMA paper ([arXiv:2605.28717](https://arxiv.org/abs/2605.28717)) summarizes the design philosophy of the UB protocol stack in a single figure — three mutually reinforcing pillars:
 
-2. **Native load/store 延迟**：NIC 的工作集能放进片上 SRAM，控制器与 CPU 同在片上总线上，CPU load/store 直接到达远程内存——把 RDMA READ 的四次 PCIe 遍历压缩为**一次片上总线穿越**。这是核心结果：==64 字节远程 fetch 端到端 ≈500ns==，对比同等条件下 RoCEv2 的 ==2236ns==，**快 4.47×**。
+1. **Transport / Transaction split.** State scales as O(local Jetties) + O(remote endpoints), not their product. This is what lets the controller sit on the on-chip bus (rather than behind PCIe).
 
-3. **分级定序（Graded Ordering）**：完整实现 §7.3 的四种服务模式 × 三种执行标签 × Fence × 两种完成模式，应用按需选择一致性级别——不请求 gating 的操作零开销。
+2. **Native load/store latency.** Because the NIC's working set fits in on-chip SRAM, the controller lives on the on-chip bus next to the CPU, so a CPU load/store reaches remote memory directly — collapsing the four PCIe traversals of an RDMA READ into a **single on-chip-bus crossing**. This is the headline result: ==a 64-byte remote fetch completes in ≈500ns== end-to-end versus ==2236ns== on the matched RoCEv2 baseline (**4.47× faster**).
 
-## 不只是 RTL
+3. **Graded ordering.** OpenURMA implements the full §7.3 surface — four service modes × three execution tags × Fence × two completion modes — so applications opt into precisely the consistency they need (it rides on the per-application counters that pillar 1 provisions, so it costs nothing on operations that don't request gating).
 
-OpenURMA 的一个亮点是**完整软件栈验证**：
+## Not Just RTL
 
-- 同一套 `.clnp` 设计既编译为 Alveo U50 硬件 RTL，也编译为 cycle-accurate SystemC NIC
-- **未经修改的官方 openEuler UMDK 栈**（`liburma → uburma.ko → ubcore.ko → openurma_ubcore.ko`）在 gem5 全系统 Linux  guest 中直接驱动它
-- 真实应用跑在上面：官方 `urma_perftest`、URPC `umq` RPC 框架、KV store（最大 60KB values）、分布式原子计数器、多客户端并发、§7.3 定序负载
-- 三种传输模式（RM / RC / UM）均验证通过
+A standout feature of OpenURMA is the **full software-stack validation**:
 
-## 复现路径
+- The same `.clnp` design compiles both to Alveo U50 hardware RTL and to a cycle-accurate SystemC NIC.
+- The **unmodified official openEuler UMDK stack** (`liburma → uburma.ko → ubcore.ko → openurma_ubcore.ko`) drives it end-to-end inside a full-system **gem5** Linux guest.
+- Real applications run on it: the official `urma_perftest`, the URPC `umq` RPC framework, a KV store (up to 60KB values), distributed atomic counters, many-client concurrency, and §7.3 ordering workloads.
+- All three transport modes (RM / RC / UM) are verified.
+
+## Reproduction Paths
 
 ```bash
 git clone https://github.com/bojieli/OpenURMA
-./reproduce.sh doctor   # 检查工具链
-./reproduce.sh smoke    # 构建 + 17 项测试 + 验证 headline 数字（~2 分钟）
-./reproduce.sh paper    # 完整数据集 + 所有图表 + 重建 PDF（~15 分钟）
+./reproduce.sh doctor   # check toolchains
+./reproduce.sh smoke    # build + 17 tests + verify headline numbers (~2 min)
+./reproduce.sh paper    # full dataset + all figures + rebuild PDF (~15 min)
 ```
 
-## 为什么值得关注
+## Why It Matters
 
-在 AI 超节点互联的语境下，OpenURMA 提供了一个有意思的对照：
+In the context of AI supernode interconnects, OpenURMA provides an interesting point of comparison:
 
-- **RoCE/RDMA** 走的是"消息传递"路径（Send/Write/Read），需要多次 PCIe 遍历
-- **UB load/store** 走的是"内存语义"路径（load/store 直达远程），延迟低一个数量级
-- OpenURMA 证明了这种差异**不是理论推演**，而是可以在真实 FPGA 上跑通、用真实软件栈验证的
+- **RoCE/RDMA** takes the "message passing" path (Send/Write/Read), requiring multiple PCIe traversals.
+- **UB load/store** takes the "memory semantics" path (load/store directly reaches remote memory), with an order-of-magnitude lower latency.
+- OpenURMA proves this difference is **not theoretical** — it runs on real FPGA hardware and is validated with a production software stack.
 
-对于研究近存通信、对称内存、GPU-centric fabric 的同学，这是一个值得细看的开源参考实现。
-
----
-
-**链接：**
-- 论文：[arXiv:2605.28717](https://arxiv.org/abs/2605.28717)
-- 代码：[github.com/bojieli/OpenURMA](https://github.com/bojieli/OpenURMA)
-- 架构导览：[docs/architecture.md](https://github.com/bojieli/OpenURMA/blob/main/docs/architecture.md)
-- 评估结果：[EVAL.md](https://github.com/bojieli/OpenURMA/blob/main/EVAL.md)
+For those studying the first principles of URMA protocol implementation, its key concepts, and full-stack vertical integration, this project offers a valuable open-source reference.
