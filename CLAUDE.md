@@ -107,6 +107,43 @@
 - **每日分析:** 每行含计算公式,便于核查
 - **对比分析:** 投影到未来规模(1B/10B),不只看当前数据
 
+### 配色哲学
+- Lil'Log 风格: 黑白灰 + 单蓝色链接
+- 去渐变、去多彩色
+- 标签统一灰色,仅 active 时用蓝色
+
+### 文章结构
+- **宏观→微观:** 先场景(图表)→量化(表格)→结论→展望
+- **每日分析:** 每行含计算公式,便于核查
+- **对比分析:** 投影到未来规模(1B/10B),不只看当前数据
+
+---
+
+## Survey by AI 报告首页规范
+
+### 设计风格
+- **暖纸色背景**: `linear-gradient(180deg, #fcfaf6 0%, #f6f3ec 42%, #ffffff 100%)` + 绿/金色径向光晕
+- **字体**: Libre Baskerville（正文/标题 serif）+ Manrope（UI sans）+ JetBrains Mono（代码）
+- **主色调**: 墨绿 `#0f5d44` / 深绿 `#0a3f30` / 绿色浅底 `rgba(15,93,68,0.10)` / 金色 `#bf8b2c` / 蓝色 `#163e7a`
+- **布局**: 顶部导航栏（brand + nav）+ 左侧 TOC 侧边栏（sticky）+ 主文章区
+- **卡片网格**: `grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))` 用于报告卡片展示
+
+### 首页结构
+1. **Hero**: 标题 + 标签 + 日期
+2. **概览**: 项目简介 + blockquote 核心观点
+3. **报告卡片网格**: 每张卡片含标签、标题、描述、元信息、CTA 链接
+4. **架构总览**: ASCII art 分层图
+5. **核心发现**: 关键洞察列表
+6. **链接汇总**: 所有报告和外部资源链接
+
+### 参考样板
+- `posts/deepep-dualpipe-synchronization-parallelization.html` — 暖纸色学术风格样板
+- `umdk/index.html` — Survey by AI 多报告合并首页样板
+
+### 同步配置
+- `sync_reports.sh` 的 `PROJECTS` 数组中，entry 字段指向首页 `index.html` 而非具体报告
+- main `index.html` 的卡片和 `SEARCH_DB` 需同步更新链接
+
 ---
 
 ## 维护命令
