@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>07 内存导入协议 Deep Dive · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#mem-overview">内存导入概述</a></li>
+<li><a class="toc-h2" href="#mem-init">初始化交换</a></li>
+<li><a class="toc-h2" href="#mem-multi">多内存池导入</a></li>
+<li><a class="toc-h2" href="#mem-lookup">内存查找路径</a></li>
+<li><a class="toc-h2" href="#eid-mgmt">EID 管理</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="06-ubplus.html">← 06 UB_PLUS 反向拉取</a>
+<h1>07 内存导入协议 Deep Dive</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#内存导入概述" class="toc-h2">内存导入概述</a></li>
+<li><a href="#初始化交换" class="toc-h2">初始化交换</a></li>
+<li><a href="#多内存池导入" class="toc-h2">多内存池导入</a></li>
+<li><a href="#内存查找路径" class="toc-h2">内存查找路径</a></li>
+<li><a href="#eid-管理" class="toc-h2">EID 管理</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">Memory Import</span><span class="ptag">EID</span><span class="ptag">Protocol</span>
+</div></div>
+<div class="notion-page">
+<h2 id="mem-overview">内存导入概述</h2>
+<p>UMQ 的多内存池导入协议允许一个连接导入多个远端内存池，支持动态扩展。</p>
+<hr/>
+<h2 id="mem-init">初始化交换</h2>
+<div class="mermaid">flowchart TB
+        N0[UMQ_QBUF_DEFAULT_MEMPOOL_ID]
+        N1[queue, OFFSET_FLOW_CONTROL]
+        N2[queue, OFFSET_MEM_IMPORT]</div>
+<hr/>
+<h2 id="mem-multi">多内存池导入</h2>
+<pre><code>// umq_ub.c: umq_ub_data_plan_import_mem()
+int umq_ub_data_plan_import_mem(uint64_t umqh_tp, umq_buf_t *rx_buf, uint32_t ref_seg_num) {
+    // 1. 解析接收缓冲区头部的 umq_imm_head
+    umq_imm_head_t *umq_imm_head = (umq_imm_head_t *)rx_buf-&gt;buf_data;
+
+    // 2. 解析 import_mempool_info 数组
+    ub_import_mempool_info_t *import_mempool_info =
+        (ub_import_mempool_info_t *)(rx_buf-&gt;buf_data + sizeof(umq_imm_head_t) + ref_seg_num * sizeof(ub_ref_sge_t));
+
+    // 3. 逐个导入内存池
+    for (uint32_t i = 0; i &lt; umq_imm_head-&gt;mempool_num; i++) {
+        // 检查是否已导入
+        if (queue-&gt;imported_tseg_list[import_mempool_info[i].mempool_id] != NULL) {
+            umq_ub_import_mem_done(queue, import_mempool_info[i].mempool_id);
+            continue;
+        }
+
+        // 导入内存
+        xchg_mem_info_t mem_info = { ... };
+        imported_tseg = import_mem(queue-&gt;dev_ctx-&gt;urma_ctx, &amp;mem_info);
+
+        // 发送 IMPORT_DONE 确认
+        umq_ub_import_mem_done(queue, import_mempool_info[i].mempool_id);
+        //    └─ umq_ub_write_imm(IMM_TYPE_MEM_IMPORT_DONE)
+    }
+}</code></pre>
+<hr/>
+<h2 id="mem-lookup">内存查找路径</h2>
+<p>发送数据时，根据 mempool_id 查找已导入的远端内存：</p>
+<div class="mermaid">flowchart TB
+        N0[mempool_id]</div>
+<hr/>
+<h2 id="eid-mgmt">EID 管理</h2>
+<div class="mermaid">flowchart TB
+        N0[1024]
+        N1[255]
+        N2[eid_id]
+        N3[tseg_id]</div>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="06-ubplus.html">← 06 UB_PLUS</a>
+<a href="08-keepalive.html">08 Keepalive 保活 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>

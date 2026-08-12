@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>01 总体架构概览 · URPC Architecture Analysis · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: { htmlLabels: true, curve: 'basis' },
+        sequence: { mirrorActors: false }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="#">backyes</a></div>
+    <div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+  </div>
+</header>
+</div>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a href="#thesis" class="toc-h2">Thesis</a></li>
+<li><a href="#executive-summary" class="toc-h2">Executive Summary</a></li>
+<li><a href="#overall-architecture" class="toc-h2">总体架构图</a></li>
+<li><a href="#data-flow" class="toc-h2">数据流向</a></li>
+<li><a href="#module-dependencies" class="toc-h2">模块依赖图</a></li>
+<li><a href="#key-insights" class="toc-h2">关键洞察</a></li>
+</ul></div>
+  </aside>
+  <article class="article">
+    <a href="00-index.html" class="back">← 返回索引</a>
+    <h1>01 总体架构概览</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#thesis" class="toc-h2">Thesis</a></li>
+<li><a href="#executive-summary" class="toc-h2">Executive Summary</a></li>
+<li><a href="#总体架构图" class="toc-h2">总体架构图</a></li>
+<li><a href="#数据流向" class="toc-h2">数据流向</a></li>
+<li><a href="#模块依赖图" class="toc-h2">模块依赖图</a></li>
+<li><a href="#关键洞察" class="toc-h2">关键洞察</a></li>
+</ul>
+</details>
+
+    <div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">Architecture</span><span class="ptag">Overview</span><span class="ptag">UMDK</span>
+</div></div>
+    <div class="notion-page">
+
+<h2 id="thesis">Thesis</h2>
+<p><strong>URPC（Unified Remote Procedure Call）是灵衢（Lingqu）内存语义开发包 UMDK 的核心组件之一，它在 UB 总线提供的原始内存语义（URMA）之上，构建了一套完整的远程过程调用协议栈。</strong>URPC 并非简单地在 RDMA 动词层封装一层 RPC，而是在 <strong>传输模式抽象</strong>、<strong>流控与内存管理</strong>、<strong>协议状态机</strong>、<strong>安全加密</strong> 和 <strong>多场景传输加速</strong> 五个维度上做了系统性的增量创新。</p>
+<blockquote><p>URPC 的设计哲学：UB 提供的是"内存语义原语"（register/unregister/import/read/write/atomic），URPC 在此之上构建的是"函数调用语义"——包括请求-响应协议、参数引用传递、流控窗口、保活探测和多模态传输。这不是 transport 的简单封装，而是一个完整的 protocol stack。</p></blockquote>
+
+<hr>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>URPC 在 URMA（统一内存语义层）之上构建了四个核心子系统，形成完整的高性能 RPC 能力：</p>
+
+<div class="mermaid">
+graph TB
+    subgraph Layer4["Layer 4: URPC Framework"]
+        API["Public API<br/>urpc_init / urpc_func_call<br/>urpc_func_poll / urpc_func_return"]
+        CP["Control Plane<br/>cp.c | channel lifecycle"]
+        DP["Data Plane<br/>dp.c | REQ/ACK/RSP protocol"]
+        FUNC["Function Registry<br/>func.c | sync/async handler"]
+    end
+
+    subgraph Layer3["Layer 3: UMQ"]
+        UMQ_API["UMQ API<br/>umq_create / umq_enqueue<br/>umq_post / umq_poll"]
+        UB_MODE["UB Mode<br/>64KB native"]
+        UB_PLUS["UB_PLUS Mode<br/>10MB reverse pull"]
+        IPC["IPC Mode<br/>shared memory"]
+        FC["Flow Control<br/>window-based credit"]
+    end
+
+    subgraph Layer2["Layer 2: URMA"]
+        URMA_API["URMA API<br/>register / import / jetty<br/>post_send / poll_jfc"]
+    end
+
+    subgraph Layer1["Layer 1: UB Hardware"]
+        HW["UB Drivers<br/>ubcore / ubus / udma<br/>physical bus transport"]
+    end
+
+    API --> CP
+    API --> DP
+    API --> FUNC
+    CP --> UMQ_API
+    DP --> UMQ_API
+    FUNC --> UMQ_API
+    UMQ_API --> UB_MODE
+    UMQ_API --> UB_PLUS
+    UMQ_API --> IPC
+    UB_MODE --> URMA_API
+    UB_PLUS --> URMA_API
+    IPC --> URMA_API
+    FC --> UB_MODE
+    URMA_API --> HW
+
+    style Layer4 fill:#e8eef8,stroke:#163e7a
+    style Layer3 fill:#e8f5e9,stroke:#0f5d44
+    style Layer2 fill:#fff8e1,stroke:#bf8b2c
+    style Layer1 fill:#f3e5f5,stroke:#7b1fa2
+</div>
+
+<hr>
+<h2 id="overall-architecture">总体架构图</h2>
+
+<div class="mermaid">
+flowchart TB
+    subgraph UserApp["用户应用层"]
+        APP["Application<br/>AI Training / Storage / Inference"]
+    end
+
+    subgraph URPC_Framework["URPC Framework Layer (~40K lines)"]
+        direction TB
+        subgraph CP["控制面 cp.c"]
+            SERVER["Server Manager<br/>listen / accept"]
+            CLIENT["Client Manager<br/>connect / attach"]
+            KA["Keepalive<br/>timer / probe"]
+        end
+        subgraph DP["数据面 dp.c"]
+            PROTO["Protocol<br/>REQ / ACK / RSP"]
+            QUEUE_OPS["Queue Ops<br/>send / post / poll"]
+            EXT["Ext Ops<br/>plugin interface"]
+        end
+        subgraph CH["通道 channel.c"]
+            CHANNEL["Channel<br/>req_entry_table<br/>func_tbl<br/>server_nodes"]
+        end
+    end
+
+    subgraph UMQ["UMQ Layer (~20K lines)"]
+        direction TB
+        subgraph TRANS["传输模式"]
+            UB["UB<br/>64KB"]
+            UBPLUS["UB_PLUS<br/>10MB"]
+            IPC["IPC<br/>shared mem"]
+            UBMM["UBMM<br/>UB shared"]
+        end
+        subgraph FC["流控"]
+            WIN["Window<br/>local_rx_posted<br/>remote_rx_window"]
+            IMM["Immediate Data<br/>IMM_TYPE_FLOW_CONTROL"]
+        end
+        subgraph BUF["缓冲区"]
+            POOL["Buffer Pool<br/>small / middle<br/>big / huge"]
+        end
+    end
+
+    subgraph URMA["URMA Layer"]
+        URMA_CORE["URMA Core<br/>register_seg / import_seg<br/>create_jetty / bind_jetty<br/>post_send / poll_jfc"]
+    end
+
+    subgraph HW["UB Hardware"]
+        DRIVER["UB Drivers<br/>ubcore / ubus / udma"]
+    end
+
+    APP --> SERVER
+    APP --> CLIENT
+    SERVER --> CHANNEL
+    CLIENT --> CHANNEL
+    CHANNEL --> PROTO
+    PROTO --> QUEUE_OPS
+    QUEUE_OPS --> UB
+    QUEUE_OPS --> UBPLUS
+    QUEUE_OPS --> IPC
+    QUEUE_OPS --> UBMM
+    UB --> URMA_CORE
+    UBPLUS --> URMA_CORE
+    IPC --> URMA_CORE
+    UBMM --> URMA_CORE
+    WIN --> UB
+    IMM --> UB
+    POOL --> UB
+    POOL --> UBPLUS
+    URMA_CORE --> DRIVER
+
+    style URPC_Framework fill:#e3f2fd,stroke:#163e7a
+    style UMQ fill:#e8f5e9,stroke:#0f5d44
+    style URMA fill:#fff8e1,stroke:#bf8b2c
+    style HW fill:#f3e5f5,stroke:#7b1fa2
+</div>
+
+<hr>
+<h2 id="data-flow">数据流向</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant C as Client App
+    participant CP as dp.c (Client)
+    participant Q as Queue (Jetty)
+    participant U as URMA (UB Bus)
+    participant QS as Queue (Jetty)
+    participant SP as dp.c (Server)
+    participant S as Server App
+
+    C->>CP: urpc_func_call()
+    Note over CP: 1. channel_get()<br/>2. RR select queues<br/>3. req_entry_get()<br/>4. fill REQ header<br/>5. optional encrypt
+    CP->>Q: queue->ops->send()
+    Q->>U: urma_post_jetty_send_wr()
+    U->>QS: hardware transport
+    QS->>SP: urma_poll_jfc()
+    Note over SP: 6. process_rx_cr()<br/>7. urpc_func_exec()<br/>8. sync_handler()
+    SP->>S: user function executes
+    S-->>SP: return result
+    SP->>QS: urpc_func_return()
+    QS->>U: urma_post_jetty_send_wr()
+    U->>Q: hardware transport
+    Q->>CP: urma_poll_jfc()
+    Note over CP: 9. process_tx_msg()<br/>10. user callback
+    CP-->>C: callback(rsps, err)
+</div>
+
+<hr>
+<h2 id="module-dependencies">模块依赖图</h2>
+
+<div class="mermaid">
+flowchart TD
+    subgraph API["Public API"]
+        URPC_API["urpc_framework_api.h"]
+        UMQ_API["umq_api.h"]
+    end
+
+    subgraph Framework["URPC Framework"]
+        CP["cp.c | 3,014 lines<br/>init / server / client"]
+        DP["dp.c | 2,094 lines<br/>func_call / func_poll"]
+        CH["channel.c | 1,471 lines<br/>channel_alloc / req_entry"]
+        QUEUE["queue_send_recv.c | 1,533 lines<br/>create / bind / delete"]
+        JETTY["jetty_public_func.c | 1,533 lines<br/>send / post / poll"]
+        PROVIDER["provider_ops_jetty.c<br/>jetty provider"]
+        FUNC["func.c<br/>register / exec"]
+        KA["keepalive_task.c | 922 lines"]
+        CRYPTO["crypto.c<br/>SSL/TLS / AES"]
+    end
+
+    subgraph UMQ["UMQ Subsystem"]
+        UMQ_UB["umq_ub.c | 2,163 lines<br/>bind / send / read"]
+        UMQ_IMPL["umq_ub_impl.c | 1,485 lines<br/>buf_alloc / enqueue"]
+        FC["umq_ub_flow_control.c<br/>window management"]
+        IMM["umq_ub_imm_data.h<br/>immediate protocol"]
+    end
+
+    subgraph URMA["URMA Layer"]
+        URMA_CORE["urma_api.h<br/>register / import / jetty<br/>post / poll"]
+    end
+
+    URPC_API --> CP
+    URPC_API --> DP
+    URPC_API --> FUNC
+    DP --> CH
+    DP --> QUEUE
+    CH --> QUEUE
+    QUEUE --> JETTY
+    JETTY --> PROVIDER
+    CP --> KA
+    CP --> CRYPTO
+
+    UMQ_API --> UMQ_UB
+    UMQ_API --> UMQ_IMPL
+    UMQ_UB --> FC
+    UMQ_UB --> IMM
+
+    PROVIDER --> URMA_CORE
+    UMQ_IMPL --> URMA_CORE
+
+    style API fill:#e8eef8,stroke:#163e7a
+    style Framework fill:#e3f2fd,stroke:#163e7a
+    style UMQ fill:#e8f5e9,stroke:#0f5d44
+    style URMA fill:#fff8e1,stroke:#bf8b2c
+</div>
+
+<hr>
+<h2 id="key-insights">关键洞察</h2>
+
+<div class="mermaid">
+mindmap
+  root((URPC Key Insights))
+    Architecture
+      Layered abstraction
+      ops interface polymorphism
+      feature flags optional
+    Concurrency
+      tx_ctx double release
+      req_entry hash + linear probe
+      rwlock separation
+      atomic vs non-atomic
+    Control In-band
+      immediate data encoding
+      flow control window
+      memory import protocol
+      UB_PLUS reverse pull
+    Resource Sharing
+      JFR/JFC ref_cnt
+      slab allocator
+      huge pool for 10MB
+    Production Features
+      Keepalive probe
+      SSL/TLS + AES-GCM
+      300K concurrent channels
+      DFX stats/perf
+</div>
+
+<table>
+<thead><tr><th>洞察</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><strong>四层动态分发</strong></td><td>dp.c → queue_ops → send_recv_send → urma_post → bondp_post</td></tr>
+<tr><td><strong>带内控制</strong></td><td>利用 immediate 数据编码流控、内存导入、反向拉取等控制协议</td></tr>
+<tr><td><strong>并发安全</strong></td><td>tx_ctx 双次释放、req_entry hash+线性探测、读写锁分离</td></tr>
+<tr><td><strong>资源复用</strong></td><td>JFR/JFC 通过 ref_cnt 在多个队列间共享</td></tr>
+<tr><td><strong>用户可选</strong></td><td>每一层增量功能都是可选的（feature flag）</td></tr>
+</tbody>
+</table>
+
+    </div>
+  </article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+  <a href="00-index.html">← 索引</a>
+  <a href="02-modules.html">02 核心模块分析 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+  <div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+</div>
+
+</body>
+</html>

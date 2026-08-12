@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>06 UB_PLUS 反向拉取 Deep Dive · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#ubplus-overview">UB_PLUS 概述</a></li>
+<li><a class="toc-h2" href="#ubplus-state">状态机</a></li>
+<li><a class="toc-h2" href="#ubplus-impl">核心实现</a></li>
+<li><a class="toc-h2" href="#ubplus-buf">缓冲区分配策略</a></li>
+<li><a class="toc-h2" href="#ubplus-imm">Immediate 子类型</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="05-flow-control.html">← 05 流控窗口</a>
+<h1>06 UB_PLUS 反向拉取 Deep Dive</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#ub_plus-概述" class="toc-h2">UB_PLUS 概述</a></li>
+<li><a href="#状态机" class="toc-h2">状态机</a></li>
+<li><a href="#核心实现umq_ub_read" class="toc-h2">核心实现：umq_ub_read()</a></li>
+<li><a href="#缓冲区分配策略" class="toc-h2">缓冲区分配策略</a></li>
+<li><a href="#immediate-子类型" class="toc-h2">Immediate 子类型</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">UB_PLUS</span><span class="ptag">Reverse Pull</span><span class="ptag">10MB</span>
+</div></div>
+<div class="notion-page">
+<h2 id="ubplus-overview">UB_PLUS 概述</h2>
+<p>UB 原生最大消息 64KB，UB_PLUS 通过"反向拉取"机制扩展到 10MB。这是一个多步握手协议。</p>
+<hr/>
+<h2 id="ubplus-state">状态机</h2>
+<div class="mermaid">sequenceDiagram</div>
+<hr/>
+<h2 id="ubplus-impl">核心实现：umq_ub_read()</h2>
+<pre><code>// umq_ub.c:1254-1310
+int umq_ub_read(uint64_t umqh_tp, umq_buf_t *rx_buf, umq_ub_imm_t imm) {
+    // 1. 解析 immediate 中的元数据
+    uint16_t buf_num = imm.ub_plus.msg_num;    // 批处理 buf 数量
+    uint16_t msg_id = imm.ub_plus.msg_id;      // 消息 ID（用于去重）
+
+    // 2. 解析接收缓冲区头部的 umq_imm_head
+    umq_imm_head_t *umq_imm_head = (umq_imm_head_t *)rx_buf-&gt;buf_data;
+    ub_ref_sge_t *ref_sge = (ub_ref_sge_t *)(umq_imm_head + 1);
+
+    // 3. 预分配本地接收缓冲区
+    umq_buf_t *ctx_buf = umq_ub_read_ctx_create(queue, umq_imm_head, buf_num, msg_id);
+    //    └─ 根据 mem_interval 计算总大小
+    //    └─ umq_buf_alloc(total_size, 1, ...) 从 huge pool 分配
+
+    // 4. 逐块发起 READ
+    for (uint32_t i = 0; i &lt; buf_num; i++) {
+        src_sge[i].addr = ref_sge[i].addr;           // 远端地址
+        src_sge[i].tseg = imported_tseg_list[ref_sge[i].mempool_id];
+        dst_sge[i].addr = tmp_buf-&gt;buf_data;          // 本地地址
+        dst_sge[i].tseg = tseg_list[tmp_buf-&gt;mempool_id];
+        urma_post_jetty_send_wr(queue-&gt;jetty, &amp;urma_wr, &amp;bad_wr); // READ
+    }
+
+    // 5. 完成后发送 REVERSE_PULL_MEM_DONE 确认
+    //    └─ umq_ub_write_imm(imm = REVERSE_PULL_MEM_DONE)
+}</code></pre>
+<hr/>
+<h2 id="ubplus-buf">缓冲区分配策略</h2>
+<p>UB_PLUS 使用独立的 huge qbuf pool，支持 8MB 级缓冲区：</p>
+<div class="mermaid">flowchart TB
+        N0[buf_size &lt; umq_buf_size_middle(]
+        N1[request_size, ...]
+        N2[buf_size]
+        N3[request_size, ..., type]
+        N4[umq_init_cfg_t *cfg]
+        N5[i = 0; i &lt; HUGE_QBUF_POOL_SIZE_TYPE_MAX; i++]
+        N6[i]
+        N7[&amp;pool_cfg]</div>
+<hr/>
+<h2 id="ubplus-imm">Immediate 子类型</h2>
+<pre><code>// umq_ub_imm_data.h: UB_PLUS 子类型
+typedef enum umq_ub_plus_imm_sub_type {
+    IMM_TYPE_UB_PLUS_DEFAULT,           // 默认子类型
+    IMM_TYPE_REVERSE_PULL_MEM,          // 请求反向拉取
+    IMM_TYPE_REVERSE_PULL_MEM_FREE,     // 释放反向拉取内存
+    IMM_TYPE_REVERSE_PULL_MEM_DONE,     // 反向拉取完成确认
+    IMM_TYPE_UB_PLUS_MAX
+} umq_ub_plus_imm_sub_type_t;</code></pre>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="05-flow-control.html">← 05 流控窗口</a>
+<a href="07-mem-import.html">07 内存导入协议 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>

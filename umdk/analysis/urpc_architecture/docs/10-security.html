@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>10 安全加密与扩展 · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#crypto-ssl">SSL/TLS 控制面加密</a></li>
+<li><a class="toc-h2" href="#crypto-aes">数据面 AES-GCM 加密</a></li>
+<li><a class="toc-h2" href="#ext-ops">扩展机制（Ext Ops）</a></li>
+<li><a class="toc-h2" href="#token-policy">Token 策略</a></li>
+<li><a class="toc-h2" href="#summary-table">Summary Table</a></li>
+<li><a class="toc-h2" href="#conclusion">Conclusion</a></li>
+<li><a class="toc-h2" href="#references">References</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="09-control-plane.html">← 09 控制面 IP 传输</a>
+<h1>10 安全加密与扩展</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#ssltls-控制面加密" class="toc-h2">SSL/TLS 控制面加密</a></li>
+<li><a href="#数据面-aes-gcm-加密" class="toc-h2">数据面 AES-GCM 加密</a></li>
+<li><a href="#扩展机制ext-ops" class="toc-h2">扩展机制（Ext Ops）</a></li>
+<li><a href="#token-策略" class="toc-h2">Token 策略</a></li>
+<li><a href="#summary-table-urpc-在-ub-上的增量功能总览" class="toc-h2">Summary Table: URPC 在 UB 上的增量功能总览</a></li>
+<li><a href="#conclusion" class="toc-h2">Conclusion</a></li>
+<li><a href="#references" class="toc-h2">References</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">Security</span><span class="ptag">Crypto</span><span class="ptag">Ext Ops</span>
+</div></div>
+<div class="notion-page">
+<h2 id="crypto-ssl">SSL/TLS 控制面加密</h2>
+<p>URPC 支持基于 OpenSSL 的控制面加密：</p>
+<ul>
+<li>通过 <code>urpc_ssl_config_set</code> 配置 SSL 参数（PSK 模式或证书模式）</li>
+<li>支持 TLS 1.2 / TLS 1.3</li>
+<li>可配置 cipher list 和 cipher suites</li>
+<li>Server 和 Client 各自维护 SSL 上下文</li>
+</ul>
+<hr/>
+<h2 id="crypto-aes">数据面 AES-GCM 加密</h2>
+<div class="mermaid">flowchart TB
+        N0[ctx, sge, sge_num, hdr_index, first_sge_offset]
+        N1[ctx]
+        N2[ctx, EVP_aes_256_gcm(]
+        N3[EVP_CTRL_GCM_GET_TAG, 16, tag]</div>
+<hr/>
+<h2 id="ext-ops">扩展机制（Ext Ops）</h2>
+<p>URPC 提供 <code>ext_ops_t</code> 扩展接口，允许用户自定义：</p>
+<pre><code>// dp.h: ext_ops_t
+typedef struct ext_ops {
+    int (*rx_req_process)(ext_call_ctx_t *, req_ctx_t **, urpc_poll_msg_t *);
+    int (*tx_read_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+    int (*tx_read_err_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+    void (*ext_proto_fill_extra_info)(urpc_req_head_t *, queue_local_t *, queue_remote_t *);
+    bool (*timeout_create_process)(urpc_call_wr_t *, req_entry_t *);
+    int (*encrypt)(urpc_hdr_type_t, urpc_cipher_t *, urpc_sge_t *, uint32_t);
+    int (*decrypt)(urpc_hdr_type_t, urpc_cipher_t *, urpc_sge_t *, uint32_t);
+    int (*stream_send_process)(void *, uint32_t, uint32_t, uint32_t);
+    int (*rx_rsp_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+} ext_ops_t;</code></pre>
+<hr/>
+<h2 id="token-policy">Token 策略</h2>
+<p>UMQ 实现了可选的 token 策略（<code>UMQ_FEATURE_ENABLE_TOKEN_POLICY</code>）：</p>
+<ul>
+<li>启用时，Jetty 和 segment token 通过 <code>urpc_rand_generate</code> 生成随机值</li>
+<li>禁用时，使用 <code>get_timestamp()</code> 作为 token（低安全场景）</li>
+<li>Token 在 bind 信息交换时传递给对端，确保只有持有正确 token 的远端能访问本端内存</li>
+</ul>
+<hr/>
+<h2 id="summary-table">Summary Table: URPC 在 UB 上的增量功能总览</h2>
+<table>
+<thead><tr><th>层级</th><th>UB 原生能力</th><th>URPC/UMQ 增量功能</th><th>核心价值</th></tr></thead>
+<tbody>
+<tr><td><strong>传输模式</strong></td><td>单一 UB 原生 (64KB)</td><td>8 种传输模式（UB/UB_PLUS/IB/UCP/IPC/UBMM 等）</td><td>一套 API 覆盖跨节点、同节点、同进程全场景</td></tr>
+<tr><td><strong>大块传输</strong></td><td>64KB 最大消息</td><td>UB_PLUS 反向拉取扩展到 10MB</td><td>存储/训练大块数据零分片传输</td></tr>
+<tr><td><strong>流控</strong></td><td>无</td><td>基于 immediate 的窗口流控 + 统计查询</td><td>防止接收端溢出，支持大规模部署</td></tr>
+<tr><td><strong>内存管理</strong></td><td>单次 import</td><td>多内存池导入协议 + EID 拓扑管理</td><td>支持多 EID、多 segment 并发</td></tr>
+<tr><td><strong>RPC 协议</strong></td><td>无</td><td>REQ/ACK/RSP 状态机 + 三种参数传递</td><td>函数调用语义，引用传参零拷贝</td></tr>
+<tr><td><strong>连接管理</strong></td><td>无</td><td>Keepalive + 控制面协议 + Channel 抽象</td><td>生产级可靠性与可运维性</td></tr>
+<tr><td><strong>安全</strong></td><td>Token（可选）</td><td>SSL/TLS 控制面 + AES-GCM 数据面</td><td>端到端加密，多租户安全隔离</td></tr>
+<tr><td><strong>事件模型</strong></td><td>Async event</td><td>中断/轮询双模式 + Pro API 精细控制</td><td>适应延迟敏感与吞吐优先两种场景</td></tr>
+<tr><td><strong>DFX</strong></td><td>无</td><td>Perf 时延统计 + Stats 报文统计 + Flowctl 统计</td><td>可观测、可调试、可优化</td></tr>
+<tr><td><strong>扩展性</strong></td><td>固定流程</td><td>ext_ops 注册 + func_defined 自定义模块</td><td>适配 DataNet、存储等异构场景</td></tr>
+</tbody>
+</table>
+<hr/>
+<h2 id="conclusion">Conclusion</h2>
+<p>URPC 在 UB 总线上构建了一套完整的"从硬件原语到函数调用语义"的技术栈。通过本次深度代码分析，我们揭示了以下关键洞察：</p>
+<ul>
+<li><strong>分层抽象</strong>：URMA → UMQ/URPC Framework → 公共 API，每层只关注本层职责，通过 ops 接口实现多态</li>
+<li><strong>带内控制</strong>：利用 immediate 数据编码流控、内存导入、反向拉取等控制协议，不占用数据通道</li>
+<li><strong>并发安全</strong>：tx_ctx 双次释放、req_entry hash+线性探测、读写锁分离等精细并发控制</li>
+<li><strong>资源复用</strong>：JFR/JFC 通过 ref_cnt 在多个队列间共享</li>
+<li><strong>用户可选</strong>：每一层增量功能都是可选的（feature flag），适应不同场景</li>
+<li><strong>生产级特性</strong>：Keepalive、DFX、SSL/TLS、300K 并发 Channel</li>
+</ul>
+<p>从架构视角看，URPC 的设计遵循了"分层抽象、带内控制、用户可选"的原则——既能以最小开销运行在延迟敏感的推理场景，也能以全功能模式运行在需要流控和加密的训练/存储场景。</p>
+<hr/>
+<h2 id="references">References</h2>
+<ul>
+<li><strong>UMDK README</strong> — <code>umdk/README.md</code>、<code>umdk/README.ch.md</code></li>
+<li><strong>URPC Framework API</strong> — <code>umdk/src/urpc/include/framework/urpc_framework_api.h</code></li>
+<li><strong>URPC Framework Types</strong> — <code>umdk/src/urpc/include/framework/urpc_framework_types.h</code></li>
+<li><strong>UMQ API</strong> — <code>umdk/src/urpc/include/umq/umq_api.h</code></li>
+<li><strong>UMQ Types</strong> — <code>umdk/src/urpc/include/umq/umq_types.h</code></li>
+<li><strong>URPC Protocol</strong> — <code>umdk/src/urpc/framework/protocol/protocol.h</code></li>
+<li><strong>URPC Datapath</strong> — <code>umdk/src/urpc/framework/lib/datapath/dp.c</code>（2,094 行）</li>
+<li><strong>URPC Control Plane</strong> — <code>umdk/src/urpc/framework/lib/control/cp.c</code>（3,014 行）</li>
+<li><strong>Channel 管理</strong> — <code>umdk/src/urpc/framework/core/channel/channel.c</code>（1,471 行）</li>
+<li><strong>Queue Send/Recv</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/queue_send_recv.c</code>（1,533 行）</li>
+<li><strong>Jetty Provider</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/provider_ops_jetty.c</code></li>
+<li><strong>Jetty Public Func</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/jetty_public_func.c</code>（1,533 行）</li>
+<li><strong>UMQ UB Core</strong> — <code>umdk/src/urpc/umq/umq_ub/core/private/umq_ub.c</code>（2,163 行）</li>
+<li><strong>UMQ UB Impl</strong> — <code>umdk/src/urpc/umq/umq_ub/core/umq_ub_impl.c</code>（1,485 行）</li>
+<li><strong>UMQ UB Flow Control</strong> — <code>umdk/src/urpc/umq/umq_ub/core/flow_control/umq_ub_flow_control.c</code></li>
+<li><strong>UMQ UB Imm Data</strong> — <code>umdk/src/urpc/umq/umq_ub/core/umq_ub_imm_data.h</code></li>
+<li><strong>Keepalive Task</strong> — <code>umdk/src/urpc/framework/lib/manager/keepalive_task.c</code>（922 行）</li>
+<li><strong>Keepalive Probe</strong> — <code>umdk/src/urpc/framework/lib/manager/keepalive_probe.c</code></li>
+<li><strong>Crypto</strong> — <code>umdk/src/urpc/framework/lib/control/crypto/crypto.c</code></li>
+<li><strong>Control Plane IP Transport</strong> — <code>umdk/src/urpc/framework/lib/control/ip/transport.c</code>（1,548 行）</li>
+<li><strong>UMDK 中文文档</strong> — <code>umdk/doc/ch/urpc/</code></li>
+</ul>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="09-control-plane.html">← 09 控制面</a>
+<a href="00-index.html">返回索引 ↑</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>

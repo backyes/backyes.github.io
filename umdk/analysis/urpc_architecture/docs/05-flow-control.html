@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>05 流控窗口 Deep Dive · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#fc-overview">流控概述</a></li>
+<li><a class="toc-h2" href="#fc-init">初始化与窗口建立</a></li>
+<li><a class="toc-h2" href="#fc-tx">发送端：窗口消耗与检查</a></li>
+<li><a class="toc-h2" href="#fc-rx">接收端：窗口通告</a></li>
+<li><a class="toc-h2" href="#fc-ops">原子 vs 非原子操作</a></li>
+<li><a class="toc-h2" href="#fc-stats">流控统计</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="04-queue-lifecycle.html">← 04 队列生命周期</a>
+<h1>05 流控窗口 Deep Dive</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#流控概述" class="toc-h2">流控概述</a></li>
+<li><a href="#初始化与窗口建立" class="toc-h2">初始化与窗口建立</a></li>
+<li><a href="#发送端窗口消耗与检查" class="toc-h2">发送端：窗口消耗与检查</a></li>
+<li><a href="#接收端窗口通告" class="toc-h2">接收端：窗口通告</a></li>
+<li><a href="#原子-vs-非原子操作" class="toc-h2">原子 vs 非原子操作</a></li>
+<li><a href="#流控统计" class="toc-h2">流控统计</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">Flow Control</span><span class="ptag">Window</span><span class="ptag">Immediate Data</span>
+</div></div>
+<div class="notion-page">
+<h2 id="fc-overview">流控概述</h2>
+<p>UMQ UB 模式的流控是一个基于 credit 的窗口机制，使用 immediate 数据在带内交换窗口信息。</p>
+<div class="mermaid">flowchart LR
+    subgraph Sender["Sender Side"]
+        TX["TX: send data"] --> FC_CHECK{"remote_rx_window<br/>>= required?"}
+        FC_CHECK -->|Yes| SEND["consume window<br/>send data"]
+        FC_CHECK -->|No| WAIT["wait for<br/>window update"]
+        WAIT --> READ_WIN["READ remote_win_buf"]
+        READ_WIN --> TX
+    end
+
+    subgraph Receiver["Receiver Side"]
+        RX["RX: receive data"] --> POST["local_rx_posted++"]
+        POST --> CHECK_INT{"notify_interval<br/>reached?"}
+        CHECK_INT -->|Yes| NOTIFY["send IMM_TYPE_FLOW_CONTROL<br/>with local_rx_posted"]
+        CHECK_INT -->|No| RX
+    end
+
+    SEND -->|"UB Transport"| RX
+    NOTIFY -->|"immediate data"| Sender
+
+    style Sender fill:#e3f2fd,stroke:#163e7a
+    style Receiver fill:#e8f5e9,stroke:#0f5d44
+</div>
+<hr/>
+<h2 id="fc-init">初始化与窗口建立</h2>
+<div class="mermaid">flowchart TB
+        N0[&amp;queue-&gt;flow_control, info]</div>
+<hr/>
+<h2 id="fc-tx">发送端：窗口消耗与检查</h2>
+<div class="mermaid">flowchart TB
+        N0[&amp;fc, queue, 1]
+        N1[remote_rx_window &gt;= required]
+        N2[fc, queue]
+        N3[READ, remote_win_buf_addr]</div>
+<hr/>
+<h2 id="fc-rx">接收端：窗口通告</h2>
+<div class="mermaid">flowchart TB
+    N0[// umq_ub_fill_tx_imm 每次发送时：]
+    N2[//   └─ 如果是，填充 IMM_TYPE_FLOW_CONTROL immediate：]
+    N1 --&gt; N2
+    N3[//       umq_ub_imm_t imm =  .flow_control =]
+    N2 --&gt; N3
+    N4[//           .umq_private = 1,]
+    N3 --&gt; N4
+    N5[//           .type = IMM_TYPE_FLOW_CONTROL,]
+    N4 --&gt; N5
+    N7[//       ;]
+    N6 --&gt; N7</div>
+<hr/>
+<h2 id="fc-ops">原子 vs 非原子操作</h2>
+<p>流控窗口支持两种实现，通过 <code>use_atomic_window</code> 配置选择：</p>
+<table>
+<thead><tr><th>类型</th><th>实现</th><th>适用场景</th></tr></thead>
+<tbody>
+<tr><td><strong>非原子</strong></td><td>直接读写 <code>uint16_t</code></td><td>单线程收发</td></tr>
+<tr><td><strong>原子</strong></td><td><code>__atomic_compare_exchange_n</code> CAS</td><td>多线程并发收发</td></tr>
+</tbody>
+</table>
+<pre><code>// 原子操作实现（umq_ub_flow_control.c）
+static inline uint16_t remote_rx_window_inc_atomic(struct ub_flow_control *fc, uint16_t new_win) {
+    uint16_t after, before = __atomic_load_n(&amp;fc-&gt;remote_rx_window, __ATOMIC_RELAXED);
+    do {
+        win_sum = before + new_win;
+        if (win_sum &gt; UINT16_MAX) { /* error */ break; }
+        after = (uint16_t)win_sum;
+    } while (!__atomic_compare_exchange_n(&amp;fc-&gt;remote_rx_window, &amp;before, after,
+                                           true, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return after;
+}</code></pre>
+<hr/>
+<h2 id="fc-stats">流控统计</h2>
+<table>
+<thead><tr><th>统计项</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>local_rx_posted</code></td><td>当前本端已下发的 RX buffer 数</td></tr>
+<tr><td><code>remote_rx_window</code></td><td>对端通告的可用 RX 深度</td></tr>
+<tr><td><code>total_local_rx_posted</code></td><td>本端累计下发的 RX buffer 总数</td></tr>
+<tr><td><code>total_local_rx_notified</code></td><td>本端累计通告的可用深度总数</td></tr>
+<tr><td><code>total_remote_rx_consumed</code></td><td>发送端累计消耗的对端窗口总数</td></tr>
+<tr><td><code>total_flow_controlled_wr</code></td><td>因窗口不足失败的 WR 数</td></tr>
+</tbody>
+</table>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="04-queue-lifecycle.html">← 04 队列生命周期</a>
+<a href="06-ubplus.html">06 UB_PLUS 反向拉取 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>

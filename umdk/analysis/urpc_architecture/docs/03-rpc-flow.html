@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>03 RPC 调用流 Deep Dive · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#rpc-overview">RPC 调用概览</a></li>
+<li><a class="toc-h2" href="#rpc-client">Client 端：urpc_func_call()</a></li>
+<li><a class="toc-h2" href="#rpc-server-rx">Server 端：接收 REQ</a></li>
+<li><a class="toc-h2" href="#rpc-server-tx">Server 端：返回 RSP</a></li>
+<li><a class="toc-h2" href="#rpc-client-rx">Client 端：接收 ACK/RSP</a></li>
+<li><a class="toc-h2" href="#tx-ctx-lifecycle">tx_ctx 生命周期</a></li>
+<li><a class="toc-h2" href="#call-modes">调用模式对比</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="02-modules.html">← 02 核心模块分析</a>
+<h1>03 RPC 调用流 Deep Dive</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#rpc-调用概览" class="toc-h2">RPC 调用概览</a></li>
+<li><a href="#client-端urpc_func_call" class="toc-h2">Client 端：urpc_func_call()</a></li>
+<li><a href="#server-端接收-req-与分发" class="toc-h2">Server 端：接收 REQ 与分发</a></li>
+<li><a href="#server-端返回-rsp" class="toc-h2">Server 端：返回 RSP</a></li>
+<li><a href="#client-端接收-ackrsp" class="toc-h2">Client 端：接收 ACK/RSP</a></li>
+<li><a href="#tx_ctx-生命周期双次释放机制" class="toc-h2">tx_ctx 生命周期（双次释放机制）</a></li>
+<li><a href="#调用模式对比" class="toc-h2">调用模式对比</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">RPC Flow</span><span class="ptag">REQ/ACK/RSP</span><span class="ptag">Code Path</span>
+</div></div>
+<div class="notion-page">
+<h2 id="rpc-overview">RPC 调用概览</h2>
+<p>一次完整的 URPC 函数调用涉及 Client 端、Server 端、Worker 端的协同。下图展示了从 <code>urpc_func_call()</code> 到 <code>urpc_func_return()</code> 的完整代码路径。</p>
+<div class="mermaid">sequenceDiagram
+    participant C as Client App
+    participant CP as dp.c (Client)
+    participant Q as Queue (Jetty)
+    participant U as URMA (UB Bus)
+    participant QS as Queue (Jetty)
+    participant SP as dp.c (Server)
+    participant S as Server App
+
+    C->>CP: urpc_func_call()
+    Note over CP: 1. channel_get()<br/>2. RR select queues<br/>3. req_entry_get()<br/>4. fill REQ header
+    CP->>Q: queue->ops->send()
+    Q->>U: urma_post_jetty_send_wr()
+    U->>QS: hardware transport
+    QS->>SP: urma_poll_jfc()
+    Note over SP: 5. process_rx_cr()<br/>6. urpc_func_exec()<br/>7. sync_handler()
+    SP->>S: user function executes
+    S-->>SP: return result
+    SP->>QS: urpc_func_return()
+    QS->>U: urma_post_jetty_send_wr()
+    U->>Q: hardware transport
+    Q->>CP: urma_poll_jfc()
+    Note over CP: 8. process_tx_msg()<br/>9. user callback
+    CP-->>C: callback(rsps, err)
+</div>
+<hr/>
+<h2 id="rpc-client">Client 端：urpc_func_call()</h2>
+<div class="mermaid">flowchart TB
+        N0[uint32_t chid, urpc_call_wr_t *wr, urpc_call_option_t *option]
+        N1[chid]
+        N2[channel, option]
+        N3[l_queue, QUEUE_CTX_TYPE_TX]
+        N4[channel, ctx]
+        N5[size-1]
+        N6[req_entry-&gt;valid]
+        N7[ req_id++; linear_probe ]
+        N8[urpc_req_head_t *]
+        N9[0]
+        N10[req_head, ack, channel_id]
+        N11[req_head, func_id, len, req_id, func_defined]
+        N12[func_defined, channel, r_queue, req_entry, wr]
+        N13[ctx, chid, l_qh, req_id, wr, option]
+        N14[option, req_entry, func_defined, wr]
+        N15[l_queue, &amp;queue_wr]</div>
+<hr/>
+<h2 id="rpc-server-rx">Server 端：接收 REQ 与分发</h2>
+<div class="mermaid">flowchart TB
+        N0[jfr_jfc, cr_cnt, cr]
+        N1[local_queue, msg, cr]
+        N2[func_id, args, args_sge_num, &amp;rsps, &amp;rsps_sge_num]
+        N3[func_id]
+        N4[args, args_sge_num, ctx, &amp;rsps, &amp;rsps_sge_num]</div>
+<hr/>
+<h2 id="rpc-server-tx">Server 端：返回 RSP</h2>
+<pre><code>// dp.c: urpc_func_return()
+int urpc_func_return(uint64_t urpc_qh, void *req_ctx, urpc_return_wr_t *wr, ...) {
+    // 1. 获取 queue 和 req_ctx
+    l_queue = (queue_t *)urpc_qh;
+    ctx = (req_ctx_t *)req_ctx;
+
+    // 2. 分配 tx_ctx
+    tx_ctx = queue_ctx_get(l_queue, QUEUE_CTX_TYPE_TX);
+
+    // 3. 填充 RSP 协议头
+    rsp_head = (urpc_rsp_head_t *)rsps[0].addr;
+    urpc_rsp_fill_basic_info(rsp_head, status, client_channel, ack);
+    urpc_rsp_fill_one_req_info(rsp_head, req_id, response_total_size, option);
+
+    // 4. 发送 RSP
+    l_queue-&gt;ops-&gt;send(l_queue, &amp;queue_wr);
+}</code></pre>
+<hr/>
+<h2 id="rpc-client-rx">Client 端：接收 ACK/RSP</h2>
+<div class="mermaid">flowchart TB
+        N0[jfs_jfc, ...]
+        N1[jfr_jfc, ...]
+        N2[req_entry, err_code]
+        N3[rsps, rsps_sge_num, err, arg, ctx]</div>
+<hr/>
+<h2 id="tx-ctx-lifecycle">tx_ctx 生命周期（双次释放机制）</h2>
+<p>URPC 使用 <code>tx_ctx_try_put()</code> 实现双次释放：tx_ctx 必须经历两个"完成事件"才能被释放回 slab：</p>
+<div class="mermaid">flowchart TB
+        N0[tx_ctx_t *ctx]
+        N1[ctx-&gt;free_events_completed == FALSE]
+        N2[QUEUE_CTX_TYPE_TX, ctx]</div>
+<p>这解决了 TX CQE 和 ACK/RSP 并发到达时的竞态条件——无论哪个先到，都必须等两个都完成。</p>
+<hr/>
+<h2 id="call-modes">调用模式对比</h2>
+<table>
+<thead><tr><th>模式</th><th>ACK</th><th>RSP</th><th>tx_ctx 释放时机</th><th>适用场景</th></tr></thead>
+<tbody>
+<tr><td><code>EARLY_RSP</code></td><td>无</td><td>无</td><td>TX CQE 后立即释放</td><td>流式调用，无需等待结果</td></tr>
+<tr><td><code>WAIT_RSP</code></td><td>无</td><td>有</td><td>收到 RSP 后释放</td><td>标准同步调用</td></tr>
+<tr><td><code>ACK</code></td><td>有</td><td>有</td><td>收到 ACK+RSP 后释放</td><td>需要确认参数接收</td></tr>
+<tr><td><code>ACK | EARLY_RSP</code></td><td>有</td><td>无</td><td>收到 ACK 后释放</td><td>流式调用，需确认接收</td></tr>
+</tbody>
+</table>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="02-modules.html">← 02 模块分析</a>
+<a href="04-queue-lifecycle.html">04 队列生命周期 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>

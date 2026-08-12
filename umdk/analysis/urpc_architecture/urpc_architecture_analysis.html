@@ -1,0 +1,1374 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../assets/css/notion-style.css">
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>URPC Architecture Deep Dive: UMDK 统一远程过程调用协议架构分析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="#">backyes</a></div>
+    <div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+  </div>
+</header>
+</div>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a href="#thesis" class="toc-h2">Thesis</a></li>
+<li><a href="#executive-summary" class="toc-h2">Executive Summary</a></li>
+<li><a href="#module-relationships" class="toc-h2">模块关系与调用链</a></li>
+<li><a href="#module-functions" class="toc-h2">核心模块函数表</a></li>
+<li><a href="#deepdive-rpc-flow" class="toc-h2">Deep Dive: 完整 RPC 调用流</a></li>
+<li><a href="#deepdive-flow-control" class="toc-h2">Deep Dive: 流控窗口状态机</a></li>
+<li><a href="#deepdive-ubplus" class="toc-h2">Deep Dive: UB_PLUS 反向拉取</a></li>
+<li><a href="#deepdive-queue-lifecycle" class="toc-h2">Deep Dive: 队列生命周期</a></li>
+<li><a href="#deepdive-mem-import" class="toc-h2">Deep Dive: 内存导入协议</a></li>
+<li><a href="#deepdive-keepalive" class="toc-h2">Deep Dive: Keepalive 保活</a></li>
+<li><a href="#deepdive-control-plane" class="toc-h2">Deep Dive: 控制面 IP 传输</a></li>
+<li><a href="#layer5" class="toc-h2">安全加密与扩展</a></li>
+<li><a href="#summary-table" class="toc-h2">Summary Table</a></li>
+<li><a href="#conclusion" class="toc-h2">Conclusion</a></li>
+<li><a href="#references" class="toc-h2">References</a></li>
+<li><a href="#detailed-docs" class="toc-h2">📄 详细分析文档</a></li>
+</ul></div>
+  </aside>
+  <article class="article">
+    <a href="#" class="back">← 返回 Analysis</a>
+    <h1>URPC Architecture Deep Dive: UMDK 统一远程过程调用协议架构分析</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#thesis" class="toc-h2">Thesis</a></li>
+<li><a href="#executive-summary" class="toc-h2">Executive Summary</a></li>
+<li><a href="#总体架构图" class="toc-h2">总体架构图</a></li>
+<li><a href="#数据流向总览" class="toc-h3">数据流向总览</a></li>
+<li><a href="#模块关系与调用链" class="toc-h2">模块关系与调用链</a></li>
+<li><a href="#模块依赖图" class="toc-h3">模块依赖图</a></li>
+<li><a href="#动态分发机制多态" class="toc-h3">动态分发机制（多态）</a></li>
+<li><a href="#关键调用链codegraph-验证" class="toc-h3">关键调用链（CodeGraph 验证）</a></li>
+<li><a href="#核心模块函数表" class="toc-h2">核心模块函数表</a></li>
+<li><a href="#cpc--控制面3014-行" class="toc-h3">cp.c — 控制面（3,014 行）</a></li>
+<li><a href="#dpc--数据面2094-行" class="toc-h3">dp.c — 数据面（2,094 行）</a></li>
+<li><a href="#channelc--通道管理1471-行" class="toc-h3">channel.c — 通道管理（1,471 行）</a></li>
+<li><a href="#queue_send_recvc--jetty-队列1533-行" class="toc-h3">queue_send_recv.c — Jetty 队列（1,533 行）</a></li>
+<li><a href="#umq_ubc--umq-ub-模式2163-行" class="toc-h3">umq_ub.c — UMQ UB 模式（2,163 行）</a></li>
+<li><a href="#keepalive_taskc--保活922-行" class="toc-h3">keepalive_task.c — 保活（922 行）</a></li>
+<li><a href="#cryptoc--加密300-行" class="toc-h3">crypto.c — 加密（~300 行）</a></li>
+<li><a href="#umq-其他模式" class="toc-h3">UMQ 其他模式</a></li>
+<li><a href="#protocolh--协议定义600-行" class="toc-h3">protocol.h — 协议定义（~600 行）</a></li>
+<li><a href="#deep-dive-1-完整-rpc-调用流" class="toc-h2">Deep Dive 1: 完整 RPC 调用流</a></li>
+<li><a href="#client-端urpc_func_call" class="toc-h3">Client 端：urpc_func_call()</a></li>
+<li><a href="#server-端接收-req-与分发" class="toc-h3">Server 端：接收 REQ 与分发</a></li>
+<li><a href="#server-端返回-rsp" class="toc-h3">Server 端：返回 RSP</a></li>
+<li><a href="#client-端接收-ackrsp" class="toc-h3">Client 端：接收 ACK/RSP</a></li>
+<li><a href="#tx_ctx-生命周期双次释放机制" class="toc-h3">tx_ctx 生命周期（双次释放机制）</a></li>
+<li><a href="#deep-dive-2-流控窗口状态机" class="toc-h2">Deep Dive 2: 流控窗口状态机</a></li>
+<li><a href="#初始化与窗口建立" class="toc-h3">初始化与窗口建立</a></li>
+<li><a href="#发送端窗口消耗与检查" class="toc-h3">发送端：窗口消耗与检查</a></li>
+<li><a href="#接收端窗口通告" class="toc-h3">接收端：窗口通告</a></li>
+<li><a href="#接收端处理窗口通告" class="toc-h3">接收端：处理窗口通告</a></li>
+<li><a href="#流控统计" class="toc-h3">流控统计</a></li>
+<li><a href="#deep-dive-3-ub_plus-反向拉取状态机" class="toc-h2">Deep Dive 3: UB_PLUS 反向拉取状态机</a></li>
+<li><a href="#状态机" class="toc-h3">状态机</a></li>
+<li><a href="#核心实现umq_ub_read" class="toc-h3">核心实现：umq_ub_read()</a></li>
+<li><a href="#缓冲区分配策略" class="toc-h3">缓冲区分配策略</a></li>
+<li><a href="#deep-dive-4-队列生命周期" class="toc-h2">Deep Dive 4: 队列生命周期</a></li>
+<li><a href="#创建阶段" class="toc-h3">创建阶段</a></li>
+<li><a href="#绑定阶段" class="toc-h3">绑定阶段</a></li>
+<li><a href="#状态转换" class="toc-h3">状态转换</a></li>
+<li><a href="#销毁阶段" class="toc-h3">销毁阶段</a></li>
+<li><a href="#deep-dive-5-内存导入协议" class="toc-h2">Deep Dive 5: 内存导入协议</a></li>
+<li><a href="#初始化交换" class="toc-h3">初始化交换</a></li>
+<li><a href="#多内存池导入" class="toc-h3">多内存池导入</a></li>
+<li><a href="#内存查找路径" class="toc-h3">内存查找路径</a></li>
+<li><a href="#deep-dive-6-keepalive-保活机制" class="toc-h2">Deep Dive 6: Keepalive 保活机制</a></li>
+<li><a href="#架构" class="toc-h3">架构</a></li>
+<li><a href="#定时器检查" class="toc-h3">定时器检查</a></li>
+<li><a href="#保活消息格式" class="toc-h3">保活消息格式</a></li>
+<li><a href="#deep-dive-7-控制面-ip-传输层" class="toc-h2">Deep Dive 7: 控制面 IP 传输层</a></li>
+<li><a href="#传输层架构" class="toc-h3">传输层架构</a></li>
+<li><a href="#ssl-握手流程" class="toc-h3">SSL 握手流程</a></li>
+<li><a href="#控制消息处理" class="toc-h3">控制消息处理</a></li>
+<li><a href="#安全加密与扩展机制" class="toc-h2">安全加密与扩展机制</a></li>
+<li><a href="#ssltls-控制面加密" class="toc-h3">SSL/TLS 控制面加密</a></li>
+<li><a href="#数据面-aes-gcm-加密" class="toc-h3">数据面 AES-GCM 加密</a></li>
+<li><a href="#扩展机制ext-ops" class="toc-h3">扩展机制（Ext Ops）</a></li>
+<li><a href="#summary-table-urpc-在-ub-上的增量功能总览" class="toc-h2">Summary Table: URPC 在 UB 上的增量功能总览</a></li>
+<li><a href="#conclusion" class="toc-h2">Conclusion</a></li>
+<li><a href="#详细分析文档独立阅读" class="toc-h2">📄 详细分析文档（独立阅读）</a></li>
+<li><a href="#references" class="toc-h2">References</a></li>
+</ul>
+</details>
+
+    <div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">URPC</span><span class="ptag">UMDK</span><span class="ptag">UB Bus</span><span class="ptag">RPC</span><span class="ptag">UMQ</span><span class="ptag">RDMA</span><span class="ptag">Distributed</span><span class="ptag">Huawei</span>
+</div></div>
+    <div class="notion-page">
+
+<h2 id="thesis">Thesis</h2>
+<p><strong>URPC（Unified Remote Procedure Call）是灵衢（Lingqu）内存语义开发包 UMDK 的核心组件之一，它在 UB 总线提供的原始内存语义（URMA）之上，构建了一套完整的远程过程调用协议栈。</strong>URPC 并非简单地在 RDMA 动词层封装一层 RPC，而是在 <strong>传输模式抽象</strong>、<strong>流控与内存管理</strong>、<strong>协议状态机</strong>、<strong>安全加密</strong> 和 <strong>多场景传输加速</strong> 五个维度上做了系统性的增量创新。</p>
+<blockquote><p>URPC 的设计哲学：UB 提供的是"内存语义原语"（register/unregister/import/read/write/atomic），URPC 在此之上构建的是"函数调用语义"——包括请求-响应协议、参数引用传递、流控窗口、保活探测和多模态传输。这不是 transport 的简单封装，而是一个完整的 protocol stack。</p></blockquote>
+
+<hr>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>URPC 在 URMA（统一内存语义层）之上构建了四个核心子系统，形成完整的高性能 RPC 能力：</p>
+
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│                    [Layer 4] URPC Framework Layer                     │
+│  Protocol State Machine │ Channel/Queue Abstraction │ Function Registry │
+│  REQ/ACK/RSP Flow       │ Keepalive │ Crypto (SSL/TLS) │ Ext Ops     │
+└──────────────────────────────┬───────────────────────────────────────┘
+                                 │ UMQ API (Base / Pro)
+┌──────────────────────────────▼───────────────────────────────────────┐
+│                    [Layer 3] UMQ (Unified Message Queue)              │
+│  Multi-Mode Transport │ Flow Control │ Memory Import │ Interrupt/Poll │
+│  UB / UB_PLUS / IB / UCP / IPC / UBMM / UBMM_PLUS                  │
+└──────────────────────────────┬───────────────────────────────────────┘
+                                 │ URMA API (Jetty/JFR/JFC/Seg)
+┌──────────────────────────────▼───────────────────────────────────────┐
+│                    [Layer 2] URMA (Unified Memory Semantics)          │
+│  Memory Registration │ Import/Export │ Read/Write/Atomic │ Jetty     │
+└──────────────────────────────┬───────────────────────────────────────┘
+                                 │ UB Kernel Drivers
+┌──────────────────────────────▼───────────────────────────────────────┐
+│                    [Layer 1] UB Hardware (ubcore/ubus/udma)           │
+│  Physical Bus Transport │ EID Addressing │ RDMA-like Verbs            │
+└──────────────────────────────────────────────────────────────────────┘</code></pre>
+
+<p>本报告首先分析模块间的调用关系和核心函数，然后通过 5 个专题 Deep Dive 深入代码路径，揭示"从硬件原语到函数调用语义"的完整技术栈。</p>
+
+<hr>
+<h2 id="overall-architecture">总体架构图</h2>
+<p>URPC 代码库包含约 60,000 行 C 代码，分为 <strong>URPC Framework</strong>（~40K 行）和 <strong>UMQ</strong>（~20K 行）两大子系统。下图展示完整的系统架构和数据流向。</p>
+
+<pre><code>╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
+║                           URPC 总体架构图                                                      ║
+║                                                                                               ║
+║  ┌─────────────────────────────────────────────────────────────────────────────────────────┐  ║
+║  │                          用户 API 层 (urpc_framework_api.h / umq_api.h)                   │  ║
+║  │  urpc_init()  urpc_func_call()  urpc_func_poll()  umq_create()  umq_enqueue()            │  ║
+║  └────────────────────────────────────────┬────────────────────────────────────────────────┘  ║
+║                                           │                                                   ║
+║  ┌────────────────────────────────────────┴────────────────────────────────────────────────┐  ║
+║  │                                    控制面 (cp.c)                                         │  ║
+║  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │  ║
+║  │  │ Server   │ │ Client   │ │ Keepalive│ │ Crypto   │ │ DFX      │ │ IP Transport     │  │  ║
+║  │  │ Manager  │ │ Manager  │ │ Task     │ │ SSL/TLS  │ │ Unix Srv │ │ (transport.c)    │  │  ║
+║  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────────────┘  │  ║
+║  │       │            │            │            │            │            │                │  ║
+║  │  ┌────┴────────────┴────────────┴────────────┴────────────┴────────────┴─────────────┐  │  ║
+║  │  │                           Channel 层 (channel.c)                                    │  │  ║
+║  │  │  req_entry_table │ func_tbl │ server_nodes │ l_queue_list │ r_queue_list          │  │  ║
+║  │  └────────────────────────────────────────┬──────────────────────────────────────────┘  │  ║
+║  └───────────────────────────────────────────┼─────────────────────────────────────────────┘  ║
+║                                              │                                                ║
+║  ┌───────────────────────────────────────────┴─────────────────────────────────────────────┐  ║
+║  │                                     数据面 (dp.c)                                        │  ║
+║  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │  ║
+║  │  │ Protocol     │  │ Queue Ops    │  │ Function     │  │ Ext Ops      │                  │  ║
+║  │  │ REQ/ACK/RSP  │  │ send/post   │  │ Registry     │  │ (plugin)     │                  │  ║
+║  │  │ protocol.h   │  │ poll/read   │  │ func.c       │  │ ext_ops      │                  │  ║
+║  │  └──────────────┘  └──────┬───────┘  └──────────────┘  └──────────────┘                  │  ║
+║  └───────────────────────────┼──────────────────────────────────────────────────────────────┘  ║
+║                              │                                                              ║
+║  ┌───────────────────────────┴──────────────────────────────────────────────────────────────┐  ║
+║  │                          Queue 抽象层 (queue.c / queue_send_recv.c)                       │  ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────┐   │  ║
+║  │  │                    Jetty Provider (provider_ops_jetty.c / jetty_public_func.c)     │   │  ║
+║  │  │  jfce_ctx │ jfc_ctx │ jfr_ctx │ jetty │ send │ post │ poll │ read │ flush       │   │  ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────┘   │  ║
+║  └──────────────────────────────────────────────────────────────────────────────────────────┘  ║
+║                              │                                                              ║
+║  ╔═══════════════════════════╧══════════════════════════════════════════════════════════════╗  ║
+║  ║                     UMQ 子系统 (umq_api.c / umq_ub / umq_ipc / umq_ubmm)                ║  ║
+║  ║  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐  ║  ║
+║  ║  │   UB 模式         │  │   UB_PLUS 模式   │  │   IPC 模式       │  │   UBMM 模式    │  ║  ║
+║  ║  │   (umq_ub.c)     │  │   (反向拉取)     │  │   (共享内存)     │  │   (UB 共享)    │  ║  ║
+║  ║  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  └───────┬────────┘  ║  ║
+║  ║           │                     │                     │                   │           ║  ║
+║  ║  ┌────────┴─────────────────────┴─────────────────────┴───────────────────┴────────┐  ║  ║
+║  ║  │                     Flow Control (umq_ub_flow_control.c)                         │  ║  ║
+║  ║  │  local_rx_posted │ remote_rx_window │ initial_window │ notify_interval        │  ║  ║
+║  ║  └──────────────────────────────────────────────────────────────────────────────────┘  ║  ║
+║  ║  ┌──────────────────────────────────────────────────────────────────────────────────┐  ║  ║
+║  ║  │                     Memory Import Protocol (umq_ub_imm_data.h)                    │  ║  ║
+║  ║  │  IMM_TYPE_UB_PLUS │ IMM_TYPE_FLOW_CONTROL │ IMM_TYPE_MEM │ IMM_TYPE_NOTIFY     │  ║  ║
+║  ║  └──────────────────────────────────────────────────────────────────────────────────┘  ║  ║
+║  ╚══════════════════════════════════════════════════════════════════════════════════════════╝  ║
+║                              │                                                              ║
+║  ┌───────────────────────────┴──────────────────────────────────────────────────────────────┐  ║
+║  │                                URMA 层 (urma_api.h)                                      │  ║
+║  │  register_seg │ import_seg │ create_jetty │ bind_jetty │ post_send │ poll_jfc         │  ║
+║  └──────────────────────────────────────────────────────────────────────────────────────────┘  ║
+║                              │                                                              ║
+║  ┌───────────────────────────┴──────────────────────────────────────────────────────────────┐  ║
+║  │                            UB 硬件驱动 (ubcore / ubus / udma)                            │  ║
+║  └──────────────────────────────────────────────────────────────────────────────────────────┘  ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+图例:
+───  直接调用关系         ═══  UMQ 子系统边界         │  数据流向
+┌┐  模块边界              └┘  子模块结束              ◄►  双向交互</pre></pre>
+
+<h3 id="data-flow">数据流向总览</h3>
+<pre><code>                    ┌─────────────────────────────────────────────────────────────────┐
+                    │                      数据流向图                                   │
+                    │                                                                  │
+                    │   Client                              Server                     │
+                    │    │                                   │                        │
+                    │    │  1. urpc_func_call()              │                        │
+                    │    │     ├─ channel_get()              │                        │
+                    │    │     ├─ RR select l_queue          │                        │
+                    │    │     ├─ RR select r_queue          │                        │
+                    │    │     ├─ req_entry_get()            │                        │
+                    │    │     ├─ fill REQ header            │                        │
+                    │    │     └─ queue->ops->send() ───────►│                        │
+                    │    │                                   │  2. urma_poll_jfc()    │
+                    │    │                                   │     └─ process_rx_cr() │
+                    │    │                                   │         └─ func_exec() │
+                    │    │                                   │            ↓           │
+                    │    │                                   │     [用户函数执行]      │
+                    │    │                                   │            ↓           │
+                    │    │  4. poll REQ_RSPED               │     func_return()      │
+                    │    │     ◄─────────────────────────────│         └─ send RSP   │
+                    │    │                                   │                        │
+                    └────┴───────────────────────────────────┴────────────────────────┘
+
+                    ┌─────────────────────────────────────────────────────────────────┐
+                    │                       UMQ 数据流向                                │
+                    │                                                                  │
+                    │   App                                    App                    │
+                    │    │                                      │                     │
+                    │    │  umq_enqueue()                       │                     │
+                    │    │    └─ umq_tp_enqueue()               │                     │
+                    │    │        └─ umq_ub_enqueue_impl()      │                     │
+                    │    │            ├─ flow_control_check()   │                     │
+                    │    │            ├─ fill_wr_impl()         │                     │
+                    │    │            └─ urma_post() ──────────►│                     │
+                    │    │                                      │  urma_poll_jfc()    │
+                    │    │                                      │    └─ umq_dequeue()  │
+                    │    │                                      │        └─ app       │
+                    └────┴──────────────────────────────────────┴─────────────────────┘</code></pre>
+
+<hr>
+<h2 id="module-relationships">模块关系与调用链</h2>
+<p>URPC 代码库包含约 60,000 行 C 代码，分为 <strong>URPC Framework</strong> 和 <strong>UMQ</strong> 两大子系统。理解模块间的调用关系是理解整个架构的关键。</p>
+
+<h3 id="module-graph">模块依赖图</h3>
+<pre><code>                         ┌─────────────────────────────────────────────┐
+                         │           urpc_framework_api.h (公共 API)      │
+                         │  urpc_init / urpc_func_call / urpc_func_poll  │
+                         └──────────────────────┬──────────────────────┘
+                                                │
+            ┌───────────────────────────────────┼───────────────────────────────────┐
+            │                                   │                                   │
+            ▼                                   ▼                                   ▼
+┌───────────────────────┐     ┌─────────────────────────────┐     ┌───────────────────────────┐
+│   cp.c (控制面)        │     │   dp.c (数据面)              │     │   func.c (函数注册)         │
+│   urpc_init()         │     │   urpc_func_call()         │     │   urpc_func_register()    │
+│   urpc_server_start() │     │   urpc_func_poll()         │     │   urpc_func_exec()        │
+│   channel 生命周期     │     │   urpc_func_return()       │     │   urpc_func_id_get()      │
+└───────────┬───────────┘     └──────────┬──────────────────┘     └───────────────────────────┘
+            │                            │
+            ▼                            ▼
+┌───────────────────────┐     ┌─────────────────────────────┐
+│   channel.c (通道)     │     │   queue.c → queue_send_recv.c │
+│   channel_alloc()     │     │   send_recv_create_local_queue()
+│   req_entry_get()     │     │   send_recv_send()          │
+│   server_node 管理     │     │   send_recv_post()          │
+└───────────────────────┘     └──────────┬──────────────────┘
+                                         │
+                                         ▼
+                              ┌─────────────────────────────┐
+                              │  provider_ops_jetty.c        │
+                              │  jetty_provider_init()      │
+                              │  jetty_provider_register_mem()│
+                              └──────────┬──────────────────┘
+                                         │
+                                         ▼
+                              ┌─────────────────────────────┐
+                              │  jetty_public_func.c         │
+                              │  send_recv_create_jetty()   │
+                              │  send_recv_poll_tx/rx()     │
+                              └──────────┬──────────────────┘
+                                         │
+                                         ▼
+                              ┌─────────────────────────────┐
+                              │  URMA (urma_api.h)           │
+                              │  urma_post_jetty_send_wr()  │
+                              │  urma_poll_jfc()            │
+                              └─────────────────────────────┘
+
+                         ┌─────────────────────────────────────────────┐
+                         │              umq_api.h (UMQ 公共 API)         │
+                         │  umq_init / umq_create / umq_enqueue         │
+                         └──────────────────────┬──────────────────────┘
+                                                │
+            ┌───────────────────────────────────┼───────────────────────────────────┐
+            │                                   │                                   │
+            ▼                                   ▼                                   ▼
+┌───────────────────────┐     ┌─────────────────────────────┐     ┌───────────────────────────┐
+│   umq_ub (UB 模式)     │     │   umq_ipc (IPC 模式)        │     │   umq_ubmm (共享内存)      │
+│   umq_ub_impl.c       │     │   umq_ipc_impl.c           │     │   umq_ubmm_impl.c         │
+│   umq_ub_buf_alloc   │     │   umq_ipc_post_impl        │     │   umq_ubmm_rendezvous     │
+│   umq_ub_enqueue_impl│     │   umq_ipc_poll_impl        │     │   umq_ubmm_bind_impl      │
+└───────────┬───────────┘     └─────────────────────────────┘     └───────────────────────────┘
+            │
+            ▼
+┌───────────────────────┐
+│  umq_ub/core/private/  │
+│  umq_ub.c (核心实现)   │
+│  umq_ub_bind_inner   │
+│  umq_ub_post_rx/tx   │
+│  umq_ub_read (UB_PLUS)│
+└───────────┬───────────┘
+            │
+            ▼
+┌───────────────────────┐
+│  URMA (urma_api.h)     │
+└───────────────────────┘</code></pre>
+
+<h3 id="dynamic-dispatch">动态分发机制（多态）</h3>
+<p>URPC 大量使用函数指针实现多态，这是理解模块关系的关键。CodeGraph 揭示了以下动态分发链路：</p>
+
+<table>
+<thead><tr><th>接口</th><th>分发点</th><th>实现</th><th>位置</th></tr></thead>
+<tbody>
+<tr><td><code>queue_ops_t.send</code></td><td><code>dp.c:499</code></td><td><code>send_recv_send()</code></td><td>Jetty 队列发送</td></tr>
+<tr><td><code>queue_ops_t.post</code></td><td><code>dp.c:127</code></td><td><code>send_recv_post()</code></td><td>Jetty 队列接收</td></tr>
+<tr><td><code>queue_ops_t.poll</code></td><td><code>dp.c:poll_one_queue</code></td><td><code>send_recv_poll_tx/rx()</code></td><td>轮询完成事件</td></tr>
+<tr><td><code>queue_ops_t.wait</code></td><td><code>keepalive_probe.c:43</code></td><td><code>send_recv_wait()</code></td><td>中断等待</td></tr>
+<tr><td><code>umq_ops_t.umq_tp_enqueue</code></td><td><code>umq_api.c</code></td><td><code>umq_ub_enqueue_impl()</code></td><td>UMQ 发送</td></tr>
+<tr><td><code>umq_ops_t.umq_tp_post</code></td><td><code>umq_pro_api.c:27</code></td><td><code>umq_tp_ub_plus_post()</code></td><td>UMQ Pro API</td></tr>
+<tr><td><code>urma_ops_t.post_jetty_send_wr</code></td><td><code>urma_dp_api.c:287</code></td><td><code>bondp_post_jetty_send_wr()</code></td><td>硬件发送</td></tr>
+</tbody>
+</table>
+
+<pre><code>// 三层动态分发（以 send 为例）：
+
+// Layer 1: dp.c 通过 queue_ops 调用
+// dp.c:499
+errno = l_queue->ops->send(l_queue, &queue_wr);
+//        ↑ 函数指针，运行时绑定
+
+// Layer 2: queue_send_recv.c 设置 ops
+// queue_send_recv.c:655
+static queue_ops_t g_urpc_send_recv_ops = {
+    .send = send_recv_send,
+    .post = send_recv_post,
+    .poll = send_recv_poll,
+    .read = send_recv_read,
+    .wait = send_recv_wait,
+    ...
+};
+
+// Layer 3: jetty_public_func.c 实现
+// jetty_public_func.c:865
+int send_recv_send(queue_t *l_queue, queue_wr_t *wr) {
+    // 最终调用 URMA
+    urma_post_jetty_send_wr(jetty, urma_wr, &bad_wr);
+}
+
+// Layer 4: URMA 再次分发到硬件驱动
+// urma_dp_api.c:278
+urma_status_t urma_post_jetty_send_wr(urma_jetty_t *jetty, ...) {
+    urma_ops_t *dp_ops = get_ops_by_urma_jetty(jetty);
+    return dp_ops->post_jetty_send_wr(jetty, wr, bad_wr);
+    //                  ↑ 硬件驱动函数指针
+}</code></pre>
+
+<h3 id="call-chain">关键调用链（CodeGraph 验证）</h3>
+<p>以下是通过 CodeGraph 验证的 4 条核心调用链，展示了从用户 API 到硬件操作的完整路径：</p>
+
+<div class="key-callout">
+<p><strong>Call Chain 1: 函数调用（Client 发送 REQ）</strong></p>
+<p><code>urpc_func_call()</code> → <code>channel_get()</code> → <code>urpc_get_local_queue()</code>（RR 选择） → <code>req_entry_get()</code>（分配请求条目） → <code>urpc_req_fill_basic_info()</code>（填充 REQ 头） → <code>l_queue->ops->send()</code> → <code>send_recv_send()</code> → <code>urma_post_jetty_send_wr()</code></p>
+</div>
+
+<div class="key-callout">
+<p><strong>Call Chain 2: 函数执行（Server 接收 REQ）</strong></p>
+<p><code>urma_poll_jfc()</code>（JFR 完成事件） → <code>send_recv_poll_rx()</code> → <code>process_rx_cr()</code> → <code>urpc_func_exec()</code> → <code>sync_handler()/async_handler()</code>（用户函数） → <code>urpc_func_return()</code> → <code>l_queue->ops->send()</code>（发送 RSP）</p>
+</div>
+
+<div class="key-callout">
+<p><strong>Call Chain 3: UMQ 数据发送</strong></p>
+<p><code>umq_enqueue()</code> → <code>umq_tp_enqueue()</code> → <code>umq_ub_enqueue_impl()</code> → <code>umq_ub_fill_wr_impl()</code>（填充 SGE + 流控窗口检查） → <code>umq_ub_post_impl()</code> → <code>urma_post_jetty_send_wr()</code></p>
+</div>
+
+<div class="key-callout">
+<p><strong>Call Chain 4: 初始化流程（CodeGraph 验证）</strong></p>
+<p><code>urpc_init()</code> → <code>check_set_cfg()</code> → <code>async_event_ctx_init()</code> → <code>provider_init()</code> → <code>jetty_provider_init()</code> → <code>urma_init()</code> → <code>urma_open_drivers()</code> → <code>urma_discover_devices()</code> → <code>jetty_provider_init_sub_providers()</code> → <code>urpc_client_init()</code> → <code>urpc_server_init()</code> → <code>pre_dp_start_callback()</code></p>
+</div>
+
+<div class="key-callout">
+<p><strong>Call Chain 5: UMQ 内存导入（CodeGraph 验证）</strong></p>
+<p><code>umq_ub_bind_inner_impl()</code> → <code>umq_ub_eid_id_get()</code> → <code>import_mem()</code> → <code>urma_import_seg()</code> → <code>bondp_import_seg()</code></p>
+</div>
+
+<div class="key-callout">
+<p><strong>Call Chain 6: UB_PLUS 反向拉取（CodeGraph 验证）</strong></p>
+<p><code>process_send_imm()</code> → <code>umq_ub_read()</code> → <code>umq_ub_read_ctx_create()</code> → <code>umq_ub_read_post_send()</code> → <code>urma_post_jetty_send_wr(READ)</code></p>
+</div>
+
+<hr>
+<h2 id="module-functions">核心模块函数表</h2>
+<p>以下是各核心模块的关键函数及其职责，按模块组织。每个模块先给出代码结构和核心数据结构，再列出关键函数。</p>
+
+<h3 id="func-cp">cp.c — 控制面（3,014 行）</h3>
+<p><strong>代码结构</strong>：cp.c 是 URPC Framework 的入口模块，负责系统初始化、角色管理和资源生命周期。</p>
+<pre><code>// 核心全局状态
+static urpc_ctx_t g_urpc_ctx = {0};        // 全局 URPC 上下文
+static urpc_ctrl_cb_t g_urpc_ctrl_msg_cb;  // 控制消息回调
+
+// 初始化流程（按顺序）：
+// urpc_init() → check_set_cfg() → async_event_ctx_init() → urpc_thread_ctx_init()
+//   → dfx_init() → urpc_resource_release_init() → queue_id_allocator_init()
+//   → provider_init() → urpc_server_client_init() → urpc_client_init()
+//   → urpc_server_init() → urpc_state_update(URPC_STATE_INIT)
+
+// 角色区分初始化：
+//   ROLE_SERVER: server_keepalive_cfg_init() → server_channel_id_allocator_init()
+//   ROLE_CLIENT: client_keepalive_cfg_init() → client_manage_channel_init()
+//   ROLE_SERVER_CLIENT: 两者都执行</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>urpc_init()</code></td><td>顶层初始化：校验配置 → 初始化 async event → 创建 provider → 初始化 client/server → 启动 allocator/timer/keepalive</td></tr>
+<tr><td><code>urpc_server_start()</code></td><td>启动 Server：创建监听线程 → IP handshaker 初始化 → 开始接受连接</td></tr>
+<tr><td><code>urpc_channel_server_attach()</code></td><td>Client 连接 Server：发送 attach 消息 → 交换 queue 信息 → 建立连接</td></tr>
+<tr><td><code>check_set_cfg()</code></td><td>配置校验：检查 role/trans_info_num/multi_eid → 设置 feature flags</td></tr>
+<tr><td><code>pre_dp_start_callback()</code></td><td>数据面启动前：初始化 default allocator → timing wheel → keepalive</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-dp">dp.c — 数据面（2,094 行）</h3>
+<p><strong>代码结构</strong>：dp.c 处理所有数据面操作，包括函数调用、响应、轮询和错误处理。</p>
+<pre><code>// 核心数据结构
+typedef struct tx_ctx {
+    void *user_ctx;              // 用户上下文
+    urpc_sge_t *sges;            // SGE 数组
+    uint32_t sge_num;            // SGE 数量
+    uint32_t req_id;             // 请求 ID
+    uint8_t call_mode;           // 调用模式（EARLY_RSP/ACK/WAIT_RSP）
+    uint8_t free_events_completed:1;  // 双次释放标志
+    uint8_t sge_handover_completed:1; // SGE 已交给上层
+    uint8_t internal_message:1;       // 内部消息标志
+} tx_ctx_t;
+
+// 扩展操作注册表（支持 256 个 func_defined 模块）
+static ext_ops_t *g_urpc_ext_ops[MAX_FUNC_DEFINED];
+
+// 完成事件类型（urpc_poll_event）
+POLL_EVENT_REQ_ACKED      // 收到 ACK
+POLL_EVENT_REQ_RSPED      // 收到 RSP
+POLL_EVENT_REQ_ACKED_RSPED // 同时收到 ACK+RSP
+POLL_EVENT_REQ_RECVED     // Server 收到 REQ
+POLL_EVENT_REQ_SENDED     // REQ 发送完成
+POLL_EVENT_RSP_SENDED     // RSP 发送完成
+POLL_EVENT_READ_RET       // READ 完成
+POLL_EVENT_ERR            // 错误事件</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>urpc_func_call()</code></td><td>Client 发起调用：选择 local/remote queue → 分配 req_entry → 填充 REQ 头 → 加密 → 发送</td></tr>
+<tr><td><code>urpc_func_poll()</code></td><td>轮询完成事件：遍历所有 queue → 收集 TX/RX CQE → 构造 poll_msg</td></tr>
+<tr><td><code>urpc_func_return()</code></td><td>Server 返回结果：填充 RSP 头 → 加密 → 发送 response</td></tr>
+<tr><td><code>urpc_ref_read()</code></td><td>引用读取：Worker 通过地址拉取远端参数</td></tr>
+<tr><td><code>process_tx_msg()</code></td><td>处理 TX CQE：REQ/RSP/ACK/READ 完成事件分发</td></tr>
+<tr><td><code>process_req_cqe()</code></td><td>REQ CQE 处理：根据 call_mode 决定释放 ctx/等待 RSP</td></tr>
+<tr><td><code>tx_ctx_try_put()</code></td><td>tx_ctx 双次释放：确保 TX CQE 和 ACK/RSP 都完成才释放</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-channel">channel.c — 通道管理（1,471 行）</h3>
+<p><strong>代码结构</strong>：channel.c 管理 Channel 的完整生命周期，包括请求条目、函数注册表和内存信息。</p>
+<pre><code>// 核心数据结构
+typedef struct urpc_channel_info {
+    uint32_t id;                         // Channel ID
+    req_entry_t *req_entry_table;        // 请求条目表（hash + 线性探测）
+    struct urpc_hmap func_tbl;           // 函数注册表
+    urpc_list_t server_nodes_list;       // 连接的 Server 节点
+    struct queue_nodes_head l_queue_nodes_head;  // 本地队列链表
+    struct queue_nodes_head r_queue_nodes_head;  // 远端队列链表
+    urpc_list_t mem_info_list;           // 导入的内存信息
+    pthread_spinlock_t lock;             // 自旋锁（保护 req_entry 分配）
+    pthread_rwlock_t rw_lock;            // 读写锁（数据面读，控制面写）
+    uint32_t req_id;                     // 当前请求 ID（递增）
+    uint32_t req_entry_size;             // 请求条目表大小（默认 1024）
+} urpc_channel_info_t;
+
+// 请求条目
+typedef struct req_entry {
+    pthread_mutex_t lock;                // 条目锁
+    urpc_timer_t *timer;                 // 超时定时器
+    urpc_sge_t *args;                    // 请求参数
+    uint32_t req_id;                     // 请求 ID
+    uint8_t valid;                       // 有效标志
+    urpc_req_cb_t cb;                    // 完成回调
+    void *cb_arg;                        // 回调参数
+} req_entry_t;
+
+// 全局 Channel 表
+static urpc_channel_info_t *g_urpc_channels[URPC_MAX_CHANNELS];  // 最大 300,000</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>channel_alloc()</code></td><td>分配 Channel：初始化 queue 链表、req_entry_table、func_tbl、mem_info_list</td></tr>
+<tr><td><code>req_entry_get()</code></td><td>分配请求条目：hash 查找 → 线性探测 → 标记 valid</td></tr>
+<tr><td><code>req_entry_query()</code></td><td>查询请求条目：按 req_id hash 查找，支持并发安全</td></tr>
+<tr><td><code>channel_get_next_local_queue()</code></td><td>RR 选择本地队列：round-robin 轮转</td></tr>
+<tr><td><code>channel_free()</code></td><td>释放 Channel：清理 queue/req_entry/server_node/mem_info</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-queue">queue_send_recv.c — Jetty 队列（1,533 行）</h3>
+<p><strong>代码结构</strong>：queue_send_recv.c 实现基于 Jetty 的队列操作，包括发送、接收、轮询和队列生命周期管理。</p>
+<pre><code>// 核心数据结构
+typedef struct send_recv_queue_local {
+    queue_local_t local_q;           // 基类（必须在前）
+    urma_jetty_t *jetty;             // URMA Jetty 对象
+    urma_jfc_t *jfs_jfc;             // 发送完成队列
+    urma_jfc_t *jfr_jfc;             // 接收完成队列
+    urma_jfce_t *jfce;               // 中断事件（可选）
+    atomic_uint in_restore_process;  // 恢复过程标志
+} send_recv_queue_local_t;
+
+// 资源引用计数（共享资源管理）
+typedef struct jfr_ctx {
+    urma_jfr_t *jfr;                 // 接收队列
+    urma_jfc_t *jfr_jfc;             // 接收完成队列
+    urma_jfce_t *jfr_jfce;           // 接收中断事件
+    volatile uint32_t ref_cnt;       // 引用计数
+    rx_buf_ctx_list_t rx_buf_ctx_list; // RX buffer 上下文列表
+} jfr_ctx_t;
+
+// Queue ops 接口（多态分发）
+static queue_ops_t g_send_recv_queue_ops = {
+    .send = send_recv_send,
+    .post = send_recv_post,
+    .poll = send_recv_poll,
+    .read = send_recv_read,
+    .bind_queue = send_recv_bind_queue,
+    .unbind_queue = send_recv_unbind_queue,
+    .delete_local_queue = send_recv_delete_local_queue,
+    .delete_remote_queue = send_recv_delete_remote_queue,
+};</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>send_recv_create_local_queue()</code></td><td>创建本地队列：分配内存 → 创建 transport 资源（JFR/JFC/Jetty）</td></tr>
+<tr><td><code>send_recv_create_transport_resource()</code></td><td>创建传输资源：获取 JFCE → 创建 JFS_JFC → JFR_JFC → JFR → Jetty</td></tr>
+<tr><td><code>send_recv_send()</code></td><td>发送数据：填充 SGE → urma_post_jetty_send_wr</td></tr>
+<tr><td><code>send_recv_post()</code></td><td>接收缓冲：填充 RX SGE → urma_post_jetty_send_wr</td></tr>
+<tr><td><code>send_recv_poll_tx/rx()</code></td><td>轮询完成：urma_poll_jfc → 处理 CR</td></tr>
+<tr><td><code>send_recv_flush_jetty()</code></td><td>排空队列：等待所有 TX/RX WR 完成</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-umq-ub">umq_ub.c — UMQ UB 模式（2,163 行）</h3>
+<p><strong>代码结构</strong>：umq_ub.c 是 UMQ UB 模式的核心实现，处理绑定、发送、接收、流控和内存导入。</p>
+<pre><code>// 核心数据结构
+typedef struct ub_queue {
+    urma_jetty_t *jetty;             // Jetty 对象
+    jfr_ctx_t *jfr_ctx;              // 接收上下文
+    urma_jfc_t *jfs_jfc;             // 发送完成队列
+    umq_ub_ctx_t *dev_ctx;           // 设备上下文
+    struct ub_bind_ctx *bind_ctx;    // 绑定上下文
+    ub_flow_control_t flow_control;  // 流控状态
+    urma_target_seg_t **imported_tseg_list;  // 导入的远端 segment 列表
+    umq_buf_t *notify_buf;           // 管理消息缓冲区
+    uint32_t rx_depth, tx_depth;     // 队列深度
+    umq_state_t state;               // 队列状态
+} ub_queue_t;
+
+typedef struct umq_ub_ctx {
+    urma_context_t *urma_ctx;        // URMA 上下文
+    urma_target_seg_t *tseg_list[UMQ_MAX_TSEG_NUM];  // 本地 segment 列表
+    remote_imported_tseg_info_t *remote_imported_info;  // 远端导入信息
+    umq_flow_control_cfg_t flow_control;  // 流控配置
+} umq_ub_ctx_t;
+
+// 远端 EID 管理
+typedef struct remote_imported_tseg_info_t {
+    bool tesg_imported[1024][255];   // 导入标志 [eid_id][tseg_id]
+    urma_target_seg_t *imported_tseg_list[1024][255];  // 导入的 segment
+    struct urpc_hmap remote_eid_id_table;  // EID → ID 映射
+    util_id_allocator_t eid_id_allocator;  // ID 分配器
+} remote_imported_tseg_info_t;</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>umq_ub_bind_inner_impl()</code></td><td>绑定队列：import 远端 jetty → bind_jetty → prefill RX buffer → 获取 EID ID</td></tr>
+<tr><td><code>umq_ub_post_rx/tx()</code></td><td>发送/接收：填充 SGE → 流控窗口检查 → urma_post_jetty_send_wr</td></tr>
+<tr><td><code>umq_ub_read()</code></td><td>UB_PLUS 反向拉取：解析元数据 → 预分配缓冲 → 逐块 READ → 发送 DONE</td></tr>
+<tr><td><code>umq_ub_data_plan_import_mem()</code></td><td>内存导入：解析 imm_head → 逐个 import tseg → 发送 IMPORT_DONE</td></tr>
+<tr><td><code>umq_ub_eid_id_get()</code></td><td>EID 管理：hash 查找 → 分配 ID → import 内存 → 插入 hmap</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-keepalive">keepalive_task.c — 保活（922 行）</h3>
+<p><strong>代码结构</strong>：keepalive_task.c 实现连接保活机制，使用定时器和可达列表检测连接健康状态。</p>
+<pre><code>// 核心数据结构
+typedef struct urpc_keepalive_task_entry {
+    pthread_spinlock_t lock;         // 条目锁
+    urpc_instance_key_t key;         // 远端实例标识（EID + PID）
+    struct urpc_hmap_node task_node; // 任务 hash 表节点
+    uint64_t cpu_cycles;             // 最后活跃时间戳
+    urpc_timer_t *timer;             // 超时定时器
+    urpc_list_t list;                // 可达链表节点
+    uint32_t server_chid[URPC_MAX_CHANNEL_PER_CLIENT];  // Server 通道 ID 列表
+} urpc_keepalive_task_entry_t;
+
+// 全局管理结构
+static struct {
+    pthread_rwlock_t lock;           // 读写锁
+    struct urpc_hmap client_id_map;  // Client ID → entry
+    struct urpc_hmap server_id_map;  // Server ID → entry
+    struct urpc_hmap task_map;       // instance_key → entry
+    struct urpc_hmap server_info_map;  // server_info → entry
+    urpc_list_t reachable_list;      // 可达列表（逻辑 Server 更新）
+} g_urpc_keepalive_mgmt;
+
+// 配置参数
+#define URPC_KEEPALIVE_TASK_NUM 8192   // 最大任务数
+#define KEEPALIVE_MAX_PROB_CNT 127     // 最大探测次数
+// keepalive_cycle_time: 发送间隔 [1, 3600]s
+// keepalive_check_time: 超时判定 [cycle_time, 3600]s
+// delay_release_time: 延迟释放 [1, 3600]s</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>urpc_keepalive_task_create()</code></td><td>创建保活任务：初始化 entry → 启动 timer → 插入 hmap</td></tr>
+<tr><td><code>urpc_keepalive_check()</code></td><td>定时检查：遍历 reachable_list → 超时检测 → 回调通知</td></tr>
+<tr><td><code>urpc_keepalive_request_send()</code></td><td>发送保活消息：构造 keepalive REQ → 发送到对端</td></tr>
+<tr><td><code>urpc_keepalive_process_msg()</code></td><td>处理保活消息：更新 timestamp → 回复响应</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-crypto">crypto.c — 加密（~300 行）</h3>
+<p><strong>代码结构</strong>：crypto.c 实现控制面 SSL/TLS 和数据面 AES-GCM 加密。</p>
+<pre><code>// 核心数据结构
+typedef struct urpc_cipher {
+    const EVP_CIPHER *cipher;        // EVP cipher 对象（AES-256-GCM）
+    crypto_key_t crypto_key;         // 32 字节密钥
+    uint32_t chid;                   // 通道 ID（IV 固定字段）
+    atomic_ullong counter;           // IV 计数器（可变字段）
+} urpc_cipher_t;
+
+typedef struct crypto_key {
+    uint8_t key[32];                 // 256-bit 密钥
+} crypto_key_t;
+
+// SSL 配置
+typedef struct urpc_ssl_config {
+    uint32_t ssl_flag;               // 启用/禁用标志
+    urpc_ssl_mode_t ssl_mode;        // PSK / 证书
+    urpc_tls_version_t min/max_tls_version;  // TLS 1.2 / 1.3
+    char *cipher_list;               // TLS 1.2 cipher
+    char *cipher_suites;             // TLS 1.3 cipher
+    urpc_ssl_psk_client_cb_func client_cb_func;  // PSK 客户端回调
+    urpc_ssl_psk_server_cb_func server_cb_func;  // PSK 服务端回调
+} urpc_ssl_config_t;
+
+// 加密头结构
+typedef struct urpc_security_exthdr {
+    uint8_t iv[12];                  // 初始化向量
+    uint8_t tag[16];                 // GCM 认证标签
+} urpc_security_exthdr_t;</code></pre>
+<table>
+<thead><tr><th>函数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>crypto_ssl_init()</code></td><td>初始化 SSL 上下文：加载证书/PSK → 创建 SSL 对象</td></tr>
+<tr><td><code>crypto_encrypt_user_data()</code></td><td>加密用户数据：AES-256-GCM 加密 SGE</td></tr>
+<tr><td><code>crypto_decrypt_user_data()</code></td><td>解密用户数据：AES-256-GCM 解密 SGE</td></tr>
+<tr><td><code>crypto_encrypt_keepalive_req()</code></td><td>加密保活请求：专用加密路径</td></tr>
+</tbody>
+</table>
+
+<h3 id="func-umq-other">UMQ 其他模式</h3>
+<p><strong>umq_ipc（共享内存 IPC 模式，~1,000 行）</strong>：</p>
+<pre><code>// 核心数据结构
+typedef struct umq_ipc_queue {
+    int shm_fd;                      // 共享内存文件描述符
+    void *shm_addr;                  // 映射地址
+    umq_ipc_shm_hdr_t *shm_hdr;      // 共享内存头部（ring buffer 元数据）
+    umq_ipc_ring_t *tx_ring;         // 发送 ring buffer
+    umq_ipc_ring_t *rx_ring;         // 接收 ring buffer
+    sem_t *tx_sem, *rx_sem;          // 进程间信号量
+} umq_ipc_queue_t;
+
+// 数据传输：通过共享内存 ring buffer，无 kernel 参与
+// umq_ipc_post_impl() → 写入 tx_ring → sem_post(tx_sem)
+// umq_ipc_poll_impl() → 等待 rx_sem → 从 rx_ring 读取</code></pre>
+
+<p><strong>umq_ubmm（UB 共享内存模式，~850 行）</strong>：</p>
+<pre><code>// 核心数据结构
+typedef struct umq_ubmm_queue {
+    urma_target_seg_t *shm_seg;      // 共享内存 segment
+    urma_ubva_t shm_ubva;            // UB 虚拟地址
+    umq_ubmm_ring_t *tx_ring;        // 发送 ring
+    umq_ubmm_ring_t *rx_ring;        // 接收 ring
+} umq_ubmm_queue_t;
+
+// 特点：同节点设备间通过 UB 共享内存零拷贝通信
+// 使用 rendezvous 协议交换共享内存地址
+// umq_ubmm_bind_impl() → 交换 UBVA → 直接读写共享内存</code></pre>
+
+<h3 id="func-protocol">protocol.h — 协议定义（~600 行）</h3>
+<p><strong>代码结构</strong>：protocol.h 定义 URPC 的所有协议消息格式和编解码函数。</p>
+<pre><code>// 消息类型
+typedef enum urpc_msg_type {
+    URPC_MSG_REQ,            // 请求
+    URPC_MSG_ACK,            // 确认
+    URPC_MSG_RSP,            // 响应
+    URPC_MSG_ACK_AND_RSP,    // ACK+RSP 合并
+    URPC_MSG_READ,           // 读取（参数拉取）
+} urpc_msg_type_t;
+
+// REQ 头（32B + DMA table）
+struct urpc_req_head {
+    uint64_t version : 4;
+    uint64_t type : 4;
+    uint64_t ack : 1;                // 是否需要 ACK
+    uint64_t arg_dma_count : 5;      // DMA 地址表项数
+    uint64_t function : 48;          // 函数 ID
+    uint32_t req_total_size;         // 请求总大小
+    uint32_t req_id;                 // 请求唯一 ID
+    uint32_t client_channel : 24;    // 客户端通道 ID
+    uint32_t function_defined : 8;   // 自定义字段
+    arg_dma_t ub_dma[0];             // DMA 地址表（灵活数组）
+};
+
+// ACK 头（12B）
+struct urpc_ack_head {
+    uint8_t version : 4;
+    uint8_t type : 4;
+    uint16_t req_id_range;           // 请求 ID 范围
+    uint32_t req_id;                 // 请求 ID
+    uint32_t client_channel : 24;
+};
+
+// RSP 头（16B + offset array）
+struct urpc_rsp_head {
+    uint8_t version : 4;
+    uint8_t type : 4;
+    uint8_t status;                  // 执行状态
+    uint16_t req_id_range;
+    uint32_t req_id;
+    uint32_t client_channel : 24;
+    uint32_t function_defined : 8;
+    uint32_t response_total_size;    // 响应总大小
+    uint32_t return_data_offset[0];  // 返回数据偏移
+};
+
+// 控制面头
+struct urpc_ctl_head {
+    uint8_t version;
+    uint8_t opcode;                  // URPC_CTL_*
+    uint16_t error_code;
+    uint16_t dp_encrypt : 1;         // 数据面加密标志
+    uint16_t keepalive : 1;          // 保活标志
+    uint32_t channel;                // 通道 ID
+    uint32_t data_size;              // 负载大小
+    uint32_t ctl_opcode;             // 操作码
+    int task_id;                     // 任务 ID（异步）
+};</code></pre>
+
+<hr>
+<h2 id="deepdive-rpc-flow">Deep Dive 1: 完整 RPC 调用流</h2>
+<p>一次完整的 URPC 函数调用涉及 Client 端、Server 端、Worker 端的协同。下图展示了从 <code>urpc_func_call()</code> 到 <code>urpc_func_return()</code> 的完整代码路径。</p>
+
+<h3 id="rpc-client">Client 端：urpc_func_call()</h3>
+<pre><code>// dp.c:352-533
+uint64_t urpc_func_call(uint32_t chid, urpc_call_wr_t *wr, urpc_call_option_t *option) {
+    // 1. 获取 channel（读锁保护）
+    channel = channel_get(chid);
+
+    // 2. 选择 local queue（round-robin）
+    l_queue = urpc_get_local_queue(channel, option);
+    //    └─ channel_get_next_local_queue() → RR 轮转
+
+    // 3. 选择 remote queue（round-robin）
+    r_queue = urpc_get_remote_queue(channel, option);
+
+    // 4. 分配 tx_ctx（从 queue 的 slab allocator）
+    ctx = queue_ctx_get(l_queue, QUEUE_CTX_TYPE_TX);
+
+    // 5. 分配 req_entry（hash 表 + 线性探测）
+    req_entry = req_entry_get(channel, ctx);
+    //    └─ req_id = channel->req_id++ & (size-1)
+    //    └─ while (req_entry->valid) { req_id++; linear_probe }
+
+    // 6. 填充 REQ 协议头
+    req_head = (urpc_req_head_t *)wr->args[0].addr;
+    urpc_req_fill_basic_info(req_head, ack, channel_id);
+    urpc_req_fill_req_info_without_dma(req_head, func_id, len, req_id, func_defined);
+
+    // 7. 可选加密（keepalive 或 ext_ops->encrypt）
+    func_call_sge_encrypt(func_defined, channel, r_queue, req_entry, wr);
+
+    // 8. 填充 tx_ctx
+    fill_req_tx_ctx(ctx, chid, l_qh, req_id, wr, option);
+
+    // 9. 启动超时定时器（如果配置了 timeout）
+    timeout_create(option, req_entry, func_defined, wr);
+
+    // 10. 发送（调用 queue ops → send_recv_send → urma_post）
+    l_queue->ops->send(l_queue, &queue_wr);
+
+    return req_id;  // 返回请求句柄
+}</code></pre>
+
+<h3 id="rpc-server-rx">Server 端：接收 REQ 与分发</h3>
+<pre><code>// queue_send_recv.c: send_recv_poll_rx()
+//   └─ urma_poll_jfc(jfr_jfc, cr_cnt, cr)  // 获取 RX 完成事件
+//   └─ process_rx_cr(local_queue, msg, cr)
+
+// dp.c: process_rx_cr() → 处理接收到的 REQ
+//   └─ 解析 REQ 头：urpc_req_parse_function() / urpc_req_parse_req_id()
+//   └─ 分配 req_ctx（从 queue 的 slab）
+//   └─ 可选解密：crypto_decrypt_user_data()
+//   └─ ext_ops->rx_req_process()（扩展处理）
+//   └─ urpc_func_exec(func_id, args, args_sge_num, &rsps, &rsps_sge_num)
+//       └─ 查找 handler = channel->func_tbl[func_id]
+//       └─ handler->sync_handler(args, args_sge_num, ctx, &rsps, &rsps_sge_num)
+//          【用户函数在此执行】</code></pre>
+
+<h3 id="rpc-server-tx">Server 端：返回 RSP</h3>
+<pre><code>// dp.c: urpc_func_return()
+int urpc_func_return(uint64_t urpc_qh, void *req_ctx, urpc_return_wr_t *wr, ...) {
+    // 1. 获取 queue 和 req_ctx
+    l_queue = (queue_t *)urpc_qh;
+    ctx = (req_ctx_t *)req_ctx;
+
+    // 2. 分配 tx_ctx
+    tx_ctx = queue_ctx_get(l_queue, QUEUE_CTX_TYPE_TX);
+
+    // 3. 填充 RSP 协议头
+    rsp_head = (urpc_rsp_head_t *)rsps[0].addr;
+    urpc_rsp_fill_basic_info(rsp_head, status, client_channel, ack);
+    urpc_rsp_fill_one_req_info(rsp_head, req_id, response_total_size, option);
+
+    // 4. 发送 RSP
+    l_queue->ops->send(l_queue, &queue_wr);
+}</code></pre>
+
+<h3 id="rpc-client-rx">Client 端：接收 ACK/RSP</h3>
+<pre><code>// dp.c: urpc_func_poll() / urpc_func_poll_wait()
+//   └─ 遍历 channel 的所有 local queue
+//   └─ l_queue->ops->poll() → send_recv_poll_tx/rx()
+//       └─ urma_poll_jfc(jfs_jfc, ...)  // TX CQE
+//       └─ urma_poll_jfc(jfr_jfc, ...)  // RX CQE
+
+// process_tx_msg() → process_req_cqe():
+//   根据 call_mode 分支：
+//   ├─ EARLY_RSP: 直接释放 tx_ctx，报告 REQ_RSPED
+//   ├─ WAIT_RSP: 报告 REQ_SENDED，等待 RSP
+//   └─ 其他: 解锁 req_entry，等待 RSP
+
+// 收到 RSP 后：
+//   └─ urpc_process_rsp_callback(req_entry, err_code)
+//       └─ req_entry->cb(rsps, rsps_sge_num, err, arg, ctx)
+//          【用户回调在此执行】</code></pre>
+
+<h3 id="rpc-lifecycle">tx_ctx 生命周期（双次释放机制）</h3>
+<p>URPC 使用 <code>tx_ctx_try_put()</code> 实现双次释放：tx_ctx 必须经历两个"完成事件"才能被释放回 slab：</p>
+<pre><code>// dp.c:650-658
+void tx_ctx_try_put(tx_ctx_t *ctx) {
+    if (ctx->free_events_completed == FALSE) {
+        ctx->free_events_completed = TRUE;  // 第一次：TX CQE
+        return;
+    }
+    queue_ctx_put(QUEUE_CTX_TYPE_TX, ctx);  // 第二次：ACK/RSP → 真正释放
+}</code></pre>
+<p>这解决了 TX CQE 和 ACK/RSP 并发到达时的竞态条件——无论哪个先到，都必须等两个都完成。</p>
+
+<hr>
+<h2 id="deepdive-flow-control">Deep Dive 2: 流控窗口状态机</h2>
+<p>UMQ UB 模式的流控是一个基于 credit 的窗口机制，使用 immediate 数据在带内交换窗口信息。</p>
+
+<h3 id="fc-init">初始化与窗口建立</h3>
+<pre><code>// umq_ub_flow_control.c: umq_ub_window_init()
+// 当 local_rx_posted 首次达到 initial_window 时：
+//   1. 将 initial_window 写入 notify_buf 的 OFFSET_FLOW_CONTROL 位置
+//   2. 对端通过 READ 获取该值，初始化 remote_rx_window
+
+// umq_ub_bind_inner_impl() 中：
+//   └─ umq_ub_window_init(&queue->flow_control, info)
+//       └─ 从 bind_info 读取 win_buf_addr → 设置 remote_win_buf_addr</code></pre>
+
+<h3 id="fc-tx">发送端：窗口消耗与检查</h3>
+<pre><code>// umq_ub_fill_wr_impl() 发送前：
+//   └─ umq_ub_window_dec(&fc, queue, 1)  // 消耗 1 个窗口
+//       └─ if (remote_rx_window >= required) → 扣减并返回
+//       └─ else → 返回 0，wr 返回 -UMQ_ERR_EAGAIN
+
+// 窗口不足时：
+//   └─ umq_ub_window_read(fc, queue)  // 从对端 READ 最新窗口
+//       └─ urma_post_jetty_send_wr(READ, remote_win_buf_addr)</code></pre>
+
+<h3 id="fc-rx">接收端：窗口通告</h3>
+<pre><code>// umq_ub_fill_tx_imm() 每次发送时：
+//   └─ 检查 local_rx_posted - total_local_rx_notified >= notify_interval
+//   └─ 如果是，填充 IMM_TYPE_FLOW_CONTROL immediate：
+//       umq_ub_imm_t imm = { .flow_control = {
+//           .umq_private = 1,
+//           .type = IMM_TYPE_FLOW_CONTROL,
+//           .window = local_rx_posted  // 通告本端可用深度
+//       }};
+//   └─ urma_wr->rw.notify_data = imm.value & UMQ_UB_IMM_WITHOUT_PRIVATE_BITS</code></pre>
+
+<h3 id="fc-imm-rx">接收端：处理窗口通告</h3>
+<pre><code>// umq_ub_dequeue_impl() 收到数据时：
+//   └─ 检查 immediate 的 umq_private bit
+//   └─ 如果是 IMM_TYPE_FLOW_CONTROL：
+//       └─ umq_ub_window_inc(&fc, imm.flow_control.window)
+//           └─ remote_rx_window += new_win
+//           └─ 如果之前因窗口不足阻塞，现在可以继续发送</code></pre>
+
+<h3 id="fc-stats">流控统计</h3>
+<table>
+<thead><tr><th>统计项</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>local_rx_posted</code></td><td>当前本端已下发的 RX buffer 数</td></tr>
+<tr><td><code>remote_rx_window</code></td><td>对端通告的可用 RX 深度</td></tr>
+<tr><td><code>total_local_rx_posted</code></td><td>本端累计下发的 RX buffer 总数</td></tr>
+<tr><td><code>total_local_rx_notified</code></td><td>本端累计通告的可用深度总数</td></tr>
+<tr><td><code>total_remote_rx_consumed</code></td><td>发送端累计消耗的对端窗口总数</td></tr>
+<tr><td><code>total_flow_controlled_wr</code></td><td>因窗口不足失败的 WR 数</td></tr>
+</tbody>
+</table>
+
+<hr>
+<h2 id="deepdive-ubplus">Deep Dive 3: UB_PLUS 反向拉取状态机</h2>
+<p>UB 原生最大消息 64KB，UB_PLUS 通过"反向拉取"机制扩展到 10MB。这是一个多步握手协议。</p>
+
+<h3 id="ubplus-state">状态机</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                     UB_PLUS 反向拉取协议                             │
+│                                                                      │
+│  [Sender]                    [Receiver]                              │
+│     │                            │                                   │
+│     │  1. REQ(IMM=REVERSE_PULL_MEM)│                                  │
+│     │  ──────────────────────────► │                                  │
+│     │    携带: addr, length,       │                                  │
+│     │    msg_id, msg_num          │                                  │
+│     │                            │  2. 解析元数据                     │
+│     │                            │  3. umq_ub_read_ctx_create()      │
+│     │                            │     预分配 dst_buf                 │
+│     │                            │  4. 逐块发起 READ:                │
+│     │                            │     for (i = 0; i < msg_num; i++) │
+│     │                            │       urma_post(READ,              │
+│     │                            │         src=ref_sge[i].addr,       │
+│     │                            │         dst=local_buf)             │
+│     │                            │                                   │
+│     │  5. IMM=REVERSE_PULL_MEM_DONE                                 │
+│     │  ◄────────────────────────── │                                  │
+│     │                            │  6. 释放 dst_buf                   │
+│     │  7. 继续后续处理            │                                   │
+└─────────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="ubplus-impl">核心实现：umq_ub_read()</h3>
+<pre><code>// umq_ub.c:1254-1310
+int umq_ub_read(uint64_t umqh_tp, umq_buf_t *rx_buf, umq_ub_imm_t imm) {
+    // 1. 解析 immediate 中的元数据
+    uint16_t buf_num = imm.ub_plus.msg_num;    // 批处理 buf 数量
+    uint16_t msg_id = imm.ub_plus.msg_id;      // 消息 ID（用于去重）
+
+    // 2. 解析接收缓冲区头部的 umq_imm_head
+    umq_imm_head_t *umq_imm_head = (umq_imm_head_t *)rx_buf->buf_data;
+    ub_ref_sge_t *ref_sge = (ub_ref_sge_t *)(umq_imm_head + 1);
+
+    // 3. 预分配本地接收缓冲区
+    umq_buf_t *ctx_buf = umq_ub_read_ctx_create(queue, umq_imm_head, buf_num, msg_id);
+    //    └─ 根据 mem_interval 计算总大小
+    //    └─ umq_buf_alloc(total_size, 1, ...) 从 huge pool 分配
+
+    // 4. 逐块发起 READ
+    for (uint32_t i = 0; i < buf_num; i++) {
+        src_sge[i].addr = ref_sge[i].addr;           // 远端地址
+        src_sge[i].tseg = imported_tseg_list[ref_sge[i].mempool_id];
+        dst_sge[i].addr = tmp_buf->buf_data;          // 本地地址
+        dst_sge[i].tseg = tseg_list[tmp_buf->mempool_id];
+        urma_post_jetty_send_wr(queue->jetty, &urma_wr, &bad_wr); // READ
+    }
+
+    // 5. 完成后发送 REVERSE_PULL_MEM_DONE 确认
+    //    └─ umq_ub_write_imm(imm = REVERSE_PULL_MEM_DONE)
+}</code></pre>
+
+<h3 id="ubplus-buf">缓冲区分配策略</h3>
+<p>UB_PLUS 使用独立的 huge qbuf pool，支持 8MB 级缓冲区：</p>
+<pre><code>// umq_ub_impl.c: umq_ub_plus_buf_alloc_impl()
+if (buf_size < umq_buf_size_middle()) {
+    // 小 buffer → 从普通 pool 分配
+    umq_qbuf_alloc(request_size, ...);
+} else {
+    // 大 buffer → 从 huge pool 分配
+    type = umq_huge_qbuf_get_type_by_size(buf_size);
+    umq_huge_qbuf_alloc(request_size, ..., type);
+}</code></pre>
+
+<hr>
+<h2 id="deepdive-queue-lifecycle">Deep Dive 4: 队列生命周期</h2>
+<p>URPC 的队列经历创建 → 绑定 → 使用 → 销毁的完整生命周期。</p>
+
+<h3 id="queue-create">创建阶段</h3>
+<pre><code>// queue_send_recv.c: send_recv_create_local_queue()
+queue_t *send_recv_create_local_queue(queue_create_option_t *option) {
+    // 1. 分配 send_recv_queue_local_t
+    send_recv_local_q = urpc_dbuf_calloc(1, sizeof(send_recv_queue_local_t));
+
+    // 2. 设置配置（rx_buf_size, tx_depth, priority 等）
+    send_recv_set_local_queue_normal_cfg(provider, cfg_get, cfg, QUEUE_TRANS_MODE_JETTY);
+
+    // 3. 创建传输资源
+    send_recv_create_transport_resource(provider, send_recv_local_q, cfg, qid);
+    //    └─ send_recv_get_jfce_ctx() → urma_create_jfce() [中断模式]
+    //    └─ send_recv_get_jfs_jfc_ctx() → urma_create_jfc()
+    //    └─ send_recv_get_jfr_jfc_ctx() → urma_create_jfc()
+    //    └─ send_recv_get_jfr_ctx() → urma_create_jfr()
+    //    └─ send_recv_create_jetty() → urma_create_jetty()
+
+    // 4. 初始化 queue 元数据
+    send_recv_local_q_init(send_recv_local_q, provider, ops, flag, qid);
+}</code></pre>
+
+<h3 id="queue-bind">绑定阶段</h3>
+<pre><code>// queue_send_recv.c: send_recv_bind_queue()
+int send_recv_bind_queue(queue_t *l_queue, queue_t *r_queue) {
+    // 1. 导入远端 jetty
+    imported_queue->tjetty = urma_import_jetty(urma_ctx, &rjetty, &token);
+
+    // 2. 绑定 jetty（建立连接）
+    urma_bind_jetty(local_queue->jetty, imported_queue->tjetty);
+
+    // 3. 记录远端 jetty_id
+    local_queue->remote_jetty_id = imported_queue->tjetty->id;
+    local_queue->is_binded = TRUE;
+}</code></pre>
+
+<h3 id="queue-state">状态转换</h3>
+<pre><code>// queue.h: urpc_queue_status
+QUEUE_STATUS_IDLE → QUEUE_STATUS_RUNNING → QUEUE_STATUS_READY
+                                              ↓
+                              QUEUE_STATUS_FAULT → QUEUE_STATUS_ERR
+                              QUEUE_STATUS_RESET → QUEUE_STATUS_ERR
+
+// 销毁前必须排空（flush）：
+// send_recv_delete_lq_validate() 检查：
+//   ├─ tx_wr_cnt == 0（所有发送完成）
+//   └─ rx_flush_done == TRUE 或 rx_wr_cnt == 0（所有接收完成）</code></pre>
+
+<h3 id="queue-destroy">销毁阶段</h3>
+<pre><code>// queue_send_recv.c: send_recv_delete_local_queue()
+int send_recv_delete_local_queue(queue_t *l_queue) {
+    // 1. 排空检查
+    send_recv_delete_lq_validate(local);
+
+    // 2. 解绑
+    l_queue->ops->unbind_queue(l_queue);  // urma_unbind_jetty()
+
+    // 3. 清理 slab
+    queue_slab_uninit(local_q);
+
+    // 4. 销毁传输资源
+    send_recv_destroy_transport_resource(local);
+    //    └─ urma_delete_jetty()
+    //    └─ send_recv_put_jfr_ctx() → urma_delete_jfr()
+    //    └─ send_recv_put_jfc_ctx() → urma_delete_jfc()
+    //    └─ send_recv_put_jfce_ctx() → urma_delete_jfce()
+}</code></pre>
+
+<hr>
+<h2 id="deepdive-mem-import">Deep Dive 5: 内存导入协议</h2>
+<p>UMQ 的多内存池导入协议允许一个连接导入多个远端内存池，支持动态扩展。</p>
+
+<h3 id="mem-import-init">初始化交换</h3>
+<pre><code>// umq_ub_bind_info_get_impl() 构造 bind_info：
+info->tseg = queue->dev_ctx->tseg_list[UMQ_QBUF_DEFAULT_MEMPOOL_ID];  // 默认 pool
+info->win_buf_addr = umq_ub_notify_buf_addr_get(queue, OFFSET_FLOW_CONTROL);
+info->notify_buf = umq_ub_notify_buf_addr_get(queue, OFFSET_MEM_IMPORT);
+
+// 对端收到 bind_info 后：
+// umq_ub_bind_inner_impl() → umq_ub_eid_id_get()
+//   └─ 检查 remote_eid_id_table（hash map）
+//   └─ 如果新 EID → 分配 eid_id → import_mem() → 插入 hmap</code></pre>
+
+<h3 id="mem-import-multi">多内存池导入</h3>
+<pre><code>// umq_ub.c: umq_ub_data_plan_import_mem()
+int umq_ub_data_plan_import_mem(uint64_t umqh_tp, umq_buf_t *rx_buf, uint32_t ref_seg_num) {
+    // 1. 解析接收缓冲区头部的 umq_imm_head
+    umq_imm_head_t *umq_imm_head = (umq_imm_head_t *)rx_buf->buf_data;
+
+    // 2. 解析 import_mempool_info 数组
+    ub_import_mempool_info_t *import_mempool_info =
+        (ub_import_mempool_info_t *)(rx_buf->buf_data + sizeof(umq_imm_head_t) + ref_seg_num * sizeof(ub_ref_sge_t));
+
+    // 3. 逐个导入内存池
+    for (uint32_t i = 0; i < umq_imm_head->mempool_num; i++) {
+        // 检查是否已导入
+        if (queue->imported_tseg_list[import_mempool_info[i].mempool_id] != NULL) {
+            umq_ub_import_mem_done(queue, import_mempool_info[i].mempool_id);
+            continue;
+        }
+
+        // 导入内存
+        xchg_mem_info_t mem_info = { ... };
+        imported_tseg = import_mem(queue->dev_ctx->urma_ctx, &mem_info);
+
+        // 发送 IMPORT_DONE 确认
+        umq_ub_import_mem_done(queue, import_mempool_info[i].mempool_id);
+        //    └─ umq_ub_write_imm(IMM_TYPE_MEM_IMPORT_DONE)
+    }
+}</code></pre>
+
+<h3 id="mem-import-lookup">内存查找路径</h3>
+<p>发送数据时，根据 mempool_id 查找已导入的远端内存：</p>
+<pre><code>// umq_ub_fill_wr_impl() 发送时：
+//   └─ buf_pro->mempool_id → 确定使用哪个内存池
+//   └─ queue->imported_tseg_list[mempool_id] → 获取远端 tseg
+//   └─ urma_sge.tseg = queue->imported_tseg_list[mempool_id]
+//   └─ urma_post_jetty_send_wr() → 使用 tseg 发送</code></pre>
+
+<hr>
+<h2 id="deepdive-keepalive">Deep Dive 6: Keepalive 保活机制</h2>
+<p>URPC 的保活机制使用专用队列和定时器实现连接健康检测。</p>
+
+<h3 id="ka-arch">架构</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                    Keepalive 架构                             │
+│                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │ Client Side  │    │  Timer Wheel │    │ Server Side  │   │
+│  │              │    │              │    │              │   │
+│  │ keepalive_   │───►│ urpc_timer_  │◄───│ keepalive_   │   │
+│  │ task_entry   │    │ start/check  │    │ task_entry   │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
+│         │                                       │            │
+│         ▼                                       ▼            │
+│  ┌──────────────┐                      ┌──────────────┐     │
+│  │ 发送 REQ     │                      │ 接收 REQ     │     │
+│  │ (keepalive   │─────────────────────►│ 更新 ts      │     │
+│  │  function_id)│                      │ 回复 RSP     │     │
+│  └──────────────┘                      └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="ka-timer">定时器检查</h3>
+<pre><code>// keepalive_task.c: urpc_keepalive_check()
+void urpc_keepalive_check(void *args) {
+    // 遍历 reachable_list
+    URPC_LIST_FOR_EACH(entry, list, &g_urpc_keepalive_mgmt.reachable_list) {
+        // 检查是否超时
+        if (current_time - entry->timestamp > check_time) {
+            // 超时 → 回调通知
+            keepalive_callback(URPC_KEEPALIVE_FAILED, info);
+            // 延迟释放
+            entry->timer = urpc_timer_start(delay_release_time, ...);
+        } else {
+            // 未超时 → 更新 timer
+            urpc_timer_start(entry->timer, check_time, urpc_keepalive_check, ...);
+        }
+    }
+}</code></pre>
+
+<h3 id="ka-msg">保活消息格式</h3>
+<p>保活消息复用 URPC REQ 头格式，使用专用 function ID：</p>
+<pre><code>// protocol.h:
+#define URPC_KEEPALIVE_FUNCTION_ID  (0x002001000005)
+#define URPC_KEEPALIVE_HDR_SIZE     (sizeof(urpc_req_head_t) + sizeof(urpc_keepalive_head_t))
+
+// keepalive_head 结构：
+typedef struct urpc_keepalive_head {
+    uint8_t version : 4;
+    uint8_t is_rsp : 1;          // 是否为响应
+    uint8_t status;              // 处理结果
+    uint16_t l_qid;              // 本地队列 ID
+    uint32_t server_channel : 24;
+    uint32_t rsvd[9];            // 最后 28B 用于加密头
+} urpc_keepalive_head_t;</code></pre>
+
+<hr>
+<h2 id="deepdive-control-plane">Deep Dive 7: 控制面 IP 传输层</h2>
+<p>URPC 控制面使用 TCP/IP 连接传输控制消息（attach/detach/keepalive 等）。</p>
+
+<h3 id="cp-transport">传输层架构</h3>
+<pre><code>// transport.c: 控制面 IP 传输
+//   ├─ Server 端：监听 TCP 端口 → 接受连接 → SSL 握手 → IO 事件处理
+//   └─ Client 端：发起 TCP 连接 → SSL 握手 → 发送控制消息
+
+// 关键数据结构：
+urpc_client_connect_hamp    // Client 连接 hash table（key: server_inner）
+urpc_server_accept_manager  // Server 连接管理
+server_resource_hamp        // Server 资源 hash table（key: client_key）</code></pre>
+
+<h3 id="cp-ssl">SSL 握手流程</h3>
+<pre><code>// transport.c: client_do_ssl_handshake()
+//   1. crypto_ssl_init(sockfd, false)  // 创建 SSL 对象
+//   2. crypto_ssl_connect(ssl, &err)    // 发起连接
+//   3. 注册 epoll 事件：client_on_ssl_handshake()
+//   4. 握手完成 → client_on_io_event_process()
+
+// transport.c: server_do_ssl_handshake()
+//   1. crypto_ssl_init(sockfd, true)   // 创建 SSL 对象
+//   2. crypto_ssl_accept(ssl, &err)    // 接受连接
+//   3. 注册 epoll 事件：server_on_ssl_handshake()
+//   4. 握手完成 → server_on_io_event_process()</code></pre>
+
+<h3 id="cp-msg-proc">控制消息处理</h3>
+<pre><code>// transport.c: client_on_io_event_process()
+//   └─ SSL_read() 读取消息
+//   └─ 解析 urpc_ctl_head（version/opcode/channel/data_size）
+//   └─ urpc_ctrl_msg_process(msg_type, ctrl_msg)
+//       └─ 根据 opcode 分发：
+//           ├─ URPC_CTL_SESSION_UPDATE → 更新会话
+//           ├─ URPC_CTL_QUEUE_INFO_BIND → 绑定队列
+//           ├─ URPC_CTL_QUEUE_INFO_ADD → 添加队列
+//           └─ ...</code></pre>
+
+<hr>
+<h2 id="layer5">安全加密与扩展机制</h2>
+
+<h3 id="crypto-ssl">SSL/TLS 控制面加密</h3>
+<p>URPC 支持基于 OpenSSL 的控制面加密：</p>
+<ul>
+<li>通过 <code>urpc_ssl_config_set</code> 配置 SSL 参数（PSK 模式或证书模式）</li>
+<li>支持 TLS 1.2 / TLS 1.3</li>
+<li>可配置 cipher list 和 cipher suites</li>
+</ul>
+
+<h3 id="crypto-aes">数据面 AES-GCM 加密</h3>
+<pre><code>// crypto.c: 数据面加密上下文
+typedef struct urpc_cipher {
+    const EVP_CIPHER *cipher;          // AES-256-GCM
+    crypto_key_t crypto_key;           // 32B 密钥
+    uint32_t chid;                     // 通道 ID（IV 固定字段）
+    atomic_ullong counter;             // IV 计数器
+} urpc_cipher_t;
+
+// 加密流程：
+// crypto_encrypt_user_data(ctx, sge, sge_num, hdr_index, first_sge_offset)
+//   └─ EVP_CIPHER_CTX_init(ctx)
+//   └─ EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, key, iv)
+//   └─ EVP_EncryptUpdate() → 加密 SGE 数据
+//   └─ EVP_EncryptFinal_ex() → 完成加密
+//   └─ EVP_CIPHER_CTX_ctrl(EVP_CTRL_GCM_GET_TAG, 16, tag) → 获取认证标签</code></pre>
+
+<h3 id="ext-ops">扩展机制（Ext Ops）</h3>
+<p>URPC 提供 <code>ext_ops_t</code> 扩展接口，允许用户自定义：</p>
+<pre><code>// dp.h: ext_ops_t
+typedef struct ext_ops {
+    int (*rx_req_process)(ext_call_ctx_t *, req_ctx_t **, urpc_poll_msg_t *);
+    int (*tx_read_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+    int (*tx_read_err_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+    void (*ext_proto_fill_extra_info)(urpc_req_head_t *, queue_local_t *, queue_remote_t *);
+    bool (*timeout_create_process)(urpc_call_wr_t *, req_entry_t *);
+    int (*encrypt)(urpc_hdr_type_t, urpc_cipher_t *, urpc_sge_t *, uint32_t);
+    int (*decrypt)(urpc_hdr_type_t, urpc_cipher_t *, urpc_sge_t *, uint32_t);
+    int (*stream_send_process)(void *, uint32_t, uint32_t, uint32_t);
+    int (*rx_rsp_process)(ext_call_ctx_t *, urpc_poll_msg_t *);
+} ext_ops_t;</code></pre>
+
+<hr>
+<h2 id="summary-table">Summary Table: URPC 在 UB 上的增量功能总览</h2>
+
+<table>
+<thead><tr><th>层级</th><th>UB 原生能力</th><th>URPC/UMQ 增量功能</th><th>核心价值</th></tr></thead>
+<tbody>
+<tr><td><strong>传输模式</strong></td><td>单一 UB 原生 (64KB)</td><td>8 种传输模式（UB/UB_PLUS/IB/UCP/IPC/UBMM 等）</td><td>一套 API 覆盖跨节点、同节点、同进程全场景</td></tr>
+<tr><td><strong>大块传输</strong></td><td>64KB 最大消息</td><td>UB_PLUS 反向拉取扩展到 10MB</td><td>存储/训练大块数据零分片传输</td></tr>
+<tr><td><strong>流控</strong></td><td>无</td><td>基于 immediate 的窗口流控 + 统计查询</td><td>防止接收端溢出，支持大规模部署</td></tr>
+<tr><td><strong>内存管理</strong></td><td>单次 import</td><td>多内存池导入协议 + EID 拓扑管理</td><td>支持多 EID、多 segment 并发</td></tr>
+<tr><td><strong>RPC 协议</strong></td><td>无</td><td>REQ/ACK/RSP 状态机 + 三种参数传递</td><td>函数调用语义，引用传参零拷贝</td></tr>
+<tr><td><strong>连接管理</strong></td><td>无</td><td>Keepalive + 控制面协议 + Channel 抽象</td><td>生产级可靠性与可运维性</td></tr>
+<tr><td><strong>安全</strong></td><td>Token（可选）</td><td>SSL/TLS 控制面 + AES-GCM 数据面</td><td>端到端加密，多租户安全隔离</td></tr>
+<tr><td><strong>事件模型</strong></td><td>Async event</td><td>中断/轮询双模式 + Pro API 精细控制</td><td>适应延迟敏感与吞吐优先两种场景</td></tr>
+<tr><td><strong>DFX</strong></td><td>无</td><td>Perf 时延统计 + Stats 报文统计 + Flowctl 统计</td><td>可观测、可调试、可优化</td></tr>
+<tr><td><strong>扩展性</strong></td><td>固定流程</td><td>ext_ops 注册 + func_defined 自定义模块</td><td>适配 DataNet、存储等异构场景</td></tr>
+</tbody>
+</table>
+
+<hr>
+<h2 id="conclusion">Conclusion</h2>
+<p>URPC 在 UB 总线上构建了一套完整的"从硬件原语到函数调用语义"的技术栈。通过本次深度代码分析，我们揭示了以下关键洞察：</p>
+
+<ul>
+<li><strong>分层抽象</strong>：URMA → UMQ/URPC Framework → 公共 API，每层只关注本层职责，通过 ops 接口实现多态</li>
+<li><strong>带内控制</strong>：利用 immediate 数据编码流控、内存导入、反向拉取等控制协议，不占用数据通道</li>
+<li><strong>并发安全</strong>：tx_ctx 双次释放、req_entry hash+线性探测、读写锁分离等精细并发控制</li>
+<li><strong>用户可选</strong>：每一层增量功能都是可选的（feature flag），适应不同场景</li>
+<li><strong>生产级特性</strong>：Keepalive、DFX、SSL/TLS、300K 并发 Channel</li>
+</ul>
+
+<p>从架构视角看，URPC 的设计遵循了"分层抽象、带内控制、用户可选"的原则——既能以最小开销运行在延迟敏感的推理场景，也能以全功能模式运行在需要流控和加密的训练/存储场景。</p>
+
+<hr>
+<h2 id="detailed-docs">📄 详细分析文档（独立阅读）</h2>
+<p>以下文档将本报告的各个章节拆分为独立的 HTML 文件，方便单独阅读和分享。每个文档都包含完整的 Mermaid 可视化图表。</p>
+
+<table>
+<thead><tr><th>#</th><th>文档</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td><strong>01</strong></td><td><a href="docs/01-overview.html">总体架构概览</a></td><td>Thesis、分层架构图、数据流向、模块依赖图</td></tr>
+<tr><td><strong>02</strong></td><td><a href="docs/02-modules.html">核心模块分析</a></td><td>模块函数表、动态分发机制、数据结构</td></tr>
+<tr><td><strong>03</strong></td><td><a href="docs/03-rpc-flow.html">RPC 调用流 Deep Dive</a></td><td>完整 RPC 调用链、Client/Server 端代码路径</td></tr>
+<tr><td><strong>04</strong></td><td><a href="docs/04-queue-lifecycle.html">队列生命周期 Deep Dive</a></td><td>创建、绑定、状态转换、销毁</td></tr>
+<tr><td><strong>05</strong></td><td><a href="docs/05-flow-control.html">流控窗口 Deep Dive</a></td><td>流控状态机、Immediate 数据编码、窗口更新</td></tr>
+<tr><td><strong>06</strong></td><td><a href="docs/06-ubplus.html">UB_PLUS 反向拉取 Deep Dive</a></td><td>10MB 大块传输、反向拉取状态机</td></tr>
+<tr><td><strong>07</strong></td><td><a href="docs/07-mem-import.html">内存导入协议 Deep Dive</a></td><td>多内存池导入、EID 拓扑管理</td></tr>
+<tr><td><strong>08</strong></td><td><a href="docs/08-keepalive.html">Keepalive 保活 Deep Dive</a></td><td>定时器检查、保活消息格式</td></tr>
+<tr><td><strong>09</strong></td><td><a href="docs/09-control-plane.html">控制面 IP 传输 Deep Dive</a></td><td>TCP/IP 传输层、SSL 握手、控制消息</td></tr>
+<tr><td><strong>10</strong></td><td><a href="docs/10-security.html">安全加密与扩展</a></td><td>SSL/TLS、AES-GCM、Ext Ops</td></tr>
+</tbody>
+</table>
+
+<div class="key-callout">
+<p><strong>📌 导航说明</strong></p>
+<p>• 本页面是总览，包含完整的分析内容</p>
+<p>• <a href="docs/00-index.html">docs/00-index.html</a> 是详细文档的索引页</p>
+<p>• 每个独立文档底部有"← 返回索引"链接和前后文档导航</p>
+</div>
+
+<hr>
+<h2 id="references">References</h2>
+<ul>
+<li><strong>UMDK README</strong> — <code>umdk/README.md</code>、<code>umdk/README.ch.md</code></li>
+<li><strong>URPC Framework API</strong> — <code>umdk/src/urpc/include/framework/urpc_framework_api.h</code></li>
+<li><strong>URPC Framework Types</strong> — <code>umdk/src/urpc/include/framework/urpc_framework_types.h</code></li>
+<li><strong>UMQ API</strong> — <code>umdk/src/urpc/include/umq/umq_api.h</code></li>
+<li><strong>UMQ Types</strong> — <code>umdk/src/urpc/include/umq/umq_types.h</code></li>
+<li><strong>URPC Protocol</strong> — <code>umdk/src/urpc/framework/protocol/protocol.h</code></li>
+<li><strong>URPC Datapath</strong> — <code>umdk/src/urpc/framework/lib/datapath/dp.c</code>（2,094 行）</li>
+<li><strong>URPC Control Plane</strong> — <code>umdk/src/urpc/framework/lib/control/cp.c</code>（3,014 行）</li>
+<li><strong>Channel 管理</strong> — <code>umdk/src/urpc/framework/core/channel/channel.c</code>（1,471 行）</li>
+<li><strong>Queue Send/Recv</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/queue_send_recv.c</code>（1,533 行）</li>
+<li><strong>Jetty Provider</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/provider_ops_jetty.c</code></li>
+<li><strong>Jetty Public Func</strong> — <code>umdk/src/urpc/framework/core/queue/jetty/jetty_public_func.c</code>（1,533 行）</li>
+<li><strong>UMQ UB Core</strong> — <code>umdk/src/urpc/umq/umq_ub/core/private/umq_ub.c</code>（2,163 行）</li>
+<li><strong>UMQ UB Impl</strong> — <code>umdk/src/urpc/umq/umq_ub/core/umq_ub_impl.c</code>（1,485 行）</li>
+<li><strong>UMQ UB Flow Control</strong> — <code>umdk/src/urpc/umq/umq_ub/core/flow_control/umq_ub_flow_control.c</code></li>
+<li><strong>UMQ UB Imm Data</strong> — <code>umdk/src/urpc/umq/umq_ub/core/umq_ub_imm_data.h</code></li>
+<li><strong>Keepalive Task</strong> — <code>umdk/src/urpc/framework/lib/manager/keepalive_task.c</code>（922 行）</li>
+<li><strong>Keepalive Probe</strong> — <code>umdk/src/urpc/framework/lib/manager/keepalive_probe.c</code></li>
+<li><strong>Crypto</strong> — <code>umdk/src/urpc/framework/lib/control/crypto/crypto.c</code></li>
+<li><strong>Control Plane IP Transport</strong> — <code>umdk/src/urpc/framework/lib/control/ip/transport.c</code>（1,548 行）</li>
+<li><strong>UMDK 中文文档</strong> — <code>umdk/doc/ch/urpc/</code></li>
+</ul>
+
+    </div>
+  </article>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+  <div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+</div>
+
+</body>
+</html>

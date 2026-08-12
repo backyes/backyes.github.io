@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+
+<html lang="zh">
+<head>
+  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
+  <meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>04 队列生命周期 Deep Dive · URPC Architecture Analysis · backyes</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="shared.css" rel="stylesheet"/>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: "'Manrope', 'Segoe UI', sans-serif",
+        flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        sequence: {
+            mirrorActors: false
+        }
+    });
+});
+</script>
+</head>
+<body>
+
+<div class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-name"><a href="#">backyes</a></div>
+<div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+</div>
+</header>
+</div>
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a class="toc-h2" href="#queue-states">队列状态机</a></li>
+<li><a class="toc-h2" href="#queue-create">创建阶段</a></li>
+<li><a class="toc-h2" href="#queue-bind">绑定阶段</a></li>
+<li><a class="toc-h2" href="#queue-data">数据传输</a></li>
+<li><a class="toc-h2" href="#queue-flush">排空与销毁</a></li>
+<li><a class="toc-h2" href="#rx-buf-mgmt">RX Buffer 管理</a></li>
+</ul></div>
+</aside>
+<article class="article">
+<a class="back" href="03-rpc-flow.html">← 03 RPC 调用流</a>
+<h1>04 队列生命周期 Deep Dive</h1>
+<details class="notion-toc"><summary>Contents</summary>
+<ul>
+<li><a href="#队列状态机" class="toc-h2">队列状态机</a></li>
+<li><a href="#创建阶段" class="toc-h2">创建阶段</a></li>
+<li><a href="#绑定阶段" class="toc-h2">绑定阶段</a></li>
+<li><a href="#数据传输" class="toc-h2">数据传输</a></li>
+<li><a href="#排空与销毁" class="toc-h2">排空与销毁</a></li>
+<li><a href="#rx-buffer-管理" class="toc-h2">RX Buffer 管理</a></li>
+</ul>
+</details>
+
+<div class="meta"><span>📅 2026-08-12</span><div>
+<span class="ptag">Queue</span><span class="ptag">Lifecycle</span><span class="ptag">Jetty</span>
+</div></div>
+<div class="notion-page">
+<h2 id="queue-states">队列状态机</h2>
+<div class="mermaid">flowchart TB
+    N0[// queue.h: urpc_queue_status]
+    N1[QUEUE_STATUS_IDLE       // 空闲]
+    N0 --&gt; N1
+    N2[↓]
+    N1 --&gt; N2
+    N3[QUEUE_STATUS_RUNNING    // 正在导入资源]
+    N2 --&gt; N3
+    N4[↓]
+    N3 --&gt; N4
+    N5[QUEUE_STATUS_READY      // 就绪（可收发数据）]
+    N4 --&gt; N5
+    N6[↓]
+    N5 --&gt; N6
+    N7[QUEUE_STATUS_FAULT      // 故障（可恢复）]
+    N6 --&gt; N7
+    N8[↓]
+    N7 --&gt; N8
+    N9[QUEUE_STATUS_ERR        // 错误（不可恢复）]
+    N8 --&gt; N9</div>
+<hr/>
+<h2 id="queue-create">创建阶段</h2>
+<div class="mermaid">flowchart TB
+        N0[queue_create_option_t *option]
+        N1[1, sizeof(send_recv_queue_local_t]
+        N2[provider, cfg_get, cfg, QUEUE_TRANS_MODE_JETTY]
+        N3[provider, send_recv_local_q, cfg, qid]
+        N4[中断模式]
+        N5[send_recv_local_q, provider, ops, flag, qid]</div>
+<hr/>
+<h2 id="queue-bind">绑定阶段</h2>
+<pre><code>// queue_send_recv.c: send_recv_bind_queue()
+int send_recv_bind_queue(queue_t *l_queue, queue_t *r_queue) {
+    // 1. 导入远端 jetty
+    imported_queue-&gt;tjetty = urma_import_jetty(urma_ctx, &amp;rjetty, &amp;token);
+
+    // 2. 绑定 jetty（建立连接）
+    urma_bind_jetty(local_queue-&gt;jetty, imported_queue-&gt;tjetty);
+
+    // 3. 记录远端 jetty_id
+    local_queue-&gt;remote_jetty_id = imported_queue-&gt;tjetty-&gt;id;
+    local_queue-&gt;is_binded = TRUE;
+}</code></pre>
+<hr/>
+<h2 id="queue-data">数据传输</h2>
+<div class="mermaid">flowchart TB
+        N0[jetty, wr, &amp;bad_wr]
+        N1[jfs_jfc, ...]
+        N2[jfr_jfc, ...]</div>
+<hr/>
+<h2 id="queue-flush">排空与销毁</h2>
+<div class="mermaid">flowchart TB
+        N0[queue_t *l_queue]
+        N1[local]
+        N2[l_queue]
+        N3[local_q]</div>
+<hr/>
+<h2 id="rx-buf-mgmt">RX Buffer 管理</h2>
+<pre><code>// 接收缓冲区上下文
+typedef struct rx_buf_ctx {
+    urpc_list_t node;
+    umq_buf_t *buffer;
+} rx_buf_ctx_t;
+
+typedef struct rx_buf_ctx_list {
+    void *addr;                             // 分配的内存起始地址
+    urpc_list_t idle_rx_buf_ctx_list;       // 空闲列表
+    urpc_list_t used_rx_buf_ctx_list;       // 已用列表
+} rx_buf_ctx_list_t;
+
+// 预填充 RX buffer（bind 后）
+static int umq_ub_prefill_rx_buf(ub_queue_t *queue) {
+    do {
+        qbuf = umq_buf_alloc(queue-&gt;rx_buf_size, batch_count, 0, NULL);
+        umq_ub_post_rx_inner_impl(queue, qbuf, &amp;bad_buf);
+        require_rx_count -= cur_batch_count;
+    } while (require_rx_count &gt; 0);
+}</code></pre>
+</div>
+</article>
+</div>
+<div class="nav-prev-next" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<a href="03-rpc-flow.html">← 03 RPC 调用流</a>
+<a href="05-flow-control.html">05 流控窗口 →</a>
+</div>
+<footer class="footer-grid" style="max-width:1160px;margin:0 auto;padding:0 32px">
+<div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified · 基于 UMDK 开源代码分析</p></div>
+</footer>
+
+
+</body>
+</html>
