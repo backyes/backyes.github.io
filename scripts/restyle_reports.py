@@ -123,9 +123,9 @@ def restyle(file_path: Path) -> tuple:
 
     file_rel = os.path.relpath(file_path, REPO)
 
-    # --- Guard: exclude directory index pages (homepages with warm-paper styling) ---
-    # index.html at report root is a navigation homepage, not a report — keep its own styling
-    if file_rel.endswith("index.html") and file_rel.count(os.sep) <= 1:
+    # --- Guard: exclude ALL index.html (homepages / directory indexes) ---
+    # These are navigation pages with their own warm-paper styling, not reports
+    if file_rel.endswith("index.html"):
         return None, "skip: directory index homepage"
 
     # --- Guard: exclude scraped external pages ---
