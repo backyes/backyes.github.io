@@ -55,6 +55,7 @@ REPORT_DIRS = [
 # These reports have their own polished styling that should be preserved
 EXCLUDE_DIRS = [
     "umdk",
+    "deep-ep",
 ]
 
 # External CSS hosts — files with <link rel="stylesheet"> to these are scraped
