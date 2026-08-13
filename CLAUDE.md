@@ -144,6 +144,25 @@
 - `sync_reports.sh` 的 `PROJECTS` 数组中，entry 字段指向首页 `index.html` 而非具体报告
 - main `index.html` 的卡片和 `SEARCH_DB` 需同步更新链接
 
+### 风格保留规则
+- **restyle_reports.py** 会注入 `notion-style.css` 并包裹 `.notion-page`，覆盖原始暖纸色样式
+- **EXCLUDE_DIRS** 列表中的目录完全跳过 restyle（保留源文件原始风格）
+- **index.html** 文件全部跳过 restyle（无论层级）
+- 如果报告源文件已有润色好的暖纸色样式，应将其目录加入 `EXCLUDE_DIRS`
+
+### 发布流程最佳实践
+1. **复用源文件**: 直接使用源 `index.html` 作为首页，不重写内容
+2. **仅增加导航**: 在源文件 topbar 中添加主站导航链接
+3. **相对路径计算**: 源文件在 `umdk/analysis/index.html`，到站点根需 `../../`
+4. **同步后验证**: rsync 后检查 MD5 确保源文件正确同步到目标
+5. **restyle 排除**: 有自定义样式的报告目录必须加入 `EXCLUDE_DIRS`
+
+### 常见陷阱
+- **build_site.py 覆盖手动修改**: 每次构建从 REPORTS 数组重新生成 index.html，必须改 REPORTS 而非手动编辑 index.html
+- **rsync --delete 删除自定义文件**: 源目录没有 index.html 时会被删除 → 将 index.html 放入源目录
+- **rsync 时间戳跳过**: 目标文件时间戳比源文件新时会跳过 → 删除目标文件或强制 rsync
+- **git pull 恢复旧文件**: sync_reports.sh 先 git pull 会恢复刚删除的文件 → 手动 rsync 后直接提交
+
 ---
 
 ## 维护命令
