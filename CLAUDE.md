@@ -137,18 +137,33 @@
 6. **链接汇总**: 所有报告和外部资源链接
 
 ### 参考样板
-- `posts/deepep-dualpipe-synchronization-parallelization.html` — 暖纸色学术风格样板
-- `umdk/index.html` — Survey by AI 多报告合并首页样板
+- `umdk_research/analysis/index.html` — **首页标准**（topbar + hero + stats + 报告卡片 + 章节表 + 阅读路径）
+- `umdk_research/analysis/cam_v2/CAM深度分析报告_v2.html` — **子页面标准**（shared.css + article-layout + toc-sidebar）
+- `vllm_research/vllm_analysis/index.html` — 首页参考（章节总览表格 + 推荐阅读路径）
+
+### 首页结构标准（参照 UMDK）
+1. **Topbar** — brand + `← backyes` / `Posts` / `Survey` / `报告` 导航
+2. **Hero** — 标题 + 描述 + 统计数据卡片（章节数/页数/深度）
+3. **子报告卡片网格** — 每张卡片含标题、描述、元信息、CTA 链接
+4. **章节总览表格** — 从主报告提取的 h2/h3 列表（§ / 章 / 核心）
+5. **推荐阅读路径** — 新手/架构师/追代码 等路径
+
+### 子页面结构标准（参照 UMDK）
+1. 使用 `<link rel="stylesheet" href="shared.css">`（不内联 style）
+2. `article-layout` 网格（TOC 侧边栏 + 主文章区）
+3. `toc-sidebar` 自动生成目录（从 h1/h2/h3 提取）
+4. `article-body` 使用 Libre Baskerville serif 字体
 
 ### 同步配置
 - `sync_reports.sh` 的 `PROJECTS` 数组中，entry 字段指向首页 `index.html` 而非具体报告
 - main `index.html` 的卡片和 `SEARCH_DB` 需同步更新链接
 
 ### 风格保留规则
-- **restyle_reports.py** 会注入 `notion-style.css` 并包裹 `.notion-page`，覆盖原始暖纸色样式
-- **EXCLUDE_DIRS** 列表中的目录完全跳过 restyle（保留源文件原始风格）
-- **index.html** 文件全部跳过 restyle（无论层级）
-- 如果报告源文件已有润色好的暖纸色样式，应将其目录加入 `EXCLUDE_DIRS`
+- **Notion 风格已完全停用** - restyle_reports.py 不再执行任何 restyle 操作
+- 所有报告统一使用暖纸色风格（Libre Baskerville + Manrope + 墨绿主题）
+- 子页面使用 `shared.css`（外部样式表），不内联 style
+- `shared.css` 包含完整的暖纸色 CSS 变量系统
+- 首页使用内联 `<style>`（与子页面 shared.css 相同的 CSS 变量）
 
 ### 发布流程最佳实践
 1. **复用源文件**: 直接使用源 `index.html` 作为首页，不重写内容
