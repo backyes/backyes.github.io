@@ -160,6 +160,12 @@
 5. **restyle 排除**: 有自定义样式的报告目录必须加入 `EXCLUDE_DIRS`
 6. **入口更新**: `sync_reports.sh` + `build_site.py` 的 entry 改为 `index.html`
 
+### Latest survey 自动刷新
+- `build_site.py` 的 `gen_hero_aside()` 按 `published_at` 日期选最新报告
+- 每次发布新报告时，在 REPORTS 数组中添加 `"published_at":"YYYY-MM-DD"` 字段
+- 最新报告会自动显示在首页 "Latest survey" 位置
+- 无 `published_at` 的报告不参与比较（向后兼容）
+
 ### 常见陷阱
 - **build_site.py 覆盖手动修改**: 每次构建从 REPORTS 数组重新生成 index.html，必须改 REPORTS 而非手动编辑 index.html
 - **rsync --delete 删除自定义文件**: 源目录没有 index.html 时会被删除 → 将 index.html 放入源目录
