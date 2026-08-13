@@ -51,6 +51,12 @@ REPORT_DIRS = [
     "vllm_research",
 ]
 
+# Directories to completely exclude from restyling (keep original warm-paper styling)
+# These reports have their own polished styling that should be preserved
+EXCLUDE_DIRS = [
+    "umdk",
+]
+
 # External CSS hosts — files with <link rel="stylesheet"> to these are scraped
 # NOTE: only match actual stylesheet links, NOT regular <a> content links
 EXCLUDE_HOSTS = r"arxiv\.org|githubassets\.com|vllm\.ai"
@@ -218,6 +224,9 @@ def discover_files() -> list:
     """Return list of all HTML files in report directories."""
     files = []
     for d in REPORT_DIRS:
+        # Skip excluded directories (keep original styling)
+        if d in EXCLUDE_DIRS:
+            continue
         base = REPO / d
         if not base.exists():
             continue
