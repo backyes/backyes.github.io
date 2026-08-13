@@ -23,7 +23,7 @@ REPORTS = [
      "desc":"AMD Advancing AI 2026 全栈深度调研 · EPYC Venice (Zen 6/6c, 256 核) / MI455X (CDNA 4, 2.61 PFLOPS FP8) / Helios 机架 / Ryzen AI Gorgon · 芯片 + 集群 + 路线图",
      "cat":"chip","priority":"p0",
      "tags":["AMD","EPYC","Venice","MI455X","CDNA","Helios","Zen6","RyzenAI","Gorgon","路线图"]},
-    {"dst":"umdk","entry":"index.html","visual":"UMDK",
+    {"dst":"umdk","entry":"analysis/index.html","visual":"UMDK",
      "title":"UMDK 深度分析文档索引",
      "desc":"3 份主报告 + 16 篇 CAM Agent 深挖 + 10 篇 URPC 专题文档 · CAM 通信加速库 v2 (8章) / URPC 统一远程过程调用 (11篇) / CAM v1 · 21K+ 分析行数",
      "cat":"chip","priority":"p0",
