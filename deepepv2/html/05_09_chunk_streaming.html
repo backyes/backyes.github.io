@@ -1,66 +1,67 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <link rel="stylesheet" href="../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chunk Streaming 概念在 DeepGEMM Mega MoE 中的映射分析</title>
+<style>
 
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
 <script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 </script>
 </head>
 <body>
-
-<div class="notion-page">
+<div class="container">
 <h1 id="chunk-streaming-deepgemm-mega-moe">Chunk Streaming 概念在 DeepGEMM Mega MoE 中的映射分析</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#1-核心结论摘要" class="toc-h2">1. 核心结论摘要</a></li>
-<li><a href="#2-deepep-的-chunk-streaming-模型回顾" class="toc-h2">2. DeepEP 的 Chunk Streaming 模型回顾</a></li>
-<li><a href="#21-核心概念" class="toc-h3">2.1 核心概念</a></li>
-<li><a href="#22-为什么需要-chunk" class="toc-h3">2.2 为什么需要 Chunk？</a></li>
-<li><a href="#3-mega-moe-的通信模型" class="toc-h2">3. Mega MoE 的通信模型</a></li>
-<li><a href="#31-symmetric-memory-消除-chunk-需求的基石" class="toc-h3">3.1 Symmetric Memory: 消除 Chunk 需求的基石</a></li>
-<li><a href="#32-token-级直接拉取-token-level-pull" class="toc-h3">3.2 Token 级直接拉取 (Token-Level Pull)</a></li>
-<li><a href="#4-调度粒度-vs-通信粒度" class="toc-h2">4. 调度粒度 vs 通信粒度</a></li>
-<li><a href="#41-deepep-的分离模型" class="toc-h3">4.1 DeepEP 的分离模型</a></li>
-<li><a href="#42-mega-moe-的统一模型" class="toc-h3">4.2 Mega MoE 的统一模型</a></li>
-<li><a href="#5-可变-token-数处理" class="toc-h2">5. 可变 Token 数处理</a></li>
-<li><a href="#51-每个-expert-的-token-数动态变化" class="toc-h3">5.1 每个 Expert 的 Token 数动态变化</a></li>
-<li><a href="#52-调度器按-expert-分配-block" class="toc-h3">5.2 调度器按 Expert 分配 Block</a></li>
-<li><a href="#53-有效-m-维度处理-非对齐-token-数" class="toc-h3">5.3 有效 M 维度处理 (非对齐 Token 数)</a></li>
-<li><a href="#6-调度单元-scheduling-unit" class="toc-h2">6. 调度单元 (Scheduling Unit)</a></li>
-<li><a href="#61-mega-moe-的三级调度" class="toc-h3">6.1 Mega MoE 的三级调度</a></li>
-<li><a href="#62-调度器状态机" class="toc-h3">6.2 调度器状态机</a></li>
-<li><a href="#7-flow-through-without-waiting-流式行为" class="toc-h2">7. "Flow Through Without Waiting" 流式行为</a></li>
-<li><a href="#71-deepep-的-fifo-流式" class="toc-h3">7.1 DeepEP 的 FIFO 流式</a></li>
-<li><a href="#72-mega-moe-的-arrival-counter-流式" class="toc-h3">7.2 Mega MoE 的 Arrival Counter 流式</a></li>
-<li><a href="#73-l1--l2-的流式衔接" class="toc-h3">7.3 L1 → L2 的流式衔接</a></li>
-<li><a href="#8-combine-阶段的-chunk-概念" class="toc-h2">8. Combine 阶段的 Chunk 概念</a></li>
-<li><a href="#81-mega-moe-中唯一的-chunk" class="toc-h3">8.1 Mega MoE 中唯一的 "Chunk"</a></li>
-<li><a href="#82-combine-的-token-级处理" class="toc-h3">8.2 Combine 的 Token 级处理</a></li>
-<li><a href="#9-架构对比图" class="toc-h2">9. 架构对比图</a></li>
-<li><a href="#91-deepep-chunk-streaming-架构" class="toc-h3">9.1 DeepEP Chunk Streaming 架构</a></li>
-<li><a href="#92-mega-moe-symmetric-memory-架构" class="toc-h3">9.2 Mega MoE Symmetric Memory 架构</a></li>
-<li><a href="#10-关键问题回答" class="toc-h2">10. 关键问题回答</a></li>
-<li><a href="#q1-mega-moe-是否使用-chunking代码中是否有-chunk-概念" class="toc-h3">Q1: Mega MoE 是否使用 Chunking？代码中是否有 "chunk" 概念？</a></li>
-<li><a href="#q2-内核如何处理每个-expert-的可变-token-数" class="toc-h3">Q2: 内核如何处理每个 Expert 的可变 Token 数？</a></li>
-<li><a href="#q3-是否存在-调度粒度-vs-通信粒度-的区分" class="toc-h3">Q3: 是否存在 "调度粒度" vs "通信粒度" 的区分？</a></li>
-<li><a href="#q4-内核如何处理-token--逐个还是分批分块" class="toc-h3">Q4: 内核如何处理 Token — 逐个还是分批/分块？</a></li>
-<li><a href="#q5-symmetric-memory-是否消除了对-chunking-的需求" class="toc-h3">Q5: Symmetric Memory 是否消除了对 Chunking 的需求？</a></li>
-<li><a href="#q6-mega-moe-的-调度单元-是什么" class="toc-h3">Q6: Mega MoE 的 "调度单元" 是什么？</a></li>
-<li><a href="#q7-内核如何处理-flow-through-without-waiting-流式行为" class="toc-h3">Q7: 内核如何处理 "flow through without waiting" 流式行为？</a></li>
-<li><a href="#11-设计哲学对比" class="toc-h2">11. 设计哲学对比</a></li>
-<li><a href="#111-deepep-通信优化范式" class="toc-h3">11.1 DeepEP: 通信优化范式</a></li>
-<li><a href="#112-mega-moe-计算-通信融合范式" class="toc-h3">11.2 Mega MoE: 计算-通信融合范式</a></li>
-<li><a href="#113-演进路径" class="toc-h3">11.3 演进路径</a></li>
-<li><a href="#12-代码引用索引" class="toc-h2">12. 代码引用索引</a></li>
-<li><a href="#13-总结" class="toc-h2">13. 总结</a></li>
-</ul>
-</details>
-
 <blockquote>
 <p>分析日期: 2026-07-30<br />
 分析目标: 对比 DeepEP 博客中描述的 "Chunk Streaming" 概念与 Mega MoE 实际实现的差异<br />
@@ -678,8 +679,7 @@ Mega MoE:       Token → Symmetric Memory → Token → Compute
 </li>
 </ol>
 <p><strong>核心洞察</strong>: Mega MoE 的设计哲学是 <strong>"让通信适配计算"</strong> 而非 <strong>"让计算适配通信"</strong>。Symmetric Memory 是这一哲学的硬件基础，它使通信粒度可以细化为 Token 级，从而消除了 DeepEP 中 Chunk 聚合的必要性。</p>
-<nav class="notion-nav"><a href="index.html">← 返回索引</a></nav>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
 </div>
-
 </body>
 </html>

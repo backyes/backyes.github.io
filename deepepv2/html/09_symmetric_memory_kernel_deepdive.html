@@ -1,61 +1,67 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <link rel="stylesheet" href="../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>对称内存访问模式内核级深度分析</title>
+<style>
 
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
 <script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 </script>
 </head>
 <body>
-
-<div class="notion-page">
+<div class="container">
 <h1 id="_1">对称内存访问模式内核级深度分析</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#目录" class="toc-h2">目录</a></li>
-<li><a href="#1-核心概念与术语" class="toc-h2">1. 核心概念与术语</a></li>
-<li><a href="#2-deepep-内核对称内存访问模式" class="toc-h2">2. DeepEP 内核对称内存访问模式</a></li>
-<li><a href="#21-get_sym_ptr--对称指针翻译的核心" class="toc-h3">2.1 get_sym_ptr() — 对称指针翻译的核心</a></li>
-<li><a href="#22-is_nvlink_accessible--路径选择的关键" class="toc-h3">2.2 is_nvlink_accessible() — 路径选择的关键</a></li>
-<li><a href="#23-dispatchcuh--dispatch-warps-的远端写入" class="toc-h3">2.3 dispatch.cuh — Dispatch Warps 的远端写入</a></li>
-<li><a href="#24-combinecuh--combine-warps-的远端回写" class="toc-h3">2.4 combine.cuh — Combine Warps 的远端回写</a></li>
-<li><a href="#25-hybrid_dispatchcuh--三阶段流水线的对称内存访问" class="toc-h3">2.5 hybrid_dispatch.cuh — 三阶段流水线的对称内存访问</a></li>
-<li><a href="#26-put_value--远端对称指针的原子写" class="toc-h3">2.6 put_value — 远端对称指针的原子写</a></li>
-<li><a href="#27-red_add_rel--远端对称指针的归约加" class="toc-h3">2.7 red_add_rel — 远端对称指针的归约加</a></li>
-<li><a href="#3-deepgemm-内核对称内存访问模式" class="toc-h2">3. DeepGEMM 内核对称内存访问模式</a></li>
-<li><a href="#31-sym_buffermap--极简的偏移映射" class="toc-h3">3.1 sym_buffer.map() — 极简的偏移映射</a></li>
-<li><a href="#32-dispatch-warps--从远端拉取-token-数据" class="toc-h3">3.2 Dispatch Warps — 从远端拉取 token 数据</a></li>
-<li><a href="#33-epilogue-warps--计算结果回写到远端" class="toc-h3">3.3 Epilogue Warps — 计算结果回写到远端</a></li>
-<li><a href="#34-nvlink_barrier--跨-rank-同步屏障" class="toc-h3">3.4 nvlink_barrier — 跨 rank 同步屏障</a></li>
-<li><a href="#35-full_barriers--empty_barriers--生产者-消费者协议" class="toc-h3">3.5 full_barriers / empty_barriers — 生产者-消费者协议</a></li>
-<li><a href="#4-tma-vs-ibgda-对比分析" class="toc-h2">4. TMA vs IBGDA 对比分析</a></li>
-<li><a href="#41-deepep-的双路径设计" class="toc-h3">4.1 DeepEP 的双路径设计</a></li>
-<li><a href="#42-deepgemm-的纯-tma-设计" class="toc-h3">4.2 DeepGEMM 的纯 TMA 设计</a></li>
-<li><a href="#43-核心对比" class="toc-h3">4.3 核心对比</a></li>
-<li><a href="#44-为什么-deepgemm-可以纯-tma" class="toc-h3">4.4 为什么 DeepGEMM 可以纯 TMA？</a></li>
-<li><a href="#5-指针映射机制深度对比" class="toc-h2">5. 指针映射机制深度对比</a></li>
-<li><a href="#51-deepep-get_sym_ptr-的地址计算" class="toc-h3">5.1 DeepEP: get_sym_ptr 的地址计算</a></li>
-<li><a href="#52-deepgemm-sym_buffermap-的地址计算" class="toc-h3">5.2 DeepGEMM: sym_buffer.map 的地址计算</a></li>
-<li><a href="#53-运行时开销对比" class="toc-h3">5.3 运行时开销对比</a></li>
-<li><a href="#6-同步原语对比分析" class="toc-h2">6. 同步原语对比分析</a></li>
-<li><a href="#61-deepep-同步层次" class="toc-h3">6.1 DeepEP 同步层次</a></li>
-<li><a href="#62-deepgemm-同步层次" class="toc-h3">6.2 DeepGEMM 同步层次</a></li>
-<li><a href="#63-同步原语对照表" class="toc-h3">6.3 同步原语对照表</a></li>
-<li><a href="#64-关键差异" class="toc-h3">6.4 关键差异</a></li>
-<li><a href="#7-总结对比表" class="toc-h2">7. 总结对比表</a></li>
-<li><a href="#71-对称内存访问模式总览" class="toc-h3">7.1 对称内存访问模式总览</a></li>
-<li><a href="#72-代码路径长度对比" class="toc-h3">7.2 代码路径长度对比</a></li>
-<li><a href="#73-设计哲学差异" class="toc-h3">7.3 设计哲学差异</a></li>
-<li><a href="#74-核心洞察" class="toc-h3">7.4 核心洞察</a></li>
-<li><a href="#附录关键文件索引" class="toc-h2">附录：关键文件索引</a></li>
-</ul>
-</details>
-
 <blockquote>
 <p><strong>分析范围</strong>: DeepEP (NCCL Gin + IBGDA + TMA) vs DeepGEMM (纯 TMA + NVLink) 的 symmetric memory 访问模式</p>
 <p><strong>代码版本</strong>: DeepEP main 分支, DeepGEMM main 分支</p>
@@ -1262,8 +1268,7 @@ CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">voi
 </tr>
 </tbody>
 </table>
-<nav class="notion-nav"><a href="index.html">← 返回索引</a></nav>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
 </div>
-
 </body>
 </html>

@@ -1,45 +1,78 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
-  <link rel="stylesheet" href="../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PD 分离 D 端内存瓶颈 — 社区技术调研报告</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PD 分离 D 端内存瓶颈 — 社区技术调研报告 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #f6f3ec;
+  --paper-light: #fcfaf6;
+  --surface: rgba(255,255,255,0.86);
+  --surface-strong: #ffffff;
+  --line: rgba(17,17,17,0.12);
+  --ink: #111111;
+  --ink-soft: #4d4d4d;
+  --ink-mute: #6a6a6a;
+  --green: #0f5d44;
+  --green-deep: #0a3f30;
+  --green-soft: rgba(15,93,68,0.10);
+  --green-line: rgba(15,93,68,0.25);
+  --gold: #bf8b2c;
+  --gold-soft: rgba(191,139,44,0.14);
+  --blue: #163e7a;
+  --red: #c0392b;
+  --font-serif: 'Libre Baskerville', Georgia, serif;
+  --font-sans: 'Manrope', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --shadow: 0 24px 60px rgba(17,17,17,0.10);
+  --shadow-sm: 0 2px 8px rgba(17,17,17,0.06);
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --content-width: 1200px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  font-family:var(--font-sans);
+  font-size:16px;line-height:1.7;
+  color:var(--ink);
+  background:
+    radial-gradient(1200px 600px at 80% -5%, rgba(191,139,44,.08), transparent 60%),
+    radial-gradient(1000px 500px at 0% 10%, rgba(15,93,68,.07), transparent 55%),
+    linear-gradient(180deg, #fcfaf6 0%, var(--paper) 42%, #ffffff 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3,h4{font-family:var(--font-serif);color:var(--ink);margin:1.5em 0 .5em}
+h1{font-size:2rem;border-bottom:2px solid var(--green);padding-bottom:12px}
+h2{font-size:1.5rem;border-bottom:1px solid var(--line);padding-bottom:8px}
+h3{font-size:1.25rem;border-left:3px solid var(--green);padding-left:12px}
+p{line-height:1.8;margin:.8em 0}
+code,pre{font-family:var(--font-mono);font-size:.88em}
+code{background:var(--green-soft);padding:2px 6px;border-radius:4px}
+pre{background:var(--surface-strong);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px;overflow-x:auto}
+blockquote{border-left:3px solid var(--green);background:var(--green-soft);padding:12px 16px;margin:1em 0;font-style:italic}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9rem}
+th{background:var(--green-soft);color:var(--green-deep);font-weight:600;padding:10px 14px;border:1px solid var(--line)}
+td{padding:10px 14px;border:1px solid var(--line)}
+tr:nth-child(even){background:rgba(15,93,68,.03)}
+tr:hover{background:var(--green-soft)}
+hr{border:none;border-top:1px solid var(--line);margin:2em 0}
+img{max-width:100%;border-radius:var(--radius-sm)}
+
+</style>
 </head>
 <body>
-<div class="notion-page">
-
-
+<div class="page-shell" style="max-width:var(--content-width);margin:0 auto;padding:16px 28px 80px">
 <h1>PD 分离 D 端（Decode）内存瓶颈<br><span style="font-size:.7em;color:#8b949e">社区论坛 / GitHub Issue / 博客评论区 技术调研</span></h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#1-瓶颈定性decode-kv-bound-成为独立瓶颈类" class="toc-h2">1. 瓶颈定性：Decode-KV-bound 成为独立瓶颈类</a></li>
-<li><a href="#11-vllm-rfc-43470--首次正式定义-decode-kv-bound" class="toc-h3">1.1 vLLM RFC #43470 — 首次正式定义 "Decode-KV-bound"</a></li>
-<li><a href="#12-google-ai-overview-双重确认" class="toc-h3">1.2 Google AI Overview 双重确认</a></li>
-<li><a href="#2-实际部署数据d-端内存不够的具体案例" class="toc-h2">2. 实际部署数据：D 端内存不够的具体案例</a></li>
-<li><a href="#21-sglang-24523--pd-部署-input-length-被硬限-18432-toke" class="toc-h3">2.1 SGLang #24523 — PD 部署 input length 被硬限 18,432 Tokens（H200 140GB）</a></li>
-<li><a href="#32-sglang-30010--高并发-batch-下-decode-死锁gb300--kimi-" class="toc-h3">3.2 SGLang #30010 — 高并发 batch 下 Decode 死锁（GB300 / Kimi-K2.5-NVFP4）</a></li>
-<li><a href="#23-sglang-31252--hicache-draft-kv-pool-backup-在-pd" class="toc-h3">2.3 SGLang #31252 — HiCache draft KV pool backup 在 PD 模式 crash</a></li>
-<li><a href="#24-sglang-23022--多模态--dp--1--pd-共享内存过早释放" class="toc-h3">2.4 SGLang #23022 — 多模态 + DP > 1 + PD 共享内存过早释放</a></li>
-<li><a href="#3-学术前沿异构-pd-设计空间arxiv-260629708-2026-06-30" class="toc-h2">3. 学术前沿：异构 PD 设计空间（arXiv 2606.29708, 2026-06-30）</a></li>
-<li><a href="#四设计轴" class="toc-h3">四设计轴</a></li>
-<li><a href="#三边界决策与-d-端内存直接相关" class="toc-h3">三边界决策（与 D 端内存直接相关）</a></li>
-<li><a href="#4-工业实践d-端-kv-pool-规划与容量扩展" class="toc-h2">4. 工业实践：D 端 KV pool 规划与容量扩展</a></li>
-<li><a href="#41-vllm-单节点-pd--mori-io-解决-itl-尖峰2026-04-07-博客" class="toc-h3">4.1 vLLM 单节点 PD — MORI-IO 解决 ITL 尖峰（2026-04-07 博客）</a></li>
-<li><a href="#42-vllm--mooncake--分布式-kv-cache-pool-via-multiconn" class="toc-h3">4.2 vLLM × Mooncake — 分布式 KV cache pool via MultiConnector（2026-05-06）</a></li>
-<li><a href="#43-vllm-46107--moriio-异构-tpdp-并行mi300x-实测数据" class="toc-h3">4.3 vLLM #46107 — MoRIIO 异构 TP↔DP 并行（MI300X 实测数据）</a></li>
-<li><a href="#44-sglang-uni-pd--memory-semantic-pd-范式35263-2025-" class="toc-h3">4.4 SGLang Uni-PD — Memory-semantic PD 范式（#35263, 2025-12-09）</a></li>
-<li><a href="#5-kv-pool-sizing-方法论" class="toc-h2">5. KV pool sizing 方法论</a></li>
-<li><a href="#6-其他关键-issue-索引" class="toc-h2">6. 其他关键 Issue 索引</a></li>
-<li><a href="#7-社区讨论sglang-discussions" class="toc-h2">7. 社区讨论（SGLang Discussions）</a></li>
-<li><a href="#8-研判总结模型设计者视角" class="toc-h2">8. 研判总结（模型设计者视角）</a></li>
-<li><a href="#附录-a全部抓取来源-url" class="toc-h2">附录 A：全部抓取来源 URL</a></li>
-<li><a href="#主搜索6-项" class="toc-h3">主搜索（6 项）</a></li>
-<li><a href="#深度-issue--博客8-项" class="toc-h3">深度 Issue / 博客（8 项）</a></li>
-<li><a href="#访问失败" class="toc-h3">访问失败</a></li>
-</ul>
-</details>
-
 
 <div class="meta">
   <span>📅 调研日期：2026-07-15</span>
@@ -284,7 +317,6 @@ DSv4 pool sizes: full=186368, swa=18432, c4=46592, c128=1456, c4_state=1152, c12
 <footer>
 报告生成：2026-07-15 by Claude (LongCat-2.0) · 本地存档目录：research/decode-memory-bottleneck/ · 原始抓取文件 18 个共 82 KB
 </footer>
-
 </div>
 </body>
 </html>

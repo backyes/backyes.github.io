@@ -1,90 +1,67 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <link rel="stylesheet" href="../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DeepEP V2 ElasticBuffer 架构深度分析</title>
+<style>
 
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
 <script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 </script>
 </head>
 <body>
-
-<div class="notion-page">
+<div class="container">
 <h1 id="deepep-v2-elasticbuffer">DeepEP V2 ElasticBuffer 架构深度分析</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#目录" class="toc-h2">目录</a></li>
-<li><a href="#1-fully-jit全即时编译" class="toc-h2">1. Fully JIT（全即时编译）</a></li>
-<li><a href="#11-设计哲学" class="toc-h3">1.1 设计哲学</a></li>
-<li><a href="#12-jit-流水线源码实证" class="toc-h3">1.2 JIT 流水线源码实证</a></li>
-<li><a href="#13-includeparser-递归-hashinclude_parserhpp" class="toc-h3">1.3 IncludeParser 递归 Hash（include_parser.hpp）</a></li>
-<li><a href="#14-jit-环境变量控制" class="toc-h3">1.4 JIT 环境变量控制</a></li>
-<li><a href="#2-nccl-gin-backend" class="toc-h2">2. NCCL Gin Backend</a></li>
-<li><a href="#21-gingpu-initiated-networking架构" class="toc-h3">2.1 Gin（GPU-Initiated Networking）架构</a></li>
-<li><a href="#22-ncclgin-handle-封装handlecuh" class="toc-h3">2.2 NCCLGin Handle 封装（handle.cuh）</a></li>
-<li><a href="#23-qp-映射策略commcuh56-86" class="toc-h3">2.3 QP 映射策略（comm.cuh:56-86）</a></li>
-<li><a href="#24-symmetric-memory-三层架构symmetrichpp" class="toc-h3">2.4 Symmetric Memory 三层架构（symmetric.hpp）</a></li>
-<li><a href="#25-gin-barrier-实现commcuh131-181" class="toc-h3">2.5 Gin Barrier 实现（comm.cuh:131-181）</a></li>
-<li><a href="#3-header-only-amp-lightweight" class="toc-h2">3. Header-only &amp; Lightweight</a></li>
-<li><a href="#31-header-only-设计" class="toc-h3">3.1 Header-only 设计</a></li>
-<li><a href="#32-编译期开关compiledcuh" class="toc-h3">3.2 编译期开关（compiled.cuh）</a></li>
-<li><a href="#33-轻量级-c-层" class="toc-h3">3.3 轻量级 C++ 层</a></li>
-<li><a href="#34-零拷贝-python-binding" class="toc-h3">3.4 零拷贝 Python Binding</a></li>
-<li><a href="#4-复用已有-nccl-communicator" class="toc-h2">4. 复用已有 NCCL Communicator</a></li>
-<li><a href="#41-python-层elasticpy301" class="toc-h3">4.1 Python 层（elastic.py:301）</a></li>
-<li><a href="#42-c-层ncclcu76" class="toc-h3">4.2 C++ 层（nccl.cu:76）</a></li>
-<li><a href="#43-domain-size-查询" class="toc-h3">4.3 Domain Size 查询</a></li>
-<li><a href="#5-epv2-架构总览" class="toc-h2">5. EPv2 架构总览</a></li>
-<li><a href="#51-统一-elasticbuffer-类" class="toc-h3">5.1 统一 ElasticBuffer 类</a></li>
-<li><a href="#52-内存布局" class="toc-h3">5.2 内存布局</a></li>
-<li><a href="#53-token-layoutlayoutcuh179-249" class="toc-h3">5.3 Token Layout（layout.cuh:179-249）</a></li>
-<li><a href="#6-统一-elasticbuffer-接口--新-gemm-layout" class="toc-h2">6. 统一 ElasticBuffer 接口 + 新 GEMM Layout</a></li>
-<li><a href="#61-统一-apielasticpy" class="toc-h3">6.1 统一 API（elastic.py）</a></li>
-<li><a href="#62-新-gemm-layout--tma-aligned-column-major-sf" class="toc-h3">6.2 新 GEMM Layout — TMA-aligned Column-major SF</a></li>
-<li><a href="#63-buffer-size-自动计算bufferhpp652-686" class="toc-h3">6.3 Buffer Size 自动计算（buffer.hpp:652-686）</a></li>
-<li><a href="#7-大规模-ep2048-支持" class="toc-h2">7. 大规模 EP2048 支持</a></li>
-<li><a href="#71-编译期常量layoutcuh" class="toc-h3">7.1 编译期常量（layout.cuh）</a></li>
-<li><a href="#72-运行时-ep-数无限制" class="toc-h3">7.2 运行时 EP 数无限制</a></li>
-<li><a href="#73-multi-plane-支持elasticpy279-282" class="toc-h3">7.3 Multi-plane 支持（elastic.py:279-282）</a></li>
-<li><a href="#74-large-buffer-va-space-扩展elasticpy284-298" class="toc-h3">7.4 Large Buffer VA Space 扩展（elastic.py:284-298）</a></li>
-<li><a href="#8-解析式-smqp-计算告别-auto-tuning" class="toc-h2">8. 解析式 SM/QP 计算（告别 Auto-tuning）</a></li>
-<li><a href="#81-sm-数计算elasticpy728-834" class="toc-h3">8.1 SM 数计算（elastic.py:728-834）</a></li>
-<li><a href="#82-qp-数计算elasticpy836-853" class="toc-h3">8.2 QP 数计算（elastic.py:836-853）</a></li>
-<li><a href="#83-自动-smqp-选择elasticpy926-929" class="toc-h3">8.3 自动 SM/QP 选择（elastic.py:926-929）</a></li>
-<li><a href="#9-hybrid-amp-direct-双模式并存" class="toc-h2">9. Hybrid &amp; Direct 双模式并存</a></li>
-<li><a href="#91-模式选择ncclcu117-125" class="toc-h3">9.1 模式选择（nccl.cu:117-125）</a></li>
-<li><a href="#92-kernel-分发dispatchhpp52-88" class="toc-h3">9.2 Kernel 分发（dispatch.hpp:52-88）</a></li>
-<li><a href="#93-hybrid-dispatch-架构hybrid_dispatchcuh" class="toc-h3">9.3 Hybrid Dispatch 架构（hybrid_dispatch.cuh）</a></li>
-<li><a href="#94-hybrid-combine-架构hybrid_combinecuh" class="toc-h3">9.4 Hybrid Combine 架构（hybrid_combine.cuh）</a></li>
-<li><a href="#10-v3-训练-sm-数从-244-6" class="toc-h2">10. V3 训练 SM 数从 24→4-6</a></li>
-<li><a href="#101-背景" class="toc-h3">10.1 背景</a></li>
-<li><a href="#102-v3-的-sm-优化" class="toc-h3">10.2 V3 的 SM 优化</a></li>
-<li><a href="#103-为什么可以降到-4-6-sms" class="toc-h3">10.3 为什么可以降到 4-6 SMs</a></li>
-<li><a href="#11-0-sm-engram-with-rdma" class="toc-h2">11. 0 SM Engram (with RDMA)</a></li>
-<li><a href="#111-engram-概念" class="toc-h3">11.1 Engram 概念</a></li>
-<li><a href="#112-0-sm-实现原理" class="toc-h3">11.2 0 SM 实现原理</a></li>
-<li><a href="#113-engram-fetch-kernelengram_fetchcuh" class="toc-h3">11.3 Engram Fetch Kernel（engram_fetch.cuh）</a></li>
-<li><a href="#114-engram-fetch-waitengram_fetch_waitcuh" class="toc-h3">11.4 Engram Fetch Wait（engram_fetch_wait.cuh）</a></li>
-<li><a href="#115-cpu-buffer-用于-engram-storagebufferhpp229-240" class="toc-h3">11.5 CPU Buffer 用于 Engram Storage（buffer.hpp:229-240）</a></li>
-<li><a href="#12-0-sm-pp-with-rdma" class="toc-h2">12. 0 SM PP (with RDMA)</a></li>
-<li><a href="#121-pp-sendrecv-api" class="toc-h3">12.1 PP Send/Recv API</a></li>
-<li><a href="#122-pp-实现pp_send_recvhpp" class="toc-h3">12.2 PP 实现（pp_send_recv.hpp）</a></li>
-<li><a href="#123-0-sm-的含义" class="toc-h3">12.3 0 SM 的含义</a></li>
-<li><a href="#124-pp-buffer-layoutbufferhpp327-337" class="toc-h3">12.4 PP Buffer Layout（buffer.hpp:327-337）</a></li>
-<li><a href="#13-0-sm-cp-copy-engine" class="toc-h2">13. 0 SM CP (Copy Engine)</a></li>
-<li><a href="#131-agrs--all-gather-reduce-scatter" class="toc-h3">13.1 AGRS — All-Gather Reduce-Scatter</a></li>
-<li><a href="#132-copy-engine-实现bufferhpp438-524" class="toc-h3">13.2 Copy Engine 实现（buffer.hpp:438-524）</a></li>
-<li><a href="#133-0-sm-的含义" class="toc-h3">13.3 0 SM 的含义</a></li>
-<li><a href="#134-batched-write-and-waitcuda_drivercu" class="toc-h3">13.4 Batched Write and Wait（cuda_driver.cu）</a></li>
-<li><a href="#总结deepep-v2-架构的-13-个设计维度" class="toc-h2">总结：DeepEP V2 架构的 13 个设计维度</a></li>
-<li><a href="#附录关键源码文件索引" class="toc-h2">附录：关键源码文件索引</a></li>
-</ul>
-</details>
-
 <blockquote>
 <p><strong>分析范围</strong>：DeepEP v2.1.0 ElasticBuffer 新架构的 13 个关键设计维度，细化到源码级别</p>
 <p><strong>核心源码文件</strong>：<br />
@@ -1135,8 +1112,7 @@ all_gather(<span style="color: #008000; font-weight: bold">const</span><span sty
 <blockquote>
 <p><strong>分析方法论</strong>：本报告基于源码实证，每个结论都标注了具体文件和行号。分析遵循"设计哲学 → 源码实现 → 关键代码片段 → 设计亮点"的结构，确保可追溯性。</p>
 </blockquote>
-<nav class="notion-nav"><a href="index.html">← 返回索引</a></nav>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
 </div>
-
 </body>
 </html>

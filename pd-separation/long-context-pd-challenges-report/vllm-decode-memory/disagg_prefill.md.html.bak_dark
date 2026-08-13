@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>disagg_prefill.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">disagg_prefill.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/disagg_prefill.md</span> <span class="src-tag">7750 chars</span></div>
+
+<h1>Disaggregated Prefilling (experimental)</h1>
+
+<p>This page introduces you to the disaggregated prefilling feature in vLLM.</p>
+
+<p>!!! note</p>
+<p>    This feature is experimental and subject to change.</p>
+
+<h2>Why disaggregated prefilling?</h2>
+
+<p>Two main reasons:</p>
+
+<p>- **Tuning time-to-first-token (TTFT) and inter-token-latency (ITL) separately**. Disaggregated prefilling put prefill and decode phase of LLM inference inside different vLLM instances. This gives you the flexibility to assign different parallel strategies (e.g. `tp` and `pp`) to tune TTFT without affecting ITL, or to tune ITL without affecting TTFT.</p>
+<p>- **Controlling tail ITL**. Without disaggregated prefilling, vLLM may insert some prefill jobs during the decoding of one request. This results in higher tail latency. Disaggregated prefilling helps you solve this issue and control tail ITL. Chunked prefill with a proper chunk size also can achieve the same goal, but in practice it&#x27;s hard to figure out the correct chunk size value. So disaggregated prefilling is a much more reliable way to control tail ITL.</p>
+
+<p>!!! note</p>
+<p>    Disaggregated prefill DOES NOT improve throughput.</p>
+
+<h2>Usage example</h2>
+
+<p>Now supports 9 types of connectors:</p>
+
+<p>- **ExampleConnector**: refer to [examples/disaggregated/example_connector/run.sh](../../examples/disaggregated/example_connector/run.sh) for the example usage of ExampleConnector disaggregated prefilling.</p>
+<p>- **LMCacheConnectorV1**: refer to [examples/disaggregated/lmcache/disagg_prefill_lmcache_v1/disagg_example_nixl.sh](../../examples/disaggregated/lmcache/disagg_prefill_lmcache_v1/disagg_example_nixl.sh) for the example usage of LMCacheConnectorV1 disaggregated prefilling which uses NIXL as the underlying KV transmission. LMCache also offers a multi-process (MP) mode via `LMCacheMPConnector`, where a standalone `lmcache server` holds the KV cache shared by one or more vLLM instances; see the [LMCache examples](../../examples/disaggregated/lmcache/README.md) and the [LMCache docs](https://docs.lmcache.ai) for setup.</p>
+<p>- **NixlConnector**: refer to [tests/v1/kv_connector/nixl_integration/run_accuracy_test.sh](../../tests/v1/kv_connector/nixl_integration/run_accuracy_test.sh) for the example usage of NixlConnector disaggregated prefilling which support fully async send/recv. For detailed usage guide, see [NixlConnector Usage Guide](nixl_connector_usage.md). For feature compatibility details, see [NixlConnector Compatibility Matrix](nixl_connector_compatibility.md). You may specify one or multiple NIXL transfer backends, such as:</p>
+
+<p>  ```bash</p>
+<p>  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;NixlConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;, &quot;kv_buffer_device&quot;:&quot;cuda&quot;, &quot;kv_connector_extra_config&quot;:{&quot;backends&quot;:[&quot;UCX&quot;, &quot;GDS&quot;]}}&#x27;</p>
+<p>  ```</p>
+
+<p>- **MooncakeConnector**: refer to [examples/disaggregated/mooncake_connector/run_mooncake_connector.sh](../../examples/disaggregated/mooncake_connector/run_mooncake_connector.sh) for the example usage of MooncakeConnector disaggregated prefilling. For detailed usage guide, see [MooncakeConnector Usage Guide](mooncake_connector_usage.md).</p>
+<p>- **MoRIIOConnector** (ROCm only): see [MoRI-IO Usage Guide](moriio_connector_usage.md) for example usage and detailed documentation.</p>
+<p>- **MultiConnector**: take advantage of the kv_connector_extra_config: dict[str, Any] already present in KVTransferConfig to stash all the connectors we want in an ordered list of kwargs.such as:</p>
+
+<p>  ```bash</p>
+<p>  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;MultiConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_extra_config&quot;:{&quot;connectors&quot;:[{&quot;kv_connector&quot;:&quot;NixlConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;},{&quot;kv_connector&quot;:&quot;ExampleConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_extra_config&quot;:{&quot;shared_storage_path&quot;:&quot;local_storage&quot;}}]}}&#x27;</p>
+<p>  ```</p>
+
+<p>- **OffloadingConnector**: enable offloading of KV data to CPU memory, customizing the CPU block size (in tokens) and total CPU memory bytes to allocate:</p>
+
+<p>  ```bash</p>
+<p>  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;OffloadingConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_extra_config&quot;:{&quot;block_size&quot;: 64, &quot;cpu_bytes_to_use&quot;: 1000000000}}&#x27;</p>
+<p>  ```</p>
+
+<p>  For multi-tier offloading (e.g., CPU + filesystem tier) and the full configuration reference, see the [KV Offloading Usage Guide](kv_offloading_usage.md).</p>
+
+<p>- **FlexKVConnectorV1**: refer to [examples/disaggregated/flexkv_connector/prefix_caching_flexkv.py](../../examples/disaggregated/flexkv_connector/prefix_caching_flexkv.py) for the example usage of FlexKVConnectorV1. FlexKV is a distributed KV Store and multi-level cache management system for ultra-large-scale LLM inference.</p>
+
+<p>  ```bash</p>
+<p>  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;FlexKVConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;}&#x27;</p>
+<p>  ```</p>
+
+<h2>Development</h2>
+
+<p>We implement disaggregated prefilling by running 2 vLLM instances. One for prefill (we call it prefill instance) and one for decode (we call it decode instance), and then use a connector to transfer the prefill KV caches and results from prefill instance to decode instance.</p>
+
+<p>All disaggregated prefilling implementation is under `vllm/distributed/kv_transfer`.</p>
+
+<p>Key abstractions for disaggregated prefilling:</p>
+
+<p>- **Connector**: Connector allows **kv consumer** to retrieve the KV caches of a batch of request from **kv producer**.</p>
+<p>- **LookupBuffer**: LookupBuffer provides two API: `insert` KV cache and `drop_select` KV cache. The semantics of `insert` and `drop_select` are similar to SQL, where `insert` inserts a KV cache into the buffer, and `drop_select` returns the KV cache that matches the given condition and drop it from the buffer.</p>
+<p>- **Pipe**: A single-direction FIFO pipe for tensor transmission. It supports `send_tensor` and `recv_tensor`.</p>
+
+<p>!!! note</p>
+<p>    `insert` is non-blocking operation but `drop_select` is blocking operation.</p>
+
+<p>Here is a figure illustrating how the above 3 abstractions are organized:</p>
+
+<p>![Disaggregated prefilling abstractions](../assets/features/disagg_prefill/abstraction.jpg)</p>
+
+<p>The workflow of disaggregated prefilling is as follows:</p>
+
+<p>![Disaggregated prefilling workflow](../assets/features/disagg_prefill/overview.jpg)</p>
+
+<p>The `buffer` corresponds to `insert` API in LookupBuffer, and the `drop_select` corresponds to `drop_select` API in LookupBuffer.</p>
+
+<p>Now every process in vLLM will have a corresponding connector. Specifically, we have:</p>
+
+<p>- Scheduler connector: the connector that locates in the same process as the scheduler process. It schedules the KV cache transfer ops.</p>
+<p>- Worker connectors: the connectors that locate in the worker processes. They execute KV cache transfer ops.</p>
+
+<p>Here is a figure illustrating how the above 2 connectors are organized:</p>
+
+<p>![Disaggregated prefilling high level design](../assets/features/disagg_prefill/high_level_design.png)</p>
+
+<p>The figure below shows how the worker connector works with the attention module to achieve layer-by-layer KV cache store and load:</p>
+
+<p>![Disaggregated prefilling workflow](../assets/features/disagg_prefill/workflow.png)</p>
+
+<h2>Third-party contributions</h2>
+
+<p>Disaggregated prefilling is highly related to infrastructure, so vLLM relies on third-party connectors for production-level disaggregated prefilling (and vLLM team will actively review and merge new PRs for third-party connectors).</p>
+
+<p>We recommend three ways of implementations:</p>
+
+<p>- **Fully-customized connector**: Implement your own `Connector`, and call third-party libraries to send and receive KV caches, and many many more (like editing vLLM&#x27;s model input to perform customized prefilling, etc.). This approach gives you the most control, but at the risk of being incompatible with future vLLM versions.</p>
+<p>- **Database-like connector**: Implement your own `LookupBuffer` and support the `insert` and `drop_select` APIs just like SQL.</p>
+<p>- **Distributed P2P connector**: Implement your own `Pipe` and support the `send_tensor` and `recv_tensor` APIs, just like `torch.distributed`.</p>
+
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>

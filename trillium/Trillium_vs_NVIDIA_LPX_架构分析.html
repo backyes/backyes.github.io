@@ -1,52 +1,96 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <link rel="stylesheet" href="../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trillium vs NVIDIA Groq 3 LPX：微架构与集群架构设计深度分析</title>
+<style>
+  :root{
+    --paper: #f6f3ec;
+    --paper-light: #fcfaf6;
+    --surface: rgba(255,255,255,0.86);
+    --line: rgba(17,17,17,0.12);
+    --ink: #111111;
+    --ink-soft: #4d4d4d;
+    --ink-mute: #6a6a6a;
+    --green: #0f5d44;
+    --green-deep: #0a3f30;
+    --green-soft: rgba(15,93,68,0.10);
+    --gold: #bf8b2c;
+    --gold-soft: rgba(191,139,44,0.10);
+    --blue: #163e7a;
+    --red: #c0392b;
+    --font-serif: 'Libre Baskerville', Georgia, serif;
+    --font-sans: 'Manrope', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    --radius-md: 18px;
+    --radius-sm: 12px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    color:var(--ink);
+    font-family:var(--font-sans);
+    line-height:1.75;
+    font-size:16px;
+    -webkit-text-size-adjust:100%;
+    background:
+      radial-gradient(1200px 600px at 80% -5%, rgba(191,139,44,.08), transparent 60%),
+      radial-gradient(1000px 500px at 0% 10%, rgba(15,93,68,.07), transparent 55%),
+      linear-gradient(180deg, #fcfaf6 0%, var(--paper) 42%, #ffffff 100%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:16px 16px 80px;}
+  header{padding:24px 0 12px;border-bottom:1px solid var(--line);margin-bottom:18px;}
+  h1{font-family:var(--font-serif);font-size:1.55rem;line-height:1.35;margin:0 0 6px;color:var(--green-deep);}
+  h2{font-size:1.2rem;margin:30px 0 10px;color:var(--green);border-left:4px solid var(--green);padding-left:10px;font-family:var(--font-serif);}
+  h3{font-size:1.05rem;margin:20px 0 8px;color:var(--gold);}
+  h4{font-size:0.98rem;margin:14px 0 6px;color:var(--green-deep);}
+  p{margin:8px 0;}
+  .sub{color:var(--ink-mute);font-size:0.85rem;}
+  .meta{color:var(--ink-mute);font-size:0.8rem;margin-top:6px;}
+  .lead{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:14px 16px;margin:14px 0;}
+  .thesis{background:var(--green-soft);border:1px solid var(--green);border-radius:var(--radius-md);padding:14px 16px;margin:16px 0;}
+  .thesis b{color:var(--green);}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:14px 18px;margin:14px 0;}
+  blockquote{border-left:3px solid var(--gold);margin:10px 0;padding:8px 16px;color:var(--ink-soft);background:var(--gold-soft);border-radius:0 8px 8px 0;font-size:0.92rem;}
+  blockquote.en{font-style:italic;}
+  code{background:rgba(17,17,17,0.06);border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:0.85em;color:var(--green-deep);font-family:var(--font-mono);}
+  .src{font-size:0.74rem;color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue);}
+  .src:hover{color:var(--green);}
+  table{border-collapse:collapse;width:100%;font-size:0.82rem;margin:12px 0;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;white-space:normal;}
+  th{background:var(--green-soft);color:var(--green-deep);position:sticky;top:0;}
+  tr:nth-child(even) td{background:rgba(17,17,17,0.02);}
+  .tag{display:inline-block;background:var(--green-soft);border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:0.74rem;color:var(--green);margin:2px 4px 2px 0;}
+  .tag.g{color:var(--green);border-color:rgba(15,93,68,0.2);}
+  .tag.n{color:var(--gold);border-color:rgba(191,139,44,0.2);}
+  .kbox{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0;}
+  .kbox>div{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px;}
+  .kbox h4{margin-top:0;}
+  .kbox.g{border-left:3px solid var(--green);}
+  .kbox.n{border-left:3px solid var(--gold);}
+  @media(max-width:560px){.kbox{grid-template-columns:1fr;} h1{font-size:1.3rem;} body{font-size:15px;}}
+  .pill{background:var(--gold);color:#fff;border-radius:4px;padding:0 6px;font-weight:700;font-size:0.72rem;}
+  .pill.g{background:var(--green);}
+  details{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 14px;margin:10px 0;}
+  summary{cursor:pointer;color:var(--green);font-weight:600;}
+  ul{margin:6px 0;padding-left:20px;} li{margin:3px 0;}
+  .warn{background:rgba(192,57,43,0.06);border:1px solid rgba(192,57,43,0.2);border-radius:var(--radius-sm);padding:10px 14px;font-size:0.88rem;margin:10px 0;border-left:4px solid var(--red);}
+  .ok{background:rgba(15,93,68,0.06);border:1px solid rgba(15,93,68,0.2);border-radius:var(--radius-sm);padding:10px 14px;font-size:0.88rem;margin:10px 0;border-left:4px solid var(--green);}
+  hr{border:0;border-top:1px solid var(--line);margin:24px 0;}
+  .toc{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:12px 18px;font-size:0.86rem;}
+  .toc a{color:var(--blue);text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  footer{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);font-size:0.8rem;color:var(--ink-mute);}
+  .num{color:var(--green-deep);font-weight:700;}
+</style>
 </head>
 <body>
-
-<div class="notion-page">
+<div class="wrap">
 
 <header>
 <h1>Trillium vs NVIDIA Groq 3 LPX<br>微架构与集群架构设计深度分析</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#0-概念澄清nvidia-lpx-指什么" class="toc-h2">0. 概念澄清："NVIDIA LPX" 指什么</a></li>
-<li><a href="#1-核心论点" class="toc-h2">1. 核心论点</a></li>
-<li><a href="#2-trillium-微架构tpu-v6e" class="toc-h2">2. Trillium 微架构（TPU v6e）</a></li>
-<li><a href="#21-芯片级架构" class="toc-h3">2.1 芯片级架构</a></li>
-<li><a href="#22-关键规格官方权威值" class="toc-h3">2.2 关键规格（官方权威值）</a></li>
-<li><a href="#3-trillium-集群架构" class="toc-h2">3. Trillium 集群架构</a></li>
-<li><a href="#31-pod-与拓扑" class="toc-h3">3.1 Pod 与拓扑</a></li>
-<li><a href="#32-跨-pod-规模multislice--jupiter--ocs" class="toc-h3">3.2 跨 Pod 规模：Multislice + Jupiter + OCS</a></li>
-<li><a href="#33-液冷google-的基础设施护城河" class="toc-h3">3.3 液冷：Google 的基础设施护城河</a></li>
-<li><a href="#34-推理软件栈集群级" class="toc-h3">3.4 推理软件栈（集群级）</a></li>
-<li><a href="#35-规模实况推理-token-指数爆炸" class="toc-h3">3.5 规模实况：推理 token 指数爆炸</a></li>
-<li><a href="#4-nvidia-groq-3-lpx-微架构" class="toc-h2">4. NVIDIA Groq 3 LPX 微架构</a></li>
-<li><a href="#41-设计哲学确定性优先" class="toc-h3">4.1 设计哲学：确定性优先</a></li>
-<li><a href="#42-计算与显式数据搬运320-字节向量" class="toc-h3">4.2 计算与显式数据搬运：320 字节向量</a></li>
-<li><a href="#43-lp30-芯片规格semianalysis-补充" class="toc-h3">4.3 LP30 芯片规格（SemiAnalysis 补充）</a></li>
-<li><a href="#44-lpx-的固有局限批判视角" class="toc-h3">4.4 LPX 的固有局限（批判视角）</a></li>
-<li><a href="#5-nvidia-groq-3-lpx-集群架构" class="toc-h2">5. NVIDIA Groq 3 LPX 集群架构</a></li>
-<li><a href="#51-机架级256-颗-lp30" class="toc-h3">5.1 机架级：256 颗 LP30</a></li>
-<li><a href="#52-fabric-与-scale-out" class="toc-h3">5.2 Fabric 与 scale-out</a></li>
-<li><a href="#53-异构推理afdattention-ffn-解耦" class="toc-h3">5.3 异构推理：AFD（Attention-FFN 解耦）</a></li>
-<li><a href="#54-编排与平台" class="toc-h3">5.4 编排与平台</a></li>
-<li><a href="#6-架构对比" class="toc-h2">6. 架构对比</a></li>
-<li><a href="#61-微架构对比每芯片" class="toc-h3">6.1 微架构对比（每芯片）</a></li>
-<li><a href="#62-集群对比pod--机架" class="toc-h3">6.2 集群对比（Pod / 机架）</a></li>
-<li><a href="#7-深度研判三视角" class="toc-h2">7. 深度研判（三视角）</a></li>
-<li><a href="#71-模型设计者视角rule-8" class="toc-h3">7.1 模型设计者视角（rule 8）</a></li>
-<li><a href="#72-投资经理视角rule-9" class="toc-h3">7.2 投资经理视角（rule 9）</a></li>
-<li><a href="#73-学术前沿视角rule-10" class="toc-h3">7.3 学术/前沿视角（rule 10）</a></li>
-<li><a href="#8-关键风险与待验证点" class="toc-h2">8. 关键风险与待验证点</a></li>
-<li><a href="#9-溯源清单" class="toc-h2">9. 溯源清单</a></li>
-</ul>
-</details>
-
 <div class="sub">面向 AI 算法 / 系统 / 芯片研究人员的架构研判报告</div>
 <div class="meta">调研日期：2026-07-07 · 数据来源：Google Cloud 官方文档/博客、NVIDIA 开发者技术博客、The Next Platform、SemiAnalysis（见文末溯源清单）</div>
 </header>
@@ -414,6 +458,5 @@
 </footer>
 
 </div>
-
 </body>
 </html>

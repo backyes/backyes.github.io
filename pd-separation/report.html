@@ -1,66 +1,161 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
-  <link rel="stylesheet" href="../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>P/D 分离架构下 KVCache 流通方式：系统性深度调研报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --paper: #f6f3ec;
+  --paper-light: #fcfaf6;
+  --surface: rgba(255,255,255,0.86);
+  --surface-strong: #ffffff;
+  --line: rgba(17,17,17,0.12);
+  --ink: #111111;
+  --ink-soft: #4d4d4d;
+  --ink-mute: #6a6a6a;
+  --green: #0f5d44;
+  --green-deep: #0a3f30;
+  --green-soft: rgba(15,93,68,0.10);
+  --green-line: rgba(15,93,68,0.25);
+  --gold: #bf8b2c;
+  --gold-soft: rgba(191,139,44,0.14);
+  --blue: #163e7a;
+  --red: #c0392b;
+  --font-serif: 'Libre Baskerville', Georgia, serif;
+  --font-sans: 'Manrope', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --shadow: 0 24px 60px rgba(17,17,17,0.10);
+  --shadow-sm: 0 2px 8px rgba(17,17,17,0.06);
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --content-width: 1200px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  font-family:var(--font-sans);
+  font-size:16px;line-height:1.7;
+  color:var(--ink);
+  background:
+    radial-gradient(1200px 600px at 80% -5%, rgba(191,139,44,.08), transparent 60%),
+    radial-gradient(1000px 500px at 0% 10%, rgba(15,93,68,.07), transparent 55%),
+    linear-gradient(180deg, #fcfaf6 0%, var(--paper) 42%, #ffffff 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+.page-shell{max-width:var(--content-width);margin:0 auto;padding:16px 28px 80px}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:28px;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;gap:4px}
+.brand-name{display:inline-flex;align-items:center;gap:10px;font-family:var(--font-serif);font-size:1.5rem;font-weight:700;letter-spacing:-.03em}
+.brand-name a:hover{color:var(--green)}
+.brand-tagline{font-size:.88rem;color:var(--ink-soft)}
+.topnav{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.topnav a{padding:8px 14px;border:1px solid var(--line);border-radius:999px;font-size:.88rem;color:var(--ink-soft);background:rgba(255,255,255,.55);transition:transform .2s,border-color .2s,color .2s}
+.topnav a:hover{color:var(--ink);border-color:rgba(17,17,17,.3);transform:translateY(-1px)}
+@media(max-width:768px){
+  .page-shell{padding:16px 16px 60px}
+  .topbar{flex-direction:column;align-items:flex-start}
+  table{display:block;overflow-x:auto;font-size:.85em}
+  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.82em}
+}
+</style>
+
+
+<style>
+/* ===== Report content base ===== */
+.report-content{max-width:900px;margin:0 auto}
+.report-content h1{font-family:var(--font-serif);font-size:1.8rem;font-weight:700;margin:24px 0 12px;color:var(--ink);line-height:1.3;border-bottom:2px solid var(--green);padding-bottom:8px}
+.report-content h2{font-family:var(--font-serif);font-size:1.35rem;font-weight:700;margin:32px 0 14px;color:var(--green-deep);border-bottom:1px solid var(--line);padding-bottom:6px}
+.report-content h3{font-family:var(--font-sans);font-size:1.1rem;font-weight:600;margin:24px 0 10px;color:var(--ink)}
+.report-content h4{font-family:var(--font-sans);font-size:1rem;font-weight:600;margin:18px 0 8px;color:var(--ink-soft)}
+.report-content p{margin:10px 0}
+.report-content a{color:var(--green);text-decoration:none}
+.report-content a:hover{text-decoration:underline}
+.report-content ul,.report-content ol{padding-left:1.4rem;margin:8px 0}
+.report-content li{margin:4px 0}
+.report-content code{background:var(--green-soft);padding:1px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.88em;color:var(--green-deep)}
+.report-content pre{background:var(--paper-light);border:1px solid var(--line);padding:14px;border-radius:8px;overflow-x:auto;font-family:var(--font-mono);font-size:.85em;line-height:1.55}
+.report-content pre code{background:none;padding:0;color:var(--ink)}
+.report-content table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.9em}
+.report-content th,.report-content td{border:1px solid var(--line);padding:8px 10px;text-align:left}
+.report-content th{background:var(--green-soft);color:var(--green-deep);font-weight:600}
+.report-content tr:nth-child(even) td{background:rgba(252,250,246,.6)}
+.report-content blockquote{border-left:4px solid var(--green);padding:12px 16px;margin:14px 0;background:var(--green-soft);border-radius:0 8px 8px 0;font-style:italic;color:var(--ink-soft)}
+
+/* ===== Dark-style class mappings ===== */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px;margin:14px 0}
+.card-title{font-weight:700;color:var(--green);margin-bottom:8px;font-size:1rem}
+.tag{display:inline-block;background:var(--paper-light);color:var(--green-deep);border:1px solid var(--green-line);border-radius:999px;padding:2px 10px;font-size:.78rem;margin:2px 3px 2px 0;font-weight:500}
+.tag.tag-tech{color:var(--blue);background:rgba(22,62,122,.08);border-color:rgba(22,62,122,.2)}
+.tag.tag-invest{color:var(--gold);background:var(--gold-soft);border-color:rgba(191,139,44,.25)}
+.tag.tag-impact{color:var(--red);background:rgba(192,57,43,.08);border-color:rgba(192,57,43,.2)}
+.tag.tag-green{color:var(--green);background:var(--green-soft);border-color:var(--green-line)}
+.highlight-box{background:var(--gold-soft);border:1px solid rgba(191,139,44,.3);border-radius:var(--radius-sm);padding:16px;margin:16px 0}
+.key-insight{background:var(--green-soft);border-left:4px solid var(--green);padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0}
+.key-insight.warn{border-left-color:var(--gold);background:var(--gold-soft)}
+.insight{background:var(--green-soft);border-left:4px solid var(--green);padding:10px 14px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:var(--gold-soft);border-left:4px solid var(--gold);padding:10px 14px;margin:12px 0;border-radius:0 6px 6px 0}
+.math-box{background:var(--paper-light);border:1px solid var(--line);border-radius:8px;padding:14px;margin:14px 0;font-family:var(--font-mono);font-size:.9em;overflow-x:auto}
+.src,.source,.source-link{font-size:.82em;color:var(--ink-mute);margin-top:4px}
+.src a,.source a,.source-link a{color:var(--green);font-size:.95em}
+.srcband{font-size:.82em;color:var(--ink-mute);border-left:3px solid var(--line);padding-left:10px;margin:8px 0}
+.pbox{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px;margin:12px 0}
+.inv{background:rgba(252,250,246,.5);border:1px solid var(--line);border-radius:6px;padding:10px;margin:10px 0}
+.mark{background:var(--gold-soft);padding:1px 4px;border-radius:3px}
+.def{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 14px;margin:10px 0;font-size:.9em}
+.compare-table{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 0;overflow-x:auto}
+.compare-table table{margin:0}
+.step-list{padding-left:1.4rem;margin:10px 0;counter-reset:step}
+.step-list li{margin:6px 0}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:14px 0}
+.stat-item{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px;text-align:center}
+.stat-num{font-family:var(--font-serif);font-size:1.4rem;font-weight:700;color:var(--green)}
+.stat-label{font-size:.82rem;color:var(--ink-mute);margin-top:4px}
+.toc,.nav-toc{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px 18px;margin:14px 0}
+.toc a,.nav-toc a{display:block;padding:3px 0;font-size:.92em}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.sep,.divider{border:none;border-top:1px solid var(--line);margin:24px 0}
+.footer,.meta-foot{font-size:.82em;color:var(--ink-mute);border-top:1px solid var(--line);padding-top:14px;margin-top:30px}
+.update{font-size:.85em;color:var(--ink-mute);border-bottom:1px dashed var(--line);padding-bottom:10px;margin-bottom:16px}
+.table-wrap{overflow-x:auto;margin:14px 0}
+.table-wrap table{margin:0}
+.conclusion{background:var(--green-soft);border:1px solid var(--green-line);border-radius:var(--radius-sm);padding:16px;margin:14px 0}
+.lead{font-size:1.05rem;color:var(--ink-soft);margin:12px 0}
+.meta{font-size:.85em;color:var(--ink-mute);margin:8px 0}
+
+@media(max-width:768px){
+  .report-content h1{font-size:1.4rem}
+  .report-content h2{font-size:1.2rem}
+  .grid2{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:1fr 1fr}
+}
+</style>
+
 </head>
 <body>
-<div class="notion-page">
-
-
+<div class="page-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-name"><a href="../">backyes</a> / <a href="../index.html">P/D 分离 KVCache 流通</a></div>
+      <div class="brand-tagline">主报告</div>
+    </div>
+    <nav class="topnav">
+      <a href="../" style="color:var(--green)">← backyes</a>
+      <a href="../posts.html">Posts</a>
+      <a href="../#survey">Survey</a>
+    </nav>
+  </header>
+  <main class="report-content">
 <h1>P/D 分离架构下 KVCache 流通方式：系统性深度调研报告</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#1-背景与动机为什么需要-pd-分离" class="toc-h2">1. 背景与动机：为什么需要 P/D 分离</a></li>
-<li><a href="#2-kvcache-流通的核心模式" class="toc-h2">2. KVCache 流通的核心模式</a></li>
-<li><a href="#21-数据路径的三种基本拓扑" class="toc-h3">2.1 数据路径的三种基本拓扑</a></li>
-<li><a href="#22-流通的时域层级" class="toc-h3">2.2 流通的"时域"层级</a></li>
-<li><a href="#3-sglang-的实现路径" class="toc-h2">3. SGLang 的实现路径</a></li>
-<li><a href="#31-sglang-v04-起的-pd-分离设计" class="toc-h3">3.1 SGLang v0.4 起的 PD 分离设计</a></li>
-<li><a href="#32-gb200-nvl72-时代的变迁" class="toc-h3">3.2 GB200 NVL72 时代的变迁</a></li>
-<li><a href="#33-sglang-router-视角" class="toc-h3">3.3 SGLang Router 视角</a></li>
-<li><a href="#4-vllm-的-nixl-连接器体系" class="toc-h2">4. vLLM 的 NIXL 连接器体系</a></li>
-<li><a href="#41-总体架构vllm-v0251-状态" class="toc-h3">4.1 总体架构（vLLM v0.25.1 状态）</a></li>
-<li><a href="#42-push-vs-pull-的模式对比" class="toc-h3">4.2 Push vs Pull 的模式对比</a></li>
-<li><a href="#43-lease-renewal--heartbeat-故障恢复" class="toc-h3">4.3 Lease Renewal + Heartbeat 故障恢复</a></li>
-<li><a href="#5-第三方关键系统mooncake--lmcache--flexkv" class="toc-h2">5. 第三方关键系统：Mooncake · LMCache · FlexKV</a></li>
-<li><a href="#51-mooncake--kvcache-为中心的调度" class="toc-h3">5.1 Mooncake — KVCache 为中心的调度</a></li>
-<li><a href="#52-lmcache--把-kv-持久化脱离引擎" class="toc-h3">5.2 LMCache — 把 KV 持久化脱离引擎</a></li>
-<li><a href="#53-flexkvconnectorv1--分布式-kv-store" class="toc-h3">5.3 FlexKVConnectorV1 — 分布式 KV Store</a></li>
-<li><a href="#6-nvidia-dynamo-如何看待-kv" class="toc-h2">6. NVIDIA Dynamo 如何看待 KV</a></li>
-<li><a href="#7-共性技术挑战" class="toc-h2">7. 共性技术挑战</a></li>
-<li><a href="#71-带宽瓶颈与-ttft-预算" class="toc-h3">7.1 带宽瓶颈与 TTFT 预算</a></li>
-<li><a href="#72-拥塞与关键路径上的带宽争夺" class="toc-h3">7.2 拥塞与"关键路径上的带宽争夺"</a></li>
-<li><a href="#73-kv-cache-的幽灵问题分布异构" class="toc-h3">7.3 KV Cache 的"幽灵问题"——分布异构</a></li>
-<li><a href="#74-multi-turn-重复搬移" class="toc-h3">7.4 Multi-turn 重复搬移</a></li>
-<li><a href="#75-kv-精度-vs-带宽折中" class="toc-h3">7.5 KV 精度 vs 带宽折中</a></li>
-<li><a href="#8-论文观点速览distserve--netkv--3dls" class="toc-h2">8. 论文观点速览（DistServe → NetKV → 3DLS）</a></li>
-<li><a href="#distserve-osdi24--奠基工作" class="toc-h3">DistServe (OSDI'24) — 奠基工作</a></li>
-<li><a href="#mooncake-2024-06--kvcache-一等公民" class="toc-h3">Mooncake (2024-06) — KVCache 一等公民</a></li>
-<li><a href="#splitserve-2024-11--训练时-pd-分离" class="toc-h3">SplitServe (2024-11) — 训练时 P/D 分离</a></li>
-<li><a href="#crosspool-2026-06--cold-moe-共享-kv-pool" class="toc-h3">CrossPool (2026-06) — Cold MoE 共享 KV Pool</a></li>
-<li><a href="#netkv-2026-06--网络感知-decode-选路" class="toc-h3">NetKV (2026-06) — 网络感知 Decode 选路</a></li>
-<li><a href="#rapid-serve-2026-01--单-gpu-上-pd-分离" class="toc-h3">RAPID-Serve (2026-01) — 单 GPU 上 P/D 分离</a></li>
-<li><a href="#towards-load-aware-prefill-deflection-2026-07" class="toc-h3">Towards Load-Aware Prefill Deflection (2026-07)</a></li>
-<li><a href="#3dls-2026-07--芯片级-kv-cache-传输重构" class="toc-h3">3DLS (2026-07) — 芯片级 KV Cache 传输重构</a></li>
-<li><a href="#towards-load-aware-prefill-deflection-2026-07-与-to" class="toc-h3">Towards Load-Aware Prefill Deflection (2026-07) 与 TokenScale (2025-12)</a></li>
-<li><a href="#9-cxl-对-kvcache-管理的潜在颠覆" class="toc-h2">9. CXL 对 KVCache 管理的潜在颠覆</a></li>
-<li><a href="#91-cxl-的技术属性" class="toc-h3">9.1 CXL 的技术属性</a></li>
-<li><a href="#92-cxl-native-kvcache-系统已浮现" class="toc-h3">9.2 CXL-native KVCache 系统（已浮现）</a></li>
-<li><a href="#93-cxl-对-pd-分离-kvcache-流通的范式影响" class="toc-h3">9.3 CXL 对 PD 分离 KVCache 流通的范式影响</a></li>
-<li><a href="#94-cxl-vs-rdmamooncake不是替代是分层" class="toc-h3">9.4 CXL vs RDMA/Mooncake：不是替代，是分层</a></li>
-<li><a href="#95-arxiv-251218194-tract-给的具体数据" class="toc-h3">9.5 arxiv 2512.18194 (TraCT) 给的具体数据</a></li>
-<li><a href="#10-趋势判断研究前沿流向何方" class="toc-h2">10. 趋势判断：研究前沿流向何方</a></li>
-<li><a href="#附录--引用资料集" class="toc-h2">附录 · 引用资料集</a></li>
-<li><a href="#a-博客与官方文档" class="toc-h3">A. 博客与官方文档</a></li>
-<li><a href="#b-关键论文按年代" class="toc-h3">B. 关键论文（按年代）</a></li>
-<li><a href="#c-专题-cxl-论文" class="toc-h3">C. 专题 CXL 论文</a></li>
-<li><a href="#d-中文关联资料" class="toc-h3">D. 中文关联资料</a></li>
-</ul>
-</details>
-
 <p class="update">📅 调研时间：2026-07-15 &nbsp;|&nbsp; 受众：AI 系统 / 芯片架构研究人员 &nbsp;|&nbsp; 覆盖：SGLang · vLLM · NVIDIA Dynamo · Mooncake · LMCache · arxiv 前沿（2024-2026）&nbsp;|&nbsp; 主题：挑战 · 流通模式 · CXL 影响分析 &nbsp;|&nbsp; 📎 续篇：<a href="routing-report/report.html">PD 路由调研</a> · <a href="long-context-pd-challenges-report/report.html">长序列 PD 挑战</a>（含 4 项子报告）</p>
 
 <div class="nav-toc">
@@ -450,8 +545,7 @@
   <p>📝 报告生成日期：2026-07-15 &nbsp;|&nbsp; 调研时段：2026-07-14~15 &nbsp;|&nbsp; 累计抓站 ~25 个 arxiv/博客 &nbsp;|&nbsp; 引用 ~33 个公开来源</p>
   <p>⚠️ 本报告内容来自于对公开资源的自动抓取与综合推理，部分引用结论以原文为准。CXL 章节的"判断"基于论文报告数字，并不代表NVIDIA / AMD 官方产品路线图。</p>
 </div>
-
-
+  </main>
 </div>
 </body>
 </html>
