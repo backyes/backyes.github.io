@@ -16,17 +16,17 @@ REPORTS = [
     {"dst":"nvidia-specs-research","entry":"nvidia-specs-report.html","visual":"NVIDIA",
      "title":"NVIDIA 产品全规格深度调研",
      "desc":"NVIDIA GPU / CPU / 网络全产品线规格总览 · 含 8 篇 Agent 深度调研模块 (GPU 微架构 / 互联 / 内存 / 网络 / DGX / 边缘计算 / 学术论文 / 数据手册)",
-     "cat":"chip","priority":"p0",
+     "cat":"chip","priority":"p0","published_at":"2026-07-20",
      "tags":["NVIDIA","GPU","H100","B200","GB200","Grace","Spectrum-X","数据中心","Agent调研"]},
     {"dst":"amd-latest-tech-2026","entry":"index.html","visual":"AMD",
      "title":"AMD 全栈 AI 基础设施调研",
      "desc":"AMD Advancing AI 2026 全栈深度调研 · EPYC Venice (Zen 6/6c, 256 核) / MI455X (CDNA 4, 2.61 PFLOPS FP8) / Helios 机架 / Ryzen AI Gorgon · 芯片 + 集群 + 路线图",
-     "cat":"chip","priority":"p0",
+     "cat":"chip","priority":"p0","published_at":"2026-07-18",
      "tags":["AMD","EPYC","Venice","MI455X","CDNA","Helios","Zen6","RyzenAI","Gorgon","路线图"]},
     {"dst":"umdk","entry":"analysis/index.html","visual":"UMDK",
      "title":"UMDK 深度分析文档索引",
      "desc":"3 份主报告 + 16 篇 CAM Agent 深挖 + 10 篇 URPC 专题文档 · CAM 通信加速库 v2 (8章) / URPC 统一远程过程调用 (11篇) / CAM v1 · 21K+ 分析行数",
-     "cat":"chip","priority":"p0",
+     "cat":"chip","priority":"p0","published_at":"2026-08-12",
      "tags":["UMDK","CAM","URPC","EP通信","Low-Latency","Fused Deep MoE","Catlass","UBPlus","源码级","MoE专家并行"]},
     {"dst":"vllm_research/vllm_analysis","entry":"index.html","visual":"vLLM",
      "title":"vLLM 架构统一分析",
@@ -116,12 +116,12 @@ REPORTS = [
     {"dst":"deep-ep","entry":"index.html","visual":"DeepEP",
      "title":"DeepEP 深度分析索引",
      "desc":"源码级深度分析索引 · 主报告 + 三视角分报告 + 交叉讨论 + 专题深潜 · MoE AllToAll / NVLink+RDMA / Low-Latency",
-     "cat":"network","priority":"p0",
+     "cat":"network","priority":"p0","published_at":"2026-08-13",
      "tags":["DeepEP","MoE","AllToAll","专家并行","NVLink","RDMA","通信库","源码级"]},
     {"dst":"deepepv2","entry":"html/index.html","visual":"DGEMM",
      "title":"DeepGEMM & DeepEP 三向对比 (Survey by AI)",
      "desc":"47 篇深度分析报告（架构4篇 + 博客↔DeepGEMM 10篇 + 三向对比9篇 + DeepEP独立分析11篇 + 测试分析7篇 + 对称内存4篇 + V2弹性架构2篇）· 同步范式 Barrier→mbarrier FIFO / 通信模型 消息传递→Load-Store 对称直传",
-     "cat":"chip","priority":"p0",
+     "cat":"chip","priority":"p0","published_at":"2026-08-10",
      "tags":["DeepGEMM","DeepEP","MoE","Mega MoE","SymmBuffer","Warp Specialization","NVLink","RDMA","对称内存","博客验证","三向对比"]},
 ]
 
@@ -335,7 +335,9 @@ def gen_hero(posts=None):
 def gen_hero_aside(posts):
     """动态生成 Use This Page aside: 最新文章 + 正确计数"""
     latest_post = posts[0] if posts else None
-    latest_report = REPORTS[0] if REPORTS else None
+    # 按 published_at 选最新报告（而非 REPORTS[0]）
+    dated_reports = [r for r in REPORTS if r.get("published_at")]
+    latest_report = max(dated_reports, key=lambda r: r["published_at"]) if dated_reports else (REPORTS[0] if REPORTS else None)
     posts_count = len(posts)
     reports_count = len(REPORTS)
 
