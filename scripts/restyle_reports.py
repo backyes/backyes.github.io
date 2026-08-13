@@ -52,10 +52,28 @@ REPORT_DIRS = [
 ]
 
 # Directories to completely exclude from restyling (keep original warm-paper styling)
-# These reports have their own polished styling that should be preserved
+# 所有报告都已统一为暖纸色风格，全部排除 Notion restyle
 EXCLUDE_DIRS = [
     "umdk",
     "deep-ep",
+    "deepepv2",
+    "vllm_research/vllm_analysis",
+    "pd-separation",
+    "mlsys2026",
+    "deepseek-mtp",
+    "moe-clos",
+    "generative-rec",
+    "sparse-clos",
+    "ai-supernode-bus",
+    "supernode-metrics",
+    "mtp-survey",
+    "3dls",
+    "space-ecom",
+    "pd-routing",
+    "trillium",
+    "spacex",
+    "hbm-cxl",
+    "inference-community",
 ]
 
 # External CSS hosts — files with <link rel="stylesheet"> to these are scraped
