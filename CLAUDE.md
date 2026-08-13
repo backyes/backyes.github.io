@@ -153,9 +153,12 @@
 ### 发布流程最佳实践
 1. **复用源文件**: 直接使用源 `index.html` 作为首页，不重写内容
 2. **仅增加导航**: 在源文件 topbar 中添加主站导航链接
-3. **相对路径计算**: 源文件在 `umdk/analysis/index.html`，到站点根需 `../../`
+3. **相对路径计算**: 根据首页实际位置计算到站点根的路径
+   - `deep-ep/index.html` → 到站点根用 `../`
+   - `umdk/analysis/index.html` → 到站点根用 `../../`
 4. **同步后验证**: rsync 后检查 MD5 确保源文件正确同步到目标
 5. **restyle 排除**: 有自定义样式的报告目录必须加入 `EXCLUDE_DIRS`
+6. **入口更新**: `sync_reports.sh` + `build_site.py` 的 entry 改为 `index.html`
 
 ### 常见陷阱
 - **build_site.py 覆盖手动修改**: 每次构建从 REPORTS 数组重新生成 index.html，必须改 REPORTS 而非手动编辑 index.html
