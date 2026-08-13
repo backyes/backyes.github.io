@@ -1,18 +1,94 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
   <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHMEM 模式 — 用户态 RDMA (master) — UMDK/CAM 深度分析</title>
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHMEM 模式 — 用户态 RDMA — UMDK/CAM · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div class="notion-page">
-<div class="nav-top">
-<a href="01_arch.html">整体架构与设</a><span class="sep">|</span><a href="02_build.html">编译系统与部</a><span class="sep">|</span><a href="03_ep.html">EP</a><span class="sep">|</span><a href="04_fused.html">FusedDeepMoE</a><span class="sep">|</span><a href="05_test.html">测试体系与回</a><span class="sep">|</span><strong style="color:var(--fg-bold)">SHMEM</strong><span class="sep">|</span><a href="07_hccl.html">非</a><span class="sep">|</span><a href="08_notify.html">notify_dispatch</a><span class="sep">|</span><a href="09_fused_shmem.html">FusedDeepMoE</a><span class="sep">|</span><a href="10_zb_dispatch.html">ZB</a><span class="sep">|</span><a href="11_zb_combine.html">ZB</a><span class="sep">|</span><a href="12_fused_family.html">FusedDeepMoE</a><span class="sep">|</span><a href="13_new_comm.html">新通信算子</a><span class="sep">|</span><a href="14_zb_utils.html">ZB</a><span class="sep">|</span><a href="15_pybind.html">Pybind</a><span class="sep">|</span><a href="16_shmem_nda.html">SHMEM</a><span class="sep">|</span><a href="../CAM深度分析报告.html">← 主报告</a>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../../../">backyes</a></div>
+    <div class="brand-tagline">CAM Agent-06 — SHMEM 模式 — 用户态 RDMA</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../../../posts.html">Posts</a>
+    <a href="../../../#survey" class="nav-accent">Survey by AI</a>
+  </nav>
+</header>
 </div>
-<h1 id="cam-shmem">CAM SHMEM 模式代码深度剖析</h1>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+      <li><a href="#1-shmem" class="toc-h2">1. SHMEM 模式整体架构</a></li>
+      <li><a href="#11" class="toc-h3">1.1 定位与使命</a></li>
+      <li><a href="#12" class="toc-h3">1.2 数据流全景</a></li>
+      <li><a href="#2" class="toc-h2">2. 核心数据结构深度分析</a></li>
+      <li><a href="#21-aclshmemi_rdma_info-rdma" class="toc-h3">2.1 aclshmemi_rdma_info — 全局 RDMA 信息表</a></li>
+      <li><a href="#22-aclshmemi_rdma_sq_ctx-send-queue" class="toc-h3">2.2 aclshmemi_rdma_sq_ctx — Send Queue 上下文</a></li>
+      <li><a href="#23-aclshmemi_rdma_cq_ctx-completion-queue" class="toc-h3">2.3 aclshmemi_rdma_cq_ctx — Completion Queue 上下文</a></li>
+      <li><a href="#24-aclshmemi_rdma_send_wr" class="toc-h3">2.4 aclshmemi_rdma_send_wr — 发送工作请求</a></li>
+      <li><a href="#25-aclshmemi_rdma_atomic_params" class="toc-h3">2.5 aclshmemi_rdma_atomic_params — 原子操作参数联合体</a></li>
+      <li><a href="#26-aclshmemi_rdma_mem_info-memory-region" class="toc-h3">2.6 aclshmemi_rdma_mem_info — Memory Region 信息</a></li>
+      <li><a href="#3-api" class="toc-h2">3. API 调用链</a></li>
+      <li><a href="#31" class="toc-h3">3.1 粗粒度 → 细粒度调用层次</a></li>
+      <li><a href="#32-rdma-write" class="toc-h3">3.2 RDMA WRITE 完整调用链</a></li>
+      <li><a href="#33-aclshmemx_roce_quiet" class="toc-h3">3.3 aclshmemx_roce_quiet 同步机制</a></li>
+      <li><a href="#4-traits" class="toc-h2">4. 编译时多态 traits 系统</a></li>
+      <li><a href="#41" class="toc-h3">4.1 设计理念</a></li>
+      <li><a href="#42" class="toc-h3">4.2 后端选择宏</a></li>
+      <li><a href="#43-traits" class="toc-h3">4.3 traits 系统架构</a></li>
+      <li><a href="#44" class="toc-h3">4.4 编译期错误防护</a></li>
+      <li><a href="#45" class="toc-h3">4.5 零运行时开销验证</a></li>
+      <li><a href="#5-xscale-wqecqe" class="toc-h2">5. XSCALE 后端 WQE/CQE 格式</a></li>
+      <li><a href="#51-wqe-xscale-128-bytes" class="toc-h3">5.1 WQE 整体结构 (XSCALE, 128 Bytes)</a></li>
+      <li><a href="#52-control-segment" class="toc-h3">5.2 Control Segment 版本差异</a></li>
+      <li><a href="#53-cqe-xscale-diamond-64-bytes" class="toc-h3">5.3 CQE 格式 (XSCALE Diamond, 64 Bytes)</a></li>
+      <li><a href="#54-owner-bit" class="toc-h3">5.4 Owner Bit 机制</a></li>
+      <li><a href="#55-doorbell" class="toc-h3">5.5 Doorbell 格式</a></li>
+      <li><a href="#56" class="toc-h3">5.6 操作码映射</a></li>
+      <li><a href="#6" class="toc-h2">6. 原子操作机制</a></li>
+      <li><a href="#61-api" class="toc-h3">6.1 原子操作 API 全景</a></li>
+      <li><a href="#62-masked-vs-unmasked" class="toc-h3">6.2 Masked vs Unmasked 变体</a></li>
+      <li><a href="#63-wqe" class="toc-h3">6.3 原子操作 WQE 构造</a></li>
+      <li><a href="#64" class="toc-h3">6.4 字节序转换</a></li>
+      <li><a href="#65" class="toc-h3">6.5 原子操作结果读取</a></li>
+      <li><a href="#7-host" class="toc-h2">7. Host 端传输管理</a></li>
+      <li><a href="#71-rdmatransportmanagerv2" class="toc-h3">7.1 RdmaTransportManagerV2 生命周期</a></li>
+      <li><a href="#72-opendevice" class="toc-h3">7.2 OpenDevice 流程</a></li>
+      <li><a href="#73-connect" class="toc-h3">7.3 Connect 流程</a></li>
+      <li><a href="#74-fillrdmainfo" class="toc-h3">7.4 FillRdmaInfo — 核心数据提取</a></li>
+      <li><a href="#75" class="toc-h3">7.5 内存注册策略</a></li>
+      <li><a href="#76" class="toc-h3">7.6 原子操作共享内存</a></li>
+      <li><a href="#77" class="toc-h3">7.7 底层协议结构</a></li>
+      <li><a href="#8" class="toc-h2">8. 编译注入机制</a></li>
+      <li><a href="#81-shmem_home_path" class="toc-h3">8.1 SHMEM_HOME_PATH 环境变量</a></li>
+      <li><a href="#82" class="toc-h3">8.2 编译期后端选择</a></li>
+      <li><a href="#83" class="toc-h3">8.3 算子选择过滤</a></li>
+      <li><a href="#84" class="toc-h3">8.4 当前算子注册表状态</a></li>
+      <li><a href="#9-hccl-window" class="toc-h2">9. 与 HCCL Window 模式的本质区别</a></li>
+      <li><a href="#91" class="toc-h3">9.1 架构层面对比</a></li>
+      <li><a href="#92" class="toc-h3">9.2 代码层面对比</a></li>
+      <li><a href="#93" class="toc-h3">9.3 性能影响分析</a></li>
+      <li><a href="#94" class="toc-h3">9.4 启用路径</a></li>
+      <li><a href="#10" class="toc-h2">10. 关键设计洞察</a></li>
+      <li><a href="#101-rdma" class="toc-h3">10.1 用户态 RDMA 的极致优化</a></li>
+      <li><a href="#102" class="toc-h3">10.2 编译时多态的工程价值</a></li>
+      <li><a href="#103" class="toc-h3">10.3 版本兼容性的优雅处理</a></li>
+      <li><a href="#104" class="toc-h3">10.4 同步机制的精心设计</a></li>
+      <li><a href="#105" class="toc-h3">10.5 原子操作的统一抽象</a></li>
+      <li><a href="#11_1" class="toc-h2">11. 总结</a></li>
+    </ul></div>
+  </aside>
+  <article class="article">
+    <a href="../../../#survey" class="back">← 返回 Survey by AI</a>
+    <h1>SHMEM 模式 — 用户态 RDMA — UMDK/CAM</h1>
 <details class="notion-toc"><summary>Contents</summary>
 <ul>
 <li><a href="#1-shmem-模式整体架构" class="toc-h2">1. SHMEM 模式整体架构</a></li>
@@ -76,10 +152,16 @@
 </ul>
 </details>
 
+    <div class="meta">
+      <span>📅 2026-07-21</span>
+      <div><span class="ptag">SHMEM</span><span class="ptag">RDMA</span><span class="ptag">用户态</span></div>
+    </div>
+    <div class="notion-page">
+<h1 id="cam-shmem">CAM SHMEM 模式代码深度剖析</h1>
 <h2 id="1-shmem">1. SHMEM 模式整体架构</h2>
 <h3 id="11">1.1 定位与使命</h3>
 <p>SHMEM 模式是 CAM 的 <strong>用户态 RDMA 直通路径</strong>。它完全绕过 HCCL 集合通信库，在 AIV（Ascend Intelligent Vector）核心上直接操作 RoCE RDMA 硬件的 WQE/CQE/SQ/CQ 寄存器，实现 kernel 内部的细粒度 P2P 数据传输。</p>
-<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
 │                          Host Side (CPU)                              │
 │                                                                       │
 │  RdmaTransportManagerV2                                               │
@@ -118,10 +200,9 @@
 │  硬件寄存器: SQ Doorbell / CQ Doorbell / WQE(128B) / CQE(64B)        │
 └──────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
-
 <h3 id="12">1.2 数据流全景</h3>
 <p>一次 <code>aclshmemx_roce_put_nbi</code> (RDMA WRITE) 的完整路径：</p>
-<div class="highlight"><pre><span></span><code><span class="n">用户调用</span><span class="w"> </span><span class="n">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">elem_size</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">)</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">用户调用</span><span class="w"> </span><span class="n">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">elem_size</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">)</span>
 <span class="w">    </span><span class="err">│</span>
 <span class="w">    </span><span class="err">├─</span><span class="w"> </span><span class="mf">1.</span><span class="w"> </span><span class="n">aclshmem_ptr</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">)</span><span class="w">        </span><span class="err">←</span><span class="w"> </span><span class="n">本地对称地址</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">远端对称地址</span>
 <span class="w">    </span><span class="err">│</span><span class="w">     </span><span class="nl">计算</span><span class="p">:</span><span class="w"> </span><span class="n">remote</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p2p_device_heap_base</span><span class="o">[</span><span class="n">pe</span><span class="o">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">dst</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">heap_base</span><span class="p">)</span>
@@ -147,12 +228,11 @@
 <span class="w">    </span><span class="err">│</span>
 <span class="w">    </span><span class="err">└─</span><span class="w"> </span><span class="mf">4.</span><span class="w"> </span><span class="n">硬件自动执行</span><span class="w"> </span><span class="n">RDMA</span><span class="w"> </span><span class="k">WRITE</span><span class="err">，</span><span class="n">数据通过</span><span class="w"> </span><span class="n">RoCE</span><span class="w"> </span><span class="n">网络直达远端</span><span class="w"> </span><span class="n">HBM</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="2">2. 核心数据结构深度分析</h2>
 <h3 id="21-aclshmemi_rdma_info-rdma">2.1 aclshmemi_rdma_info — 全局 RDMA 信息表</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:38-45</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_info</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_info</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_num</span><span class="p">;</span><span class="w">   </span><span class="c1">// 每个连接的 QP 数量 (支持多 QP 并行)</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">sq_ptr</span><span class="p">;</span><span class="w">   </span><span class="c1">// SQ 上下文数组地址 [PE_NUM][qp_num]</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">rq_ptr</span><span class="p">;</span><span class="w">   </span><span class="c1">// RQ 上下文数组地址 [PE_NUM][qp_num]</span>
@@ -161,14 +241,13 @@
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">mem_ptr</span><span class="p">;</span><span class="w">  </span><span class="c1">// Memory Region 信息数组地址 [MAX_PE_NUM]</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>设计要点</strong>:
 - 这是 device 端唯一的全局入口，通过 <code>aclshmemi_qp_info_fetch()</code> 从 HBM 固定地址读取
 - 数组维度 <code>[PE_NUM][qp_num]</code> 支持多 rank 多 QP 场景
 - <code>mem_ptr</code> 存储每个 rank 的 MR (Memory Region) 信息，包含 lkey/rkey 用于 RDMA 访问权限控制</p>
 <h3 id="22-aclshmemi_rdma_sq_ctx-send-queue">2.2 aclshmemi_rdma_sq_ctx — Send Queue 上下文</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:54-66</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_sq_ctx</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_sq_ctx</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqn</span><span class="p">;</span><span class="w">       </span><span class="c1">// Work Queue Number (硬件 QP 编号)</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">buf_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// SQ ring buffer 起始地址 (HBM)</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_size</span><span class="p">;</span><span class="w">  </span><span class="c1">// 每个 WQE 的大小 (XSCALE=128B)</span>
@@ -182,14 +261,13 @@
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">amo_lkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// 原子操作缓冲区的 local key</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>关键字段解读</strong>:
 - <code>head_addr</code> / <code>tail_addr</code>: 分离的 producer/consumer index，支持硬件异步消费。<code>head_addr</code> 由软件通过 <code>aclshmemi_roce_ring_sq_doorbell</code> 更新，<code>tail_addr</code> 由硬件通过 CQE 完成事件推进。
 - <code>db_mode</code>: 区分硬件 doorbell (HW_DB) 和软件 doorbell (SW_DB)，适应不同硬件版本。
 - <code>amo_addr</code> / <code>amo_lkey</code>: 原子操作的专用缓冲区。RDMA atomic fetch 操作的结果会写回此地址，软件通过 <code>dcci_cachelines</code> 刷新后读取。</p>
 <h3 id="23-aclshmemi_rdma_cq_ctx-completion-queue">2.3 aclshmemi_rdma_cq_ctx — Completion Queue 上下文</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:68-77</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_cq_ctx</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_cq_ctx</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cqn</span><span class="p">;</span><span class="w">       </span><span class="c1">// Completion Queue Number</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">buf_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// CQ ring buffer 起始地址</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cqe_size</span><span class="p">;</span><span class="w">  </span><span class="c1">// 每个 CQE 的大小 (XSCALE=64B, 含 32B padding)</span>
@@ -200,11 +278,10 @@
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">db_addr</span><span class="p">;</span><span class="w">   </span><span class="c1">// CQ Doorbell register 地址</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>与 SQ 的对称性</strong>: CQ 的 <code>head_addr</code> 由硬件更新（新 CQE 写入时），<code>tail_addr</code> 由软件更新（<code>aclshmemi_roce_ring_cq_doorbell</code> 在 poll 完成后更新）。</p>
 <h3 id="24-aclshmemi_rdma_send_wr">2.4 aclshmemi_rdma_send_wr — 发送工作请求</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:121-141</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_send_wr</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_send_wr</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// ---- Operation ----</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">send_flags</span><span class="p">;</span><span class="w">    </span><span class="c1">// 发送标志位掩码</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">imm_data</span><span class="p">;</span><span class="w">      </span><span class="c1">// immediate data (带内通知数据)</span>
@@ -226,14 +303,13 @@
 <span class="w">    </span><span class="n">aclshmemi_rdma_atomic_params</span><span class="w"> </span><span class="n">atomic</span><span class="p">;</span><span class="w">  </span><span class="c1">// 原子操作参数</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>设计要点</strong>:
 - <code>__gm__</code> 修饰符标记全局内存指针（HBM 地址空间）
 - <code>num_sge</code> / <code>sg_list</code> 支持 scatter-gather 传输（当前 XSCALE 后端主要使用单 SGE）
 - <code>atomic</code> 联合体支持多种原子操作参数格式</p>
 <h3 id="25-aclshmemi_rdma_atomic_params">2.5 aclshmemi_rdma_atomic_params — 原子操作参数联合体</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:85-119</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_atomic_params</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_atomic_params</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">union</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="c1">// 标准 8B FA/CAS (unmasked)</span>
 <span class="w">        </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">compare_add</span><span class="p">;</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">swap</span><span class="p">;</span><span class="w"> </span><span class="p">};</span>
@@ -263,22 +339,20 @@
 <span class="w">    </span><span class="p">};</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>设计哲学</strong>: 使用 union 实现参数格式的零开销复用。<code>masked_common</code> 是 XSCALE 后端实际使用的格式，其 4 个 64-bit 字段直接映射到 WQE 的 atomic segment。</p>
 <h3 id="26-aclshmemi_rdma_mem_info-memory-region">2.6 aclshmemi_rdma_mem_info — Memory Region 信息</h3>
 <p><strong>文件</strong>: <code>shmemi_device_rdma.h:47-52</code></p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_mem_info</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_mem_info</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">size</span><span class="p">;</span><span class="w">  </span><span class="c1">// MR 大小</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// MR 起始地址</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">lkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// Local Key (本地访问权限)</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">rkey</span><span class="p">;</span><span class="w">  </span><span class="c1">// Remote Key (远端 RDMA 访问权限)</span>
 <span class="p">};</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="3-api">3. API 调用链</h2>
 <h3 id="31">3.1 粗粒度 → 细粒度调用层次</h3>
-<div class="highlight"><pre><span></span><code><span class="err">┌─────────────────────────────────────────────────────────────┐</span>
+<div class="hl-amber"><pre><span></span><code><span class="err">┌─────────────────────────────────────────────────────────────┐</span>
 <span class="err">│</span><span class="w"> </span><span class="nx">用户代码</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nx">算子</span><span class="w"> </span><span class="nx">kernel</span><span class="w">                                       </span><span class="err">│</span>
 <span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">)</span><span class="w">            </span><span class="err">│</span>
 <span class="err">│</span><span class="w">   </span><span class="nx">aclshmemx_roce_get_nbi</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">,</span><span class="w"> </span><span class="nx">pe</span><span class="p">)</span><span class="w">            </span><span class="err">│</span>
@@ -314,9 +388,8 @@
 <span class="err">│</span><span class="w">   </span><span class="nx">aclshmemi_rdma_xscdv_fill_wqe_cas</span><span class="p">&lt;</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">IS_MASKED</span><span class="p">&gt;(</span><span class="o">...</span><span class="p">)</span><span class="w">      </span><span class="err">│</span>
 <span class="err">└─────────────────────────────────────────────────────────────┘</span>
 </code></pre></div>
-
 <h3 id="32-rdma-write">3.2 RDMA WRITE 完整调用链</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// Step 1: 用户调用</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// Step 1: 用户调用</span>
 <span class="n">aclshmemx_roce_put_nbi</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="n">pe</span><span class="p">);</span>
 
 <span class="c1">// Step 2: 地址转换 + 转发</span>
@@ -354,9 +427,8 @@
 <span class="w">    </span><span class="n">aclshmemi_roce_ring_sq_doorbell</span><span class="o">&lt;</span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(</span><span class="n">sq</span><span class="p">,</span><span class="w"> </span><span class="n">cur_head</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="33-aclshmemx_roce_quiet">3.3 aclshmemx_roce_quiet 同步机制</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:253-276</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:253-276</span>
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
 <span class="kt">void</span><span class="w"> </span><span class="n">aclshmemx_roce_quiet</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="n">__ubuf__</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="o">*</span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">sync_id</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">qp_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">qp_idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">qp_num</span><span class="p">;</span><span class="w"> </span><span class="n">qp_idx</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -368,9 +440,8 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>关键设计</strong>: quiet 遍历所有 QP，对每个 QP 读取当前 SQ head（即已 post 的 WQE 总数），然后 poll_cq 等待 CQ tail 追上该值。</p>
-<hr />
+<hr/>
 <h2 id="4-traits">4. 编译时多态 traits 系统</h2>
 <h3 id="41">4.1 设计理念</h3>
 <p>CAM 使用 <strong>C++ 模板特化</strong> 实现零运行时开销的后端选择。核心思想：</p>
@@ -378,16 +449,15 @@
 <p>在编译期通过 <code>ACLSHMEMI_K_RDMA_BACKEND</code> 宏确定后端，所有 <code>aclshmemi_roce_*&lt;B&gt;()</code> 调用在编译期绑定到具体后端实现，运行时无 switch/if 分支。</p>
 </blockquote>
 <h3 id="42">4.2 后端选择宏</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:25-29</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:25-29</span>
 <span class="cp">#if defined(ACLSHMEMI_RDMA_K_BACKEND_XSCALE)</span>
 <span class="w">    </span><span class="cp">#define ACLSHMEMI_K_RDMA_BACKEND (aclshmemi_rdma_backend_t::XSCALE)</span>
 <span class="cp">#else</span>
 <span class="w">    </span><span class="cp">#define ACLSHMEMI_K_RDMA_BACKEND (aclshmemi_rdma_backend_t::IN_DIE)</span>
 <span class="cp">#endif</span>
 </code></pre></div>
-
 <h3 id="43-traits">4.3 traits 系统架构</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:263-315 — 主模板 (未定义, 强制特化)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:263-315 — 主模板 (未定义, 强制特化)</span>
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_backend_t</span><span class="w"> </span><span class="n">B</span><span class="o">&gt;</span>
 <span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_backend_traits</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
@@ -416,34 +486,31 @@
 <span class="w">    </span><span class="p">};</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h3 id="44">4.4 编译期错误防护</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:318-323</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// rdma_device_backend_base.h:318-323</span>
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_atomic_op_t</span><span class="o">&gt;</span>
 <span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_atomic_op_dependent_false</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">false_type</span><span class="w"> </span><span class="p">{};</span>
 
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">&gt;</span>
 <span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_rdma_backend_dependent_false</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">false_type</span><span class="w"> </span><span class="p">{};</span>
 </code></pre></div>
-
 <p>当调用未特化的后端或未实现的原子操作时，<code>static_assert</code> 触发编译错误而非运行时崩溃。</p>
 <h3 id="45">4.5 零运行时开销验证</h3>
 <p>所有关键路径函数标记为 <code>ACLSHMEM_DEVICE</code>（展开为 <code>__forceinline__ __device__</code>），配合 <code>if constexpr</code> 实现编译期分支消除：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:75-81</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:75-81</span>
 <span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">ACLSHMEMI_K_RDMA_BACKEND</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">::</span><span class="n">XSCALE</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">aclshmemi_roce_atomic_fetch_and_add</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">,</span><span class="w"> </span><span class="n">XSCALE</span><span class="o">&gt;</span><span class="p">(...);</span>
 <span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">ACLSHMEM_DEBUG_FUNC</span><span class="p">(</span><span class="n">aclshmemi_kernel_abort</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ROCE atomic add is only supported on XSCALE backend.</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">ACLSHMEM_DEBUG_FUNC</span><span class="p">(</span><span class="n">aclshmemi_kernel_abort</span><span class="p">,</span><span class="w"> </span><span class="s">"ROCE atomic add is only supported on XSCALE backend.</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">T</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p>编译后，XSCALE 后端下 <code>else</code> 分支被完全消除，无运行时判断。</p>
-<hr />
+<hr/>
 <h2 id="5-xscale-wqecqe">5. XSCALE 后端 WQE/CQE 格式</h2>
 <h3 id="51-wqe-xscale-128-bytes">5.1 WQE 整体结构 (XSCALE, 128 Bytes)</h3>
 <p>XSCALE 后端的 WQE 为 <strong>128 Bytes</strong> (<code>ACLSHMEMI_XSCALE_SND_WQE_SIZE = 1 &lt;&lt; 7 = 128</code>)，由以下部分组成：</p>
-<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>┌──────────────────────────────────────────────────────┐
 │  Control Segment (16 Bytes)                           │
 │  ├── msg_opcode    (8 bits)  — 操作码                 │
 │  ├── with_imm      (1 bit)   — 是否带 immediate      │
@@ -475,10 +542,9 @@
 │  Padding (64 Bytes, 补齐到 128B)                      │
 └──────────────────────────────────────────────────────┘
 </code></pre></div>
-
 <h3 id="52-control-segment">5.2 Control Segment 版本差异</h3>
 <p>XSCALE 支持两个 API 版本，通过 <code>ACLSHMEMI_XSCALE_API_VERSION_VAR</code> 宏选择：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// V1: wqe_id 占 16 bits (bits [0:15] of the last 32-bit field)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// V1: wqe_id 占 16 bits (bits [0:15] of the last 32-bit field)</span>
 <span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">msg_opcode</span><span class="p">;</span><span class="w">     </span><span class="c1">// [0:7]</span>
 <span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">with_imm</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// [8]</span>
@@ -513,16 +579,14 @@
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">wqe_id</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">    </span><span class="c1">// [27:47] — 20 bits (支持更多 WQE)</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>版本选择机制</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
 <span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">conditional_t</span><span class="o">&lt;</span><span class="n">ACLSHMEMI_XSCALE_API_VERSION_VAR</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span>
 <span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="p">,</span>
 <span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v2</span><span class="o">&gt;</span><span class="p">;</span>
 </code></pre></div>
-
 <h3 id="53-cqe-xscale-diamond-64-bytes">5.3 CQE 格式 (XSCALE Diamond, 64 Bytes)</h3>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_cqe64_t</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_cqe64_t</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">aclshmemi_xscdv_diamond_cqe_t</span><span class="w"> </span><span class="n">cqe</span><span class="p">;</span><span class="w">  </span><span class="c1">// 32 Bytes</span>
 <span class="w">    </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">padding</span><span class="p">[</span><span class="mi">32</span><span class="p">];</span><span class="w">                 </span><span class="c1">// 32 Bytes padding</span>
 <span class="p">};</span>
@@ -564,10 +628,9 @@
 <span class="w">    </span><span class="p">};</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h3 id="54-owner-bit">5.4 Owner Bit 机制</h3>
 <p>XSCALE 使用 <strong>owner bit</strong> 实现硬件/软件同步，避免昂贵的 atomic 操作：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:389-397</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:389-397</span>
 <span class="kt">bool</span><span class="w"> </span><span class="nf">aclshmemi_roce_xscale_check_cqe_owner</span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="n">aclshmemi_xscdv_cqe64_t</span><span class="w"> </span><span class="o">*</span><span class="n">cqe64</span><span class="p">,</span><span class="w"> </span>
 <span class="w">                                            </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">cur_tail</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">depth</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">owner_bit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">cqe64</span><span class="o">-&gt;</span><span class="n">cqe</span><span class="p">.</span><span class="n">owner</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">ACLSHMEMI_XSC_CQE_OWNER_MASK</span><span class="p">);</span>
@@ -575,11 +638,10 @@
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">owner_bit</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">expect_bit</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>原理</strong>: 硬件每写完一轮 CQ（depth 个 CQE），自动翻转 owner bit。软件通过比较 <code>owner_bit == (cur_tail / depth) &amp; 1</code> 判断 CQE 是否已写入。</p>
 <h3 id="55-doorbell">5.5 Doorbell 格式</h3>
 <p><strong>SQ Doorbell</strong> (8 Bytes):</p>
-<div class="highlight"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_send_doorbell_v2</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_send_doorbell_v2</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">next_pid</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">21</span><span class="p">;</span><span class="w">  </span><span class="c1">// 下一个 WQE 的 producer index (已左移)</span>
 <span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">qp_id</span><span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w">  </span><span class="c1">// QP 编号</span>
@@ -587,9 +649,8 @@
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">raw</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>CQ Doorbell</strong> (8 Bytes):</p>
-<div class="highlight"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_cq_doorbell_t</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">union</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_diamond_cq_doorbell_t</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">cq_next_cid</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">23</span><span class="p">;</span><span class="w">  </span><span class="c1">// 下一个待处理的 CQE ID</span>
 <span class="w">        </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">cq_id</span><span class="w">       </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w">  </span><span class="c1">// CQ 编号</span>
@@ -598,9 +659,8 @@
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">raw</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h3 id="56">5.6 操作码映射</h3>
-<div class="highlight"><pre><span></span><code><span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_msg_type_t</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">aclshmemi_xscdv_msg_type_t</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_WRITE</span><span class="w">                    </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
 <span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_READ</span><span class="w">                     </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
 <span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_CMP_AND_SWAP</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mi">26</span><span class="p">,</span>
@@ -611,8 +671,7 @@
 <span class="w">    </span><span class="n">ACLSHMEMI_XSCALE_MSG_OPCODE_RDMA_ATOMIC_4B_MSK_FETCH_AND_ADD</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">34</span><span class="p">,</span>
 <span class="p">};</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="6">6. 原子操作机制</h2>
 <h3 id="61-api">6.1 原子操作 API 全景</h3>
 <p>CAM 提供 <strong>16 种</strong> 原子操作 API，覆盖 fetch/set/compare-swap/inc/add/and/or/xor 及其组合：</p>
@@ -714,15 +773,14 @@
 </table>
 <h3 id="62-masked-vs-unmasked">6.2 Masked vs Unmasked 变体</h3>
 <p>XSCALE 后端对原子操作区分 <strong>masked</strong> 和 <strong>unmasked</strong> 两种模式：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 4B 操作强制使用 masked 模式</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 4B 操作强制使用 masked 模式</span>
 <span class="k">static_assert</span><span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">BYTES_32</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="n">IS_MASKED</span><span class="p">),</span>
-<span class="w">    </span><span class="s">&quot;XSCALE backend doesn&#39;t support fetch and add operation with type size of 4B without mask</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="s">"XSCALE backend doesn't support fetch and add operation with type size of 4B without mask</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>Masked 模式</strong> 允许对 64-bit 字中的特定位字段进行原子操作，通过 <code>swap_add_mask</code> / <code>compare_mask</code> 控制哪些位参与操作。</p>
 <h3 id="63-wqe">6.3 原子操作 WQE 构造</h3>
 <p>以 <code>aclshmemi_rdma_xscdv_fill_wqe_fa</code> 为例：</p>
-<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span>
 <span class="kt">uint32_t</span><span class="w"> </span><span class="n">aclshmemi_rdma_xscdv_fill_wqe_fa</span><span class="p">(</span><span class="n">aclshmemi_rdma_send_wr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">wr</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">DS_DATA_NUM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">  </span><span class="c1">// ctrl + data_seg + atomic_seg</span>
 <span class="w">    </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">MSG_LEN</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">TYPE_BYTES</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">BYTES_32</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span>
@@ -742,10 +800,9 @@
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">aclshmemi_rdma_xscdv_fill_fa_atomic_seg</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">IS_MASKED</span><span class="o">&gt;</span><span class="p">(</span><span class="n">cur_wqe_addr</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="64">6.4 字节序转换</h3>
 <p>XSCALE 硬件要求 <strong>Big-Endian</strong> 格式的原子操作数据：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:333-343</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// rdma_device_backend_xscale.hpp:333-343</span>
 <span class="n">ACLSHMEM_DEVICE</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">aclshmemi_htobe64</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">host_val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">56</span><span class="w"> </span><span class="o">|</span>
 <span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">48</span><span class="w"> </span><span class="o">|</span>
@@ -757,17 +814,15 @@
 <span class="w">           </span><span class="p">((</span><span class="n">host_val</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">56</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xFF</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p>读取 fetch 结果时需反向转换：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:293-297</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:293-297</span>
 <span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">ACLSHMEMI_K_RDMA_BACKEND</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">aclshmemi_rdma_backend_t</span><span class="o">::</span><span class="n">XSCALE</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">fetch_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">fetch_addr</span><span class="p">;</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="n">aclshmemi_htobe32</span><span class="p">(</span><span class="n">fetch_bytes</span><span class="p">);</span><span class="w">  </span><span class="c1">// 4B 结果需要字节序转换</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="65">6.5 原子操作结果读取</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:278-301</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// shmem_device_rdma.hpp:278-301</span>
 <span class="kt">uint64_t</span><span class="w"> </span><span class="nf">aclshmemi_roce_get_atomic_fetch_addr</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">pe</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">qp_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 从 sq_ctx-&gt;amo_addr 获取原子操作结果缓冲区地址</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">sq_context</span><span class="o">-&gt;</span><span class="n">amo_addr</span><span class="p">;</span>
@@ -781,15 +836,13 @@
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">fetch_addr</span><span class="p">;</span><span class="w">  </span><span class="c1">// 读取 fetch 前的原始值</span>
 <span class="p">}</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="7-host">7. Host 端传输管理</h2>
 <h3 id="71-rdmatransportmanagerv2">7.1 RdmaTransportManagerV2 生命周期</h3>
-<div class="highlight"><pre><span></span><code><span class="nv">OpenDevice</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="nv">RegisterMemoryRegion</span><span class="ss">()</span><span class="w"> </span>×<span class="w"> </span><span class="nv">N</span><span class="w"> </span>→<span class="w"> </span><span class="nv">Prepare</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="k">Connect</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span>[运行期]<span class="w"> </span>→<span class="w"> </span><span class="nv">CloseDevice</span><span class="ss">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="nv">OpenDevice</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="nv">RegisterMemoryRegion</span><span class="ss">()</span><span class="w"> </span>×<span class="w"> </span><span class="nv">N</span><span class="w"> </span>→<span class="w"> </span><span class="nv">Prepare</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span><span class="k">Connect</span><span class="ss">()</span><span class="w"> </span>→<span class="w"> </span>[运行期]<span class="w"> </span>→<span class="w"> </span><span class="nv">CloseDevice</span><span class="ss">()</span>
 </code></pre></div>
-
 <h3 id="72-opendevice">7.2 OpenDevice 流程</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:44-101</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:44-101</span>
 <span class="n">Result</span><span class="w"> </span><span class="nf">OpenDevice</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">TransportOptions</span><span class="o">&amp;</span><span class="w"> </span><span class="n">options</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 1. 获取设备 ID</span>
 <span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtGetDevice</span><span class="p">(</span><span class="o">&amp;</span><span class="n">userId</span><span class="p">);</span>
@@ -807,9 +860,8 @@
 <span class="w">    </span><span class="n">ReserveRdmaInfoSpace</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="73-connect">7.3 Connect 流程</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:280-307</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:280-307</span>
 <span class="n">Result</span><span class="w"> </span><span class="nf">Connect</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 1. 验证单 NIC rank 数不超过 16</span>
 <span class="w">    </span><span class="n">ValidateRanksPerNic</span><span class="p">();</span>
@@ -828,9 +880,8 @@
 <span class="w">    </span><span class="n">CreateChannelsAndFillInfo</span><span class="p">(</span><span class="n">channelDescs</span><span class="p">,</span><span class="w"> </span><span class="n">channelNum</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="74-fillrdmainfo">7.4 FillRdmaInfo — 核心数据提取</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:507-531</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:507-531</span>
 <span class="n">Result</span><span class="w"> </span><span class="nf">FillRdmaInfo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 1. 分配临时 buffer</span>
 <span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">&gt;</span><span class="w"> </span><span class="n">qpInfoBuffer</span><span class="p">(</span><span class="n">qpInfoSize_</span><span class="p">);</span>
@@ -855,9 +906,8 @@
 <span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtMemcpy</span><span class="p">(</span><span class="n">qpInfo_</span><span class="p">,</span><span class="w"> </span><span class="n">qpInfoSize_</span><span class="p">,</span><span class="w"> </span><span class="n">copyInfo</span><span class="p">,</span><span class="w"> </span><span class="n">qpInfoSize_</span><span class="p">,</span><span class="w"> </span><span class="n">ACL_MEMCPY_HOST_TO_DEVICE</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="75">7.5 内存注册策略</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:191-224</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:191-224</span>
 <span class="n">Result</span><span class="w"> </span><span class="nf">RegisterMemoryRegion</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">TransportMemoryRegion</span><span class="o">&amp;</span><span class="w"> </span><span class="n">mr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">CommMem</span><span class="w"> </span><span class="n">commMem</span><span class="p">{};</span>
 <span class="w">    </span><span class="c1">// 区分 HBM 和 Host DDR</span>
@@ -867,13 +917,12 @@
 <span class="w">        </span><span class="n">commMem</span><span class="p">.</span><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">COMM_MEM_TYPE_HOST</span><span class="p">;</span><span class="w">    </span><span class="c1">// DDR</span>
 
 <span class="w">    </span><span class="c1">// 注册到 HCCP 协议栈</span>
-<span class="w">    </span><span class="n">HcommMemReg</span><span class="p">(</span><span class="n">endpointHandle_</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;HcclBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">commMem</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">memHandle</span><span class="p">);</span>
+<span class="w">    </span><span class="n">HcommMemReg</span><span class="p">(</span><span class="n">endpointHandle_</span><span class="p">,</span><span class="w"> </span><span class="s">"HcclBuffer"</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">commMem</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">memHandle</span><span class="p">);</span>
 <span class="w">    </span><span class="n">registeredMRs_</span><span class="p">.</span><span class="n">emplace</span><span class="p">(</span><span class="n">mr</span><span class="p">.</span><span class="n">addr</span><span class="p">,</span><span class="w"> </span><span class="n">entry</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="76">7.6 原子操作共享内存</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:703-735</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// device_rdma_transport_manager_v2.cpp:703-735</span>
 <span class="kt">bool</span><span class="w"> </span><span class="nf">ReserveRdmaInfoSpace</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// qpInfo 大小: sizeof(AiQpRMAQueueInfo) + rankCount * [2*(sizeof(AiQpRMAWQ) + sizeof(AiQpRMACQ)) + sizeof(RdmaMemRegionInfo)]</span>
 <span class="w">    </span><span class="n">qpInfoSize_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">AiQpRMAQueueInfo</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">oneQpSize</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">rankCount_</span><span class="p">;</span>
@@ -886,7 +935,6 @@
 <span class="w">    </span><span class="n">DlAclApi</span><span class="o">::</span><span class="n">AclrtMalloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">atomicSharedMemory_</span><span class="p">,</span><span class="w"> </span><span class="n">atomicSize</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>设计要点</strong>: 原子操作共享内存用于存储 fetch-before-write 结果。每个 rank 占用 <code>128 × 8B = 1KB</code>，支持最大 128 个并发原子操作。</p>
 <h3 id="77">7.7 底层协议结构</h3>
 <p><strong>HCCP 协议</strong> (<code>dl_hccp_def.h</code>):
@@ -899,60 +947,56 @@
 - <code>SqContext</code> / <code>CqContext</code>: 队列上下文 (roceSq/roceCq 包含 qpn/cqn/sqVa/cqVa/dbVa 等)
 - <code>RegedBufferEntity</code>: 注册缓冲区 (addr/size/protectionInfo)
 - <code>ProtectionInfo</code>: 保护信息 (type=PROTECTION_TYPE_ROCE, lkey/rkey)</p>
-<hr />
+<hr/>
 <h2 id="8">8. 编译注入机制</h2>
 <h3 id="81-shmem_home_path">8.1 SHMEM_HOME_PATH 环境变量</h3>
-<div class="highlight"><pre><span></span><code><span class="c1"># ascendc_impl_build.py:167-178</span>
-<span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;SHMEM_HOME_PATH&#39;</span><span class="p">)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># ascendc_impl_build.py:167-178</span>
+<span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'SHMEM_HOME_PATH'</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">SHMEM_HOME_PATH</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="s2">&quot;/usr/local/Ascend/shmem/latest&quot;</span><span class="p">)</span>
+    <span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="s2">"/usr/local/Ascend/shmem/latest"</span><span class="p">)</span>
 
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/host_device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/internal&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src/device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/memfabric_hybrid/include/smem/device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/host_device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/internal"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/src"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/src/device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/memfabric_hybrid/include/smem/device"</span><span class="p">)</span>
 </code></pre></div>
-
 <h3 id="82">8.2 编译期后端选择</h3>
-<div class="highlight"><pre><span></span><code><span class="c1"># compile_ascend_proj.sh:179-192</span>
-<span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;&quot;</span>
-<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
-<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;-I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/include -I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/src/device&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># compile_ascend_proj.sh:179-192</span>
+<span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">""</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">"-I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/include -I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/src/device"</span>
 <span class="k">fi</span>
 <span class="c1"># 通过 sed 注入到 build.make 的 --compile-options 中</span>
-find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </span>-name<span class="w"> </span><span class="s2">&quot;build.make&quot;</span><span class="w"> </span>-exec<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span><span class="s2">&quot;s|--compile-options=\&quot;\&quot;|--compile-options=\\\&quot;</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">\\\&quot;|g&quot;</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
+find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </span>-name<span class="w"> </span><span class="s2">"build.make"</span><span class="w"> </span>-exec<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">"s|--compile-options=\"\"|--compile-options=\\\"</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">\\\"|g"</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
 </code></pre></div>
-
 <h3 id="83">8.3 算子选择过滤</h3>
-<div class="highlight"><pre><span></span><code><span class="c1"># select_ops.py:55-60, 116-121</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># select_ops.py:55-60, 116-121</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
-    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">get_meta</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;requires_shmem&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">get_meta</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"requires_shmem"</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
 
 <span class="c1"># 在 resolve() 中:</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">shmem</span><span class="p">:</span>
     <span class="n">dropped</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
     <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">dropped</span><span class="p">:</span>
-        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;NOTE: dropping </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s2"> (requires SHMEM, which is not installed)</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">"NOTE: dropping </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s2"> (requires SHMEM, which is not installed)</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
     <span class="n">candidates</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
 </code></pre></div>
-
 <h3 id="84">8.4 当前算子注册表状态</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// operator_registry.json</span>
-<span class="nt">&quot;operator_meta&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;dispatch_layout&quot;</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;fused_deep_moe&quot;</span><span class="p">:</span><span class="w">     </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;family&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fused_deep_moe&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;variant&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;base&quot;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;moe_combine_normal&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;moe_dispatch_normal&quot;</span><span class="p">:{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;notify_dispatch&quot;</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// operator_registry.json</span>
+<span class="nt">"operator_meta"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"dispatch_layout"</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"fused_deep_moe"</span><span class="p">:</span><span class="w">     </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"family"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fused_deep_moe"</span><span class="p">,</span><span class="w"> </span><span class="nt">"variant"</span><span class="p">:</span><span class="w"> </span><span class="s2">"base"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"moe_combine_normal"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"moe_dispatch_normal"</span><span class="p">:{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"notify_dispatch"</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>当前所有算子 <code>requires_shmem: false</code></strong>, 即默认使用 HCCL Window 模式。SHMEM 模式基础设施已完整就绪，但尚未在算子层启用。</p>
-<hr />
+<hr/>
 <h2 id="9-hccl-window">9. 与 HCCL Window 模式的本质区别</h2>
 <h3 id="91">9.1 架构层面对比</h3>
 <table>
@@ -1013,18 +1057,16 @@ find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </spa
 </table>
 <h3 id="92">9.2 代码层面对比</h3>
 <p><strong>SHMEM 模式</strong> (直接 RDMA):</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 算子 kernel 内部直接发起 RDMA</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 算子 kernel 内部直接发起 RDMA</span>
 <span class="n">aclshmemx_roce_put_nbi</span><span class="p">(</span><span class="n">remote_addr</span><span class="p">,</span><span class="w"> </span><span class="n">local_addr</span><span class="p">,</span><span class="w"> </span><span class="n">ub_buf</span><span class="p">,</span><span class="w"> </span><span class="n">len</span><span class="p">,</span><span class="w"> </span><span class="n">remote_pe</span><span class="p">);</span>
 <span class="c1">// ↑ 直接构造 WQE → doorbell → 硬件执行</span>
 </code></pre></div>
-
 <p><strong>HCCL Window 模式</strong> (当前默认):</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 通过 HCCL Window 机制</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 通过 HCCL Window 机制</span>
 <span class="n">winContext_</span><span class="o">-&gt;</span><span class="n">localWindowsIn</span><span class="p">[</span><span class="n">peer_rank</span><span class="p">]</span><span class="w">  </span><span class="c1">// 预分配的 Window 区域</span>
 <span class="n">HcclRankRelationResV2</span><span class="w">                    </span><span class="c1">// HCCL 管理的 rank 关系</span>
 <span class="c1">// ↑ 需经过 HCCL 调度、Window 资源同步</span>
 </code></pre></div>
-
 <h3 id="93">9.3 性能影响分析</h3>
 <p>SHMEM 模式的核心优势在于 <strong>消除 HCCL 软件栈开销</strong>:</p>
 <ol>
@@ -1041,7 +1083,7 @@ find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </spa
 <li><strong>算子代码改造</strong>: 在 kernel 中调用 <code>aclshmemx_roce_*</code> API 替代 HCCL Window 操作</li>
 <li><strong>编译</strong>: <code>select_ops.py</code> 会自动包含该算子，编译注入 SHMEM include 路径</li>
 </ol>
-<hr />
+<hr/>
 <h2 id="10">10. 关键设计洞察</h2>
 <h3 id="101-rdma">10.1 用户态 RDMA 的极致优化</h3>
 <p>CAM 的 SHMEM 模式是 <strong>用户态 RDMA 在 AI 芯片上的极致实现</strong>:</p>
@@ -1060,12 +1102,11 @@ find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </spa
 </ul>
 <h3 id="103">10.3 版本兼容性的优雅处理</h3>
 <p>XSCALE 后端的 V1/V2 API 版本通过 <code>std::conditional_t</code> 实现编译期选择:</p>
-<div class="highlight"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">using</span><span class="w"> </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_t</span><span class="w"> </span><span class="o">=</span>
 <span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">conditional_t</span><span class="o">&lt;</span><span class="n">ACLSHMEMI_XSCALE_API_VERSION_VAR</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span>
 <span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v1</span><span class="p">,</span>
 <span class="w">                       </span><span class="n">aclshmemi_xscdv_wqe_ctrl_seg_v2</span><span class="o">&gt;</span><span class="p">;</span>
 </code></pre></div>
-
 <p>这允许同一份代码支持不同硬件世代的 WQE 格式差异。</p>
 <h3 id="104">10.4 同步机制的精心设计</h3>
 <ul>
@@ -1081,7 +1122,7 @@ find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </spa
 <li>masked/unmasked 模式编译期选择</li>
 <li>多种原子操作 (FA/CAS/AND/OR/XOR) 的统一 WQE 构造路径</li>
 </ul>
-<hr />
+<hr/>
 <h2 id="11_1">11. 总结</h2>
 <p>CAM 的 SHMEM 模式是一个 <strong>完整的用户态 RDMA 子系统</strong>，其核心优势在于:</p>
 <ol>
@@ -1092,11 +1133,18 @@ find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </spa
 <li><strong>工程完备</strong>: 超时保护、错误处理、日志调试机制齐全</li>
 </ol>
 <p>当前所有算子默认使用 HCCL Window 模式 (<code>requires_shmem: false</code>)，但 SHMEM 模式基础设施已完整就绪，是 CAM 未来性能突破的关键路径。</p>
-<div class="footer">
-<p>📊 UMDK/CAM 深度分析报告 | 生成日期: 2026-07-21</p>
-<p><a href="../CAM深度分析报告.html">← 返回主报告</a> | <a href="index.html">📑 索引</a></p>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:40px;padding-top:20px;border-top:1px solid rgba(17,17,17,.12);"><a href="05_test.html" class="back">← 测试体系与回归测试</a> <a href="index.html" class="back">📑 索引</a> <a href="07_hccl.html" class="back">非 SHMEM — HCCL Window →</a></div>
+    </div>
+  </article>
 </div>
-</div>
+<script>
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);
+    if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})};
+  });
+});
+</script>
 
 </body>
 </html>

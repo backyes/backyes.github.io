@@ -1,18 +1,71 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
   <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FusedDeepMoE SHMEM 路径 (master) — UMDK/CAM 深度分析</title>
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FusedDeepMoE SHMEM 路径 — UMDK/CAM · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div class="notion-page">
-<div class="nav-top">
-<a href="01_arch.html">整体架构与设</a><span class="sep">|</span><a href="02_build.html">编译系统与部</a><span class="sep">|</span><a href="03_ep.html">EP</a><span class="sep">|</span><a href="04_fused.html">FusedDeepMoE</a><span class="sep">|</span><a href="05_test.html">测试体系与回</a><span class="sep">|</span><a href="06_shmem.html">SHMEM</a><span class="sep">|</span><a href="07_hccl.html">非</a><span class="sep">|</span><a href="08_notify.html">notify_dispatch</a><span class="sep">|</span><strong style="color:var(--fg-bold)">FusedDeepMoE</strong><span class="sep">|</span><a href="10_zb_dispatch.html">ZB</a><span class="sep">|</span><a href="11_zb_combine.html">ZB</a><span class="sep">|</span><a href="12_fused_family.html">FusedDeepMoE</a><span class="sep">|</span><a href="13_new_comm.html">新通信算子</a><span class="sep">|</span><a href="14_zb_utils.html">ZB</a><span class="sep">|</span><a href="15_pybind.html">Pybind</a><span class="sep">|</span><a href="16_shmem_nda.html">SHMEM</a><span class="sep">|</span><a href="../CAM深度分析报告.html">← 主报告</a>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../../../">backyes</a></div>
+    <div class="brand-tagline">CAM Agent-09 — FusedDeepMoE SHMEM 路径</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../../../posts.html">Posts</a>
+    <a href="../../../#survey" class="nav-accent">Survey by AI</a>
+  </nav>
+</header>
 </div>
-<h1 id="fuseddeepmoe-shmem">FusedDeepMoE 通信模式 &amp; SHMEM 编译机制深度剖析</h1>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+      <li><a href="#1" class="toc-h2">1. 总体架构概览</a></li>
+      <li><a href="#2-fuseddeepmoe" class="toc-h2">2. FusedDeepMoE 通信模式实现</a></li>
+      <li><a href="#21-fused_deep_moeh" class="toc-h3">2.1 核心入口：fused_deep_moe.h</a></li>
+      <li><a href="#22-hccl-window" class="toc-h3">2.2 通信上下文获取：HCCL Window 模式</a></li>
+      <li><a href="#3-shmem-vs-shmem" class="toc-h2">3. SHMEM vs 非 SHMEM 代码路径</a></li>
+      <li><a href="#31-shmem" class="toc-h3">3.1 当前状态：无 SHMEM 分支</a></li>
+      <li><a href="#32-shmem" class="toc-h3">3.2 编译系统的 SHMEM 预留</a></li>
+      <li><a href="#33" class="toc-h3">3.3 抽象层设计</a></li>
+      <li><a href="#4-raw_distributed" class="toc-h2">4. raw_distributed 子模块：通信原语详解</a></li>
+      <li><a href="#41-cam_moe_distribute_dispatchh" class="toc-h3">4.1 cam_moe_distribute_dispatch.h</a></li>
+      <li><a href="#42-cam_moe_distribute_combineh" class="toc-h3">4.2 cam_moe_distribute_combine.h</a></li>
+      <li><a href="#5" class="toc-h2">5. 三条执行路径的通信差异</a></li>
+      <li><a href="#51" class="toc-h3">5.1 路径判定机制</a></li>
+      <li><a href="#52" class="toc-h3">5.2 路径对比</a></li>
+      <li><a href="#53" class="toc-h3">5.3 深度融合路径的通信融合</a></li>
+      <li><a href="#6-workspace" class="toc-h2">6. Workspace 内存布局</a></li>
+      <li><a href="#61-workspaceoffset" class="toc-h3">6.1 WorkSpaceOffset 结构体</a></li>
+      <li><a href="#62-enable_reuse_memory" class="toc-h3">6.2 内存复用策略（ENABLE_REUSE_MEMORY）</a></li>
+      <li><a href="#63-workspace" class="toc-h3">6.3 Workspace 总大小计算</a></li>
+      <li><a href="#64" class="toc-h3">6.4 数据流转图</a></li>
+      <li><a href="#7-shmem" class="toc-h2">7. 编译系统 SHMEM 机制</a></li>
+      <li><a href="#71-select_opspy-shmem" class="toc-h3">7.1 select_ops.py — SHMEM 算子过滤</a></li>
+      <li><a href="#72-compile_ascend_projsh-shmem" class="toc-h3">7.2 compile_ascend_proj.sh — SHMEM 路径注入</a></li>
+      <li><a href="#73-ascendc_impl_buildpy-shmem" class="toc-h3">7.3 ascendc_impl_build.py — SHMEM 编译选项生成</a></li>
+      <li><a href="#74-operator_registryjson-shmem" class="toc-h3">7.4 operator_registry.json — SHMEM 标记</a></li>
+      <li><a href="#8-shmem_home_path" class="toc-h2">8. SHMEM_HOME_PATH 环境变量</a></li>
+      <li><a href="#81" class="toc-h3">8.1 作用域</a></li>
+      <li><a href="#82" class="toc-h3">8.2 编译时行为</a></li>
+      <li><a href="#83" class="toc-h3">8.3 运行时行为</a></li>
+      <li><a href="#9-shmem" class="toc-h2">9. 未来 SHMEM 集成路径</a></li>
+      <li><a href="#91" class="toc-h3">9.1 需要修改的代码</a></li>
+      <li><a href="#92-shmem" class="toc-h3">9.2 SHMEM 集成挑战</a></li>
+      <li><a href="#93" class="toc-h3">9.3 推荐集成策略</a></li>
+      <li><a href="#10" class="toc-h2">10. 关键代码索引</a></li>
+      <li><a href="#11" class="toc-h2">11. 结论</a></li>
+    </ul></div>
+  </aside>
+  <article class="article">
+    <a href="../../../#survey" class="back">← 返回 Survey by AI</a>
+    <h1>FusedDeepMoE SHMEM 路径 — UMDK/CAM</h1>
 <details class="notion-toc"><summary>Contents</summary>
 <ul>
 <li><a href="#1-总体架构概览" class="toc-h2">1. 总体架构概览</a></li>
@@ -53,10 +106,16 @@
 </ul>
 </details>
 
+    <div class="meta">
+      <span>📅 2026-07-21</span>
+      <div><span class="ptag">FusedDeepMoE</span><span class="ptag">SHMEM</span></div>
+    </div>
+    <div class="notion-page">
+<h1 id="fuseddeepmoe-shmem">FusedDeepMoE 通信模式 &amp; SHMEM 编译机制深度剖析</h1>
 <blockquote>
 <p><strong>代码深读报告</strong> | 聚焦 FusedDeepMoE 的 SHMEM vs 非 SHMEM 通信路径、raw_distributed 通信原语、三条执行路径差异、Workspace 内存布局，以及编译系统的 SHMEM 注入机制。</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="1">1. 总体架构概览</h2>
 <p>FusedDeepMoE 是 CAM 中最复杂的融合算子，将 <strong>Dispatch → GMM1 → SwiGLU → GMM2 → Combine</strong> 五个阶段融合进单一 kernel。其核心挑战在于：</p>
 <ul>
@@ -64,7 +123,7 @@
 <li><strong>三条执行路径</strong>：非深度融合 / 深度融合 / 共享专家，各自通信模式不同</li>
 <li><strong>SHMEM vs HCCL Window</strong>：当前默认使用 HCCL Window 通信，SHMEM 路径为未来预留</li>
 </ul>
-<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
 │                     FusedDeepMoE 融合流程                           │
 │                                                                     │
 │  x ──→ Dispatch ──→ GMM1 ──→ SwiGLU ──→ GMM2 ──→ Combine ──→ out  │
@@ -74,19 +133,17 @@
 │               (Cube)        (Vector)   (Cube)                       │
 └─────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="2-fuseddeepmoe">2. FusedDeepMoE 通信模式实现</h2>
 <h3 id="21-fused_deep_moeh">2.1 核心入口：<code>fused_deep_moe.h</code></h3>
 <p>文件：<code>op_kernel/fused_deep_moe.h</code></p>
 <p><strong>通信完全通过 <code>raw_distributed</code> 子模块实现</strong>，主 kernel 类 <code>FusedDeepMoe</code> 本身不包含任何通信逻辑：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// fused_deep_moe.h 第30行</span>
-<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;fused_deep_moe/raw_distributed/cam_moe_distribute_dispatch.h&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// fused_deep_moe.h 第30行</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">"fused_deep_moe/raw_distributed/cam_moe_distribute_dispatch.h"</span>
 <span class="c1">// 注意：combine 的 include 在 GMM2 kernel 内部（通过 combiner 指针）</span>
 </code></pre></div>
-
 <p><strong>Process() 函数揭示的三阶段执行模型</strong>（第354-448行）：</p>
-<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">TemplateMC2TypeClass</span><span class="o">&gt;</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">TemplateMC2TypeClass</span><span class="o">&gt;</span>
 <span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">FusedDeepMoe</span><span class="o">&lt;</span><span class="n">TemplateMC2TypeFunc</span><span class="o">&gt;::</span><span class="n">Process</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="c1">// 阶段1: Dispatch（仅非深度融合路径）</span>
@@ -104,21 +161,18 @@
 <span class="w">    </span><span class="n">GmmDeq</span><span class="o">&lt;</span><span class="p">...</span><span class="o">&gt;</span><span class="p">(...,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">combiner</span><span class="p">);</span><span class="w">  </span><span class="c1">// ← combiner 在 GMM2 的 AIV 侧执行</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="22-hccl-window">2.2 通信上下文获取：HCCL Window 模式</h3>
 <p><strong>关键发现：当前代码中没有任何 SHMEM 分支。</strong> 所有通信通过 <code>HcclOpResParam</code> 结构体（HCCL Window 描述符）实现：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// cam_moe_distribute_dispatch.h 第236-237行</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// cam_moe_distribute_dispatch.h 第236-237行</span>
 <span class="n">winContext_</span><span class="p">[</span><span class="n">COMM_EP_IDX</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetHcclContext</span><span class="o">&lt;</span><span class="n">HCCL_GROUP_ID_0</span><span class="o">&gt;</span><span class="p">();</span>
 <span class="n">winContext_</span><span class="p">[</span><span class="n">COMM_TP_IDX</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetHcclContext</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="p">();</span>
 </code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="c1">// cam_moe_distribute_combine.h 第245-246行</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// cam_moe_distribute_combine.h 第245-246行</span>
 <span class="k">auto</span><span class="w"> </span><span class="n">contextGM0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetHcclContext</span><span class="o">&lt;</span><span class="n">HCCL_GROUP_ID_0</span><span class="o">&gt;</span><span class="p">();</span>
 <span class="n">epWinContext_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">contextGM0</span><span class="p">;</span>
 </code></pre></div>
-
 <p><strong>HCCL Window 地址解析</strong>（dispatch 第83-91行）：</p>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">GetWindAddrByRankId</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">ctxIdx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">rankId</span><span class="p">)</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">GetWindAddrByRankId</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">ctxIdx</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">rankId</span><span class="p">)</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">curRankId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctxIdx</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">COMM_EP_IDX</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">epRankId_</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">tpRankId_</span><span class="p">;</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">curRankId</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">rankId</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -130,19 +184,17 @@
 <span class="w">           </span><span class="o">+</span><span class="w"> </span><span class="n">winDataSizeOffset_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">rankId</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">OPT_RANK_OFFSET</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>通信模式总结</strong>：
 - <strong>数据通道</strong>：<code>windowsIn</code> — 存放实际 token 数据（int8/half/bf16）
 - <strong>状态通道</strong>：<code>windowsExp</code> — 存放同步状态标志（flag/sumTarget）
 - <strong>同步机制</strong>：通过 <code>DataCopy</code> 在 Window 上写入 flag，轮询对端 flag 实现握手</p>
-<hr />
+<hr/>
 <h2 id="3-shmem-vs-shmem">3. SHMEM vs 非 SHMEM 代码路径</h2>
 <h3 id="31-shmem">3.1 当前状态：无 SHMEM 分支</h3>
 <p><strong>对整个 <code>fused_deep_moe/</code> 目录进行全量 grep</strong>：</p>
-<div class="highlight"><pre><span></span><code>grep<span class="w"> </span>-rn<span class="w"> </span><span class="s2">&quot;aclshmem\|SHMEM\|shmem_&quot;</span><span class="w"> </span>src/cam/comm_operator/ascend_kernels/fused_deep_moe/
+<div class="hl-amber"><pre><span></span><code>grep<span class="w"> </span>-rn<span class="w"> </span><span class="s2">"aclshmem\|SHMEM\|shmem_"</span><span class="w"> </span>src/cam/comm_operator/ascend_kernels/fused_deep_moe/
 <span class="c1"># 结果：0 命中</span>
 </code></pre></div>
-
 <p><strong>结论：FusedDeepMoE kernel 代码中不存在任何 SHMEM 相关代码路径。</strong> 所有通信均通过 HCCL Window（<code>HcclOpResParam</code>）实现。</p>
 <h3 id="32-shmem">3.2 编译系统的 SHMEM 预留</h3>
 <p>虽然 kernel 代码没有 SHMEM 分支，但<strong>编译系统已完整预留 SHMEM 注入点</strong>：</p>
@@ -174,28 +226,26 @@
 </table>
 <h3 id="33">3.3 抽象层设计</h3>
 <p>当前通信原语通过 <code>HcclOpResParam</code> 抽象，<strong>没有引入统一的 CommunicationInterface</strong>。dispatch/combine 直接依赖 HCCL 的 Window 结构体：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 通信上下文是 HCCL 强绑定的</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 通信上下文是 HCCL 强绑定的</span>
 <span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="n">winContext_</span><span class="p">[</span><span class="n">COMM_NUM</span><span class="p">];</span><span class="w">  </span><span class="c1">// dispatch</span>
 <span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="n">epWinContext_</span><span class="p">;</span><span class="w">           </span><span class="c1">// combine</span>
 <span class="n">__gm__</span><span class="w"> </span><span class="n">HcclOpResParam</span><span class="w"> </span><span class="o">*</span><span class="n">tpWinContext_</span><span class="p">;</span><span class="w">           </span><span class="c1">// combine (TP domain)</span>
 </code></pre></div>
-
 <p><strong>如果要支持 SHMEM，需要</strong>：
 1. 引入 <code>ICommContext</code> 抽象基类
 2. 派生 <code>HcclWindowContext</code> 和 <code>ShmemContext</code>
 3. dispatch/combine 通过基类指针访问通信原语</p>
-<hr />
+<hr/>
 <h2 id="4-raw_distributed">4. raw_distributed 子模块：通信原语详解</h2>
 <h3 id="41-cam_moe_distribute_dispatchh">4.1 cam_moe_distribute_dispatch.h</h3>
 <p><strong>文件</strong>：<code>op_kernel/fused_deep_moe/raw_distributed/cam_moe_distribute_dispatch.h</code></p>
 <p><strong>类模板参数</strong>（第19-24行 <code>fused_deep_moe_base.h</code>）：</p>
-<div class="highlight"><pre><span></span><code><span class="cp">#define TemplateDispatchTypeClass</span>
+<div class="hl-amber"><pre><span></span><code><span class="cp">#define TemplateDispatchTypeClass</span>
 <span class="w">    </span><span class="k">typename</span><span class="w"> </span><span class="nc">XType</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">ExpandXOutType</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">StaticQuant</span><span class="p">,</span>
 <span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">DynamicQuant</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsSmoothScaleExist</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsNeedAllgater</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG</span>
 </code></pre></div>
-
 <p><strong>核心通信流程</strong>（第1023-1039行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">ASCEND_IS_AIV</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -213,9 +263,8 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>AlltoAllDispatch 关键路径</strong>（第575-602行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">AlltoAllDispatch</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">AlltoAllDispatch</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="c1">// 1. 加载 expertIds（决定每个 token 去哪个 expert/rank）</span>
 <span class="w">    </span><span class="n">DataCopyPad</span><span class="p">(</span><span class="n">expertIdsTensor_</span><span class="p">,</span><span class="w"> </span><span class="n">expertIdsGMTensor_</span><span class="p">,</span><span class="w"> </span><span class="n">expertIdsCntParams</span><span class="p">,</span><span class="w"> </span><span class="n">copyPadParams</span><span class="p">);</span>
@@ -234,9 +283,8 @@
 <span class="w">    </span><span class="n">SendToMoeExpert</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>SendToMoeExpert 数据搬运</strong>（第433-487行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">SendToMoeExpert</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">SendToMoeExpert</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startTokenId</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endTokenId</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">tokenIndex</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">dstExpertId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expertIdsTensor_</span><span class="p">(</span><span class="n">tokenIndex</span><span class="p">);</span>
@@ -257,9 +305,8 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>WaitDispatch 同步机制</strong>（第684-726行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">WaitDispatch</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">WaitDispatch</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="c1">// 轮询 windowInstatusFp32Tensor_ 中的 flag</span>
 <span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">((</span><span class="n">sumOfFlag</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">minTarget</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="p">(</span><span class="n">sumOfFlag</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">maxTarget</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
@@ -271,17 +318,15 @@
 <span class="w">    </span><span class="n">SyncAll</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">;</span><span class="w">  </span><span class="c1">// 全核同步</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="42-cam_moe_distribute_combineh">4.2 cam_moe_distribute_combine.h</h3>
 <p><strong>文件</strong>：<code>op_kernel/fused_deep_moe/raw_distributed/cam_moe_distribute_combine.h</code></p>
 <p><strong>类模板参数</strong>（与主 kernel 共享 <code>TemplateMC2TypeClass</code>）：</p>
-<div class="highlight"><pre><span></span><code><span class="cp">#define TemplateMC2TypeClass</span>
+<div class="hl-amber"><pre><span></span><code><span class="cp">#define TemplateMC2TypeClass</span>
 <span class="w">    </span><span class="k">typename</span><span class="w"> </span><span class="nc">ExpandXType</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">W1ScaleType</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">W2ScaleType</span><span class="p">,</span>
 <span class="w">    </span><span class="k">typename</span><span class="w"> </span><span class="nc">ExpandIdxType</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsNeedReduceScatter</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG</span>
 </code></pre></div>
-
 <p><strong>CombineCalcInfo 结构体</strong>（第46-56行）— 传递给 GMM2 AIV 侧的关键信息：</p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">CombineCalcInfo</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">CombineCalcInfo</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">expertPerSizeOnWin_</span><span class="p">;</span><span class="w">   </span><span class="c1">// 每个 expert 在 Window 上占用的字节数</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">epRankId_</span><span class="p">;</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">epWorldSize_</span><span class="p">;</span>
@@ -293,9 +338,8 @@
 <span class="w">    </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">winDataSizeOffset_</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>Process 流程</strong>（第719-734行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="n">SyncAll</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">IsNeedReduceScatter</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -311,9 +355,8 @@
 <span class="w">    </span><span class="n">LocalWindowCopy</span><span class="p">();</span><span class="w">                 </span><span class="c1">// 从 Window 读取 + 加权求和</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>LocalWindowCopy 核心逻辑</strong>（第627-716行）：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">LocalWindowCopy</span><span class="p">()</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">LocalWindowCopy</span><span class="p">()</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">beginIndex</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endIndex</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="n">Duplicate</span><span class="p">(</span><span class="n">sumFloatBufLocal</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">float</span><span class="p">)</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span><span class="w">  </span><span class="c1">// 清零累加器</span>
@@ -336,27 +379,24 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="5">5. 三条执行路径的通信差异</h2>
 <h3 id="51">5.1 路径判定机制</h3>
 <p><strong>EXEC_FLAG 位图定义</strong>（<code>fused_deep_moe_tiling.h</code> 第104-108行）：</p>
-<div class="highlight"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span><span class="w">  </span><span class="c1">// 深度融合</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span><span class="w">  </span><span class="c1">// 深度融合</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_TENSOR_LIST</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// 权重 tensor list</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_X_ACTIVE_MASK</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">2</span><span class="p">);</span><span class="w">  </span><span class="c1">// 激活 mask</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span><span class="w">  </span><span class="c1">// 共享专家</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG_SMOOTH_QUANT</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1U</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">4</span><span class="p">);</span><span class="w">  </span><span class="c1">// 平滑量化</span>
 </code></pre></div>
-
 <p><strong>Tiling 阶段计算 EXEC_FLAG</strong>（<code>fused_deep_moe_tiling.cpp</code> 第35-40行）：</p>
-<div class="highlight"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">=</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">=</span>
 <span class="w">    </span><span class="p">(</span><span class="n">TPL_IS_DEEP_FUSE</span><span class="w">     </span><span class="o">?</span><span class="w"> </span><span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="w">     </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">|</span>
 <span class="w">    </span><span class="p">(</span><span class="n">TPL_IS_TENSOR_LIST</span><span class="w">   </span><span class="o">?</span><span class="w"> </span><span class="n">EXEC_FLAG_TENSOR_LIST</span><span class="w">   </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">|</span>
 <span class="w">    </span><span class="p">(</span><span class="n">TPL_IS_X_ACTIVE_MASK</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">EXEC_FLAG_X_ACTIVE_MASK</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">|</span>
 <span class="w">    </span><span class="p">(</span><span class="n">TPL_IS_SHARED_EXPERT</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">|</span>
 <span class="w">    </span><span class="p">(</span><span class="n">TPL_IS_SMOOTH_QUANT</span><span class="w">  </span><span class="o">?</span><span class="w"> </span><span class="n">EXEC_FLAG_SMOOTH_QUANT</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="52">5.2 路径对比</h3>
 <table>
 <thead>
@@ -414,7 +454,7 @@
 </table>
 <h3 id="53">5.3 深度融合路径的通信融合</h3>
 <p><strong>GMM2 AIV 侧执行流程</strong>（<code>grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h</code> 第291-458行）：</p>
-<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span>
 <span class="n">CATLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="k">operator</span><span class="p">()</span><span class="o">&lt;</span><span class="n">AscendC</span><span class="o">::</span><span class="n">AIV</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Params</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="o">&amp;</span><span class="n">params</span><span class="p">)</span>
 <span class="p">{</span>
 <span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">combiner</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">CamMoeDistributeCombine</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">params</span><span class="p">.</span><span class="n">combiner</span><span class="p">;</span>
@@ -448,16 +488,15 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>关键同步机制</strong>：
 - <code>SEND_SYNC_EVENT_ID = 6</code> — GMM2 epilogue 完成 → Combine 开始
 - <code>RECV_SYNC_EVENT_ID = 7</code> — Combine 接收完成 → 主 kernel 继续
 - <code>CheckSyncFlag</code> — AIV 等待 AIC 的 Cube 计算完成（soft sync）</p>
-<hr />
+<hr/>
 <h2 id="6-workspace">6. Workspace 内存布局</h2>
 <h3 id="61-workspaceoffset">6.1 WorkSpaceOffset 结构体</h3>
 <p><strong>文件</strong>：<code>fused_deep_moe_tiling.h</code> 第19-40行</p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">WorkSpaceOffset</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">WorkSpaceOffset</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// MM1/GMM1-Swiglu input</span>
 <span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">shareX1TokenOffset</span><span class="p">;</span><span class="w">     </span><span class="c1">// 共享专家 GMM1 输入</span>
 <span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">x1TokenOffset</span><span class="p">;</span><span class="w">          </span><span class="c1">// MoE GMM1 输入（dispatch 后）</span>
@@ -482,10 +521,9 @@
 <span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">reservedOffset</span><span class="p">;</span><span class="w">         </span><span class="c1">// 保留区</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h3 id="62-enable_reuse_memory">6.2 内存复用策略（ENABLE_REUSE_MEMORY）</h3>
 <p><strong>文件</strong>：<code>fused_deep_moe_tiling.cpp</code> 第671-711行</p>
-<div class="highlight"><pre><span></span><code><span class="cp">#ifdef ENABLE_REUSE_MEMORY</span>
+<div class="hl-amber"><pre><span></span><code><span class="cp">#ifdef ENABLE_REUSE_MEMORY</span>
 <span class="w">    </span><span class="c1">// shareX1 和 shareX2 复用同一块内存（因为 SwiGLU 后不再需要 X1）</span>
 <span class="w">    </span><span class="n">tilingData</span><span class="p">.</span><span class="n">workSpaceOffset</span><span class="p">.</span><span class="n">shareX1TokenOffset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offset</span><span class="p">;</span>
 <span class="w">    </span><span class="n">tilingData</span><span class="p">.</span><span class="n">workSpaceOffset</span><span class="p">.</span><span class="n">shareX2TokenOffset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">offset</span><span class="p">;</span>
@@ -511,13 +549,11 @@
 <span class="w">    </span><span class="c1">// ... 每个区域单独 CeilUp 对齐</span>
 <span class="cp">#endif</span>
 </code></pre></div>
-
 <h3 id="63-workspace">6.3 Workspace 总大小计算</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// 第716-717行</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 第716-717行</span>
 <span class="kt">size_t</span><span class="w"> </span><span class="n">usrSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tilingData</span><span class="p">.</span><span class="n">workSpaceOffset</span><span class="p">.</span><span class="n">reservedOffset</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">reservedSize</span><span class="p">;</span>
 <span class="n">workSpaces</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SYSTEM_NEED_WORKSPACE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">usrSize</span><span class="p">;</span><span class="w">  </span><span class="c1">// 16MB 系统预留 + 用户区</span>
 </code></pre></div>
-
 <p><strong>各区域大小公式</strong>：</p>
 <table>
 <thead>
@@ -571,7 +607,7 @@
 </tbody>
 </table>
 <h3 id="64">6.4 数据流转图</h3>
-<div class="highlight"><pre><span></span><code>HBM (GM)
+<div class="hl-amber"><pre><span></span><code>HBM (GM)
   │
   ├── x [bs, h] ─────────────────────────────────────────────────────────────┐
   ├── expert_ids [bs, k] ─────────────────────────────────────────────────────┤
@@ -601,27 +637,24 @@
        ├── epSendCount (各 rank 接收计数)
        └── reserved
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="7-shmem">7. 编译系统 SHMEM 机制</h2>
 <h3 id="71-select_opspy-shmem">7.1 select_ops.py — SHMEM 算子过滤</h3>
 <p><strong>文件</strong>：<code>build/cam/comm_operator/select_ops.py</code></p>
 <p><strong>requires_shmem() 函数</strong>（第55-56行）：</p>
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
-    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">get_meta</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;requires_shmem&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">get_meta</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">op</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"requires_shmem"</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
 </code></pre></div>
-
 <p><strong>SHMEM 过滤逻辑</strong>（第116-121行）：</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># 3. SHMEM filter: drop requires_shmem operators when SHMEM is not installed.</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># 3. SHMEM filter: drop requires_shmem operators when SHMEM is not installed.</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">shmem</span><span class="p">:</span>
     <span class="n">dropped</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
     <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">dropped</span><span class="p">:</span>
-        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;NOTE: dropping </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s2"> (requires SHMEM, which is not installed)</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">"NOTE: dropping </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s2"> (requires SHMEM, which is not installed)</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
     <span class="n">candidates</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">requires_shmem</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="n">o</span><span class="p">)]</span>
 </code></pre></div>
-
 <p><strong>完整选择管线</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="mf">1.</span><span class="w"> </span><span class="n">确定候选集</span><span class="err">（</span><span class="n">全</span><span class="w"> </span><span class="n">SOC</span><span class="w"> </span><span class="n">列表</span><span class="w"> </span><span class="n">或</span><span class="w"> </span><span class="n">用户</span><span class="w"> </span><span class="o">-</span><span class="n">a</span><span class="w"> </span><span class="n">列表</span><span class="err">）</span>
+<div class="hl-amber"><pre><span></span><code><span class="mf">1.</span><span class="w"> </span><span class="n">确定候选集</span><span class="err">（</span><span class="n">全</span><span class="w"> </span><span class="n">SOC</span><span class="w"> </span><span class="n">列表</span><span class="w"> </span><span class="n">或</span><span class="w"> </span><span class="n">用户</span><span class="w"> </span><span class="o">-</span><span class="n">a</span><span class="w"> </span><span class="n">列表</span><span class="err">）</span>
 <span class="w">        </span><span class="err">↓</span>
 <span class="mf">2.</span><span class="w"> </span><span class="n">fused_deep_moe</span><span class="w"> </span><span class="n">base</span><span class="o">/</span><span class="n">w4a8</span><span class="w"> </span><span class="n">互斥规则</span>
 <span class="w">   </span><span class="o">-</span><span class="n">q</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">选</span><span class="w"> </span><span class="n">w4a8</span><span class="err">，</span><span class="n">剔除</span><span class="w"> </span><span class="n">base</span>
@@ -633,74 +666,68 @@
 <span class="w">        </span><span class="err">↓</span>
 <span class="mf">4.</span><span class="w"> </span><span class="n">按</span><span class="w"> </span><span class="n">registry</span><span class="w"> </span><span class="n">顺序排列输出</span>
 </code></pre></div>
-
 <h3 id="72-compile_ascend_projsh-shmem">7.2 compile_ascend_proj.sh — SHMEM 路径注入</h3>
 <p><strong>文件</strong>：<code>build/cam/comm_operator/compile_ascend_proj.sh</code></p>
 <p><strong>SHMEM_HOME_PATH 检测</strong>（第19-22行）：</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Whether SHMEM is installed (determined by the SHMEM_HOME_PATH env variable)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># Whether SHMEM is installed (determined by the SHMEM_HOME_PATH env variable)</span>
 <span class="nv">shmem_installed</span><span class="o">=</span><span class="m">1</span>
-<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-z<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-z<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
 <span class="w">    </span><span class="nv">shmem_installed</span><span class="o">=</span><span class="m">0</span>
 <span class="k">fi</span>
 </code></pre></div>
-
 <p><strong>SHMEM include 注入</strong>（第179-192行）：</p>
-<div class="highlight"><pre><span></span><code><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;&quot;</span>
-<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
-<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;-I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/include -I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/src/device&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">""</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">"-I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/include -I</span><span class="si">${</span><span class="nv">SHMEM_HOME_PATH</span><span class="si">}</span><span class="s2">/shmem/src/device"</span>
 <span class="k">fi</span>
-<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">CATLASS_HOME_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
-<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2"> -I</span><span class="si">${</span><span class="nv">CATLASS_HOME_PATH</span><span class="si">}</span><span class="s2">/include&quot;</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">CATLASS_HOME_PATH</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2"> -I</span><span class="si">${</span><span class="nv">CATLASS_HOME_PATH</span><span class="si">}</span><span class="s2">/include"</span>
 <span class="k">fi</span>
-<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
-<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Patching kernel compile options: </span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">&quot;</span>
-<span class="w">    </span>find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </span>-name<span class="w"> </span><span class="s2">&quot;build.make&quot;</span><span class="w"> </span>-exec<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="se">\</span>
-<span class="w">        </span><span class="s2">&quot;s|--compile-options=\&quot;\&quot;|--compile-options=\\\&quot;</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">\\\&quot;|g&quot;</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"Patching kernel compile options: </span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">"</span>
+<span class="w">    </span>find<span class="w"> </span>build_out/op_kernel/CMakeFiles<span class="w"> </span>-name<span class="w"> </span><span class="s2">"build.make"</span><span class="w"> </span>-exec<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span><span class="s2">"s|--compile-options=\"\"|--compile-options=\\\"</span><span class="si">${</span><span class="nv">KERNEL_COMPILE_OPTS</span><span class="si">}</span><span class="s2">\\\"|g"</span><span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
 <span class="k">fi</span>
 </code></pre></div>
-
 <p><strong>关键机制</strong>：通过 <code>sed</code> 替换 <code>.make</code> 文件中的 <code>--compile-options=""</code> 为实际的 include 路径。这是因为 npu_op_* 构建系统的 <code>simple_kernel_compile</code> 不读取 <code>custom_compile_options.ini</code>。</p>
 <h3 id="73-ascendc_impl_buildpy-shmem">7.3 ascendc_impl_build.py — SHMEM 编译选项生成</h3>
 <p><strong>文件</strong>：<code>src/cam/comm_operator/ascend_kernels/cmake_files/cmake/util/ascendc_impl_build.py</code></p>
 <p><strong>SHMEM include 路径硬编码</strong>（第167-179行）：</p>
-<div class="highlight"><pre><span></span><code><span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;SHMEM_HOME_PATH&#39;</span><span class="p">)</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'SHMEM_HOME_PATH'</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">SHMEM_HOME_PATH</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="s2">&quot;/usr/local/Ascend/shmem/latest&quot;</span><span class="p">)</span>
+    <span class="n">SHMEM_HOME_PATH</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="s2">"/usr/local/Ascend/shmem/latest"</span><span class="p">)</span>
 
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;shmem/include/device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/host_device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/internal&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/src/device&quot;</span><span class="p">)</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/memfabric_hybrid/include/smem/device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"shmem/include/device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/host_device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/internal"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/src"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/src/device"</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/memfabric_hybrid/include/smem/device"</span><span class="p">)</span>
 </code></pre></div>
-
 <p><strong>注意</strong>：这里有一个 <strong>bug</strong> — 第172行缺少 <code>/</code> 分隔符：</p>
-<div class="highlight"><pre><span></span><code><span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;shmem/include/device&quot;</span><span class="p">)</span>  <span class="c1"># 缺少 /</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"shmem/include/device"</span><span class="p">)</span>  <span class="c1"># 缺少 /</span>
 <span class="c1"># 应该是：</span>
-<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-I&quot;</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">&quot;/shmem/include/device&quot;</span><span class="p">)</span>
+<span class="n">options</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"-I"</span> <span class="o">+</span> <span class="n">SHMEM_HOME_PATH</span> <span class="o">+</span> <span class="s2">"/shmem/include/device"</span><span class="p">)</span>
 </code></pre></div>
-
 <h3 id="74-operator_registryjson-shmem">7.4 operator_registry.json — SHMEM 标记</h3>
 <p><strong>文件</strong>：<code>src/cam/comm_operator/ascend_kernels/operator_registry.json</code></p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;operator_meta&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;dispatch_layout&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;fused_deep_moe&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;family&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fused_deep_moe&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;variant&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;base&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"operator_meta"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"dispatch_layout"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"fused_deep_moe"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"family"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fused_deep_moe"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"variant"</span><span class="p">:</span><span class="w"> </span><span class="s2">"base"</span>
 <span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;moe_combine_normal&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;moe_dispatch_normal&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;notify_dispatch&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="nt">"moe_combine_normal"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"moe_dispatch_normal"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"notify_dispatch"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>当前所有算子的 <code>requires_shmem</code> 均为 <code>false</code></strong>，即 SHMEM 过滤当前不影响任何算子。</p>
-<hr />
+<hr/>
 <h2 id="8-shmem_home_path">8. SHMEM_HOME_PATH 环境变量</h2>
 <h3 id="81">8.1 作用域</h3>
 <table>
@@ -730,7 +757,7 @@
 </tbody>
 </table>
 <h3 id="82">8.2 编译时行为</h3>
-<div class="highlight"><pre><span></span><code>SHMEM_HOME_PATH<span class="w"> </span>未设置:
+<div class="hl-amber"><pre><span></span><code>SHMEM_HOME_PATH<span class="w"> </span>未设置:
 <span class="w">  </span>├──<span class="w"> </span>select_ops.py:<span class="w"> </span>shmem=0<span class="w"> </span>→<span class="w"> </span>剔除<span class="w"> </span>requires_shmem=true<span class="w"> </span>的算子
 <span class="w">  </span>├──<span class="w"> </span>compile_ascend_proj.sh:<span class="w"> </span>不注入<span class="w"> </span>SHMEM<span class="w"> </span>include
 <span class="w">  </span>└──<span class="w"> </span>ascendc_impl_build.py:<span class="w"> </span>使用默认路径<span class="w"> </span>/usr/local/Ascend/shmem/latest
@@ -740,21 +767,19 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 <span class="w">  </span>├──<span class="w"> </span>compile_ascend_proj.sh:<span class="w"> </span>注入<span class="w"> </span>-I<span class="cp">${</span><span class="n">SHMEM_HOME_PATH</span><span class="cp">}</span>/shmem/include<span class="w"> </span>等
 <span class="w">  </span>└──<span class="w"> </span>ascendc_impl_build.py:<span class="w"> </span>使用<span class="w"> </span>SHMEM_HOME_PATH<span class="w"> </span>的值
 </code></pre></div>
-
 <h3 id="83">8.3 运行时行为</h3>
 <p><strong>当前 kernel 代码不读取 SHMEM_HOME_PATH</strong>。SHMEM 的运行时行为（如 <code>aclshmem_*</code> API 的链接）由 CANN 的 SHMEM 库在算子加载时动态解析。</p>
-<hr />
+<hr/>
 <h2 id="9-shmem">9. 未来 SHMEM 集成路径</h2>
 <h3 id="91">9.1 需要修改的代码</h3>
 <p>要让 FusedDeepMoE 支持 SHMEM，需要以下改动：</p>
 <h4 id="911">9.1.1 通信抽象层（新增）</h4>
-<div class="highlight"><pre><span></span><code>新增文件：
+<div class="hl-amber"><pre><span></span><code>新增文件：
   op_kernel/fused_deep_moe/comm/icomm_context.h        # 抽象基类
   op_kernel/fused_deep_moe/comm/hccl_window_context.h   # HCCL 实现
   op_kernel/fused_deep_moe/comm/shmem_context.h         # SHMEM 实现
 </code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="c1">// icomm_context.h (概念设计)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// icomm_context.h (概念设计)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">ICommContext</span><span class="w"> </span><span class="p">{</span>
 <span class="k">public</span><span class="o">:</span>
 <span class="w">    </span><span class="k">virtual</span><span class="w"> </span><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">GetDataAddr</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">rankId</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
@@ -764,42 +789,38 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 <span class="w">    </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">DataCopy</span><span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">dst</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">len</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h4 id="912-dispatchcombine">9.1.2 dispatch/combine 改造</h4>
-<div class="highlight"><pre><span></span><code><span class="c1">// cam_moe_distribute_dispatch.h 改造方向</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// cam_moe_distribute_dispatch.h 改造方向</span>
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">CommContext</span><span class="o">&gt;</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">CamMoeDistributeDispatch</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">CommContext</span><span class="o">*</span><span class="w"> </span><span class="n">commCtx_</span><span class="p">;</span><span class="w">  </span><span class="c1">// 替代 winContext_[COMM_NUM]</span>
 <span class="w">    </span><span class="c1">// ...</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h4 id="913">9.1.3 编译系统改动</h4>
 <ol>
 <li><strong>operator_registry.json</strong> — 新增 SHMEM 变体：</li>
 </ol>
-<div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;fused_deep_moe_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;requires_shmem&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;family&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fused_deep_moe&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;variant&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;shmem&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"fused_deep_moe_shmem"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"requires_shmem"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"family"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fused_deep_moe"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"variant"</span><span class="p">:</span><span class="w"> </span><span class="s2">"shmem"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <ol start="2">
 <li><strong>select_ops.py</strong> — 新增 SHMEM 变体互斥规则：</li>
 </ol>
-<div class="highlight"><pre><span></span><code><span class="n">SHMEM</span> <span class="o">=</span> <span class="s2">&quot;fused_deep_moe_shmem&quot;</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">SHMEM</span> <span class="o">=</span> <span class="s2">"fused_deep_moe_shmem"</span>
 <span class="c1"># base/w4a8/shmem 三者互斥</span>
 </code></pre></div>
-
 <ol start="3">
 <li><strong>compile_ascend_proj.sh</strong> — 已支持，无需改动（通过 SHMEM_HOME_PATH 自动注入）</li>
 </ol>
 <h4 id="914-shmem-api">9.1.4 运行时 SHMEM API 调用</h4>
 <p>SHMEM 路径的核心变化：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// HCCL Window 模式（当前）</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// HCCL Window 模式（当前）</span>
 <span class="n">GM_ADDR</span><span class="w"> </span><span class="n">dstAddr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetWindAddrByRankId</span><span class="p">(</span><span class="n">COMM_EP_IDX</span><span class="p">,</span><span class="w"> </span><span class="n">rankId</span><span class="p">);</span>
 <span class="n">DataCopy</span><span class="p">(</span><span class="n">dstWinGMTensor</span><span class="p">,</span><span class="w"> </span><span class="n">xOutTensor_</span><span class="p">,</span><span class="w"> </span><span class="n">axisHCommu_</span><span class="p">);</span>
 
@@ -809,7 +830,6 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 <span class="n">aclshmem_fence</span><span class="p">();</span>
 <span class="n">aclshmem_wait_flag</span><span class="p">(</span><span class="n">flagAddr</span><span class="p">,</span><span class="w"> </span><span class="n">target</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="92-shmem">9.2 SHMEM 集成挑战</h3>
 <table>
 <thead>
@@ -848,7 +868,7 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 <li><strong>Phase 3</strong>：将 SHMEM 路径扩展到 FusedDeepMoE 的 dispatch/combine</li>
 <li><strong>Phase 4</strong>：性能调优，利用 SHMEM 的单边 RDMA 降低同步开销</li>
 </ol>
-<hr />
+<hr/>
 <h2 id="10">10. 关键代码索引</h2>
 <table>
 <thead>
@@ -976,7 +996,7 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 </tr>
 </tbody>
 </table>
-<hr />
+<hr/>
 <h2 id="11">11. 结论</h2>
 <ol>
 <li>
@@ -1007,11 +1027,18 @@ SHMEM_HOME_PATH<span class="w"> </span>已设置:
 <p><strong><code>ascendc_impl_build.py</code> 第172行存在路径 bug</strong>：<code>SHMEM_HOME_PATH + "shmem/include/device"</code> 缺少 <code>/</code> 分隔符。</p>
 </li>
 </ol>
-<div class="footer">
-<p>📊 UMDK/CAM 深度分析报告 | 生成日期: 2026-07-21</p>
-<p><a href="../CAM深度分析报告.html">← 返回主报告</a> | <a href="index.html">📑 索引</a></p>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:40px;padding-top:20px;border-top:1px solid rgba(17,17,17,.12);"><a href="08_notify.html" class="back">← notify_dispatch + dispatch_layout</a> <a href="index.html" class="back">📑 索引</a> <a href="10_zb_dispatch.html" class="back">ZB Dispatch 算子族 →</a></div>
+    </div>
+  </article>
 </div>
-</div>
+<script>
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);
+    if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})};
+  });
+});
+</script>
 
 </body>
 </html>

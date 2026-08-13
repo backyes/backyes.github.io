@@ -1,18 +1,104 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
   <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EP 通信算子深度分析 (master) — UMDK/CAM 深度分析</title>
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EP 通信算子深度分析 — UMDK/CAM · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div class="notion-page">
-<div class="nav-top">
-<a href="01_arch.html">整体架构与设</a><span class="sep">|</span><a href="02_build.html">编译系统与部</a><span class="sep">|</span><strong style="color:var(--fg-bold)">EP</strong><span class="sep">|</span><a href="04_fused.html">FusedDeepMoE</a><span class="sep">|</span><a href="05_test.html">测试体系与回</a><span class="sep">|</span><a href="06_shmem.html">SHMEM</a><span class="sep">|</span><a href="07_hccl.html">非</a><span class="sep">|</span><a href="08_notify.html">notify_dispatch</a><span class="sep">|</span><a href="09_fused_shmem.html">FusedDeepMoE</a><span class="sep">|</span><a href="10_zb_dispatch.html">ZB</a><span class="sep">|</span><a href="11_zb_combine.html">ZB</a><span class="sep">|</span><a href="12_fused_family.html">FusedDeepMoE</a><span class="sep">|</span><a href="13_new_comm.html">新通信算子</a><span class="sep">|</span><a href="14_zb_utils.html">ZB</a><span class="sep">|</span><a href="15_pybind.html">Pybind</a><span class="sep">|</span><a href="16_shmem_nda.html">SHMEM</a><span class="sep">|</span><a href="../CAM深度分析报告.html">← 主报告</a>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../../../">backyes</a></div>
+    <div class="brand-tagline">CAM Agent-03 — EP 通信算子深度分析</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../../../posts.html">Posts</a>
+    <a href="../../../#survey" class="nav-accent">Survey by AI</a>
+  </nav>
+</header>
 </div>
-<h1 id="cam-ep-communication-kernels">CAM EP Communication Kernels 深度分析报告</h1>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+      <li><a href="#_1" class="toc-h2">目录</a></li>
+      <li><a href="#1" class="toc-h2">1. 架构总览与设计哲学</a></li>
+      <li><a href="#11-cam" class="toc-h3">1.1 CAM 的定位</a></li>
+      <li><a href="#12" class="toc-h3">1.2 算子调用链</a></li>
+      <li><a href="#13" class="toc-h3">1.3 核心数据流</a></li>
+      <li><a href="#2" class="toc-h2">2. 共享基础设施分析</a></li>
+      <li><a href="#21-commargs-utilsop_kernelcomm_argsh" class="toc-h3">2.1 CommArgs (utils/op_kernel/comm_args.h)</a></li>
+      <li><a href="#22-synccollectives-utilsop_kernelsync_collectivesh" class="toc-h3">2.2 SyncCollectives (utils/op_kernel/sync_collectives.h)</a></li>
+      <li><a href="#23-datacopy-utilsop_kerneldata_copyh" class="toc-h3">2.3 DataCopy 工具 (utils/op_kernel/data_copy.h)</a></li>
+      <li><a href="#24-mc2tilingutils-utilsop_hostmc2_tiling_utilsh" class="toc-h3">2.4 Mc2TilingUtils (utils/op_host/mc2_tiling_utils.h)</a></li>
+      <li><a href="#25-tilingargs-utilsop_hosttiling_argsh" class="toc-h3">2.5 TilingArgs (utils/op_host/tiling_args.h)</a></li>
+      <li><a href="#3-dispatch_layout" class="toc-h2">3. dispatch_layout 算子</a></li>
+      <li><a href="#31" class="toc-h3">3.1 功能定位</a></li>
+      <li><a href="#32-op_api" class="toc-h3">3.2 op_api 层</a></li>
+      <li><a href="#33-op_host-tiling" class="toc-h3">3.3 op_host 层 (Tiling 逻辑)</a></li>
+      <li><a href="#34-op_kernel" class="toc-h3">3.4 op_kernel 层 (核心算法)</a></li>
+      <li><a href="#4-notify_dispatch" class="toc-h2">4. notify_dispatch 算子</a></li>
+      <li><a href="#41" class="toc-h3">4.1 功能定位</a></li>
+      <li><a href="#42-op_api" class="toc-h3">4.2 op_api 层</a></li>
+      <li><a href="#43-op_host" class="toc-h3">4.3 op_host 层</a></li>
+      <li><a href="#44-op_kernel" class="toc-h3">4.4 op_kernel 层 (核心算法)</a></li>
+      <li><a href="#45" class="toc-h3">4.5 同步机制</a></li>
+      <li><a href="#5-moe_dispatch_normal" class="toc-h2">5. moe_dispatch_normal 算子</a></li>
+      <li><a href="#51" class="toc-h3">5.1 功能定位</a></li>
+      <li><a href="#52-op_api" class="toc-h3">5.2 op_api 层</a></li>
+      <li><a href="#53-op_host-tiling" class="toc-h3">5.3 op_host 层 (Tiling 逻辑)</a></li>
+      <li><a href="#54-op_kernel" class="toc-h3">5.4 op_kernel 层 (核心算法)</a></li>
+      <li><a href="#55-quantprocess" class="toc-h3">5.5 量化机制 (QuantProcess)</a></li>
+      <li><a href="#6-moe_combine_normal" class="toc-h2">6. moe_combine_normal 算子</a></li>
+      <li><a href="#61" class="toc-h3">6.1 功能定位</a></li>
+      <li><a href="#62-op_api" class="toc-h3">6.2 op_api 层</a></li>
+      <li><a href="#63-op_host-tiling" class="toc-h3">6.3 op_host 层 (Tiling 逻辑)</a></li>
+      <li><a href="#64-op_kernel" class="toc-h3">6.4 op_kernel 层 (核心算法)</a></li>
+      <li><a href="#65-magic" class="toc-h3">6.5 Magic 双缓冲机制</a></li>
+      <li><a href="#7-pybind" class="toc-h2">7. Pybind 绑定层</a></li>
+      <li><a href="#71" class="toc-h3">7.1 注册机制</a></li>
+      <li><a href="#72" class="toc-h3">7.2 三层调用架构</a></li>
+      <li><a href="#73-get_dispatch_layout" class="toc-h3">7.3 get_dispatch_layout 绑定</a></li>
+      <li><a href="#74-moe_dispatch_prefill" class="toc-h3">7.4 moe_dispatch_prefill 绑定</a></li>
+      <li><a href="#75-moe_combine_prefill" class="toc-h3">7.5 moe_combine_prefill 绑定</a></li>
+      <li><a href="#76-torch_bind_exceptionh" class="toc-h3">7.6 异常处理 (torch_bind_exception.h)</a></li>
+      <li><a href="#8" class="toc-h2">8. 通信模式全局分析</a></li>
+      <li><a href="#81" class="toc-h3">8.1 通信模式总结</a></li>
+      <li><a href="#82-all-to-all" class="toc-h3">8.2 自管理 All-to-All 的优势</a></li>
+      <li><a href="#83" class="toc-h3">8.3 通信拓扑</a></li>
+      <li><a href="#9" class="toc-h2">9. 量化机制深度分析</a></li>
+      <li><a href="#91" class="toc-h3">9.1 量化模式</a></li>
+      <li><a href="#92-dispatch" class="toc-h3">9.2 量化流程 (Dispatch 阶段)</a></li>
+      <li><a href="#93-combine" class="toc-h3">9.3 反量化流程 (Combine 阶段)</a></li>
+      <li><a href="#94" class="toc-h3">9.4 量化对内存的影响</a></li>
+      <li><a href="#10" class="toc-h2">10. 关键性能优化点</a></li>
+      <li><a href="#101-ping-pong" class="toc-h3">10.1 双缓冲 (Ping-Pong)</a></li>
+      <li><a href="#102" class="toc-h3">10.2 地址对齐</a></li>
+      <li><a href="#103-flag" class="toc-h3">10.3 增量 Flag 检查</a></li>
+      <li><a href="#104-reducesum" class="toc-h3">10.4 状态位批量 ReduceSum</a></li>
+      <li><a href="#105" class="toc-h3">10.5 原子操作聚合</a></li>
+      <li><a href="#106" class="toc-h3">10.6 诊断模式 (可选)</a></li>
+      <li><a href="#11-hccl-window" class="toc-h2">11. HCCL Window 内存布局</a></li>
+      <li><a href="#111" class="toc-h3">11.1 整体布局</a></li>
+      <li><a href="#112-token-dispatch" class="toc-h3">11.2 Token 存储格式 (Dispatch)</a></li>
+      <li><a href="#113-token-combine" class="toc-h3">11.3 Token 存储格式 (Combine)</a></li>
+      <li><a href="#a" class="toc-h2">附录 A: 关键常量速查表</a></li>
+      <li><a href="#b" class="toc-h2">附录 B: 文件索引</a></li>
+      <li><a href="#c" class="toc-h2">附录 C: 关键洞察总结</a></li>
+      <li><a href="#c1" class="toc-h3">C.1 设计范式</a></li>
+      <li><a href="#c2" class="toc-h3">C.2 性能关键路径</a></li>
+      <li><a href="#c3" class="toc-h3">C.3 与竞品对比洞察</a></li>
+      <li><a href="#c4" class="toc-h3">C.4 潜在优化方向</a></li>
+    </ul></div>
+  </aside>
+  <article class="article">
+    <a href="../../../#survey" class="back">← 返回 Survey by AI</a>
+    <h1>EP 通信算子深度分析 — UMDK/CAM</h1>
 <details class="notion-toc"><summary>Contents</summary>
 <ul>
 <li><a href="#目录" class="toc-h2">目录</a></li>
@@ -86,13 +172,19 @@
 </ul>
 </details>
 
+    <div class="meta">
+      <span>📅 2026-07-21</span>
+      <div><span class="ptag">EP</span><span class="ptag">通信算子</span><span class="ptag">master</span></div>
+    </div>
+    <div class="notion-page">
+<h1 id="cam-ep-communication-kernels">CAM EP Communication Kernels 深度分析报告</h1>
 <blockquote>
 <p><strong>分析范围</strong>: <code>src/cam/comm_operator/ascend_kernels/</code> 下的 4 个核心 MoE EP 通信算子
 <strong>目标硬件</strong>: Ascend 910_93 (A3)
 <strong>分析日期</strong>: 2026-07-21
 <strong>分析层级</strong>: op_api → op_host → op_kernel → pybind 全栈</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="_1">目录</h2>
 <ol>
 <li><a href="#1-架构总览与设计哲学">架构总览与设计哲学</a></li>
@@ -107,7 +199,7 @@
 <li><a href="#10-关键性能优化点">关键性能优化点</a></li>
 <li><a href="#11-hccl-window-内存布局">HCCL Window 内存布局</a></li>
 </ol>
-<hr />
+<hr/>
 <h2 id="1">1. 架构总览与设计哲学</h2>
 <h3 id="11-cam">1.1 CAM 的定位</h3>
 <p>CAM (Communication Acceleration for Matrix) 是华为 Ascend NPU 面向 MoE (Mixture-of-Experts) Expert Parallelism 场景的通信加速库。其核心设计目标是：</p>
@@ -117,7 +209,7 @@
 <li><strong>计算通信重叠</strong>: 通过状态位同步 + 双缓冲 (ping-pong) 实现流水线隐藏延迟</li>
 </ul>
 <h3 id="12">1.2 算子调用链</h3>
-<div class="highlight"><pre><span></span><code>Python 前端
+<div class="hl-amber"><pre><span></span><code>Python 前端
     │
     ▼
 Pybind 层 (TORCH_LIBRARY + EXEC_NPU_CMD)
@@ -131,9 +223,8 @@ Tiling 层 (op_host/*_tiling.cpp) ─── 计算分片参数、校验合法性
     ▼
 Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IPC
 </code></pre></div>
-
 <h3 id="13">1.3 核心数据流</h3>
-<div class="highlight"><pre><span></span><code>                    ┌─────────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>                    ┌─────────────────────────────────────────────────────────┐
                     │                    MoE EP Pipeline                      │
                     │                                                         │
   TopkIdx           │   Notify     MoeDispatch     Expert      MoeCombine     │
@@ -147,12 +238,11 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
                     │                                                         │
                     └─────────────────────────────────────────────────────────┘
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="2">2. 共享基础设施分析</h2>
 <h3 id="21-commargs-utilsop_kernelcomm_argsh">2.1 CommArgs (<code>utils/op_kernel/comm_args.h</code>)</h3>
 <p>这是整个通信层的<strong>核心参数结构体</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">CommArgs</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">CommArgs</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">rank</span><span class="p">;</span><span class="w">              </span><span class="c1">// 全局 rank ID</span>
 <span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">localRank</span><span class="p">;</span><span class="w">         </span><span class="c1">// 本地 rank (fullmesh 内部编号)</span>
 <span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">rankSize</span><span class="p">;</span><span class="w">          </span><span class="c1">// 全局 rank 数量 (最大 384)</span>
@@ -164,7 +254,6 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="c1">// ...</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <p><strong>关键常量</strong>：</p>
 <table>
 <thead>
@@ -205,23 +294,21 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <h3 id="22-synccollectives-utilsop_kernelsync_collectivesh">2.2 SyncCollectives (<code>utils/op_kernel/sync_collectives.h</code>)</h3>
 <p>这是<strong>卡间同步原语</strong>的核心实现，使用 HCCL Window 上的 flag 实现跨卡同步：</p>
 <p><strong>同步标志结构</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">FLAG_UNIT_INT_NUM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">      </span><span class="c1">// 每个 flag 占 4 个 int64</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">FLAG_UNIT_INT_NUM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">      </span><span class="c1">// 每个 flag 占 4 个 int64</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">SYNC_UNIT_SIZE</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int64_t</span><span class="p">);</span><span class="w">  </span><span class="c1">// 32 Bytes</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">MAGIC_OFFSET</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span><span class="w">          </span><span class="c1">// magic 占高 32 位</span>
 </code></pre></div>
-
 <p><strong>核心机制 — Magic + Value 编码</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">MergeMagicWithValue</span><span class="p">(</span><span class="kt">int32_t</span><span class="w"> </span><span class="n">magic</span><span class="p">,</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">MergeMagicWithValue</span><span class="p">(</span><span class="kt">int32_t</span><span class="w"> </span><span class="n">magic</span><span class="p">,</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">magic</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">MAGIC_OFFSET</span><span class="p">)</span><span class="w"> </span>
 <span class="w">           </span><span class="o">|</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">value</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>设计洞察</strong>: 高 32 位 magic 用于区分不同轮次（避免 ABA 问题），低 32 位 value 表示具体事件。这种无锁设计允许跨卡原子操作。</p>
 </blockquote>
 <p><strong>内存布局 (每个 rank 的 shareAddr)</strong>：</p>
-<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>┌──────────────────────────────────────────────────────┐
 │ 段 A: 卡内同步 flags (blockNum × FLAG_UNIT_INT_NUM)   │
 ├──────────────────────────────────────────────────────┤
 │ 段 B: 卡间同步 flags (blockNum × FLAG_UNIT_INT_NUM)   │
@@ -229,9 +316,8 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 │ Chunk Flags: IPC 传输完成标记 (per destRank)            │
 └──────────────────────────────────────────────────────┘
 </code></pre></div>
-
 <p><strong>WaitOneRankPartFlag 实现</strong> — 核心等待循环：</p>
-<div class="highlight"><pre><span></span><code><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">do</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">DataCopy</span><span class="p">(</span><span class="n">localWait</span><span class="p">,</span><span class="w"> </span><span class="n">globalWait</span><span class="p">[...],</span><span class="w"> </span><span class="p">...);</span><span class="w">  </span><span class="c1">// GM→UB 拷贝</span>
 <span class="w">    </span><span class="n">WaitFlag</span><span class="o">&lt;</span><span class="n">MTE2_S</span><span class="o">&gt;</span><span class="p">();</span><span class="w">                          </span><span class="c1">// 等待 DMA 完成</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">remainToCheck</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -244,7 +330,6 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">isSync</span><span class="p">);</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>优化点</strong>: 增量检查（<code>checkedFlagNum</code>）避免重复检查已完成的 flag，减少 UB 读取开销。</p>
 </blockquote>
@@ -256,16 +341,14 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 - <code>SetAtomicOpType&lt;T&gt;(op)</code>: 设置原子操作类型（ADD/MUL/MAX/MIN）</p>
 <h3 id="24-mc2tilingutils-utilsop_hostmc2_tiling_utilsh">2.4 Mc2TilingUtils (<code>utils/op_host/mc2_tiling_utils.h</code>)</h3>
 <p>关键功能：读取 <code>HCCL_BUFFSIZE</code> 环境变量，计算 Window 可用大小：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">uint64_t</span><span class="w"> </span><span class="n">maxWindowSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">defaultWindowSize</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="p">;</span><span class="w">  </span><span class="c1">// 默认 200MB</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">uint64_t</span><span class="w"> </span><span class="n">maxWindowSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">defaultWindowSize</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="p">;</span><span class="w">  </span><span class="c1">// 默认 200MB</span>
 </code></pre></div>
-
 <h3 id="25-tilingargs-utilsop_hosttiling_argsh">2.5 TilingArgs (<code>utils/op_host/tiling_args.h</code>)</h3>
 <p>定义关键偏移常量：</p>
-<div class="highlight"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">COMBINE_STATE_WIN_OFFSET</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="p">;</span><span class="w">    </span><span class="c1">// Combine 状态区偏移</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">constexpr</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">COMBINE_STATE_WIN_OFFSET</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="p">;</span><span class="w">    </span><span class="c1">// Combine 状态区偏移</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">NOTIFY_DISPATCH_WIN_OFFSET</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">204UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024UL</span><span class="p">;</span><span class="w"> </span><span class="c1">// NotifyDispatch 偏移</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="3-dispatch_layout">3. dispatch_layout 算子</h2>
 <h3 id="31">3.1 功能定位</h3>
 <p><code>dispatch_layout</code> (aclnnDispatchLayout) 是 MoE 路由的<strong>前置分析算子</strong>，纯计算、无通信。它根据 topkIdx 计算：</p>
@@ -277,7 +360,7 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <li>小 sendTokenIdx (<code>sendTokenIdxSmall</code>)</li>
 </ul>
 <h3 id="32-op_api">3.2 op_api 层</h3>
-<div class="highlight"><pre><span></span><code><span class="n">aclnnStatus</span><span class="w"> </span><span class="nf">aclnnDispatchLayout</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">workspaceSize</span><span class="p">,</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">aclnnStatus</span><span class="w"> </span><span class="nf">aclnnDispatchLayout</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">workspaceSize</span><span class="p">,</span><span class="w"> </span>
 <span class="w">                                 </span><span class="n">aclOpExecutor</span><span class="w"> </span><span class="o">*</span><span class="n">executor</span><span class="p">,</span><span class="w"> </span><span class="n">aclrtStream</span><span class="w"> </span><span class="n">stream</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">NnopbaseSetHcclServerType</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="n">NnopbaseSetHcclServerType</span><span class="p">(</span><span class="n">executor</span><span class="p">,</span><span class="w"> </span><span class="n">NNOPBASE_HCCL_SERVER_TYPE_MTE</span><span class="p">);</span><span class="w">  </span><span class="c1">// 关键: 使用 MTE 模式</span>
@@ -285,7 +368,6 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">aclnnInnerDispatchLayout</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span><span class="w"> </span><span class="n">workspaceSize</span><span class="p">,</span><span class="w"> </span><span class="n">executor</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>关键设计</strong>: 强制设置 HCCL Server Type 为 MTE (Memory Transfer Engine)，绕过 AICPU 中转。</p>
 </blockquote>
@@ -301,18 +383,16 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 - <code>numTokens</code> ∈ (0, 8000]
 - <strong>约束</strong>: <code>numExperts % numRanks == 0</code>（expert 必须均匀分布）</p>
 <p><strong>Workspace 计算</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">workSpaces</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SYSTEM_NEED_WORKSPACE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">KERNEL_USE_WORKSPACE</span><span class="p">;</span><span class="w">  </span><span class="c1">// 16MB + 1MB</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">workSpaces</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SYSTEM_NEED_WORKSPACE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">KERNEL_USE_WORKSPACE</span><span class="p">;</span><span class="w">  </span><span class="c1">// 16MB + 1MB</span>
 </code></pre></div>
-
 <p><strong>Tiling Key</strong> 固定为 23。</p>
 <h3 id="34-op_kernel">3.4 op_kernel 层 (核心算法)</h3>
 <p><strong>并行策略</strong>: 按 token 维度切分到多个 AIV core：</p>
-<div class="highlight"><pre><span></span><code><span class="n">aivNum_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">numTokens_</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">maxAivNum</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">numTokens_</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">maxAivNum</span><span class="p">;</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">aivNum_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">numTokens_</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">maxAivNum</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">numTokens_</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">maxAivNum</span><span class="p">;</span>
 <span class="c1">// 每个 core 处理 tempTokens_ 个 token</span>
 </code></pre></div>
-
 <p><strong>核心算法 — Process()</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">Phase</span><span class="w"> </span><span class="mi">1</span><span class="err">:</span><span class="w"> </span><span class="n">统计</span><span class="w"> </span><span class="p">(</span><span class="n">每个</span><span class="w"> </span><span class="n">core</span><span class="w"> </span><span class="n">独立</span><span class="p">)</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">Phase</span><span class="w"> </span><span class="mi">1</span><span class="err">:</span><span class="w"> </span><span class="n">统计</span><span class="w"> </span><span class="p">(</span><span class="n">每个</span><span class="w"> </span><span class="n">core</span><span class="w"> </span><span class="n">独立</span><span class="p">)</span>
 <span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="o">[</span><span class="n">startToken, endToken):</span>
 <span class="n">    for each topk j:</span>
 <span class="n">      expert_idx = topkIdx[i</span><span class="o">][</span><span class="n">j</span><span class="o">]</span>
@@ -338,18 +418,16 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">      </span><span class="n">expert_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topkIdx</span><span class="o">[</span><span class="n">i</span><span class="o">][</span><span class="n">j</span><span class="o">]</span>
 <span class="w">      </span><span class="n">sendTokenIdxSmall</span><span class="o">[</span><span class="n">i</span><span class="o">][</span><span class="n">j</span><span class="o">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">aggregatedNumTokensPerExpert</span><span class="o">[</span><span class="n">expert_idx</span><span class="o">]++</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>算法洞察</strong>: Phase 2 使用 <code>SetAtomicAdd</code> 而非显式 reduce，利用硬件原子操作实现跨 core 聚合，避免额外的同步开销。</p>
 </blockquote>
 <p><strong>UB 内存规划</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">topkIdx32AlignIntLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">tempTokens_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">numTopk_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int64_t</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">topkIdx32AlignIntLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">tempTokens_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">numTopk_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int64_t</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
 <span class="n">numTokensPerRank32AlignIntLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">numRanks_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
 <span class="n">numTokensPerExpert32AlignIntLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">numExperts_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
 <span class="n">isTokenInRank32AlignIntLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">tempTokens_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">numRanks_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="4-notify_dispatch">4. notify_dispatch 算子</h2>
 <h3 id="41">4.1 功能定位</h3>
 <p><code>notify_dispatch</code> (aclnnNotifyDispatch) 是<strong>元数据 All-to-All 通信算子</strong>。它在实际 token 数据传输前，先让每张卡知道：</p>
@@ -362,20 +440,18 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 </ul>
 <h3 id="42-op_api">4.2 op_api 层</h3>
 <p><strong>参数列表</strong> (极复杂，反映通信元数据交换的本质)：</p>
-<div class="highlight"><pre><span></span><code><span class="n">aclnnNotifyDispatchGetWorkspaceSize</span><span class="p">(</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">aclnnNotifyDispatchGetWorkspaceSize</span><span class="p">(</span>
 <span class="w">    </span><span class="n">sendData</span><span class="p">,</span><span class="w"> </span><span class="n">tokenPerExpertData</span><span class="p">,</span><span class="w"> </span><span class="n">sendCount</span><span class="p">,</span><span class="w"> </span><span class="n">numTokens</span><span class="p">,</span>
 <span class="w">    </span><span class="n">commGroup</span><span class="p">,</span><span class="w"> </span><span class="n">rankSize</span><span class="p">,</span><span class="w"> </span><span class="n">rankId</span><span class="p">,</span><span class="w"> </span><span class="n">localRankSize</span><span class="p">,</span><span class="w"> </span><span class="n">localRankId</span><span class="p">,</span>
 <span class="w">    </span><span class="n">sendDataOffset</span><span class="p">,</span><span class="w"> </span><span class="n">recvData</span><span class="p">,</span><span class="w"> </span><span class="n">totalRecvTokens</span><span class="p">,</span><span class="w"> </span><span class="n">recvCount</span><span class="p">,</span><span class="w"> </span><span class="n">recvOffset</span><span class="p">,</span>
 <span class="w">    </span><span class="n">maxBs</span><span class="p">,</span><span class="w"> </span><span class="n">recvTokensPerExpert</span><span class="p">,</span><span class="w"> </span><span class="p">...</span>
 <span class="p">)</span>
 </code></pre></div>
-
 <h3 id="43-op_host">4.3 op_host 层</h3>
 <p><strong>HCCL 通信配置</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="kt">uint32_t</span><span class="w"> </span><span class="n">opType1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">OP_TYPE_ALL_TO_ALL</span><span class="p">;</span><span class="w">  </span><span class="c1">// 8 = AlltoAll</span>
-<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllToAllStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;AlltoAll=level0:fullmesh;level1:pairwise&quot;</span><span class="p">;</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">uint32_t</span><span class="w"> </span><span class="n">opType1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">OP_TYPE_ALL_TO_ALL</span><span class="p">;</span><span class="w">  </span><span class="c1">// 8 = AlltoAll</span>
+<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllToAllStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"AlltoAll=level0:fullmesh;level1:pairwise"</span><span class="p">;</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>通信拓扑</strong>: level0 使用 fullmesh（适合机内全互联），level1 使用 pairwise（适合跨机逐步传输）。这是经典的两级 All-to-All 策略。</p>
 </blockquote>
@@ -388,7 +464,7 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <h3 id="44-op_kernel">4.4 op_kernel 层 (核心算法)</h3>
 <p><strong>NotifyDispatch 是 CAM 中最复杂的算子</strong>，它实现了<strong>自管理的 All-to-All</strong>（不依赖 HCCL 集合通信）：</p>
 <p><strong>四阶段流水线</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">Proc</span><span class="nv">ess</span><span class="p">():</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">Proc</span><span class="nv">ess</span><span class="p">():</span>
 <span class="w">  </span><span class="nf">if</span><span class="w"> </span><span class="p">(</span><span class="nv">blockIdx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">):</span>
 <span class="w">    </span><span class="nf">AssembleSendData</span><span class="p">()</span><span class="w">         </span><span class="o">//</span><span class="w"> </span><span class="nv">Phase</span><span class="w"> </span><span class="mi">0</span><span class="p">:</span><span class="w"> </span><span class="nv">Core</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="err">组装发送数据</span>
 <span class="w">  </span><span class="nf">SyncAll</span><span class="o">&lt;</span><span class="nv">true</span><span class="o">&gt;</span><span class="p">()</span>
@@ -404,9 +480,8 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">  </span><span class="nf">BuildMaxBs</span><span class="p">()</span><span class="w">                 </span><span class="o">//</span><span class="w"> </span><span class="nv">Phase</span><span class="w"> </span><span class="mi">3</span><span class="nv">e</span><span class="p">:</span><span class="w"> </span><span class="err">构建</span><span class="w"> </span><span class="nv">maxBs</span><span class="w"> </span><span class="p">(</span><span class="nv">blockIdx</span><span class="o">==</span><span class="mi">3</span><span class="p">)</span>
 <span class="w">  </span><span class="nf">BuildRecvTokenPerExp</span><span class="p">()</span><span class="w">       </span><span class="o">//</span><span class="w"> </span><span class="nv">Phase</span><span class="w"> </span><span class="mi">3</span><span class="nv">f</span><span class="p">:</span><span class="w"> </span><span class="err">构建</span><span class="w"> </span><span class="nv">recvTokensPerExpert</span><span class="w"> </span><span class="p">(</span><span class="nv">blockIdx</span><span class="o">==</span><span class="mi">4</span><span class="p">)</span>
 </code></pre></div>
-
 <p><strong>AssembleSendData 详解</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 每个 expert 的 sendPerGroup = 3 个字段:</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 每个 expert 的 sendPerGroup = 3 个字段:</span>
 <span class="c1">// [numTokensExpert, prefixSum, numTokens]</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">numExperts</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">numTokensExpert</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tokenPerExpertUB</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
@@ -417,21 +492,19 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="n">prefixSum</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">numTokensExpert</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>InputToShareSlice — 核心 IPC 写入</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 每个 core 负责对 copyLen 个 rank 进行写入</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 每个 core 负责对 copyLen 个 rank 进行写入</span>
 <span class="n">CpGM2GMPingPong</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">copyLen</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">perRankDataNum</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">),</span><span class="w"> </span>
 <span class="w">                    </span><span class="n">readGt</span><span class="p">,</span><span class="w"> </span><span class="n">writeGt</span><span class="p">[</span><span class="n">copyOffset</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">perRankDataNum</span><span class="p">],</span><span class="w"> </span><span class="n">COPYONLY</span><span class="p">);</span>
 <span class="c1">// 写入完成后设置 flag 通知对端</span>
 <span class="kt">uint64_t</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MergeMagicWithValue</span><span class="p">(</span><span class="n">magic</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
 <span class="n">CpUB2GM</span><span class="p">(</span><span class="n">shareAddrs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">rank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">FLAG_UNIT_INT_NUM</span><span class="p">,</span><span class="w"> </span><span class="n">inputUB</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">uint64_t</span><span class="p">));</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>设计亮点</strong>: 使用 Ping-Pong 双缓冲 GM→GM 拷贝，<code>UB_HEAD_OFFSET</code> (96B) 和 <code>UB_MID_OFFSET</code> (96B + 95KB + 32B) 交替使用，实现流水隐藏。</p>
 </blockquote>
 <p><strong>ShareToShareSlice — 读取对端数据</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 等待本卡数据已被写入对端</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 等待本卡数据已被写入对端</span>
 <span class="n">WaitSyncFlag</span><span class="p">(</span><span class="n">magic</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">copyOffset</span><span class="p">,</span><span class="w"> </span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">copyLen</span><span class="p">);</span>
 <span class="c1">// 从对端 Window 读取属于本卡的数据</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">copyLen</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -440,9 +513,8 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">                        </span><span class="n">recvDataOutputGt</span><span class="p">[</span><span class="n">checkRank</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">perRankDataNum</span><span class="p">],</span><span class="w"> </span><span class="n">COPYONLY</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>CpGM2GMPingPong — 核心 DMA 引擎</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 双缓冲交替:</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 双缓冲交替:</span>
 <span class="c1">// 偶数轮: 用 inputUB[0] + outputUB[0]</span>
 <span class="c1">// 奇数轮: 用 inputUB[1] + outputUB[1]</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int64_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">dataSizeRemain</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -454,10 +526,9 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="n">dataSizeRemain</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">size</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="45">4.5 同步机制</h3>
 <p><strong>Magic 值获取</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">NotifyDispatch</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">GetMagicValue</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">NotifyDispatch</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">GetMagicValue</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 从 localWindowsExp + STATE_WIN_OFFSET + blockIdx * UB_ALIGN_SIZE 读取</span>
 <span class="w">    </span><span class="n">magic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">selfDataStatusTensor</span><span class="p">(</span><span class="n">blockIdx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">UB_ALIGN_SIZE</span><span class="p">);</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">magic</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">magic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
@@ -465,21 +536,19 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">magic</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>Window 地址计算</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">shareAddrs</span><span class="p">[</span><span class="n">rank</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetWindAddrByRankId</span><span class="p">(</span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">ctxIdx</span><span class="p">)</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">shareAddrs</span><span class="p">[</span><span class="n">rank</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetWindAddrByRankId</span><span class="p">(</span><span class="n">rank</span><span class="p">,</span><span class="w"> </span><span class="n">ctxIdx</span><span class="p">)</span><span class="w"> </span>
 <span class="w">                   </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">magic</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">PING_PONG_SIZE</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">IPC_BUFF_MAX_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">IPC_DATA_OFFSET</span><span class="p">);</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>Ping-Pong 双 Window</strong>: 交替使用两个 102MB+2MB 的 buffer，避免读写冲突。</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="5-moe_dispatch_normal">5. moe_dispatch_normal 算子</h2>
 <h3 id="51">5.1 功能定位</h3>
 <p><code>moe_dispatch_normal</code> (aclnnMoeDispatchNormal) 是 <strong>token 数据实际分发算子</strong>。它将 hidden states 通过 HCCL Window 路由到对应 expert 所在的 rank。</p>
 <h3 id="52-op_api">5.2 op_api 层</h3>
-<div class="highlight"><pre><span></span><code><span class="n">aclnnMoeDispatchNormalGetWorkspaceSize</span><span class="p">(</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">aclnnMoeDispatchNormalGetWorkspaceSize</span><span class="p">(</span>
 <span class="w">    </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">topkIdx</span><span class="p">,</span><span class="w"> </span><span class="n">sendOffset</span><span class="p">,</span><span class="w"> </span><span class="n">sendTokenIdx</span><span class="p">,</span><span class="w">    </span><span class="c1">// 输入</span>
 <span class="w">    </span><span class="n">recvOffset</span><span class="p">,</span><span class="w"> </span><span class="n">recvCount</span><span class="p">,</span><span class="w">                    </span><span class="c1">// 从 notify 获取的接收信息</span>
 <span class="w">    </span><span class="n">groupEp</span><span class="p">,</span><span class="w"> </span><span class="n">epWorldSize</span><span class="p">,</span><span class="w"> </span><span class="n">epRankId</span><span class="p">,</span><span class="w">           </span><span class="c1">// EP 通信域</span>
@@ -490,7 +559,6 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 <span class="w">    </span><span class="p">...</span>
 <span class="p">)</span>
 </code></pre></div>
-
 <h3 id="53-op_host-tiling">5.3 op_host 层 (Tiling 逻辑)</h3>
 <p><strong>输入/输出多态</strong>（根据 quantMode 变化）：</p>
 <table>
@@ -530,46 +598,40 @@ Kernel 层 (op_kernel/*.cpp) ─── 设备端执行，操作 HCCL Window + IP
 </tbody>
 </table>
 <p><strong>HCCL 通信配置</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// EP 域: All-to-All (fullmesh + pairwise)</span>
-<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllToAllStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;AlltoAll=level0:fullmesh;level1:pairwise&quot;</span><span class="p">;</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// EP 域: All-to-All (fullmesh + pairwise)</span>
+<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllToAllStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"AlltoAll=level0:fullmesh;level1:pairwise"</span><span class="p">;</span>
 <span class="c1">// TP 域: AllGather (ring)</span>
-<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllGatherStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;AllGather=level0:ring&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigAllGatherStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"AllGather=level0:ring"</span><span class="p">;</span>
 </code></pre></div>
-
 <p><strong>Window 大小校验</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">tokenActualLen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">44</span><span class="p">;</span><span class="w">  </span><span class="c1">// h_align_32B + scale(32B) + expandIdx(3*4B)</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">tokenActualLen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">44</span><span class="p">;</span><span class="w">  </span><span class="c1">// h_align_32B + scale(32B) + expandIdx(3*4B)</span>
 <span class="n">tokenNeedSizeDispatch</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">tokenActualLen</span><span class="p">,</span><span class="w"> </span><span class="mi">512</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">512</span><span class="p">;</span>
 <span class="n">tokenNeedSizeCombine</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">512</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">512</span><span class="p">;</span>
 <span class="n">actualSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">maxBs</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">tokenNeedSizeCombine</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tokenNeedSizeDispatch</span><span class="p">)</span><span class="w"> </span>
 <span class="w">              </span><span class="o">+</span><span class="w"> </span><span class="mi">4</span><span class="n">MB</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">204</span><span class="n">MB</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
 <span class="c1">// 校验 actualSize &lt;= HCCL_BUFFSIZE</span>
 </code></pre></div>
-
 <p><strong>Tiling Key 计算</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">tilingKey</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">quantMode</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">tpWorldSize</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">tilingKey</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">quantMode</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">tpWorldSize</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
 <span class="c1">// 10000: 无量化, 10002: 动态量化, 10100: TP=2 无量化</span>
 </code></pre></div>
-
 <p><strong>Workspace</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">workSpaces</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="n">MB</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">aivNum</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">aivNum</span><span class="p">;</span><span class="w">  </span><span class="c1">// 用于诊断统计</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">workSpaces</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="n">MB</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">aivNum</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">aivNum</span><span class="p">;</span><span class="w">  </span><span class="c1">// 用于诊断统计</span>
 </code></pre></div>
-
 <h3 id="54-op_kernel">5.4 op_kernel 层 (核心算法)</h3>
 <p><strong>模板参数化</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">XType</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">ExpandXOutType</span><span class="p">,</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">XType</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">ExpandXOutType</span><span class="p">,</span><span class="w"> </span>
 <span class="w">          </span><span class="kt">bool</span><span class="w"> </span><span class="n">dynamicQuant</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsSmoothScaleExist</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsShareExpertRank</span><span class="o">&gt;</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">MoeDispatchNormal</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">};</span>
 </code></pre></div>
-
 <p><strong>四阶段流水线 (Process)</strong>：</p>
-<div class="highlight"><pre><span></span><code>InputToShare()    →  将 token 数据写入目标 rank 的 Window
+<div class="hl-amber"><pre><span></span><code>InputToShare()    →  将 token 数据写入目标 rank 的 Window
 SetStatus()       →  设置目标 rank 的状态位 (通知数据已到达)
 WaitStatus()      →  等待所有源 rank 的数据到达
 ShareToOutput()   →  从 Window 读取数据到本地输出
 </code></pre></div>
-
 <p><strong>InputToShare 详解</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 每个 core 负责 [startTokenId, endTokenId) 的 token</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 每个 core 负责 [startTokenId, endTokenId) 的 token</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startTokenId</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endTokenId</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">tokenIndex</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">dstExpertId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">expertIdsTensor</span><span class="p">(</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">startTokenId</span><span class="p">);</span>
 <span class="w">    </span><span class="n">curExpertCnt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sendTokenIdxTensor</span><span class="p">(</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">startTokenId</span><span class="p">);</span>
@@ -589,9 +651,8 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>FillTriple — 元数据嵌入</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">FillTriple</span><span class="p">(</span><span class="n">LocalTensor</span><span class="o">&lt;</span><span class="n">ExpandXOutType</span><span class="o">&gt;</span><span class="w"> </span><span class="o">&amp;</span><span class="n">xOutTensor</span><span class="p">,</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">FillTriple</span><span class="p">(</span><span class="n">LocalTensor</span><span class="o">&lt;</span><span class="n">ExpandXOutType</span><span class="o">&gt;</span><span class="w"> </span><span class="o">&amp;</span><span class="n">xOutTensor</span><span class="p">,</span><span class="w"> </span>
 <span class="w">                                   </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">tokenIndex</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">k</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">LocalTensor</span><span class="o">&lt;</span><span class="kt">int32_t</span><span class="o">&gt;</span><span class="w"> </span><span class="n">xOutTint32</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">xOutTensor</span><span class="p">.</span><span class="n">ReinterpretCast</span><span class="o">&lt;</span><span class="kt">int32_t</span><span class="o">&gt;</span><span class="p">();</span>
 <span class="w">    </span><span class="n">xOutTint32</span><span class="p">(</span><span class="n">expandIdxStartIdx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">epRankId</span><span class="p">;</span><span class="w">      </span><span class="c1">// 源 rank ID</span>
@@ -599,12 +660,11 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="w">    </span><span class="n">xOutTint32</span><span class="p">(</span><span class="n">expandIdxStartIdx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">k</span><span class="p">;</span><span class="w">          </span><span class="c1">// topk index</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>设计洞察</strong>: 在每个 token 的 hidden state 后面附加三元组 (srcRank, srcTokenIdx, topkIdx)，这样 combine 阶段无需额外通信即可知道数据来源。</p>
 </blockquote>
 <p><strong>SetStatus — 状态位同步</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 将 status 写入目标 rank 的 Window 状态区</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 将 status 写入目标 rank 的 Window 状态区</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startExpId</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endExpId</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">targetRankId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">moeExpertNumPerRank</span><span class="p">;</span>
 <span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">stateOffset</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">epRankId</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">moeExpertNumPerRank</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">epRankSize</span><span class="p">);</span>
@@ -612,9 +672,8 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="w">    </span><span class="n">DataCopy</span><span class="p">(</span><span class="n">dstStatusGT</span><span class="p">,</span><span class="w"> </span><span class="n">statusTensor</span><span class="p">[(</span><span class="n">i</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">startExpId</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">8</span><span class="p">],</span><span class="w"> </span><span class="mi">8UL</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>WaitStatus — 等待数据到达</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">sumOfFlag</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">compareTarget</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">sumOfFlag</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">compareTarget</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">DataCopy</span><span class="p">(</span><span class="n">statusFp32Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">windowInstatusFp32Tensor</span><span class="p">[</span><span class="n">startStatusId</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">stateOffset</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">4</span><span class="p">],</span><span class="w"> </span><span class="p">...);</span>
 <span class="w">    </span><span class="n">ReduceSum</span><span class="p">(</span><span class="n">statusSumOutTensor</span><span class="p">,</span><span class="w"> </span><span class="n">statusFp32Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">gatherMaskOutTensor</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="w">    </span><span class="n">sumOfFlag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">statusSumOutTensor</span><span class="p">.</span><span class="n">GetValue</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
@@ -623,12 +682,11 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="n">Duplicate</span><span class="o">&lt;</span><span class="kt">int32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">cleanStateTensor</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="n">DataCopy</span><span class="p">(</span><span class="n">windowInstatusFp32Tensor</span><span class="p">[...],</span><span class="w"> </span><span class="n">cleanStateTensor</span><span class="p">.</span><span class="n">ReinterpretCast</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(),</span><span class="w"> </span><span class="p">...);</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>性能洞察</strong>: 使用 <code>ReduceSum</code> 在 Vector 单元上快速求和所有状态位，当 sum == statusNumPerCore 时说明所有数据已到达。</p>
 </blockquote>
 <p><strong>ShareToOutput — 从 Window 读取</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startStatusId</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endStatusId</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startStatusId</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endStatusId</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">fromRank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">epRankSize</span><span class="p">;</span>
 <span class="w">    </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">recvCountTensor</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">preCount</span><span class="p">;</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -645,9 +703,8 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="55-quantprocess">5.5 量化机制 (QuantProcess)</h3>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">QuantProcess</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">QuantProcess</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">Cast</span><span class="p">(</span><span class="n">floatLocalTemp</span><span class="p">,</span><span class="w"> </span><span class="n">xInTensor</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_NONE</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">);</span><span class="w">        </span><span class="c1">// BF16 → FP32</span>
 <span class="w">    </span><span class="n">Abs</span><span class="p">(</span><span class="n">floatLocalAbsTemp</span><span class="p">,</span><span class="w"> </span><span class="n">floatLocalTemp</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">);</span><span class="w">              </span><span class="c1">// |x|</span>
 <span class="w">    </span><span class="n">ReduceMaxInplace</span><span class="p">(</span><span class="n">floatLocalAbsTemp</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">);</span><span class="w">                 </span><span class="c1">// max(|x|)</span>
@@ -660,28 +717,25 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 <span class="w">    </span><span class="n">floatLocalTemp</span><span class="p">.</span><span class="n">SetValue</span><span class="p">(</span><span class="n">hUBAlignSize</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">float</span><span class="p">),</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">dynamicScale</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>ReduceMaxInplace 优化</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 两级 reduce: 先两两比较 (stride=8), 再 WholeReduceMax</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 两级 reduce: 先两两比较 (stride=8), 再 WholeReduceMax</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">repsFp32</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">Max</span><span class="p">(</span><span class="n">srcLocal</span><span class="p">,</span><span class="w"> </span><span class="n">srcLocal</span><span class="p">[</span><span class="mi">64</span><span class="p">],</span><span class="w"> </span><span class="n">srcLocal</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="n">repsFp32</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">8</span><span class="p">,</span><span class="mi">0</span><span class="p">});</span>
 <span class="p">}</span>
 <span class="n">WholeReduceMax</span><span class="p">(</span><span class="n">srcLocal</span><span class="p">,</span><span class="w"> </span><span class="n">srcLocal</span><span class="p">,</span><span class="w"> </span><span class="n">mask</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">);</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="6-moe_combine_normal">6. moe_combine_normal 算子</h2>
 <h3 id="61">6.1 功能定位</h3>
 <p><code>moe_combine_normal</code> (aclnnMoeCombineNormal) 是 <strong>token 加权聚合算子</strong>。Expert 计算完成后，将结果通过 Window 发回源 rank，并按 topk_weight 加权求和。</p>
 <h3 id="62-op_api">6.2 op_api 层</h3>
-<div class="highlight"><pre><span></span><code><span class="n">aclnnMoeCombineNormalGetWorkspaceSize</span><span class="p">(</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">aclnnMoeCombineNormalGetWorkspaceSize</span><span class="p">(</span>
 <span class="w">    </span><span class="n">recvX</span><span class="p">,</span><span class="w"> </span><span class="n">tokenSrcInfo</span><span class="p">,</span><span class="w"> </span><span class="n">epRecvCounts</span><span class="p">,</span><span class="w"> </span><span class="n">recvTopkWeights</span><span class="p">,</span><span class="w"> </span><span class="n">tpRecvCountsOptional</span><span class="p">,</span>
 <span class="w">    </span><span class="n">epGroupName</span><span class="p">,</span><span class="w"> </span><span class="n">epWorldSize</span><span class="p">,</span><span class="w"> </span><span class="n">epRankId</span><span class="p">,</span>
 <span class="w">    </span><span class="n">tpGroupNameOptional</span><span class="p">,</span><span class="w"> </span><span class="n">tpWorldSize</span><span class="p">,</span><span class="w"> </span><span class="n">tpRankId</span><span class="p">,</span>
 <span class="w">    </span><span class="n">moeExpertNum</span><span class="p">,</span><span class="w"> </span><span class="n">globalBs</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">,</span><span class="w"> </span><span class="n">sendCostStats</span><span class="p">,</span><span class="w"> </span><span class="p">...</span>
 <span class="p">)</span>
 </code></pre></div>
-
 <h3 id="63-op_host-tiling">6.3 op_host 层 (Tiling 逻辑)</h3>
 <p><strong>输入/输出</strong>：
 - recv_x: [totalRecvTokens, h] (BF16/FP16)
@@ -690,25 +744,22 @@ ShareToOutput()   →  从 Window 读取数据到本地输出
 - recv_topk_weights: [bs, k] (FLOAT)
 - x: [bs, h] (BF16/FP16)</p>
 <p><strong>HCCL 通信配置</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// EP: All-to-All (fullmesh + pairwise)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// EP: All-to-All (fullmesh + pairwise)</span>
 <span class="c1">// TP: ReduceScatter (ring) ← 注意这里是 ReduceScatter 不是 AllGather</span>
-<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigReduceScatterStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;ReduceScatter=level0:ring&quot;</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">algConfigReduceScatterStr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"ReduceScatter=level0:ring"</span><span class="p">;</span>
 </code></pre></div>
-
 <p><strong>Tiling 约束</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// combine 不支持多 expert + TP 同时启用</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// combine 不支持多 expert + TP 同时启用</span>
 <span class="n">OPS_ERR_IF</span><span class="p">((</span><span class="n">localMoeExpertNum</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">(</span><span class="n">tpWorldSize</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">),</span><span class="w"> </span>
-<span class="w">    </span><span class="s">&quot;Cannot support multi-moeExpert in a rank when tpWorldSize &gt; 1&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="s">"Cannot support multi-moeExpert in a rank when tpWorldSize &gt; 1"</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="64-op_kernel">6.4 op_kernel 层 (核心算法)</h3>
 <p><strong>两阶段流水线</strong>：</p>
-<div class="highlight"><pre><span></span><code>CopyBufferToShareAndSetStatus()  →  将 expert 输出写入源 rank 的 Window，设置状态
+<div class="hl-amber"><pre><span></span><code>CopyBufferToShareAndSetStatus()  →  将 expert 输出写入源 rank 的 Window，设置状态
 ReadBufferFromRemote()           →  等待数据到达，读取并按 weight 加权求和
 </code></pre></div>
-
 <p><strong>CopyBufferToShareAndSetStatus 详解</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 每个 core 负责 [startTokenId, endTokenId) 的 token</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 每个 core 负责 [startTokenId, endTokenId) 的 token</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">startTokenId</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endTokenId</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">srcRankId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">srcInfoLocal</span><span class="p">(</span><span class="n">index</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span><span class="w">  </span><span class="c1">// 源 rank</span>
 <span class="w">    </span><span class="n">srcTokenId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">srcInfoLocal</span><span class="p">(</span><span class="n">index</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// 源 token</span>
@@ -720,23 +771,20 @@ ReadBufferFromRemote()           →  等待数据到达，读取并按 weight �
 <span class="w">    </span><span class="n">SetStatusBySrcInfo</span><span class="p">(</span><span class="n">srcRankId</span><span class="p">,</span><span class="w"> </span><span class="n">srcTokenId</span><span class="p">,</span><span class="w"> </span><span class="n">srcTopkId</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>CopyBufferToShare — Window 写入</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">dstGM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetBufferAddrByRankId</span><span class="p">(</span><span class="n">srcRankId</span><span class="p">)</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">dstGM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetBufferAddrByRankId</span><span class="p">(</span><span class="n">srcRankId</span><span class="p">)</span><span class="w"> </span>
 <span class="w">              </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">srcTokenId</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">axisK_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">srcTopkId</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">h512AlignRecvXLen_</span><span class="p">;</span>
 <span class="c1">// 512 字节对齐存储，每个 slot 存一个 topk 结果</span>
 <span class="n">DataCopyPad</span><span class="p">(</span><span class="n">dstWindow</span><span class="p">,</span><span class="w"> </span><span class="n">localCopyTensor</span><span class="p">,</span><span class="w"> </span><span class="n">xOutCopyParams</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>SetStatusBySrcInfo — 状态更新</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">stateGM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetStateAddrByRankId</span><span class="p">(</span><span class="n">srcRankId</span><span class="p">)</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">stateGM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetStateAddrByRankId</span><span class="p">(</span><span class="n">srcRankId</span><span class="p">)</span><span class="w"> </span>
 <span class="w">                </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">srcTokenId</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">axisK_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">srcTopkId</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">UB_32_ALIGN</span><span class="p">;</span>
 <span class="c1">// 写入 1.0 (0x3F800000) 表示该 slot 数据已就绪</span>
 <span class="n">DataCopy</span><span class="o">&lt;</span><span class="kt">uint32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">stateGMTensor</span><span class="p">,</span><span class="w"> </span><span class="n">statusTensor</span><span class="p">,</span><span class="w"> </span><span class="n">FLOAT_NUM_PER_ALIGN</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>WaitBuffCopy — 等待数据到达</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">axisK_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">FLOAT_NUM_PER_ALIGN</span><span class="p">;</span><span class="w">  </span><span class="c1">// 所有 topk 数据都到达</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">axisK_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">FLOAT_NUM_PER_ALIGN</span><span class="p">;</span><span class="w">  </span><span class="c1">// 所有 topk 数据都到达</span>
 <span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">current</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">target</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">DataCopy</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(</span><span class="n">stateTensorLocal</span><span class="p">,</span><span class="w"> </span><span class="n">stateGMTensor</span><span class="p">,</span><span class="w"> </span><span class="n">calCount</span><span class="p">);</span>
 <span class="w">    </span><span class="n">Sum</span><span class="p">(</span><span class="n">tempStateTensorLocal</span><span class="p">,</span><span class="w"> </span><span class="n">stateTensorLocal</span><span class="p">,</span><span class="w"> </span><span class="n">sumPerKParams</span><span class="p">);</span>
@@ -746,9 +794,8 @@ ReadBufferFromRemote()           →  等待数据到达，读取并按 weight �
 <span class="n">Duplicate</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(</span><span class="n">tempStateTensorLocal</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="n">calCount</span><span class="p">);</span>
 <span class="n">DataCopy</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(</span><span class="n">stateGMTensor</span><span class="p">,</span><span class="w"> </span><span class="n">tempStateTensorLocal</span><span class="p">,</span><span class="w"> </span><span class="n">calCount</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>ReadBufferAndWeightedSum — 加权求和</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">Duplicate</span><span class="p">(</span><span class="n">sumFloatBufLocal</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span><span class="w">  </span><span class="c1">// 初始化累加器</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">Duplicate</span><span class="p">(</span><span class="n">sumFloatBufLocal</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span><span class="w">  </span><span class="c1">// 初始化累加器</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">topkId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">topkId</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">axisK_</span><span class="p">;</span><span class="w"> </span><span class="n">topkId</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">scale</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topkWeightsLocal</span><span class="p">.</span><span class="n">GetValue</span><span class="p">((</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">startTokenIndex</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">axisK_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">topkId</span><span class="p">);</span>
 <span class="w">    </span><span class="c1">// 从本卡 Window 读取该 topk 对应的结果</span>
@@ -763,12 +810,11 @@ ReadBufferFromRemote()           →  等待数据到达，读取并按 weight �
 <span class="n">Cast</span><span class="p">(</span><span class="n">xOutLocal</span><span class="p">,</span><span class="w"> </span><span class="n">sumFloatBufLocal</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_RINT</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span>
 <span class="n">DataCopyPad</span><span class="p">(</span><span class="n">xOutGlobal_</span><span class="p">[</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">axisH_</span><span class="p">],</span><span class="w"> </span><span class="n">xOutLocal</span><span class="p">,</span><span class="w"> </span><span class="n">xOutCopyParams</span><span class="p">);</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>数值精度洞察</strong>: 累加使用 FP32 精度（避免 BF16 累加误差），最终输出时转回 BF16/FP16。这是混合精度计算的标准做法。</p>
 </blockquote>
 <h3 id="65-magic">6.5 Magic 双缓冲机制</h3>
-<div class="highlight"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">MoeCombineNormal</span><span class="o">::</span><span class="n">InitMagic</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__aicore__</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">MoeCombineNormal</span><span class="o">::</span><span class="n">InitMagic</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">selfMagicTensor</span><span class="p">.</span><span class="n">SetGlobalBuffer</span><span class="p">(</span>
 <span class="w">        </span><span class="p">(</span><span class="n">__gm__</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="o">*</span><span class="p">)((</span><span class="n">GM_ADDR</span><span class="p">)</span><span class="n">epWinContext_</span><span class="o">-&gt;</span><span class="n">localWindowsExp</span><span class="w"> </span>
 <span class="w">                            </span><span class="o">+</span><span class="w"> </span><span class="n">MAGIC_WIN_OFFSET</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">coreIdx_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">WIN_512_ALIGN</span><span class="p">));</span>
@@ -780,28 +826,26 @@ ReadBufferFromRemote()           →  等待数据到达，读取并按 weight �
 <span class="c1">// 使用 magic 选择 Window 的哪一半</span>
 <span class="n">winDataSizeOffset_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">magic_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">totalWinSize</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2UL</span><span class="p">);</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="7-pybind">7. Pybind 绑定层</h2>
 <h3 id="71">7.1 注册机制</h3>
 <p>使用 PyTorch 的 <strong>Dispatcher + TORCH_LIBRARY</strong> 双重注册：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 1. pybind11 模块注册 (Python 直接调用)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 1. pybind11 模块注册 (Python 直接调用)</span>
 <span class="n">PYBIND11_MODULE</span><span class="p">(</span><span class="n">TORCH_EXTENSION_NAME</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;get_dispatch_layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">GetDispatchLayoutImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;moe_dispatch_prefill&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MoeDispatchPrefillImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;moe_combine_prefill&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MoeCombinePrefillImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"get_dispatch_layout"</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">GetDispatchLayoutImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"moe_dispatch_prefill"</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MoeDispatchPrefillImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"moe_combine_prefill"</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MoeCombinePrefillImplAutograd</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="p">}</span>
 
 <span class="c1">// 2. TORCH_LIBRARY Schema 注册 (供 GE 图引擎使用)</span>
 <span class="n">TORCH_LIBRARY</span><span class="p">(</span><span class="n">umdk_cam_op_lib</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;get_dispatch_layout(Tensor topk_idx, int num_experts, int num_ranks) -&gt; (Tensor, Tensor)&quot;</span><span class="p">);</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;moe_dispatch_prefill(Tensor x, Tensor topk_idx, ...) -&gt; (Tensor, Tensor, Tensor, Tensor, Tensor)&quot;</span><span class="p">);</span>
-<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;moe_combine_prefill(Tensor x, Tensor topk_idx, ...) -&gt; Tensor&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"get_dispatch_layout(Tensor topk_idx, int num_experts, int num_ranks) -&gt; (Tensor, Tensor)"</span><span class="p">);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"moe_dispatch_prefill(Tensor x, Tensor topk_idx, ...) -&gt; (Tensor, Tensor, Tensor, Tensor, Tensor)"</span><span class="p">);</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">"moe_combine_prefill(Tensor x, Tensor topk_idx, ...) -&gt; Tensor"</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="72">7.2 三层调用架构</h3>
-<div class="highlight"><pre><span></span><code>Python 前端
+<div class="hl-amber"><pre><span></span><code>Python 前端
     │
     ▼
 AutogradPrivateUse1  (支持反向传播)
@@ -812,9 +856,8 @@ PrivateUse1 (NPU 实际执行)
     ▼
 aclnn API (CANN 运行时)
 </code></pre></div>
-
 <h3 id="73-get_dispatch_layout">7.3 get_dispatch_layout 绑定</h3>
-<div class="highlight"><pre><span></span><code><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;</span><span class="w"> </span><span class="n">GetDispatchLayoutImplNpu</span><span class="p">(</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;</span><span class="w"> </span><span class="n">GetDispatchLayoutImplNpu</span><span class="p">(</span>
 <span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="o">&amp;</span><span class="n">topkIdx</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">numExperts</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">numRanks</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 类型转换: topkIdx → int64</span>
 <span class="w">    </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">topkIdxInt64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topkIdx</span><span class="p">.</span><span class="n">scalar_type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">kLong</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">topkIdx</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">topkIdx</span><span class="p">.</span><span class="n">to</span><span class="p">(</span><span class="n">at</span><span class="o">::</span><span class="n">kLong</span><span class="p">);</span>
@@ -833,10 +876,9 @@ aclnn API (CANN 运行时)
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_tuple</span><span class="p">(</span><span class="n">numTokensPerExpert</span><span class="p">,</span><span class="w"> </span><span class="n">sendTokenIdxSmall</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="74-moe_dispatch_prefill">7.4 moe_dispatch_prefill 绑定</h3>
 <p>这是<strong>最复杂的 pybind 函数</strong>，它组合了 notify_dispatch + moe_dispatch_normal 两个算子：</p>
-<div class="highlight"><pre><span></span><code><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;</span><span class="w"> </span>
+<div class="hl-amber"><pre><span></span><code><span class="n">std</span><span class="o">::</span><span class="n">tuple</span><span class="o">&lt;</span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&gt;</span><span class="w"> </span>
 <span class="n">MoeDispatchPrefillImplNpu</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// Step 1: 准备 notify 的输入</span>
 <span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">sendData</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">empty</span><span class="p">({</span><span class="n">numExperts</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">3</span><span class="p">},</span><span class="w"> </span><span class="p">...);</span><span class="w">  </span><span class="c1">// sendPerGroup=3</span>
@@ -868,9 +910,8 @@ aclnn API (CANN 运行时)
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">expandxOut</span><span class="p">,</span><span class="w"> </span><span class="n">dynamicScalesOut</span><span class="p">,</span><span class="w"> </span><span class="n">expandIdxOut</span><span class="p">,</span><span class="w"> </span><span class="n">recvCount</span><span class="p">,</span><span class="w"> </span><span class="n">recvTokensPerExpert</span><span class="p">};</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="75-moe_combine_prefill">7.5 moe_combine_prefill 绑定</h3>
-<div class="highlight"><pre><span></span><code><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">MoeCombinePrefillImplNpu</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">MoeCombinePrefillImplNpu</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 类型转换</span>
 <span class="w">    </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">topkIdxInt32</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topkIdx</span><span class="p">.</span><span class="n">scalar_type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">kInt</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">topkIdx</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">topkIdx</span><span class="p">.</span><span class="n">to</span><span class="p">(</span><span class="n">at</span><span class="o">::</span><span class="n">kInt</span><span class="p">);</span>
 <span class="w">    </span><span class="n">at</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">expertScales</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">topkWeights</span><span class="p">.</span><span class="n">scalar_type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">at</span><span class="o">::</span><span class="n">kFloat</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">topkWeights</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">topkWeights</span><span class="p">.</span><span class="n">to</span><span class="p">(</span><span class="n">at</span><span class="o">::</span><span class="n">kFloat</span><span class="p">);</span>
@@ -886,18 +927,16 @@ aclnn API (CANN 运行时)
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">combinedX</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="76-torch_bind_exceptionh">7.6 异常处理 (torch_bind_exception.h)</h3>
-<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TorchBindException</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">exception</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TorchBindException</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">exception</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 捕获文件名、行号、断言条件</span>
-<span class="w">    </span><span class="n">message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;Failed: &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot; error &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;:&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">line</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot; error message: &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">error</span><span class="p">;</span>
+<span class="w">    </span><span class="n">message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Failed: "</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">" error "</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">":"</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">line</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">" error message: "</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">error</span><span class="p">;</span>
 <span class="p">};</span>
 
 <span class="cp">#define TORCH_BIND_ASSERT(cond) \</span>
-<span class="cp">    if (not(cond)) { throw TorchBindException(&quot;Assertion&quot;, __FILE__, __LINE__, #cond); }</span>
+<span class="cp">    if (not(cond)) { throw TorchBindException("Assertion", __FILE__, __LINE__, #cond); }</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="8">8. 通信模式全局分析</h2>
 <h3 id="81">8.1 通信模式总结</h3>
 <table>
@@ -945,7 +984,7 @@ aclnn API (CANN 运行时)
 <li><strong>内存效率</strong>: 原地更新，无需额外 buffer</li>
 </ol>
 <h3 id="83">8.3 通信拓扑</h3>
-<div class="highlight"><pre><span></span><code>Level 0 (机内): FullMesh
+<div class="hl-amber"><pre><span></span><code>Level 0 (机内): FullMesh
   ┌───┐  ┌───┐  ┌───┐  ┌───┐
   │ 0 │──│ 1 │──│ 2 │──│ 3 │
   └───┘  └───┘  └───┘  └───┘
@@ -957,46 +996,40 @@ aclnn API (CANN 运行时)
 Level 1 (跨机): Pairwise
   Machine 0 ←──→ Machine 1 ←──→ Machine 2 ...
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="9">9. 量化机制深度分析</h2>
 <h3 id="91">9.1 量化模式</h3>
-<div class="highlight"><pre><span></span><code><span class="k">enum</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">NO_SCALES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">DYNAMIC_SCALES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">};</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">enum</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">NO_SCALES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">DYNAMIC_SCALES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">};</span>
 </code></pre></div>
-
 <ul>
 <li><strong>quantMode=0</strong>: 无量化，BF16/FP16 直通</li>
 <li><strong>quantMode=2</strong>: 动态 INT8 量化（per-token 动态 scale）</li>
 </ul>
 <h3 id="92-dispatch">9.2 量化流程 (Dispatch 阶段)</h3>
-<div class="highlight"><pre><span></span><code>BF16 Token → FP32 → |x| → max(|x|) → scale = 127/max → x*scale → INT8
+<div class="hl-amber"><pre><span></span><code>BF16 Token → FP32 → |x| → max(|x|) → scale = 127/max → x*scale → INT8
                                                          ↓
                                                   存储 1/scale 供反量化
 </code></pre></div>
-
 <h3 id="93-combine">9.3 反量化流程 (Combine 阶段)</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// 如果 combine 需要反量化 (当前代码中 combine 直接操作 recvX)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 如果 combine 需要反量化 (当前代码中 combine 直接操作 recvX)</span>
 <span class="n">Cast</span><span class="p">(</span><span class="n">tokenFloatLocal</span><span class="p">,</span><span class="w"> </span><span class="n">tmpToken</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_NONE</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span><span class="w">  </span><span class="c1">// INT8 → FP32 (如果量化)</span>
 <span class="n">Muls</span><span class="p">(</span><span class="n">weightedMulBufLocal</span><span class="p">,</span><span class="w"> </span><span class="n">tokenFloatLocal</span><span class="p">,</span><span class="w"> </span><span class="n">scale</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="94">9.4 量化对内存的影响</h3>
 <p><strong>非量化模式</strong> (per token):</p>
-<div class="highlight"><pre><span></span><code>[h * 2B (BF16)] + [32B (scale)] + [12B (expandIdx)] = h*2 + 44 Bytes
+<div class="hl-amber"><pre><span></span><code>[h * 2B (BF16)] + [32B (scale)] + [12B (expandIdx)] = h*2 + 44 Bytes
 </code></pre></div>
-
 <p><strong>量化模式</strong> (per token):</p>
-<div class="highlight"><pre><span></span><code>[h * 1B (INT8)] + [32B (scale)] + [12B (expandIdx)] = h + 44 Bytes
+<div class="hl-amber"><pre><span></span><code>[h * 1B (INT8)] + [32B (scale)] + [12B (expandIdx)] = h + 44 Bytes
 </code></pre></div>
-
 <blockquote>
 <p><strong>带宽节省</strong>: 当 h=7168 时，非量化 14380B → 量化 7212B，节省约 50% Window 带宽。</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="10">10. 关键性能优化点</h2>
 <h3 id="101-ping-pong">10.1 双缓冲 (Ping-Pong)</h3>
 <p><strong>NotifyDispatch 的 CpGM2GMPingPong</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">__ubuf__</span><span class="w"> </span><span class="n">U</span><span class="w"> </span><span class="o">*</span><span class="n">inputUB</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="n">UB_HEAD_OFFSET</span><span class="p">,</span><span class="w"> </span><span class="n">UB_MID_OFFSET</span><span class="p">};</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">__ubuf__</span><span class="w"> </span><span class="n">U</span><span class="w"> </span><span class="o">*</span><span class="n">inputUB</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="n">UB_HEAD_OFFSET</span><span class="p">,</span><span class="w"> </span><span class="n">UB_MID_OFFSET</span><span class="p">};</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int64_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">dataSizeRemain</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">event_t</span><span class="w"> </span><span class="n">eventId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">EVENT_ID0</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">EVENT_ID1</span><span class="p">;</span>
 <span class="w">    </span><span class="n">WaitFlag</span><span class="o">&lt;</span><span class="n">MTE3_MTE2</span><span class="o">&gt;</span><span class="p">(</span><span class="n">eventId</span><span class="p">);</span><span class="w">     </span><span class="c1">// 等待写完成</span>
@@ -1005,54 +1038,47 @@ Level 1 (跨机): Pairwise
 <span class="w">    </span><span class="n">SetFlag</span><span class="o">&lt;</span><span class="n">MTE3_MTE2</span><span class="o">&gt;</span><span class="p">(</span><span class="n">eventId</span><span class="p">);</span><span class="w">      </span><span class="c1">// 通知可开始下一轮</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>Combine 的 Magic 双 Window</strong>：</p>
-<div class="highlight"><pre><span></span><code><span class="n">winDataSizeOffset_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">magic_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">totalWinSize</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2UL</span><span class="p">);</span><span class="w">  </span><span class="c1">// 交替使用两半</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">winDataSizeOffset_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">magic_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">totalWinSize</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2UL</span><span class="p">);</span><span class="w">  </span><span class="c1">// 交替使用两半</span>
 </code></pre></div>
-
 <h3 id="102">10.2 地址对齐</h3>
 <p>所有 Window 访问都严格对齐到 512B (WIN_ADDR_ALIGN)：</p>
-<div class="highlight"><pre><span></span><code><span class="n">hOutGMAlignSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">hScaleIdxSize</span><span class="p">,</span><span class="w"> </span><span class="n">WIN_ADDR_ALIGN</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">WIN_ADDR_ALIGN</span><span class="p">;</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">hOutGMAlignSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">hScaleIdxSize</span><span class="p">,</span><span class="w"> </span><span class="n">WIN_ADDR_ALIGN</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">WIN_ADDR_ALIGN</span><span class="p">;</span>
 <span class="n">h512AlignRecvXLen_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Ceil</span><span class="p">(</span><span class="n">hRecvXTypeLen_</span><span class="p">,</span><span class="w"> </span><span class="n">WIN_512_ALIGN</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">WIN_512_ALIGN</span><span class="p">;</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>原因</strong>: HCCL Window 的跨卡访问需要 512B 对齐以达到最佳 DMA 性能。</p>
 </blockquote>
 <h3 id="103-flag">10.3 增量 Flag 检查</h3>
-<div class="highlight"><pre><span></span><code><span class="n">checkedFlagNum</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span><span class="w">  </span><span class="c1">// 跳过已确认的 flag</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">checkedFlagNum</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span><span class="w">  </span><span class="c1">// 跳过已确认的 flag</span>
 </code></pre></div>
-
 <p>避免重复检查已完成的 flag，减少 GM→UB 读取。</p>
 <h3 id="104-reducesum">10.4 状态位批量 ReduceSum</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// WaitStatus: 使用 ReduceSum 快速判断所有数据是否到达</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// WaitStatus: 使用 ReduceSum 快速判断所有数据是否到达</span>
 <span class="n">ReduceSum</span><span class="p">(</span><span class="n">statusSumOutTensor</span><span class="p">,</span><span class="w"> </span><span class="n">statusFp32Tensor</span><span class="p">,</span><span class="w"> </span><span class="n">gatherMaskOutTensor</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="n">sumOfFlag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">statusSumOutTensor</span><span class="p">.</span><span class="n">GetValue</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="105">10.5 原子操作聚合</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// dispatch_layout 中使用原子加实现跨 core 聚合</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// dispatch_layout 中使用原子加实现跨 core 聚合</span>
 <span class="n">AscendC</span><span class="o">::</span><span class="n">SetAtomicAdd</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">();</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">coreIdx_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">aivNum_</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">DataCopyPad</span><span class="p">(</span><span class="n">tempExpertGM_</span><span class="p">[</span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">numExperts</span><span class="p">],</span><span class="w"> </span><span class="n">numTokensPerExpertTensor</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
 <span class="p">}</span>
 <span class="n">AscendC</span><span class="o">::</span><span class="n">SetAtomicNone</span><span class="p">();</span>
 </code></pre></div>
-
 <h3 id="106">10.6 诊断模式 (可选)</h3>
-<div class="highlight"><pre><span></span><code><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">isEnableDiagnose</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">isEnableDiagnose</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">durationTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">GetSystemCycle</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">systemCycleStart</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">CYCLE_TO_TIME</span><span class="p">;</span><span class="w">  </span><span class="c1">// us</span>
 <span class="w">    </span><span class="n">waitRecvCostStatsTensor</span><span class="p">.</span><span class="n">SetValue</span><span class="p">(</span><span class="n">srcRank</span><span class="p">,</span><span class="w"> </span><span class="n">preTime</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">durationTime</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <blockquote>
 <p><strong>设计亮点</strong>: 诊断输出是可选的 (OPTIONAL tensor)，不影响正常路径性能。</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="11-hccl-window">11. HCCL Window 内存布局</h2>
 <h3 id="111">11.1 整体布局</h3>
-<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────┐
 │                        HCCL Window (默认 200MB)                          │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ 0x000000 │ NotifyDispatch 数据区 (IPC Data, 100MB)                       │
@@ -1075,9 +1101,8 @@ Level 1 (跨机): Pairwise
 │          │   └── Per-token Status (数据到达标志)                           │
 └──────────┴───────────────────────────────────────────────────────────────┘
 </code></pre></div>
-
 <h3 id="112-token-dispatch">11.2 Token 存储格式 (Dispatch)</h3>
-<div class="highlight"><pre><span></span><code>每个 token slot (512B 对齐):
+<div class="hl-amber"><pre><span></span><code>每个 token slot (512B 对齐):
 ┌──────────────────────────────────────────────────────┐
 │ [0, h*2)        │ BF16 hidden states (或 INT8 量化)    │
 │ [h*2, h*2+32)   │ Scale (FP32, 量化模式)              │
@@ -1085,9 +1110,8 @@ Level 1 (跨机): Pairwise
 │ [h*2+44, 512n)  │ Padding                             │
 └──────────────────────────────────────────────────────┘
 </code></pre></div>
-
 <h3 id="113-token-combine">11.3 Token 存储格式 (Combine)</h3>
-<div class="highlight"><pre><span></span><code>每个 token slot (512B 对齐):
+<div class="hl-amber"><pre><span></span><code>每个 token slot (512B 对齐):
 ┌──────────────────────────────────────────────────────┐
 │ [0, h*2)        │ Expert 输出 (BF16)                  │
 │ [h*2, 512n)     │ Padding                             │
@@ -1098,8 +1122,7 @@ Level 1 (跨机): Pairwise
 │ [0, 32)         │ 1.0 (数据就绪) / 0.0 (未就绪)       │
 └──────────────────────────────────────────────────────┘
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="a">附录 A: 关键常量速查表</h2>
 <table>
 <thead>
@@ -1186,7 +1209,7 @@ Level 1 (跨机): Pairwise
 </tbody>
 </table>
 <h2 id="b">附录 B: 文件索引</h2>
-<div class="highlight"><pre><span></span><code><span class="n">src</span><span class="o">/</span><span class="n">cam</span><span class="o">/</span><span class="n">comm_operator</span><span class="o">/</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">src</span><span class="o">/</span><span class="n">cam</span><span class="o">/</span><span class="n">comm_operator</span><span class="o">/</span>
 <span class="err">├──</span><span class="w"> </span><span class="n">ascend_kernels</span><span class="o">/</span>
 <span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">AddCustom</span><span class="p">.</span><span class="n">json</span><span class="w">                          </span><span class="p">#</span><span class="w"> </span><span class="err">算子定义</span><span class="w"> </span><span class="p">(</span><span class="n">AddCustom</span><span class="w"> </span><span class="err">占位</span><span class="p">)</span>
 <span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">operator_registry</span><span class="p">.</span><span class="n">json</span><span class="w">                  </span><span class="p">#</span><span class="w"> </span><span class="err">算子注册表</span>
@@ -1231,8 +1254,7 @@ Level 1 (跨机): Pairwise
 <span class="w">    </span><span class="err">├──</span><span class="w"> </span><span class="n">moe_combine_prefill</span><span class="p">.</span><span class="n">cpp</span><span class="w">                 </span><span class="p">#</span><span class="w"> </span><span class="n">combine</span><span class="w"> </span><span class="err">绑定</span>
 <span class="w">    </span><span class="err">└──</span><span class="w"> </span><span class="n">torch_bind_exception</span><span class="p">.</span><span class="n">h</span><span class="w">                 </span><span class="p">#</span><span class="w"> </span><span class="err">异常处理</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="c">附录 C: 关键洞察总结</h2>
 <h3 id="c1">C.1 设计范式</h3>
 <ol>
@@ -1242,12 +1264,11 @@ Level 1 (跨机): Pairwise
 <li><strong>Self-managed All-to-All</strong>: notify_dispatch 自己管理 IPC，不依赖 HCCL 集合通信</li>
 </ol>
 <h3 id="c2">C.2 性能关键路径</h3>
-<div class="highlight"><pre><span></span><code>Token 路由延迟 = notify_dispatch (All-to-All 元数据) 
+<div class="hl-amber"><pre><span></span><code>Token 路由延迟 = notify_dispatch (All-to-All 元数据) 
                + dispatch_normal (Window 写入 + 状态同步)
                + expert_compute
                + combine_normal (Window 读取 + 加权求和)
 </code></pre></div>
-
 <h3 id="c3">C.3 与竞品对比洞察</h3>
 <table>
 <thead>
@@ -1292,11 +1313,18 @@ Level 1 (跨机): Pairwise
 <li><strong>动态 Topk</strong>: 当前 topk 固定，可探索动态 topk 路由</li>
 <li><strong>Sparse Expert</strong>: 当前 expert 均匀分布，可探索负载均衡路由</li>
 </ol>
-<div class="footer">
-<p>📊 UMDK/CAM 深度分析报告 | 生成日期: 2026-07-21</p>
-<p><a href="../CAM深度分析报告.html">← 返回主报告</a> | <a href="index.html">📑 索引</a></p>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:40px;padding-top:20px;border-top:1px solid rgba(17,17,17,.12);"><a href="02_build.html" class="back">← 编译系统与部署</a> <a href="index.html" class="back">📑 索引</a> <a href="04_fused.html" class="back">FusedDeepMoE 融合算子 →</a></div>
+    </div>
+  </article>
 </div>
-</div>
+<script>
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);
+    if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})};
+  });
+});
+</script>
 
 </body>
 </html>

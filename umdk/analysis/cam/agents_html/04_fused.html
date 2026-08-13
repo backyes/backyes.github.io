@@ -1,18 +1,81 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh">
 <head>
   <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FusedDeepMoE 融合算子 (master) — UMDK/CAM 深度分析</title>
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FusedDeepMoE 融合算子 — UMDK/CAM · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div class="notion-page">
-<div class="nav-top">
-<a href="01_arch.html">整体架构与设</a><span class="sep">|</span><a href="02_build.html">编译系统与部</a><span class="sep">|</span><a href="03_ep.html">EP</a><span class="sep">|</span><strong style="color:var(--fg-bold)">FusedDeepMoE</strong><span class="sep">|</span><a href="05_test.html">测试体系与回</a><span class="sep">|</span><a href="06_shmem.html">SHMEM</a><span class="sep">|</span><a href="07_hccl.html">非</a><span class="sep">|</span><a href="08_notify.html">notify_dispatch</a><span class="sep">|</span><a href="09_fused_shmem.html">FusedDeepMoE</a><span class="sep">|</span><a href="10_zb_dispatch.html">ZB</a><span class="sep">|</span><a href="11_zb_combine.html">ZB</a><span class="sep">|</span><a href="12_fused_family.html">FusedDeepMoE</a><span class="sep">|</span><a href="13_new_comm.html">新通信算子</a><span class="sep">|</span><a href="14_zb_utils.html">ZB</a><span class="sep">|</span><a href="15_pybind.html">Pybind</a><span class="sep">|</span><a href="16_shmem_nda.html">SHMEM</a><span class="sep">|</span><a href="../CAM深度分析报告.html">← 主报告</a>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../../../">backyes</a></div>
+    <div class="brand-tagline">CAM Agent-04 — FusedDeepMoE 融合算子</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../../../posts.html">Posts</a>
+    <a href="../../../#survey" class="nav-accent">Survey by AI</a>
+  </nav>
+</header>
 </div>
-<h1 id="fuseddeepmoe-kernel">FusedDeepMoE Kernel 深度分析报告</h1>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+      <li><a href="#_1" class="toc-h2">目录</a></li>
+      <li><a href="#1" class="toc-h2">1. 整体架构与融合策略</a></li>
+      <li><a href="#11" class="toc-h3">1.1 算子定义</a></li>
+      <li><a href="#12" class="toc-h3">1.2 输入/输出签名</a></li>
+      <li><a href="#13" class="toc-h3">1.3 为什么要融合？</a></li>
+      <li><a href="#2-op_host-tiling" class="toc-h2">2. op_host Tiling 策略</a></li>
+      <li><a href="#21-tiling" class="toc-h3">2.1 核心 Tiling 数据结构</a></li>
+      <li><a href="#22-workspace" class="toc-h3">2.2 Workspace 布局计算</a></li>
+      <li><a href="#23-tile-shape" class="toc-h3">2.3 Tile Shape 常量</a></li>
+      <li><a href="#24-tiling-key" class="toc-h3">2.4 Tiling Key 路由机制</a></li>
+      <li><a href="#3-op_kernel" class="toc-h2">3. op_kernel 执行流程</a></li>
+      <li><a href="#31-kernel" class="toc-h3">3.1 Kernel 入口</a></li>
+      <li><a href="#32-fuseddeepmoeprocess" class="toc-h3">3.2 FusedDeepMoe::Process() 主流程</a></li>
+      <li><a href="#33-gmmdeqswigluquant" class="toc-h3">3.3 GmmDeqSwigluQuant 函数</a></li>
+      <li><a href="#34-gmmdeq" class="toc-h3">3.4 GmmDeq 函数</a></li>
+      <li><a href="#4-raw_distributed" class="toc-h2">4. raw_distributed 子模块</a></li>
+      <li><a href="#41-cammoedistributedispatch" class="toc-h3">4.1 CamMoeDistributeDispatch</a></li>
+      <li><a href="#42-cammoedistributecombine" class="toc-h3">4.2 CamMoeDistributeCombine</a></li>
+      <li><a href="#5-gemm" class="toc-h2">5. gemm 子模块深度分析</a></li>
+      <li><a href="#51-catlass" class="toc-h3">5.1 Catlass 集成</a></li>
+      <li><a href="#52-groupedmatmul" class="toc-h3">5.2 GroupedMatmul 变体</a></li>
+      <li><a href="#53-blockmmad-l1l0" class="toc-h3">5.3 BlockMmad — L1/L0 多级流水</a></li>
+      <li><a href="#54" class="toc-h3">5.4 同步机制</a></li>
+      <li><a href="#6-epilogue" class="toc-h2">6. epilogue 子模块</a></li>
+      <li><a href="#61-epilogueatlasa2pertokendequantswiglu" class="toc-h3">6.1 EpilogueAtlasA2PerTokenDequantSwiglu</a></li>
+      <li><a href="#62-epilogueatlasa2pertokendequantcombine" class="toc-h3">6.2 EpilogueAtlasA2PerTokenDequantCombine</a></li>
+      <li><a href="#63-tile" class="toc-h3">6.3 Tile 级操作</a></li>
+      <li><a href="#7-swiglu-quantization" class="toc-h2">7. Swiglu + Quantization 融合机制</a></li>
+      <li><a href="#71" class="toc-h3">7.1 完整数据流</a></li>
+      <li><a href="#72-blockquant" class="toc-h3">7.2 BlockQuant — 动态量化实现</a></li>
+      <li><a href="#73" class="toc-h3">7.3 量化参数传递</a></li>
+      <li><a href="#8" class="toc-h2">8. 性能优化关键点</a></li>
+      <li><a href="#81" class="toc-h3">8.1 内存带宽优化</a></li>
+      <li><a href="#82" class="toc-h3">8.2 计算通信重叠</a></li>
+      <li><a href="#83" class="toc-h3">8.3 同步优化</a></li>
+      <li><a href="#84" class="toc-h3">8.4 循环优化</a></li>
+      <li><a href="#85-workspace" class="toc-h3">8.5 Workspace 内存复用</a></li>
+      <li><a href="#9-moe-deepseek-style" class="toc-h2">9. 与标准 MoE (DeepSeek-style) 的对应关系</a></li>
+      <li><a href="#91" class="toc-h3">9.1 数学对应</a></li>
+      <li><a href="#92" class="toc-h3">9.2 量化策略对应</a></li>
+      <li><a href="#93-torch_npu" class="toc-h3">9.3 与 torch_npu 标准算子对比</a></li>
+      <li><a href="#94" class="toc-h3">9.4 支持的配置范围</a></li>
+      <li><a href="#95" class="toc-h3">9.5 执行路径总结</a></li>
+      <li><a href="#_2" class="toc-h2">附录：关键文件索引</a></li>
+      <li><a href="#_3" class="toc-h2">总结</a></li>
+    </ul></div>
+  </aside>
+  <article class="article">
+    <a href="../../../#survey" class="back">← 返回 Survey by AI</a>
+    <h1>FusedDeepMoE 融合算子 — UMDK/CAM</h1>
 <details class="notion-toc"><summary>Contents</summary>
 <ul>
 <li><a href="#目录" class="toc-h2">目录</a></li>
@@ -63,10 +126,16 @@
 </ul>
 </details>
 
+    <div class="meta">
+      <span>📅 2026-07-21</span>
+      <div><span class="ptag">FusedDeepMoE</span><span class="ptag">融合算子</span></div>
+    </div>
+    <div class="notion-page">
+<h1 id="fuseddeepmoe-kernel">FusedDeepMoE Kernel 深度分析报告</h1>
 <blockquote>
 <p><strong>CAM (Communication Acceleration for Matrix) 皇冠上的明珠</strong> — 将 Dispatch + GMM1 + Swiglu + GMM2 + Combine 融合为单一算子的终极优化</p>
 </blockquote>
-<hr />
+<hr/>
 <h2 id="_1">目录</h2>
 <ol>
 <li><a href="#1-整体架构与融合策略">整体架构与融合策略</a></li>
@@ -79,17 +148,16 @@
 <li><a href="#8-性能优化关键点">性能优化关键点</a></li>
 <li><a href="#9-与标准-moe-deepseek-style-的对应关系">与标准 MoE (DeepSeek-style) 的对应关系</a></li>
 </ol>
-<hr />
+<hr/>
 <h2 id="1">1. 整体架构与融合策略</h2>
 <h3 id="11">1.1 算子定义</h3>
 <p>FusedDeepMoE 是 CAM 中最复杂的融合算子，将 MoE Decode 阶段的完整计算流水线融合进单一 kernel：</p>
-<div class="highlight"><pre><span></span><code>标准小算子组合 (5次kernel launch + 多次GM读写):
+<div class="hl-amber"><pre><span></span><code>标准小算子组合 (5次kernel launch + 多次GM读写):
   Dispatch → GMM1 → Swiglu → GMM2 → Combine
 
 FusedDeepMoE (1次kernel launch, 全在片上完成):
   Dispatch → GMM1 → Swiglu → GMM2 → Combine (全部融合)
 </code></pre></div>
-
 <h3 id="12">1.2 输入/输出签名</h3>
 <p><strong>输入 (14个):</strong>
 | 索引 | 名称 | 类型 | 说明 |
@@ -126,10 +194,10 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 - <strong>X2 (GMM2输入)</strong>：Swiglu 后立即做动态量化为 int8，通过 workspace 传递给 GMM2
 - <strong>GMM2 输出</strong>：直接在 UB 中完成 Combine 的 AlltoAll 发送</p>
 <p><strong>关键收益</strong>：中间数据 X1、SwigluOut、X2 全部在片上 workspace 中流转，不访问 GM。</p>
-<hr />
+<hr/>
 <h2 id="2-op_host-tiling">2. op_host Tiling 策略</h2>
 <h3 id="21-tiling">2.1 核心 Tiling 数据结构</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// fused_deep_moe_tiling.h</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// fused_deep_moe_tiling.h</span>
 <span class="k">struct</span><span class="w"> </span><span class="nc">FusedDeepMoeInfo</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">epRankSize</span><span class="p">;</span><span class="w">           </span><span class="c1">// EP 并行度</span>
 <span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">epRankId</span><span class="p">;</span><span class="w">             </span><span class="c1">// 当前 rank</span>
@@ -147,10 +215,9 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">isTensorList</span><span class="p">;</span><span class="w">             </span><span class="c1">// 权重是否为 TensorList</span>
 <span class="p">};</span>
 </code></pre></div>
-
 <h3 id="22-workspace">2.2 Workspace 布局计算</h3>
 <p>Workspace 是 FusedDeepMoE 的核心设计，所有中间数据在此共享：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 各段偏移量计算 (启用 ENABLE_REUSE_MEMORY 时复用内存)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 各段偏移量计算 (启用 ENABLE_REUSE_MEMORY 时复用内存)</span>
 <span class="nl">WorkSpaceOffset</span><span class="p">:</span>
 <span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">shareX1TokenOffset</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">x1TokenOffset</span><span class="w">      </span><span class="c1">// GMM1 输入 (int8)</span>
 <span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">shareX1ScaleOffset</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">x1ScaleOffset</span><span class="w">      </span><span class="c1">// GMM1 输入 per-token scale</span>
@@ -163,13 +230,12 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">  </span><span class="err">├──</span><span class="w"> </span><span class="n">epSendCountOffset</span><span class="w">                       </span><span class="c1">// AlltoAll 发送计数</span>
 <span class="w">  </span><span class="err">└──</span><span class="w"> </span><span class="n">reservedOffset</span><span class="w">                          </span><span class="c1">// 保留空间 (256KB)</span>
 </code></pre></div>
-
 <p><strong>内存复用策略</strong> (<code>ENABLE_REUSE_MEMORY</code>):
 - X1 和 X2 共享同一块 workspace 空间（因为 X1 和 X2 生命周期不重叠）
 - Scale 空间同理复用
 - SwapSpace 和 Swiglu 输出复用</p>
 <h3 id="23-tile-shape">2.3 Tile Shape 常量</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// GMM1 Tile Shape</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// GMM1 Tile Shape</span>
 <span class="n">GMM1_L1M</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="n">GMM1_L1N</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">128</span><span class="p">,</span><span class="w"> </span><span class="n">GMM1_L1K</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">512</span>
 <span class="n">GMM1_L0K</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">128</span><span class="p">,</span><span class="w"> </span><span class="n">GMM1_EPIM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">64</span>
 <span class="n">GMM1_SWIZZLE_OFFSET</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">GMM1_SWIZZLE_DIRECTION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
@@ -184,25 +250,23 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="n">CUSTOM_PRELOAD_STAGES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">CUSTOM_L1_STAGES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">CUSTOM_L0A_STAGES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">CUSTOM_L0B_STAGES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
 </code></pre></div>
-
 <h3 id="24-tiling-key">2.4 Tiling Key 路由机制</h3>
 <p>使用华为 ASCENDC_TPL 机制，通过 5 个 bool 标志 + 1 个 ARCH 参数组合出多种执行路径：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 关键执行标志</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 关键执行标志</span>
 <span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w">   </span><span class="c1">// 是否深度融合 (moeExpertNumPerRank != 1)</span>
 <span class="n">EXEC_FLAG_TENSOR_LIST</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">1</span><span class="w">   </span><span class="c1">// 权重是否为 TensorList</span>
 <span class="n">EXEC_FLAG_X_ACTIVE_MASK</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">2</span><span class="w">   </span><span class="c1">// 是否启用 x_active_mask</span>
 <span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">3</span><span class="w">   </span><span class="c1">// 是否有共享专家</span>
 <span class="n">EXEC_FLAG_SMOOTH_QUANT</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">4</span><span class="w">   </span><span class="c1">// 是否启用 smooth quant</span>
 </code></pre></div>
-
 <p><strong>Tiling Key 决定</strong>：
 - 是否跳过独立 Dispatch（深度融合时 Dispatch 在 kernel 内完成）
 - 是否走共享专家路径
 - 是否启用 smooth scale 处理</p>
-<hr />
+<hr/>
 <h2 id="3-op_kernel">3. op_kernel 执行流程</h2>
 <h3 id="31-kernel">3.1 Kernel 入口</h3>
-<div class="highlight"><pre><span></span><code><span class="c1">// fused_deep_moe.cpp</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// fused_deep_moe.cpp</span>
 <span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">bool</span><span class="w"> </span><span class="n">TPL_IS_DEEP_FUSE</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">TPL_IS_TENSOR_LIST</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="o">&gt;</span>
 <span class="n">__global__</span><span class="w"> </span><span class="n">__aicore__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">fused_deep_moe</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">KERNEL_TASK_TYPE_DEFAULT</span><span class="p">(</span><span class="n">KERNEL_TYPE_MIX_AIC_1_2</span><span class="p">);</span><span class="w">  </span><span class="c1">// 1C2V 模式</span>
@@ -212,10 +276,9 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="c1">// 实例化 FusedDeepMoe&lt;...&gt; op; op.Init(...); op.Process();</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>1C2V 模式</strong>：每个 AI Core 组包含 1 个 AIC (AI Core Compute) + 2 个 AIV (AI Core Vector)。AIC 负责 GMM 计算，AIV 负责通信调度。</p>
 <h3 id="32-fuseddeepmoeprocess">3.2 FusedDeepMoe::Process() 主流程</h3>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 1. 非深度融合时，先执行独立 Dispatch</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">((</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">g_coreType</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">AIV</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -240,10 +303,9 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">GmmDeq</span><span class="o">&lt;</span><span class="n">Gmm2L1TileShape</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="o">&gt;</span><span class="p">(...,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">combiner</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="33-gmmdeqswigluquant">3.3 GmmDeqSwigluQuant 函数</h3>
 <p>这是 GMM1 的模板化入口，定义了完整的 GMM1 计算流水线：</p>
-<div class="highlight"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="p">...,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">L1TileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">L0TileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">EpilogueTileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">BlockScheduler_</span><span class="o">&gt;</span>
+<div class="hl-amber"><pre><span></span><code><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="p">...,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">L1TileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">L0TileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">EpilogueTileShape_</span><span class="p">,</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">BlockScheduler_</span><span class="o">&gt;</span>
 <span class="n">CATLASS_DEVICE</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">GmmDeqSwigluQuant</span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 数据类型定义</span>
 <span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">AType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Gemm</span><span class="o">::</span><span class="n">GemmType</span><span class="o">&lt;</span><span class="kt">int8_t</span><span class="p">,</span><span class="w"> </span><span class="n">layout</span><span class="o">::</span><span class="n">RowMajor</span><span class="o">&gt;</span><span class="p">;</span><span class="w">   </span><span class="c1">// 输入 X1</span>
@@ -263,22 +325,20 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">gemm</span><span class="p">(</span><span class="n">params</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="34-gmmdeq">3.4 GmmDeq 函数</h3>
 <p>GMM2 的模板化入口，结构类似但使用不同的 Epilogue：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// GMM2 使用 PerTokenDequantCombine epilogue</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// GMM2 使用 PerTokenDequantCombine epilogue</span>
 <span class="k">using</span><span class="w"> </span><span class="n">EpilogueDispatchPolicy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Epilogue</span><span class="o">::</span><span class="n">EpilogueAtlasA2PerTokenDequantCombine</span><span class="o">&lt;</span><span class="n">ubStages</span><span class="p">,</span><span class="w"> </span><span class="n">EXEC_FLAG</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="c1">// 注意 GMM2 使用 ResidentA Dispatch Policy (A矩阵常驻 L1)</span>
 <span class="k">using</span><span class="w"> </span><span class="n">Gmm2DispatchPolicy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Gemm</span><span class="o">::</span><span class="n">MmadAtlasA2PreloadAsyncWithCallbackResidentA</span><span class="o">&lt;</span><span class="p">...</span><span class="o">&gt;</span><span class="p">;</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="4-raw_distributed">4. raw_distributed 子模块</h2>
 <h3 id="41-cammoedistributedispatch">4.1 CamMoeDistributeDispatch</h3>
 <p><strong>文件</strong>: <code>raw_distributed/cam_moe_distribute_dispatch.h</code></p>
 <p>负责将 token 按 expert_id 路由到对应 rank 的窗口内存中。</p>
 <p><strong>核心流程 (Process)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">ASCEND_IS_AIV</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="p">)</span>
 <span class="w">            </span><span class="n">QuantForShareExpert</span><span class="p">();</span><span class="w">   </span><span class="c1">// 共享专家量化</span>
@@ -294,26 +354,23 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>关键优化 — AIV 循环优化 (enableAivOpt)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 当 batch_size &lt;= 64 且 expert_num 对齐后 &lt;= 256 时启用</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 当 batch_size &lt;= 64 且 expert_num 对齐后 &lt;= 256 时启用</span>
 <span class="c1">// 使用 table 法替代逐 token 计数，减少 UB 访问</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">axisBS_</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">LOOP_OPT_MAX_BS</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">moeExpertRankNumAligned_</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">LOOP_OPT_MAX_MOE_RANK</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">enableAivOpt_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
 <span class="w">    </span><span class="c1">// 构建 (bs+1) × expert_num 的 table，用前缀和计算 expand_idx</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>量化融合</strong>：Dispatch 阶段同时完成动态量化（bf16→int8），将 scale 附加在 token 后面传输：</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// hCommuSize = hOutSize + scaleParamPad (128B for scale)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// hCommuSize = hOutSize + scaleParamPad (128B for scale)</span>
 <span class="n">hCommuSize_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">axisH_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">ExpandXOutType</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">scaleParamPad_</span><span class="p">;</span>
 </code></pre></div>
-
 <h3 id="42-cammoedistributecombine">4.2 CamMoeDistributeCombine</h3>
 <p><strong>文件</strong>: <code>raw_distributed/cam_moe_distribute_combine.h</code></p>
 <p>负责将 GMM2 计算结果路由回原始 rank，并做加权求和。</p>
 <p><strong>核心流程</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl-amber"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">Process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">SyncAll</span><span class="o">&lt;</span><span class="nb">true</span><span class="o">&gt;</span><span class="p">();</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">IsNeedReduceScatter</span><span class="p">)</span><span class="w"> </span><span class="n">ReduceScatterTrans</span><span class="p">();</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">((</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_DEEP_FUSE</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -326,9 +383,8 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">LocalWindowCopy</span><span class="p">();</span><span class="w">  </span><span class="c1">// 从窗口读取 + 加权求和 + 写出</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>深度融合时的特殊路径</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 融合模式下，Combine 被拆分为两部分：</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 融合模式下，Combine 被拆分为两部分：</span>
 <span class="kt">void</span><span class="w"> </span><span class="nf">AllToAllSend</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// AIV subblock 0: AlltoAll 发送</span>
 <span class="w">    </span><span class="c1">// AIV subblock 1: ReducePermute</span>
@@ -345,9 +401,8 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">LocalWindowCopy</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>加权求和 (LocalWindowCopy)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 对每个 token，遍历 topK 个专家的结果，加权求和</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 对每个 token，遍历 topK 个专家的结果，加权求和</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">beginIndex</span><span class="p">;</span><span class="w"> </span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">endIndex</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">tokenIndex</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">Duplicate</span><span class="p">(</span><span class="n">sumFloatBufLocal</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">axisH_</span><span class="p">);</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">axisK_</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -362,8 +417,7 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">DataCopy</span><span class="p">(</span><span class="n">expandOutGlobal_</span><span class="p">[</span><span class="n">tokenIndex</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">axisH_</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tokenOffset</span><span class="p">],</span><span class="w"> </span><span class="n">sumBufLocal</span><span class="p">,</span><span class="w"> </span><span class="n">processLen</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="5-gemm">5. gemm 子模块深度分析</h2>
 <h3 id="51-catlass">5.1 Catlass 集成</h3>
 <p>FusedDeepMoE 使用 <strong>Catlass</strong> (CUDA Template Library analogue for Ascend) 作为 GMM 计算框架。Catlass 提供：</p>
@@ -383,8 +437,8 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
   - <code>isSendCore</code> (aivIdx % 2 == 1): 负责将量化后的 token 发送给目标 rank
   - <code>isRecvCore</code> (aivIdx % 2 == 0): 负责接收其他 rank 的 token
   - <code>isCompCore</code>: 负责 Swiglu + 动态量化计算</p>
-<p><strong>AIC 端 (operator()<AIC>)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 1. 先处理共享专家 (如果启用)</span>
+<p><strong>AIC 端 (operator()<aic>)</aic></strong>:</p>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 1. 先处理共享专家 (如果启用)</span>
 <span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 等待 AIV 完成共享专家量化</span>
 <span class="w">    </span><span class="n">WaitGroupTokenNumReady</span><span class="p">(</span><span class="n">shareQuantTokenStateTensor</span><span class="p">,</span><span class="w"> </span><span class="n">expected</span><span class="p">);</span>
@@ -401,9 +455,8 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">blockMmad</span><span class="p">(</span><span class="n">gmA</span><span class="p">[</span><span class="n">gmGroupOffsetA</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">gmOffsetA</span><span class="p">],</span><span class="w"> </span><span class="p">...);</span>
 <span class="p">}</span>
 </code></pre></div>
-
-<p><strong>AIV 端 (operator()<AIV>)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 1. 共享专家量化 (shareQuantCoreFunc)</span>
+<p><strong>AIV 端 (operator()<aiv>)</aiv></strong>:</p>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 1. 共享专家量化 (shareQuantCoreFunc)</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">isShareQuantCore</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 对每个 token 做动态量化: bf16 → int8 + per-token scale</span>
 <span class="w">    </span><span class="n">shareQuantCoreFunc</span><span class="p">(</span><span class="n">gmX</span><span class="p">,</span><span class="w"> </span><span class="n">gmShareSmoothScales</span><span class="p">,</span><span class="w"> </span><span class="n">gmShareX1</span><span class="p">,</span><span class="w"> </span><span class="n">gmShareX1Scale</span><span class="p">);</span>
@@ -438,7 +491,6 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="c1">// 路由专家 Swiglu 输出量化</span>
 <span class="n">BlockQuant</span><span class="o">&lt;</span><span class="n">ArchTag</span><span class="o">&gt;</span><span class="w"> </span><span class="n">blockQuant</span><span class="p">(</span><span class="n">resource</span><span class="p">,</span><span class="w"> </span><span class="n">quantParams</span><span class="p">);</span>
 </code></pre></div>
-
 <h4 id="522-groupedmatmulslicempertokendequantmultistageworkspace">5.2.2 GroupedMatmulSliceMPerTokenDequantMultiStageWorkspace</h4>
 <p><strong>用途</strong>: GMM2 — 完成 int8 GMM + PerTokenDequant + Combine 发送</p>
 <p><strong>文件</strong>: <code>gemm/kernel/grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h</code></p>
@@ -447,7 +499,7 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 - Epilogue 中融合 Combine 的 AlltoAll 发送逻辑
 - AIV 端直接调用 <code>combiner-&gt;ProcessCombine()</code> 或 <code>combiner-&gt;AllToAllSend()</code></p>
 <p><strong>AIV 端特殊处理</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 共享专家路径</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 共享专家路径</span>
 <span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">EXEC_FLAG</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">EXEC_FLAG_SHARED_EXPERT</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetSubBlockIdx</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="n">combiner</span><span class="o">-&gt;</span><span class="n">TPipeSet</span><span class="p">(</span><span class="o">&amp;</span><span class="n">resource</span><span class="p">.</span><span class="n">pipe</span><span class="p">);</span>
@@ -463,10 +515,9 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="53-blockmmad-l1l0">5.3 BlockMmad — L1/L0 多级流水</h3>
 <p><strong>文件</strong>: <code>gemm/block/block_mmad_preload_async_with_callback_resident_a.h</code></p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 使用 ResidentA 策略的 BlockMmad</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 使用 ResidentA 策略的 BlockMmad</span>
 <span class="c1">// 关键优化: 当 A 矩阵不变时，跳过 GM→L1 的加载</span>
 <span class="kt">bool</span><span class="w"> </span><span class="n">useResidentA</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">kTileCount</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">L1A_STAGES</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">isFirstLoad</span><span class="p">)</span><span class="w"> </span>
 <span class="w">                    </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">(</span><span class="n">gmBlockA</span><span class="p">.</span><span class="n">GetPhyAddr</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">lastGmBlockA</span><span class="p">.</span><span class="n">GetPhyAddr</span><span class="p">());</span>
@@ -474,7 +525,6 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="n">copyGmToL1A</span><span class="p">(</span><span class="n">l1ATensorList</span><span class="p">[</span><span class="n">l1AListId</span><span class="p">],</span><span class="w"> </span><span class="n">gmTileA</span><span class="p">,</span><span class="w"> </span><span class="n">L1A_LAYOUT</span><span class="p">,</span><span class="w"> </span><span class="n">layoutTileA</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>多级流水阶段</strong>:
 1. <strong>PRELOAD_STAGES</strong>: 预加载指令提前发射
 2. <strong>L1A_STAGES / L1B_STAGES</strong>: L1 上 A/B 矩阵的 double buffer
@@ -483,26 +533,24 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 5. <strong>ENABLE_SHUFFLE_K</strong>: K 维度循环打乱，避免 bank conflict</p>
 <h3 id="54">5.4 同步机制</h3>
 <p><strong>AIC→AIV 同步 (Soft Sync)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// AIC 完成一个 L1 tile 的计算后，设置 flag</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// AIC 完成一个 L1 tile 的计算后，设置 flag</span>
 <span class="n">aicSetFunc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="n">syncGmAddr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">SOFT_SYNC_OFFSET</span><span class="p">,</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetBlockIdx</span><span class="p">())};</span>
 <span class="c1">// callbackAfterFixpipe = MakeCallback(&amp;aicSetFunc);</span>
 <span class="c1">// AIV 等待 flag 满足条件</span>
 <span class="n">CheckSyncFlag</span><span class="p">(</span><span class="n">syncGmAddr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">SOFT_SYNC_OFFSET</span><span class="p">,</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">uint8_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">coreIdx</span><span class="p">),</span><span class="w"> </span><span class="n">target</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>C/V 数据空间交替 (cvDataState)</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 使用 dataState 实现双缓冲，避免读写冲突</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 使用 dataState 实现双缓冲，避免读写冲突</span>
 <span class="n">cvDataState</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">FlushAndSpinValue</span><span class="o">&lt;</span><span class="kt">int32_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">selfDataStatusTensor</span><span class="p">,</span><span class="w"> </span><span class="n">aivStateGlobalCoreIdx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">UB_ALIGN</span><span class="p">);</span>
 <span class="n">vToCFlag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">cvDataState</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">V_TO_C_FLAG_1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">V_TO_C_FLAG_2</span><span class="p">;</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="6-epilogue">6. epilogue 子模块</h2>
 <h3 id="61-epilogueatlasa2pertokendequantswiglu">6.1 EpilogueAtlasA2PerTokenDequantSwiglu</h3>
 <p><strong>用途</strong>: GMM1 的 Epilogue — int32→float 反量化 + Swiglu 激活</p>
 <p><strong>文件</strong>: <code>epilogue/block/block_epilogue_per_token_dequant_swiglu.h</code></p>
 <p><strong>计算流程</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 1. 从 GM 加载 int32 累加结果到 UB</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 1. 从 GM 加载 int32 累加结果到 UB</span>
 <span class="n">copyGmToUbC</span><span class="p">(</span><span class="n">ubC</span><span class="p">,</span><span class="w"> </span><span class="n">gmTileC</span><span class="p">,</span><span class="w"> </span><span class="n">layoutUbC</span><span class="p">,</span><span class="w"> </span><span class="n">layoutGmTileC</span><span class="p">);</span>
 
 <span class="c1">// 2. int32 → float 转换</span>
@@ -530,17 +578,15 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="c1">// 6. 写出 float 结果到 workspace</span>
 <span class="n">copyUbToGmD</span><span class="p">(</span><span class="n">gmTileD</span><span class="p">,</span><span class="w"> </span><span class="n">ubD</span><span class="p">,</span><span class="w"> </span><span class="n">layoutGmTileD</span><span class="p">,</span><span class="w"> </span><span class="n">layoutUbD</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>Swiglu 数学公式</strong>:</p>
-<div class="highlight"><pre><span></span><code>Swiglu(x) = [x_left / (1 + exp(-x_left)), x_right]
+<div class="hl-amber"><pre><span></span><code>Swiglu(x) = [x_left / (1 + exp(-x_left)), x_right]
           = [x_left * sigmoid(x_left), x_right]
 </code></pre></div>
-
 <h3 id="62-epilogueatlasa2pertokendequantcombine">6.2 EpilogueAtlasA2PerTokenDequantCombine</h3>
 <p><strong>用途</strong>: GMM2 的 Epilogue — int32→bf16/fp16 反量化 + Combine 发送</p>
 <p><strong>文件</strong>: <code>epilogue/block/block_epilogue_per_token_dequant.hpp</code></p>
 <p><strong>计算流程</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 1-4: 与 Swiglu Epilogue 相同 (int32 → float → scale → per-token scale)</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 1-4: 与 Swiglu Epilogue 相同 (int32 → float → scale → per-token scale)</span>
 <span class="n">Cast</span><span class="p">(</span><span class="n">ubCFp32</span><span class="p">,</span><span class="w"> </span><span class="n">ubC</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_RINT</span><span class="p">,</span><span class="w"> </span><span class="n">TileShape</span><span class="o">::</span><span class="n">COUNT</span><span class="p">);</span>
 <span class="n">tileRowBroadcastMul</span><span class="p">(</span><span class="n">ubMul</span><span class="p">,</span><span class="w"> </span><span class="n">ubCFp32</span><span class="p">,</span><span class="w"> </span><span class="n">ubFp32Scale</span><span class="p">);</span>
 <span class="n">tileBroadcastOneBlk</span><span class="p">(</span><span class="n">ubPerTokenScaleBrcb</span><span class="p">,</span><span class="w"> </span><span class="n">ubPerTokenScale</span><span class="p">);</span>
@@ -558,9 +604,8 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <p><strong>DoCombineSend — 融合 Combine 的关键</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 根据 epSendCount 计算每个 rank 的 token 范围</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 根据 epSendCount 计算每个 rank 的 token 范围</span>
 <span class="c1">// 直接将 UB 中的结果 DataCopyPad 到对端窗口</span>
 <span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">epRank</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">epRankStart</span><span class="p">;</span><span class="w"> </span><span class="n">epRank</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">calcInfo</span><span class="p">.</span><span class="n">epWorldSize_</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">epRank</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">GM_ADDR</span><span class="w"> </span><span class="n">rankGM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetWinAddrByRankId</span><span class="p">(</span><span class="n">remoteEpRank</span><span class="p">,</span><span class="w"> </span><span class="n">expertIdx</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">...;</span>
@@ -569,7 +614,6 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <span class="w">                </span><span class="n">ubD</span><span class="p">[(</span><span class="n">itToken</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">startToken</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">layoutUbD</span><span class="p">.</span><span class="n">stride</span><span class="p">(</span><span class="mi">0</span><span class="p">)],</span><span class="w"> </span><span class="n">dataCopyParams</span><span class="p">);</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="63-tile">6.3 Tile 级操作</h3>
 <p><strong>TileStrideBinary</strong> (<code>tile_stride_binary.h</code>):
 - 支持 Mul/Div 操作，带自定义 stride
@@ -577,10 +621,10 @@ FusedDeepMoE (1次kernel launch, 全在片上完成):
 <p><strong>TileStrideMuls</strong> (<code>tile_stride_muls.h</code>):
 - 标量乘法，支持不同 DstTileShape 和 SrcTileShape
 - 用于 per-token scale 广播</p>
-<hr />
+<hr/>
 <h2 id="7-swiglu-quantization">7. Swiglu + Quantization 融合机制</h2>
 <h3 id="71">7.1 完整数据流</h3>
-<div class="highlight"><pre><span></span><code>GMM1 输入: int8 → 累加: int32
+<div class="hl-amber"><pre><span></span><code>GMM1 输入: int8 → 累加: int32
      ↓
 PerTokenDequant: int32 × weight_scale × per_token_scale → float32
      ↓
@@ -596,10 +640,9 @@ PerTokenDequant: int32 × weight_scale × per_token_scale → float32
      ↓
 Combine 发送: 直接到对端窗口
 </code></pre></div>
-
 <h3 id="72-blockquant">7.2 BlockQuant — 动态量化实现</h3>
 <p><strong>文件</strong>: <code>gemm/kernel/post_swiglu_dynamic_quant.h</code></p>
-<div class="highlight"><pre><span></span><code><span class="c1">// BlockQuant 完成 Swiglu 输出的动态量化</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// BlockQuant 完成 Swiglu 输出的动态量化</span>
 <span class="c1">// 输入: float32 Swiglu 输出 [token_count, n]</span>
 <span class="c1">// 输出: int8 [token_count, n/2] + per_token_scale [token_count]</span>
 
@@ -629,17 +672,15 @@ Combine 发送: 直接到对端窗口
 <span class="n">Cast</span><span class="p">(</span><span class="n">ubQuantF16</span><span class="p">,</span><span class="w"> </span><span class="n">ubQuantS32</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_RINT</span><span class="p">,</span><span class="w"> </span><span class="n">tileCount</span><span class="p">);</span>
 <span class="n">Cast</span><span class="p">(</span><span class="n">ubOutput</span><span class="p">,</span><span class="w"> </span><span class="n">ubQuantF16</span><span class="p">,</span><span class="w"> </span><span class="n">CAST_RINT</span><span class="p">,</span><span class="w"> </span><span class="n">tileCount</span><span class="p">);</span>
 </code></pre></div>
-
 <h3 id="73">7.3 量化参数传递</h3>
 <p><strong>Per-token scale 的存储</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 每个 token 附带 512B 的额外空间存储 scale</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 每个 token 附带 512B 的额外空间存储 scale</span>
 <span class="k">constexpr</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">TOKEN_EXTRA_SPACE</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">512</span><span class="p">;</span>
 <span class="n">scaleParamPad</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">TOKEN_EXTRA_SPACE</span><span class="p">;</span>
 <span class="n">hCommuSize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">hOutSize</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">scaleParamPad</span><span class="p">;</span>
 </code></pre></div>
-
 <p><strong>通信时的 scale 传递</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 发送端: 将 scale 附加在 token 后面</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 发送端: 将 scale 附加在 token 后面</span>
 <span class="n">yFp32Tensor</span><span class="p">.</span><span class="n">SetValue</span><span class="p">(</span><span class="n">tokenLength</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">float</span><span class="p">),</span><span class="w"> </span><span class="kt">float</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">dynamicQuantScale</span><span class="p">);</span>
 <span class="n">DataCopy</span><span class="p">(</span><span class="n">dstWinGMTensor</span><span class="p">,</span><span class="w"> </span><span class="n">yInt8Tensor</span><span class="p">[</span><span class="n">index</span><span class="p">],</span><span class="w"> </span><span class="n">tokenLength</span><span class="p">);</span><span class="w">  </span><span class="c1">// token</span>
 <span class="n">DataCopy</span><span class="p">(</span><span class="n">dstWinGMTensor</span><span class="p">[</span><span class="n">tokenLength</span><span class="p">],</span><span class="w"> </span><span class="n">yInt8Tensor</span><span class="p">[</span><span class="n">index</span><span class="p">][</span><span class="n">tokenLength</span><span class="p">],</span><span class="w"> </span><span class="n">scaleParamPad</span><span class="p">);</span><span class="w">  </span><span class="c1">// scale</span>
@@ -648,8 +689,7 @@ Combine 发送: 直接到对端窗口
 <span class="n">DataCopyPad</span><span class="p">(</span><span class="n">dynamicScalesOutGMTensor_</span><span class="p">[</span><span class="n">beginIdx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">],</span>
 <span class="w">            </span><span class="n">xOutFp32Tensor_</span><span class="p">[</span><span class="n">tokenLength</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">float</span><span class="p">)],</span><span class="w"> </span><span class="n">dataCopyParamsFloat</span><span class="p">);</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="8">8. 性能优化关键点</h2>
 <h3 id="81">8.1 内存带宽优化</h3>
 <table>
@@ -690,38 +730,34 @@ Combine 发送: 直接到对端窗口
   - 当前组 Swiglu 输出的量化
   - Combine 的 AlltoAll 发送</p>
 <p><strong>流水线示意</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="n">时间</span><span class="w"> </span><span class="err">→</span>
+<div class="hl-amber"><pre><span></span><code><span class="n">时间</span><span class="w"> </span><span class="err">→</span>
 <span class="nl">AIC</span><span class="p">:</span><span class="w"> </span><span class="o">[</span><span class="n">GMM1_Expert0</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">GMM1_Expert1</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">GMM1_Expert2</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">GMM2_Expert0</span><span class="o">]</span><span class="w"> </span><span class="p">...</span>
 <span class="nl">AIV</span><span class="p">:</span><span class="w"> </span><span class="o">[</span><span class="n">Dispatch_Send</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">Recv_Expert0</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">Swiglu_Quant_0</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">Combine_Send_0</span><span class="o">]</span><span class="w"> </span><span class="p">...</span>
 </code></pre></div>
-
 <h3 id="83">8.3 同步优化</h3>
 <p><strong>Soft Sync 替代 Hard Sync</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 使用 GM 上的 flag 做轻量级同步</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 使用 GM 上的 flag 做轻量级同步</span>
 <span class="c1">// 避免 PipeBarrier&lt;PIPE_ALL&gt;() 的全局阻塞</span>
 <span class="n">CheckSyncFlag</span><span class="p">(</span><span class="n">syncGmAddr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">SOFT_SYNC_OFFSET</span><span class="p">,</span><span class="w"> </span><span class="n">coreIdx</span><span class="p">,</span><span class="w"> </span><span class="n">target</span><span class="p">);</span>
 </code></pre></div>
-
 <p><strong>CV 双缓冲</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// dataState 在 0/1 之间交替</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// dataState 在 0/1 之间交替</span>
 <span class="c1">// C 端写 state0 时 V 端读 state1，反之亦然</span>
 <span class="n">winDataSizeOffset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dataState_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">epWorldSize_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">expertPerSizeOnWin_</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">moeExpertNumPerRank_</span><span class="p">;</span>
 </code></pre></div>
-
 <h3 id="84">8.4 循环优化</h3>
 <p><strong>AIV Dispatch 优化 (enableAivOpt)</strong>:
 - 小 batch (≤64) 时，用 table 法替代逐 token 计数
 - 将 expert_id 映射到 (bs+1) × expert_num 的 table
 - 用前缀和指令快速计算 expand_idx</p>
 <p><strong>K 维度 Shuffle</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// 打乱 K 维度的循环顺序，避免 bank conflict</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1">// 打乱 K 维度的循环顺序，避免 bank conflict</span>
 <span class="k">if</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="p">(</span><span class="n">ENABLE_SHUFFLE_K</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="n">startTileIdx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">AscendC</span><span class="o">::</span><span class="n">GetBlockIdx</span><span class="p">()</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">kTileCount</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-
 <h3 id="85-workspace">8.5 Workspace 内存复用</h3>
-<div class="highlight"><pre><span></span><code><span class="cp">#ifdef ENABLE_REUSE_MEMORY</span>
+<div class="hl-amber"><pre><span></span><code><span class="cp">#ifdef ENABLE_REUSE_MEMORY</span>
 <span class="c1">// X1 和 X2 共享空间 (生命周期不重叠)</span>
 <span class="n">shareX1TokenOffset</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">shareX2TokenOffset</span>
 <span class="c1">// Scale 空间复用</span>
@@ -730,12 +766,11 @@ Combine 发送: 直接到对端窗口
 <span class="n">swapSpaceOffset</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">shareSwigluOffset</span>
 <span class="cp">#endif</span>
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="9-moe-deepseek-style">9. 与标准 MoE (DeepSeek-style) 的对应关系</h2>
 <h3 id="91">9.1 数学对应</h3>
 <p>FusedDeepMoe 实现了 DeepSeek-V3 风格的 MoE Decode:</p>
-<div class="highlight"><pre><span></span><code>标准 MoE 计算:
+<div class="hl-amber"><pre><span></span><code>标准 MoE 计算:
   1. Routing: expert_ids = TopK(router(x), k)
   2. Dispatch: 将 token 发送到对应 expert 的 rank
   3. GMM1: y = x @ W1  (int8 量化)
@@ -751,7 +786,6 @@ FusedDeepMoE 对应:
   5. GMM2 → GroupedMatmulSliceMPerTokenDequantMultiStageWorkspace
   6. Combine → CamMoeDistributeCombine (融合在 kernel 内)
 </code></pre></div>
-
 <h3 id="92">9.2 量化策略对应</h3>
 <table>
 <thead>
@@ -791,7 +825,7 @@ FusedDeepMoE 对应:
 </table>
 <h3 id="93-torch_npu">9.3 与 torch_npu 标准算子对比</h3>
 <p><strong>标准小算子组合</strong> (SmallOps):</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># 5 次 kernel launch</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># 5 次 kernel launch</span>
 <span class="n">expand_x</span><span class="p">,</span> <span class="n">scales</span><span class="p">,</span> <span class="n">assist_info</span><span class="p">,</span> <span class="n">token_nums</span><span class="p">,</span> <span class="n">ep_send_counts</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">expand_scales</span> <span class="o">=</span> \
     <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_moe_distribute_dispatch_v2</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 <span class="n">y1_int32</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_grouped_matmul</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="p">[</span><span class="n">expand_x</span><span class="p">],</span> <span class="n">weight</span><span class="o">=</span><span class="p">[</span><span class="n">gmm1_weight</span><span class="p">],</span> <span class="o">...</span><span class="p">)</span>
@@ -799,14 +833,12 @@ FusedDeepMoE 对应:
 <span class="n">y2</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_grouped_matmul</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="p">[</span><span class="n">y1</span><span class="p">],</span> <span class="n">weight</span><span class="o">=</span><span class="p">[</span><span class="n">gmm2_weight</span><span class="p">],</span> <span class="o">...</span><span class="p">)</span>
 <span class="n">output</span> <span class="o">=</span> <span class="n">torch_npu</span><span class="o">.</span><span class="n">npu_moe_distribute_combine_v2</span><span class="p">(</span><span class="n">expand_x</span><span class="o">=</span><span class="n">y2</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </code></pre></div>
-
 <p><strong>FusedDeepMoE</strong> (FusionOp):</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># 1 次 kernel launch</span>
+<div class="hl-amber"><pre><span></span><code><span class="c1"># 1 次 kernel launch</span>
 <span class="n">output</span><span class="p">,</span> <span class="n">share_output</span><span class="p">,</span> <span class="n">expert_token_nums</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">umdk_cam_op_lib</span><span class="o">.</span><span class="n">fused_deep_moe</span><span class="p">(</span>
     <span class="n">x</span><span class="p">,</span> <span class="n">expert_ids</span><span class="p">,</span> <span class="n">gmm1_weight</span><span class="p">,</span> <span class="n">gmm1_weight_scale</span><span class="p">,</span> <span class="n">gmm2_weight</span><span class="p">,</span> <span class="n">gmm2_weight_scale</span><span class="p">,</span>
     <span class="n">expert_scales</span><span class="p">,</span> <span class="n">share_gmm1_weight</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">group_ep</span><span class="o">=...</span><span class="p">,</span> <span class="n">ep_rank_size</span><span class="o">=...</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </code></pre></div>
-
 <h3 id="94">9.4 支持的配置范围</h3>
 <table>
 <thead>
@@ -850,7 +882,7 @@ FusedDeepMoE 对应:
 </tbody>
 </table>
 <h3 id="95">9.5 执行路径总结</h3>
-<div class="highlight"><pre><span></span><code><span class="w">                        </span>┌─────────────────────────────────────┐
+<div class="hl-amber"><pre><span></span><code><span class="w">                        </span>┌─────────────────────────────────────┐
 <span class="w">                        </span>│<span class="w">         </span><span class="nv">FusedDeepMoe</span><span class="w"> </span><span class="nv">Entry</span><span class="w">          </span>│
 <span class="w">                        </span>└──────────────┬──────────────────────┘
 <span class="w">                                       </span>│
@@ -880,8 +912,7 @@ FusedDeepMoE 对应:
 <span class="w">                        </span>│<span class="w">       </span><span class="nv">Combine</span><span class="w"> </span><span class="nv">AlltoAll</span><span class="w"> </span><span class="k">Send</span><span class="w">  </span>│
 <span class="w">                        </span>└──────────────────────────────┘
 </code></pre></div>
-
-<hr />
+<hr/>
 <h2 id="_2">附录：关键文件索引</h2>
 <table>
 <thead>
@@ -993,7 +1024,7 @@ FusedDeepMoE 对应:
 </tr>
 </tbody>
 </table>
-<hr />
+<hr/>
 <h2 id="_3">总结</h2>
 <p>FusedDeepMoE 是 CAM 库的<strong>皇冠级算子</strong>，其核心价值在于：</p>
 <ol>
@@ -1004,11 +1035,18 @@ FusedDeepMoE 对应:
 <li><strong>精细同步</strong>: Soft Sync + CV 双缓冲 + 多级 Flag 同步，最小化同步开销</li>
 </ol>
 <p>这是华为昇腾 Ascend 910B 平台上 MoE Decode 阶段的<strong>终极优化实现</strong>，代表了 NPU 上 MoE 算子融合的最高水平。</p>
-<div class="footer">
-<p>📊 UMDK/CAM 深度分析报告 | 生成日期: 2026-07-21</p>
-<p><a href="../CAM深度分析报告.html">← 返回主报告</a> | <a href="index.html">📑 索引</a></p>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:40px;padding-top:20px;border-top:1px solid rgba(17,17,17,.12);"><a href="03_ep.html" class="back">← EP 通信算子深度分析</a> <a href="index.html" class="back">📑 索引</a> <a href="05_test.html" class="back">测试体系与回归测试 →</a></div>
+    </div>
+  </article>
 </div>
-</div>
+<script>
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);
+    if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})};
+  });
+});
+</script>
 
 </body>
 </html>
