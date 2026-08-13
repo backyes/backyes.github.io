@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP V1 vs V2 深度对比分析</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #555;
+  --accent: #2563eb;
+  --accent-light: #dbeafe;
+  --border: #e5e7eb;
+  --code-bg: #f6f8fa;
+  --blockquote-bg: #f0f9ff;
+  --blockquote-border: #2563eb;
+  --table-stripe: #f9fafb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-light: #1f2937;
+    --border: #30363d;
+    --code-bg: #161b22;
+    --blockquote-bg: #0d1117;
+    --blockquote-border: #58a6ff;
+    --table-stripe: #161b22;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.7;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+h1 { font-size: 2rem; border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; margin-top: 2rem; }
+h2 { font-size: 1.5rem; color: var(--accent); margin-top: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+h3 { font-size: 1.2rem; margin-top: 2rem; }
+h4 { font-size: 1.05rem; margin-top: 1.5rem; }
+p { margin: 0.8rem 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+pre {
+  background: var(--code-bg);
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+pre code { background: none; padding: 0; }
+blockquote {
+  background: var(--blockquote-bg);
+  border-left: 4px solid var(--blockquote-border);
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  border-radius: 0 8px 8px 0;
+}
+blockquote p { margin: 0.3rem 0; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+}
+th { background: var(--accent-light); font-weight: 600; }
+tbody tr:nth-child(even) { background: var(--table-stripe); }
+ul, ol { padding-left: 1.5rem; }
+li { margin: 0.3rem 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+strong { color: var(--fg); }
+@media (max-width: 600px) {
+  body { padding: 1rem; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.2rem; }
+  table { font-size: 0.8em; }
+}
+</style>
+</head>
+<body>
+<article>
+<h1>DeepEP V1 vs V2 深度对比分析：统一 ElasticBuffer、路由缓存、Engram 与 SM-Free 通信</h1>
+
+<blockquote>
+<p><strong>分析范围</strong>：DeepEP V1 (Legacy Buffer, NVSHMEM) vs V2 (ElasticBuffer, NCCL Gin) 的架构差异、路由缓存机制、Engram 远端内存访问、以及 Normal/Low-Latency 模式统一</p>
+<p></p>
+<p><strong>核心源码文件</strong>：</p>
+<p>- `deep_ep/buffers/legacy.py` (714 行) — V1 Legacy Buffer</p>
+<p>- `deep_ep/buffers/elastic.py` (1108 行) — V2 ElasticBuffer</p>
+<p>- `csrc/elastic/buffer.hpp` (1382 行) — ElasticBuffer C++ 核心</p>
+<p>- `csrc/kernels/elastic/engram.hpp` — Engram JIT runtime</p>
+<p>- `deep_ep/include/deep_ep/impls/engram_fetch.cuh` — Engram fetch kernel</p>
+<p>- `csrc/kernels/legacy/internode_ll.cu` — V1 low-latency kernel</p>
+<p>- `tests/elastic/test_ep.py` — V2 EP 测试（含 cached dispatch）</p>
+<p>- `tests/elastic/test_engram.py` — Engram 测试</p>
+<p>- `DeepEP/docs/legacy.md` — V1 官方文档</p>
+<p>- `DeepEP/README.md` — V2 官方文档</p>
+</blockquote>
+
+<hr/>
+
+<h2>目录</h2>
+
+<ol>
+<li>[V1 vs V2 核心差异总览](#1-v1-vs-v2-核心差异总览)</li>
+<li>[统一 ElasticBuffer：V2 的核心设计哲学](#2-统一-elasticbufferv2-的核心设计哲学)</li>
+<li>[EPHandle 路由缓存机制](#3-ephandle-路由缓存机制)</li>
+<li>[为什么 Decode 用 Low-Latency 而 Prefill 用 Normal？](#4-为什么-decode-用-low-latency-而-prefill-用-normal)</li>
+<li>[SM-Free 通信：RDMA Hook 机制](#5-sm-free-通信rdma-hook-机制)</li>
+<li>[Normal vs Low-Latency 模式的算法差异](#6-normal-vs-low-latency-模式的算法差异)</li>
+<li>[Engram：远端内存访问原语](#7-engram远端内存访问原语)</li>
+<li>[DeepSeek MoE 路由与两种模式的配合](#8-deepseek-moe-路由与两种模式的配合)</li>
+<li>[关键引用与源码索引](#9-关键引用与源码索引)</li>
+</ul>
+
+<hr/>
+
+<h2>1. V1 vs V2 核心差异总览</h2>
+
+<table><thead><tr>
+<th>维度</th>
+<th>V1 (Legacy)</th>
+<th>V2 (ElasticBuffer)</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>通信后端</strong></td>
+<td>NVSHMEM</td>
+<td>NCCL Gin (GPU-Initiated Networking)</td>
+</tr>
+<tr>
+<td><strong>编译方式</strong></td>
+<td>预编译 NVSHMEM kernel</td>
+<td>Fully JIT (运行时编译)</td>
+</tr>
+<tr>
+<td><strong>API 设计</strong></td>
+<td><code>Buffer</code> 类，Normal/Low-Latency 两套独立 API</td>
+<td><code>ElasticBuffer</code> 类，统一 API</td>
+</tr>
+<tr>
+<td><strong>Buffer 模型</strong></td>
+<td>分离的 NVL buffer + RDMA buffer</td>
+<td>统一 symmetric memory</td>
+</tr>
+<tr>
+<td><strong>SM 控制</strong></td>
+<td>静态变量 <code>Buffer.num_sms = 24</code></td>
+<td>解析式自动计算 <code>get_theoretical_num_sms</code></td>
+</tr>
+<tr>
+<td><strong>QP 控制</strong></td>
+<td>手动指定 <code>num_qps_per_rank</code></td>
+<td>解析式自动计算 <code>get_theoretical_num_qps</code></td>
+</tr>
+<tr>
+<td><strong>扩展规模</strong></td>
+<td>EP ≤ 128</td>
+<td>EP ≤ 2048</td>
+</tr>
+<tr>
+<td><strong>新增功能</strong></td>
+<td>无</td>
+<td>Engram, PP, CP, AGRS</td>
+</tr>
+<tr>
+<td><strong>性能</strong></td>
+<td>基准</td>
+<td>1.3× 峰值带宽，4× SM 节省</td>
+</tr>
+</tbody></table>
+
+<p><strong>来源</strong>: <code>DeepEP/README.md</code> L1-39, <code>DeepEP/docs/legacy.md</code> L1-9</p>
+
+<hr/>
+
+<h2>2. 统一 ElasticBuffer：V2 的核心设计哲学</h2>
+
+<h3>2.1 V1 时代的割裂</h3>
+
+<p>在 DeepEP V1 中，Normal 和 Low-Latency 是<strong>两套完全独立的实现</strong>：</p>
+
+<pre><code class="language-python">
+# V1 Normal: 3-phase forwarding
+num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank, event = \
+    buffer.get_dispatch_layout(topk_idx, num_experts)
+recv_x, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list, handle, event = \
+    buffer.dispatch(x, topk_idx=topk_idx, ...)
+
+# V1 Low-Latency: 完全不同的 API
+recv_hidden_states, recv_expert_count, handle, event, hook = \
+    buffer.low_latency_dispatch(x, topk_idx, num_max_dispatch_tokens_per_rank, num_experts)
+</code></pre>
+
+<p><strong>关键问题</strong>：</p>
+<ul>
+<li>两个 API 使用不同的 buffer 分配策略</li>
+<li>不同的 kernel 文件 (<code>internode.cu</code> vs <code>internode_ll.cu</code>)</li>
+<li>不同的 handle 结构 (tuple of tensors)</li>
+<li>Low-Latency 模式无法与 Normal 模式共享 buffer</li>
+</ul>
+
+<h3>22 V2 的统一设计</h3>
+
+<p>V2 的核心洞察：<strong>Normal 和 Low-Latency 的本质差异不是"通信协议"，而是"资源分配策略"</strong>。</p>
+
+<pre><code class="language-python">
+# V2 统一 API
+recv_x, recv_topk_idx, recv_topk_weights, handle, event = buffer.dispatch(
+    x, topk_idx=topk_idx, topk_weights=topk_weights,
+    num_experts=num_experts,
+    num_sms=num_sms,  # 控制 SM 数量：多=Normal, 少=Low-Latency
+    ...
+)
+</code></pre>
+
+<p><strong>统一的维度</strong>：</p>
+<ol>
+<li><strong>同一个 Buffer</strong>：所有通信模式共享</li>
+<li><strong>同一个 dispatch/combine API</strong>：参数控制行为</li>
+<li><strong>SM 数量</strong>是主要区分因子（Normal 64-160 SMs, Low-Latency 4-8 SMs）</li>
+</ul>
+
+<p><strong>来源</strong>: <code>docs/11_deep_ep_v2_deepdive_normal_lowlatency_sm_estimation.md</code> L22-60</p>
+
+<hr/>
+
+<h2>3. EPHandle 路由缓存机制</h2>
+
+<h3>3.1 EPHandle 的定义</h3>
+
+<p><code>EPHandle</code> 是 <code>dispatch</code> 返回的<strong>路由元数据对象</strong>，包含所有用于后续 combine 的信息：</p>
+
+<pre><code class="language-python">
+class EPHandle:
+    do_expand: bool
+    num_experts: int
+    expert_alignment: int
+    num_max_tokens_per_rank: int
+    num_sms: int  # dispatch 时使用的 SM 数, combine 时复用
+    topk_idx: Tensor  # [num_tokens, num_topk], clone 的 expert indices
+    psum_num_recv_tokens_per_scaleup_rank: Tensor  # [num_scaleup_ranks]
+    psum_num_recv_tokens_per_expert: Tensor  # [num_local_experts]
+    num_unaligned_recv_tokens_per_expert: Tensor  # [num_local_experts]
+    num_recv_tokens_per_expert_list: list  # CPU-side per-expert counts
+    recv_src_metadata: Tensor  # 源 token 元数据
+    dst_buffer_slot_idx: Tensor  # 目标 buffer slot 索引
+    token_metadata_at_forward: Optional[Tensor]  # Hybrid 模式
+    channel_linked_list: Optional[Tensor]  # Hybrid 模式
+</code></pre>
+
+<p><strong>来源</strong>: <code>deep_ep/buffers/elastic.py</code> L25-98</p>
+
+<h3>3.2 Cached Dispatch 机制</h3>
+
+<p>当 <code>handle</code> 参数被传入 <code>dispatch</code> 时，进入 <strong>cached mode</strong>：</p>
+
+<pre><code class="language-python">
+# elastic.py L937-944
+if handle is not None:
+    assert topk_idx is None  # 不再接受新的 topk_idx
+    assert do_cpu_sync is None or not do_cpu_sync  # 禁止 CPU sync
+    topk_idx = handle.topk_idx  # 复用缓存的 topk_idx
+    num_max_tokens_per_rank = value_or(num_max_tokens_per_rank, handle.num_max_tokens_per_rank)
+    num_experts = value_or(num_experts, handle.num_experts)
+    do_cpu_sync = False  # 关键：跳过 CPU sync
+</code></pre>
+
+<p><strong>Cached mode 的关键行为</strong>：</p>
+<ol>
+<li><strong>跳过 layout recomputation</strong>：<code>cached_num_recv_tokens</code>, <code>cached_psum_*</code> 直接传入 C++ kernel</li>
+<li><strong>跳过 CPU sync</strong>：不需要等待 GPU→CPU 的信号</li>
+<li><strong>跳过 topk_idx clone</strong>：<code>do_handle_copy</code> 仍会执行</li>
+<li><strong>C++ 层行为</strong>：<code>cached_mode = cached_num_recv_tokens.has_value()</code>（<code>buffer.hpp</code> L734）</li>
+</ul>
+
+<h3>3.3 为什么需要路由缓存？</h3>
+
+<p><strong>Decode 场景的特殊性</strong>：</p>
+<ul>
+<li>Batch size 小（128 tokens）</li>
+<li>Routing decisions 在连续 decode step 之间<strong>可能不变</strong>（如果 gating 结果一致）</li>
+<li>每次重新计算 layout 有 CPU overhead</li>
+<li>CPU sync 会引入 latency</li>
+</ul>
+
+<p><strong>使用方式</strong>（<code>README.md</code> L271-329）：</p>
+<pre><code class="language-python">
+def decode_dispatch(x, topk_idx, topk_weights, ...):
+    if cached_handle is not None:
+        # Reuse cached handle: skip layout recomputation and CPU sync
+        recv_x, _, _, handle, event = _buffer.dispatch(
+            x, handle=cached_handle, ...)
+        return recv_x, cached_handle.topk_idx, None, handle, event
+    
+    # 首次：完整计算
+    recv_x, recv_topk_idx, recv_topk_weights, handle, event = _buffer.dispatch(...)
+    return recv_x, recv_topk_idx, recv_topk_weights, handle, event
+</code></pre>
+
+<p><strong>来源</strong>: <code>DeepEP/README.md</code> L271-329, <code>deep_ep/buffers/elastic.py</code> L937-944</p>
+
+<hr/>
+
+<h2>4. 为什么 Decode 用 Low-Latency 而 Prefill 用 Normal？</h2>
+
+<h3>4.1 工作负载特征对比</h3>
+
+<table><thead><tr>
+<th>维度</th>
+<th>Prefill (Normal)</th>
+<th>Decode (Low-Latency)</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>Batch size</strong></td>
+<td>4096-8192 tokens</td>
+<td>64-256 tokens</td>
+</tr>
+<tr>
+<td><strong>优化目标</strong></td>
+<td>吞吐量 (GB/s)</td>
+<td>延迟 (μs)</td>
+</tr>
+<tr>
+<td><strong>并行度</strong></td>
+<td>高（大量数据可并行）</td>
+<td>低（少量数据）</td>
+</tr>
+<tr>
+<td><strong>Latency hiding</strong></td>
+<td>容易（大计算量）</td>
+<td>困难（小计算量）</td>
+</tr>
+<tr>
+<td><strong>通信模式</strong></td>
+<td>3-phase forwarding</td>
+<td>Direct RDMA get</td>
+</tr>
+</tbody></table>
+
+<h3>4.2 官方文档的说明</h3>
+
+<p><strong>Normal kernels</strong>（<code>docs/legacy.md</code> L9-10）：</p>
+<blockquote>
+<p>"These kernels deliver high throughput, making them suitable for both training and inference prefilling tasks."</p>
+</blockquote>
+
+<p><strong>Low-latency kernels</strong>（<code>docs/legacy.md</code> L11）：</p>
+<blockquote>
+<p>"For latency-sensitive inference decoding, DeepEP V1 includes a set of low-latency kernels with pure RDMA to minimize delays."</p>
+</blockquote>
+
+<h3>4.3 量化分析</h3>
+
+<p><strong>V1 Normal 性能</strong>（<code>docs/legacy.md</code> L17-26）：</p>
+<ul>
+<li>EP=16 internode: 43 GB/s, 4096 tokens</li>
+<li>EP=64 internode: 51 GB/s</li>
+</ul>
+
+<p><strong>V1 Low-Latency 性能</strong>（<code>docs/legacy.md</code> L29-39）：</p>
+<ul>
+<li>EP=8: 77 μs latency, 98 GB/s</li>
+<li>EP=64: 173 μs latency, 43 GB/s</li>
+<li>EP=256: 194 μs latency, 39 GB/s</li>
+</ul>
+
+<p><strong>关键洞察</strong>：Low-Latency 在小 EP 时延迟极低（77μs），但随 EP 增大延迟上升。Normal 的吞吐量稳定在 43-58 GB/s。</p>
+
+<h3>4.4 V2 的统一解释</h3>
+
+<p>在 V2 中，"Low-Latency" 不是独立模式，而是 Normal 在<strong>特定参数配置下的特例</strong>：</p>
+
+<table><thead><tr>
+<th>维度</th>
+<th>Normal 场景</th>
+<th>Low-Latency 场景</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>SM 数</strong></td>
+<td>多（64-160）</td>
+<td>少（4-8）</td>
+</tr>
+<tr>
+<td><strong>QP 数</strong></td>
+<td>多（SM×16+1）</td>
+<td>少（SM+1）</td>
+</tr>
+<tr>
+<td><strong>prefer_overlap</strong></td>
+<td>False</td>
+<td>True</td>
+</tr>
+<tr>
+<td><strong>Buffer</strong></td>
+<td>相同</td>
+<td>相同</td>
+</tr>
+</tbody></table>
+
+<p><strong>来源</strong>: <code>docs/11_deep_ep_v2_deepdive_normal_lowlatency_sm_estimation.md</code> L136-150, <code>DeepEP/docs/legacy.md</code> L9-11</p>
+
+<hr/>
+
+<h2>5. SM-Free 通信：RDMA Hook 机制</h2>
+
+<h3>5.1 V1 的 Hook-Based Overlap</h3>
+
+<p>V1 Low-Latency 模式最引人注目的特性：<strong>0 SM occupation</strong> 通信。</p>
+
+<pre><code class="language-python">
+# docs/legacy.md L264-272
+recv_hidden_states, recv_expert_count, handle, event, hook = \
+    buffer.low_latency_dispatch(x, topk_idx, ...,
+                                return_recv_hook=True)
+
+# NOTES: the actual tensor will not be received only if you call `hook()`,
+# it is useful for double-batch overlapping, but **without any SM occupation**
+</code></pre>
+
+<p><strong>机制</strong>：</p>
+<ol>
+<li><code>return_recv_hook=True</code> 时，kernel 只<strong>发起 RDMA 请求</strong>，不等待完成</li>
+<li>返回的 <code>hook</code> 是一个 callable，调用时阻塞等待数据到达</li>
+<li>RDMA 传输在<strong>网络硬件</strong>中进行，<strong>不占用 GPU SMs</strong></li>
+</ul>
+
+<h3>5.2 双 Batch Overlap</h3>
+
+<p><code>docs/legacy.md</code> L288-290 描述的 overlap 模式：</p>
+
+<pre><code>
+Batch 1: [Attention] → [Dispatch] → [MoE Compute] → [Combine]
+Batch 2:          [Attention] → [Dispatch] → [MoE Compute] → [Combine]
+                   ↑ 此时 Batch 1 的 RDMA 传输在后台进行，不占 SM
+</code></pre>
+
+<p><strong>4 个阶段的 overlap</strong>：</p>
+<ol>
+<li>Attention（当前 batch）</li>
+<li>Dispatch RDMA（后台，SM-free）</li>
+<li>MoE GEMM（当前 batch）</li>
+<li>Combine RDMA（后台，SM-free）</li>
+</ul>
+
+<h3>5.3 V2 的变化</h3>
+
+<p><strong>重要</strong>: V2 README 明确说明：</p>
+
+<blockquote>
+<p>"**Notes**: ... 0 SM RDMA low-latency EP is no longer supported"</p>
+</blockquote>
+
+<p>V2 不再支持纯 0 SM 的 low-latency EP，但保留了：</p>
+<ul>
+<li><strong>0 SM Engram</strong>（RDMA one-sided get）</li>
+<li><strong>0 SM PP</strong>（RDMA send/recv）</li>
+<li><strong>0 SM CP</strong>（Copy Engine）</li>
+</ul>
+
+<p>V2 的通信-computation overlap 通过 <code>EventOverlap</code> + <code>async_with_compute_stream=True</code> 实现，仍然占用少量 SM。</p>
+
+<p><strong>来源</strong>: <code>DeepEP/README.md</code> L28-29, <code>DeepEP/docs/legacy.md</code> L11, L264-290</p>
+
+<hr/>
+
+<h2>6. Normal vs Low-Latency 模式的算法差异</h2>
+
+<h3>6.1 Normal 模式：3-Phase Forwarding</h3>
+
+<pre><code>
+Phase 1: Push (NVLink)
+  Local Rank → Send Buffer (via NVLink)
+  
+Phase 2: Forward (RDMA)
+  Scaleup Warps → Scaleout RDMA → Remote Node
+  
+Phase 3: Reduce (Local)
+  Received tokens → Expert computation
+</code></pre>
+
+<p><strong>特点</strong>：</p>
+<ul>
+<li>使用 <strong>NVLink 域内聚合</strong> + <strong>RDMA 域间转发</strong></li>
+<li>适合 DeepSeek-V3 的 group-limited gating（top-4 groups, top-8 experts）</li>
+<li>需要 <strong>24+ SMs</strong> 处理 forwarding 逻辑</li>
+<li>Buffer 模型复杂（5 层 buffer）</li>
+</ul>
+
+<h3>6.2 Low-Latency 模式：Direct RDMA Get</h3>
+
+<pre><code>
+Direct: Local Token → RDMA Get → Remote Expert Buffer
+</code></pre>
+
+<p><strong>特点</strong>：</p>
+<ul>
+<li><strong>纯 RDMA</strong>（IBGDA — InfiniBand GPU Direct Async）</li>
+<li>GPU SM 直接操作 NIC QP，无需 CPU 介入</li>
+<li>每个 expert 对应一个 QP（<code>num_qps_per_rank = num_local_experts</code>）</li>
+<li><strong>无 forwarding</strong>：直接 get 到目标位置</li>
+<li>使用 <strong>2 个 buffer</strong> 交替（ping-pong）</li>
+<li>需要 <strong>clean_low_latency_buffer</strong> 在 dirty 后重新 zero-init</li>
+</ul>
+
+<h3>6.3 Buffer 布局差异</h3>
+
+<p><strong>V1 Normal Buffer</strong>：</p>
+<pre><code>
+[NVL Send Buffer] [NVL Recv Buffer] [RDMA Send Buffer] [RDMA Recv Buffer] [Expert Buffer]
+</code></pre>
+
+<p><strong>V1 Low-Latency Buffer</strong>：</p>
+<pre><code>
+[RDMA Buffer 0] [RDMA Buffer 1]  # Double buffering
+形状: [num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]
+</code></pre>
+
+<p><strong>V2 Unified Buffer</strong>：</p>
+<pre><code>
+[Workspace] [GPU Buffer] [CPU Buffer (for Engram)]
+</code></pre>
+
+<h3>6.4 Kernel 对比</h3>
+
+<table><thead><tr>
+<th>维度</th>
+<th>Normal (V1)</th>
+<th>Low-Latency (V1)</th>
+<th>V2 Unified</th>
+</tr></thead><tbody>
+<tr>
+<td>Kernel 文件</td>
+<td><code>internode.cu</code></td>
+<td><code>internode_ll.cu</code></td>
+<td><code>dispatch.cuh</code> / <code>hybrid_dispatch.cuh</code></td>
+</tr>
+<tr>
+<td>SM 角色</td>
+<td>Dispatch + Notify + Forward</td>
+<td>Dispatch only</td>
+<td>Dispatch + Notify (configurable)</td>
+</tr>
+<tr>
+<td>同步</td>
+<td>多阶段 barrier</td>
+<td>简单 barrier</td>
+<td>Gin barrier</td>
+</tr>
+<tr>
+<td>数据布局</td>
+<td>5 层 buffer</td>
+<td>2 层 buffer</td>
+<td>统一 token layout</td>
+</tr>
+</tbody></table>
+
+<p><strong>来源</strong>: <code>DeepEP/docs/legacy.md</code> L9-11, L528-550, <code>docs/11_deep_ep_v2_deepdive_normal_lowlatency_sm_estimation.md</code> L22-60</p>
+
+<hr/>
+
+<h2>7. Engram：远端内存访问原语</h2>
+
+<h3>7.1 Engram 的定义</h3>
+
+<p>Engram 是 DeepEP 弹性模式的<strong>远端内存访问原语</strong>——通过 NCCL Gin（GPU-initiated RDMA）直接读取远端 GPU 的存储窗口（<code>ncclWindow</code>），无需 CPU 介入。</p>
+
+<table><thead><tr>
+<th>API</th>
+<th>语义</th>
+</tr></thead><tbody>
+<tr>
+<td><code>engram_write(storage, sf)</code></td>
+<td>将本地数据注册到 NCCL window，供远端读取</td>
+</tr>
+<tr>
+<td><code>engram_fetch(indices)()</code></td>
+<td>异步发起 RDMA get，返回 callable <code>hook</code>；调用 <code>hook()</code> 阻塞等待完成</td>
+</tr>
+</tbody></table>
+
+<p><strong>来源</strong>: <code>docs/08_test_barrier_engram_gate_analysis.md</code> L87-93</p>
+
+<h3>7.2 Engram 与 KV Cache 的关系</h3>
+
+<p>Engram 的设计目标是<strong>跨节点参数/激活拉取</strong>，典型用例包括：</p>
+
+<ol>
+<li><strong>Remote KV Cache Fetching</strong>：</li>
+<li>在 disaggregated inference 中，KV cache 可能存储在远程节点</li>
+<li>Engram 允许直接通过 RDMA 读取远端 KV cache entries</li>
+<li>无需 CPU 介入，保持 GPU-centric</li>
+</ul>
+
+<ol>
+<li><strong>Parameter Server 模式</strong>：</li>
+<li>大模型参数存储在 CPU memory 或远程 GPU</li>
+<li>Engram 支持"拉取-计算"模式</li>
+</ul>
+
+<p><strong>存储布局</strong>（<code>elastic.py</code> L409-435）：</p>
+<pre><code class="language-python">
+@staticmethod
+def get_engram_storage_size_hint(num_entries, hidden, num_max_tokens_per_rank, dtype):
+    # GPU buffer: 用于接收 fetched 数据
+    num_gpu_bytes = align(hidden * dtype.itemsize * num_max_tokens_per_rank, 2MB)
+    # CPU buffer: 用于本地 storage（远端可读取）
+    num_cpu_bytes = align(hidden * dtype.itemsize * num_entries, 2MB)
+    return num_gpu_bytes, num_cpu_bytes
+</code></pre>
+
+<p><strong>内存布局</strong>（<code>buffer.hpp</code> L229-236）：</p>
+<pre><code>
+Hybrid Elastic Symmetric Memory:
+[ GPU VRAM | CPU rank0 | CPU rank1 | ... | CPU rank(N-1) ]
+                       ↑ Engram storage 写入这里
+</code></pre>
+
+<h3>7.3 Engram 的 0 SM 特性</h3>
+
+<p>Engram 是 V2 中少数保留的 <strong>0 SM</strong> 功能：</p>
+
+<pre><code class="language-cpp">
+// buffer.hpp L292-309
+launch_engram_fetch(
+    nccl_context-&gt;dev_comm, nccl_context-&gt;window,
+    math::advance_ptr(buffer, num_gpu_buffer_bytes),  // CPU segment
+    fetched.data_ptr(),
+    indices.data_ptr&lt;int&gt;(),
+    ...
+);
+</code></pre>
+
+<p><strong>机制</strong>：</p>
+<ol>
+<li><code>engram_write</code> 将数据写入 CPU segment（<code>cudaMemcpyDeviceToDevice</code>）</li>
+<li><code>engram_fetch</code> 发起 <strong>Gin RDMA get</strong> 请求</li>
+<li>返回的 callable 在调用时等待完成</li>
+<li>数据传输由 <strong>NIC hardware</strong> 完成，<strong>不占用 GPU SMs</strong></li>
+</ul>
+
+<h3>7.4 Engram 的 FP8 支持</h3>
+
+<pre><code class="language-python">
+# elastic.py L579-602
+def engram_write(self, storage, sf=None):
+    &quot;&quot;&quot;
+    storage: [num_entries, hidden], torch.bfloat16 or torch.float8_e4m3fn
+    sf: [num_total_entries, num_sf_packs], FP8 scaling factors
+    &quot;&quot;&quot;
+</code></pre>
+
+<p><strong>关键</strong>：FP8 scaling factors 是<strong>全局冗余</strong>的（每个 rank 持有全部 SF），只有 main data 通过 RDMA 传输。</p>
+
+<p><strong>来源</strong>: <code>csrc/kernels/elastic/engram.hpp</code>, <code>csrc/elastic/buffer.hpp</code> L210-325, <code>tests/elastic/test_engram.py</code></p>
+
+<hr/>
+
+<h2>8. DeepSeek MoE 路由与两种模式的配合</h2>
+
+<h3>8.1 DeepSeek-V3 的 Group-Limited Gating</h3>
+
+<p>DeepSeek-V3 采用 <strong>group-limited gating</strong> 策略：</p>
+<ul>
+<li><strong>256 experts</strong> 分为 <strong>32 groups</strong>（每 group 8 experts）</li>
+<li>每个 token 选择 <strong>top-4 groups</strong></li>
+<li>在每个选中 group 内选择 <strong>top-2 experts</strong></li>
+<li>最终 <strong>top-8 experts</strong> per token</li>
+</ul>
+
+<p><strong>意义</strong>：限制每个 token 只能访问 4 个 group → 减少跨节点通信量。</p>
+
+<h3>8.2 Normal 模式的优化</h3>
+
+<p>DeepEP V1 Normal 内核针对 group-limited gating 做了专门优化：</p>
+
+<blockquote>
+<p>"To align with the group-limited gating algorithm proposed in the DeepSeek-V3 paper, DeepEP V1 offers a set of kernels optimized for asymmetric-domain bandwidth forwarding, such as forwarding data from NVLink domain to RDMA domain."</p>
+</blockquote>
+
+<p><strong><code>docs/legacy.md</code> L9</strong></p>
+
+<h3>8.3 Decode 场景的路由缓存</h3>
+
+<p><strong>问题</strong>：在 decode 阶段，如果连续 batch 的 routing decisions 相同，每次重新计算 layout 浪费。</p>
+
+<p><strong>V2 解决方案</strong>：<code>EPHandle</code> 缓存</p>
+
+<pre><code class="language-python">
+# 首次 decode step
+recv_x, recv_topk_idx, recv_topk_weights, handle, event = buffer.dispatch(
+    x, topk_idx=topk_idx, topk_weights=topk_weights, ...)
+
+# 后续 step（routing 不变）
+recv_x, _, _, handle, event = buffer.dispatch(x, handle=handle)
+</code></pre>
+
+<p><strong>缓存的内容</strong>：</p>
+<ul>
+<li><code>psum_num_recv_tokens_per_scaleup_rank</code>：每个 scaleup rank 接收的 token 数前缀和</li>
+<li><code>psum_num_recv_tokens_per_expert</code>：每个 expert 接收的 token 数前缀和</li>
+<li><code>recv_src_metadata</code>：源 token 元数据</li>
+<li><code>dst_buffer_slot_idx</code>：目标 buffer slot 索引</li>
+</ul>
+
+<h3>8.4 Deterministic Sort</h3>
+
+<p>DeepEP 支持确定性路由（<code>deterministic=True</code>），通过 <code>EPHandle.deterministic_sort()</code> 对接收到的 token 排序，确保跨 rank 的一致性。</p>
+
+<pre><code class="language-python">
+# elastic.py L100-193
+def deterministic_sort(self, do_cpu_sync, is_cached_dispatch,
+                       recv_x, recv_sf, recv_topk_idx, recv_topk_weights,
+                       channel_linked_list):
+    # Non-expand mode: sort recv_x, recv_sf, recv_topk_weights, recv_topk_idx
+    # Expand mode: only sort expanded arrays
+</code></pre>
+
+<p><strong>来源</strong>: <code>DeepEP/docs/legacy.md</code> L9, <code>deep_ep/buffers/elastic.py</code> L100-193, <code>DeepEP/README.md</code> L271-329</p>
+
+<hr/>
+
+<h2>9. 关键引用与源码索引</h2>
+
+<h3>9.1 官方文档</h3>
+<ul>
+<li><code>DeepEP/README.md</code> — V2 官方文档，统一 API 示例</li>
+<li><code>DeepEP/docs/legacy.md</code> — V1 官方文档，Normal/Low-Latency 分离 API</li>
+<li><code>DeepEP/docs/nvshmem.md</code> — NVSHMEM 安装指南</li>
+</ul>
+
+<h3>9.2 Python 源码</h3>
+<ul>
+<li><code>deep_ep/__init__.py</code> — 包初始化，导出 <code>Buffer</code>, <code>ElasticBuffer</code>, <code>EPHandle</code></li>
+<li><code>deep_ep/buffers/legacy.py</code> — V1 Buffer 类（714 行）</li>
+<li><code>deep_ep/buffers/elastic.py</code> — V2 ElasticBuffer 类（1108 行）</li>
+<li>L25-98: EPHandle 定义</li>
+<li>L100-193: deterministic_sort</li>
+<li>L195-368: ElasticBuffer 类定义</li>
+<li>L409-435: Engram storage size hint</li>
+<li>L569-604: engram_write/engram_fetch</li>
+<li>L728-834: get_theoretical_num_sms</li>
+<li>L855-1033: dispatch 方法</li>
+<li>L1046-1107: combine 方法</li>
+</ul>
+
+<h3>9.3 C++ 源码</h3>
+<ul>
+<li><code>csrc/elastic/buffer.hpp</code> — ElasticBuffer C++ 核心（1382 行）</li>
+<li>L62-66: engram 状态</li>
+<li>L210-240: engram_write</li>
+<li>L242-325: engram_fetch</li>
+<li>L586-686: buffer size 计算</li>
+<li>L734: cached_mode 检测</li>
+<li><code>csrc/kernels/elastic/dispatch.hpp</code> — Dispatch JIT runtime</li>
+<li><code>csrc/kernels/elastic/engram.hpp</code> — Engram JIT runtime</li>
+<li><code>csrc/kernels/backend/nccl.cu</code> — NCCL Gin 后端</li>
+</ul>
+
+<h3>9.4 Kernel 实现</h3>
+<ul>
+<li><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code> — Direct dispatch kernel</li>
+<li><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code> — Hybrid dispatch kernel</li>
+<li><code>deep_ep/include/deep_ep/impls/engram_fetch.cuh</code> — Engram fetch kernel</li>
+<li><code>deep_ep/include/deep_ep/impls/combine.cuh</code> — Combine kernel</li>
+</ul>
+
+<h3>9.5 测试代码</h3>
+<ul>
+<li><code>tests/elastic/test_ep.py</code> — V2 EP 测试（含 cached dispatch）</li>
+<li><code>tests/elastic/test_engram.py</code> — Engram 测试</li>
+<li><code>tests/legacy/test_low_latency.py</code> — V1 low-latency 测试</li>
+</ul>
+
+<h3>9.6 已有研究报告</h3>
+<ul>
+<li><code>docs/10_deep_ep_v2_elastic_architecture.md</code> — V2 架构全面分析</li>
+<li><code>docs/11_deep_ep_v2_deepdive_normal_lowlatency_sm_estimation.md</code> — SM 估算与统一接口</li>
+<li><code>docs/08_test_barrier_engram_gate_analysis.md</code> — Engram 测试分析</li>
+<li><code>docs/07_deep_ep_03_normal_vs_lowlatency.md</code> — Normal vs Low-Latency 源码分析</li>
+</ul>
+
+</article>
+</body>
+</html>

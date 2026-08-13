@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05_06: NVLink Scale-up + RDMA Scale-out — DeepEP 三阶段流水线 vs Mega MoE 对称内存 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">05_06: NVLink Scale-up + RDMA </a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#05_06-nvlink-scale-up--rdma-scale-out--deepep-三阶段流" class="toc-h1">05_06: NVLink Scale-up + RDMA Scale-out — DeepEP 三阶段流水线 vs Mega MoE 对称内存</a></li><li><a href="#1-核心问题" class="toc-h2">1. 核心问题</a></li><li><a href="#2-结论摘要" class="toc-h2">2. 结论摘要</a></li><li><a href="#3-symmetric-memory-技术本质" class="toc-h2">3. Symmetric Memory 技术本质</a></li><li><a href="#31-什么是-symmetric-memory" class="toc-h3">3.1 什么是 Symmetric Memory</a></li><li><a href="#32-symbuffer-结构--跨-rank-地址映射" class="toc-h3">3.2 SymBuffer 结构 — 跨 rank 地址映射</a></li><li><a href="#4-mega-moe-的通信路径" class="toc-h2">4. Mega MoE 的通信路径</a></li><li><a href="#41-intra-node-nvlink-通过-symmetric-memory" class="toc-h3">4.1 Intra-node: NVLink (通过 Symmetric Memory)</a></li><li><a href="#42-inter-node-rdma-通过-symmetric-memory" class="toc-h3">4.2 Inter-node: RDMA (通过 Symmetric Memory)</a></li><li><a href="#5-三阶段流水线的消亡" class="toc-h2">5. 三阶段流水线的消亡</a></li><li><a href="#51-deepep-三阶段流水线-回顾" class="toc-h3">5.1 DeepEP 三阶段流水线 (回顾)</a></li><li><a href="#52-mega-moe-无阶段直接访问" class="toc-h3">5.2 Mega MoE: 无阶段直接访问</a></li><li><a href="#53-对比-mermaid-图" class="toc-h3">5.3 对比 Mermaid 图</a></li><li><a href="#6-跨-rank-读写的具体实现" class="toc-h2">6. 跨 rank 读写的具体实现</a></li><li><a href="#61-dispatch-阶段-拉取远程-token" class="toc-h3">6.1 Dispatch 阶段: 拉取远程 Token</a></li><li><a href="#62-combine-阶段-写回远程-buffer" class="toc-h3">6.2 Combine 阶段: 写回远程 Buffer</a></li><li><a href="#7-barrier-与跨-rank-同步" class="toc-h2">7. Barrier 与跨 rank 同步</a></li><li><a href="#71-nvlink-barrier-实现" class="toc-h3">7.1 NVLink Barrier 实现</a></li><li><a href="#72-三种-barrier-类型" class="toc-h3">7.2 三种 Barrier 类型</a></li><li><a href="#73-nvlink-barrier-tag-语义" class="toc-h3">7.3 NVLink Barrier Tag 语义</a></li><li><a href="#8-gpu-centric-communication-fabric-的演进" class="toc-h2">8. GPU-Centric Communication Fabric 的演进</a></li><li><a href="#81-deepep-的-gpu-centric-fabric" class="toc-h3">8.1 DeepEP 的 GPU-Centric Fabric</a></li><li><a href="#82-mega-moe-的演进-sm--tma--symbuffer" class="toc-h3">8.2 Mega MoE 的演进: SM + TMA + SymBuffer</a></li><li><a href="#9-完整数据流对比" class="toc-h2">9. 完整数据流对比</a></li><li><a href="#91-deepep-normal-kernel-数据流" class="toc-h3">9.1 DeepEP Normal Kernel 数据流</a></li><li><a href="#92-mega-moe-数据流" class="toc-h3">9.2 Mega MoE 数据流</a></li><li><a href="#10-关键差异深度分析" class="toc-h2">10. 关键差异深度分析</a></li><li><a href="#101-为什么-mega-moe-能消除三阶段" class="toc-h3">10.1 为什么 Mega MoE 能消除三阶段?</a></li><li><a href="#102-对称内存-vs-显式-rdma-的权衡" class="toc-h3">10.2 对称内存 vs 显式 RDMA 的权衡</a></li><li><a href="#103-mega-moe-仍保留的-gpu-centric-特征" class="toc-h3">10.3 Mega MoE 仍保留的 "GPU-Centric" 特征</a></li><li><a href="#11-代码结构映射表" class="toc-h2">11. 代码结构映射表</a></li><li><a href="#12-总结" class="toc-h2">12. 总结</a></li><li><a href="#121-mega-moe-对-deepep-的继承" class="toc-h3">12.1 Mega MoE 对 DeepEP 的继承</a></li><li><a href="#122-mega-moe-对-deepep-的革新" class="toc-h3">12.2 Mega MoE 对 DeepEP 的革新</a></li><li><a href="#123-一句话总结" class="toc-h3">12.3 一句话总结</a></li><li><a href="#附录-关键源码位置" class="toc-h2">附录: 关键源码位置</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="05_06-nvlink-scale-up-rdma-scale-out-deepep-vs-mega-moe">05_06: NVLink Scale-up + RDMA Scale-out — DeepEP 三阶段流水线 vs Mega MoE 对称内存</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+源材料: DeepEP 博客 Section 4 + DeepGEMM Mega MoE 源码 (SM100 FP8/FP4)</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 核心问题</h2>
+<p>DeepEP 博客 Section 4 描述了多节点 MoE 的 <strong>Intra-node NVLink + Inter-node RDMA</strong> 协调问题：<br />
+- Token 可能留在本地、同节点另一 GPU、或远端节点<br />
+- 单 Dispatch 包含两个通信域：Intra-node (NVLink) + Inter-node (RDMA)<br />
+- 三阶段流水线：Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</p>
+<p><strong>Mega MoE 用 Symmetric Memory 重新解决了同一个问题，但架构完全不同。</strong></p>
+<hr />
+<h2 id="2">2. 结论摘要</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intra-node 通信</td>
+<td>NVLink (显式)</td>
+<td>NVLink (通过 Symmetric Memory)</td>
+</tr>
+<tr>
+<td>Inter-node 通信</td>
+<td>RDMA (显式)</td>
+<td>RDMA (通过 Symmetric Memory)</td>
+</tr>
+<tr>
+<td>流水线</td>
+<td>三阶段 (Send → Forward → Receive)</td>
+<td>无阶段 — 直接远程访问</td>
+</tr>
+<tr>
+<td>通信发起者</td>
+<td>GPU SM + NIC</td>
+<td>GPU SM + TMA (通过 SymBuffer.map)</td>
+</tr>
+<tr>
+<td>数据组织</td>
+<td>Chunk Buffer + FIFO</td>
+<td>对称内存池 (Token Pool)</td>
+</tr>
+<tr>
+<td>同步机制</td>
+<td>FIFO + Barrier</td>
+<td>NVLink Barrier + Grid Sync + mbarrier</td>
+</tr>
+<tr>
+<td>角色分工</td>
+<td>IB Sending / Forwarding / NVLink Receiving</td>
+<td>Dispatch Warps / MMA Warps / Epilogue Warps</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心差异</strong>: DeepEP 是 <strong>"推送 + 转发"</strong> 模型，Mega MoE 是 <strong>"拉取 + 直接远程访问"</strong> 模型。</p>
+<hr />
+<h2 id="3-symmetric-memory">3. Symmetric Memory 技术本质</h2>
+<h3 id="31-symmetric-memory">3.1 什么是 Symmetric Memory</h3>
+<p>Symmetric Memory 是 PyTorch 提供的<strong>分布式共享内存抽象</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/mega/__init__.py</span>
+<span style="color: #008000; font-weight: bold">import</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">torch.distributed._symmetric_memory</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">as</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">symm_mem</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 每个 rank 分配一块 buffer</span>
+<span style="color: #008000">self</span><span style="color: #666">.</span>buffer <span style="color: #666">=</span> symm_mem<span style="color: #666">.</span>empty(num_bytes, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int8, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+
+<span style="color: #3D7B7B; font-style: italic"># rendezvous 让 buffer 对所有 rank 可见</span>
+<span style="color: #008000">self</span><span style="color: #666">.</span>handle <span style="color: #666">=</span> symm_mem<span style="color: #666">.</span>rendezvous(<span style="color: #008000">self</span><span style="color: #666">.</span>buffer, group<span style="color: #666">=</span>group)
+</code></pre></div>
+
+<p><strong>技术本质</strong>:<br />
+- 每个 rank 分配一块 <strong>本地物理内存</strong><br />
+- 通过 <code>rendezvous</code> 注册到通信后端，使所有 rank 获得 <strong>remote accessible pointer</strong><br />
+- 底层传输: <strong>同节点 NVLink, 跨节点 RDMA (NCCL 自动选择)</strong><br />
+- 对 GPU kernel 来说，可以通过 <strong>TMA (Tensor Memory Accelerator)</strong> 直接发起远程 load/store</p>
+<h3 id="32-symbuffer-rank">3.2 SymBuffer 结构 — 跨 rank 地址映射</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_gemm/layout/sym_buffer.cuh</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>base;<span style="color: #BBB">                    </span><span style="color: #3D7B7B; font-style: italic">// 本地 buffer 基地址</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>offsets[kNumMaxRanks];<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 各 rank 相对于本 rank 的偏移</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rank_idx;<span style="color: #BBB">               </span><span style="color: #3D7B7B; font-style: italic">// 当前 rank 编号</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 关键: 将本地指针映射为可远程访问的指针</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ptr_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong><code>map(ptr, dst_rank_idx)</code> 是 Mega MoE 跨 rank 访问的核心原语</strong>:<br />
+- 输入: 本地 buffer 中的指针 + 目标 rank<br />
+- 输出: 可在目标 rank 上执行 TMA load/store 的远程虚拟地址<br />
+- 底层: 利用 NVLink/RDMA 的 <strong>统一虚拟地址空间 (UVA)</strong></p>
+<hr />
+<h2 id="4-mega-moe">4. Mega MoE 的通信路径</h2>
+<h3 id="41-intra-node-nvlink-symmetric-memory">4.1 Intra-node: NVLink (通过 Symmetric Memory)</h3>
+<p>Mega MoE <strong>不显式区分</strong> intra-node 和 inter-node。Symmetric Memory 抽象隐藏了传输层差异：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh — Dispatch Warp 拉取远程 token</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>pull_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>smem_send_buffers.get_rank_buffer(warp_idx).get_data_buffer(<span style="color: #666">0</span>);
+
+<span style="color: #3D7B7B; font-style: italic">// 关键: 通过 sym_buffer.map 将本地 input_token_buffer 指针映射到远程 rank</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),<span style="color: #BBB">                                          </span><span style="color: #3D7B7B; font-style: italic">// 本地 smem 目标</span>
+<span style="color: #BBB">    </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx)<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// 远程 rank 源地址</span>
+<span style="color: #BBB">                   </span>.get_base_ptr(),<span style="color: #BBB"> </span>current_rank_in_expert_idx),
+<span style="color: #BBB">    </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+</code></pre></div>
+
+<p><strong>Intra-node 传输</strong>: 当 <code>current_rank_in_expert_idx</code> 对应同节点 rank 时，TMA 通过 <strong>NVLink</strong> 完成远程 load。</p>
+<h3 id="42-inter-node-rdma-symmetric-memory">4.2 Inter-node: RDMA (通过 Symmetric Memory)</h3>
+<p>同样的 <code>sym_buffer.map</code> + <code>tma_load_1d</code> 机制，当目标 rank 在远端节点时，底层自动走 <strong>RDMA</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 同一段代码，不同 dst_rank_idx → 不同底层传输</span>
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_topk_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 跨节点写 → RDMA</span>
+</code></pre></div>
+
+<p><strong>关键</strong>: Mega MoE 不需要像 DeepEP 那样显式管理 IB Sending / RDMA 网络 / NIC 绑定。</p>
+<hr />
+<h2 id="5">5. 三阶段流水线的消亡</h2>
+<h3 id="51-deepep">5.1 DeepEP 三阶段流水线 (回顾)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU
+</code></pre></div>
+
+<p><strong>为什么需要 Forwarding?</strong> 因为 GPU-NIC 拓扑不对称：<br />
+- GPU0 要发送到 NIC1 绑定的远端 GPU<br />
+- 必须: GPU0 → NVLink → GPU4 → PCIe → NIC1 → RDMA → ...</p>
+<h3 id="52-mega-moe">5.2 Mega MoE: 无阶段直接访问</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────┐
+│                    Symmetric Memory                      │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │ Rank 0   │◄──►│ Rank 1   │◄──►│ Rank N   │          │
+│  │ Buffer   │ NVLink│ Buffer │ NVLink│ Buffer  │          │
+│  └──────────┘    └──────────┘    └──────────┘          │
+│       ▲              ▲              ▲                   │
+│       │ TMA          │ TMA          │ TMA               │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │ SM 0     │    │ SM 1     │    │ SM N     │          │
+│  └──────────┘    └──────────┘    └──────────┘          │
+└─────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>Mega MoE 消除了 Forwarding 阶段</strong>:<br />
+- 每个 rank 的 kernel 直接通过 <code>sym_buffer.map</code> 计算远程地址<br />
+- TMA 硬件直接执行跨 rank load/store<br />
+- 不需要 "GPU 作为通信中继" 的角色</p>
+<h3 id="53-mermaid">5.3 对比 Mermaid 图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph DeepEP[&quot;DeepEP: 三阶段推送 + 转发&quot;]
+        S[Source GPU] --&gt;|读取 Dispatch Buffer| IB[IB Sending]
+        IB --&gt;|RDMA 网络| NET[RDMA Network]
+        NET --&gt;|接收| FWD[IB-to-NVLink Forwarding]
+        FWD --&gt;|NVLink| RECV[NVLink Receiving]
+        RECV --&gt;|写入 Receive Buffer| T[Target GPU]
+    end
+
+    subgraph MegaMoE[&quot;Mega MoE: 对称内存直接访问&quot;]
+        S2[Dispatch Warp] --&gt;|TMA Load + sym_buffer.map| LB[Local L1 Buffer]
+        S3[Epilogue Warp] --&gt;|TMA Store + sym_buffer.map| RB[Remote Combine Buffer]
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="6-rank">6. 跨 rank 读写的具体实现</h2>
+<h3 id="61-dispatch-token">6.1 Dispatch 阶段: 拉取远程 Token</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh (line 544-598)</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 1. 读取源 token-topk 索引 (由远端 dispatch 通过 NVLink 写入)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">    </span>current_expert_idx,<span style="color: #BBB"> </span>current_rank_in_expert_idx,<span style="color: #BBB"> </span>token_idx_in_rank);
+
+<span style="color: #3D7B7B; font-style: italic">// 2. TMA load token 从远端 rank 到本地 smem</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">        </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">        </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                       </span>current_rank_in_expert_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 远程 rank 地址</span>
+<span style="color: #BBB">        </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 加载并存储 SF (与 TMA token load 重叠)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>remote_sf_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>input_sf_buffer.get_data_buffer(src_token_idx).get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);
+<span style="color: #3D7B7B; font-style: italic">// ... 直接读取 remote_sf_ptr</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 4. 存储到本地 L1 buffer</span>
+ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">    </span>l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),<span style="color: #BBB"> </span>pull_buffer.get_num_bytes());
+</code></pre></div>
+
+<h3 id="62-combine-buffer">6.2 Combine 阶段: 写回远程 Buffer</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh (line 1196-1202)</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 从 shared memory 读取</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>packed<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_shared(<span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>float4<span style="color: #666">*&gt;</span>(smem_ptr));
+
+<span style="color: #3D7B7B; font-style: italic">// 写入远端 combine buffer</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>combine_token_buffer.get_rank_buffer(dst_topk_idx)
+<span style="color: #BBB">                       </span>.get_data_buffer(dst_token_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>dst_token.get_base_ptr(),
+<span style="color: #BBB">    </span>n_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(nv_bfloat16)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">16</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(float4));
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 远程 NVLink/RDMA 写</span>
+</code></pre></div>
+
+<hr />
+<h2 id="7-barrier-rank">7. Barrier 与跨 rank 同步</h2>
+<h3 id="71-nvlink-barrier">7.1 NVLink Barrier 实现</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_gemm/comm/barrier.cuh</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvlink_barrier(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>Workspace<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>workspace,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>SymBuffer<span style="color: #666">&lt;</span>kNumRanks<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sym_buffer,
+<span style="color: #BBB">                                   </span>...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. Grid sync (节点内所有 SM 同步)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_prologue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(workspace,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>sync_scope);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. NVLink 跨 rank barrier (仅 SM 0 参与)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 发送信号到远端 rank</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add_rel_sys(sym_buffer.map(signal_ptr,<span style="color: #BBB"> </span>thread_idx),<span style="color: #BBB"> </span>signal_sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">-1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 等待所有 rank 到达</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add(counter_ptr,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq_sys(signal_ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* spin */</span><span style="color: #BBB"> </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Grid sync (确保所有 SM 看到 barrier 完成)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_epilogue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(workspace,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>sync_scope);
+}
+</code></pre></div>
+
+<h3 id="72-barrier">7.2 三种 Barrier 类型</h3>
+<table>
+<thead>
+<tr>
+<th>Barrier</th>
+<th>作用</th>
+<th>触发时机</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grid_sync</code></td>
+<td>节点内所有 SM 同步</td>
+<td>每次跨 rank 操作前后</td>
+</tr>
+<tr>
+<td><code>nvlink_barrier</code></td>
+<td>跨 rank 全局同步</td>
+<td>Dispatch 前/后, Combine 前</td>
+</tr>
+<tr>
+<td><code>mbarrier</code></td>
+<td>TMA 数据传输完成</td>
+<td>每次 TMA load/store 完成</td>
+</tr>
+</tbody>
+</table>
+<h3 id="73-nvlink-barrier-tag">7.3 NVLink Barrier Tag 语义</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kBeforeDispatchPullBarrierTag<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// Dispatch 拉取前</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kBeforeCombineReduceBarrierTag<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// Combine 归约前</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kAfterWorkspaceCleanBarrierTag<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3</span>;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// Workspace 清理后</span>
+</code></pre></div>
+
+<hr />
+<h2 id="8-gpu-centric-communication-fabric">8. GPU-Centric Communication Fabric 的演进</h2>
+<h3 id="81-deepep-gpu-centric-fabric">8.1 DeepEP 的 GPU-Centric Fabric</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>NVLink + RDMA + GPU SM → 共同构成数据路径
+</code></pre></div>
+
+<ul>
+<li>GPU SM 发起通信 (不是 NIC 独立处理)</li>
+<li>GPU 作为 Forwarding 中继</li>
+<li>SM + NIC + NVLink 紧密耦合</li>
+</ul>
+<h3 id="82-mega-moe-sm-tma-symbuffer">8.2 Mega MoE 的演进: SM + TMA + SymBuffer</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Symmetric Memory + TMA + GPU SM → 统一数据路径
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Mega MoE 的通信由以下三者协作:</span>
+<span style="color: #3D7B7B; font-style: italic">// 1. Dispatch Warps (GPU SM): 计算远程地址, 发起 TMA</span>
+<span style="color: #3D7B7B; font-style: italic">// 2. TMA (Tensor Memory Accelerator): 执行实际数据传输</span>
+<span style="color: #3D7B7B; font-style: italic">// 3. SymBuffer.map(): 提供远程地址映射</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 关键代码: SM 直接发起远程 TMA load</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>local_smem_ptr,
+<span style="color: #BBB">    </span>sym_buffer.map(remote_ptr,<span style="color: #BBB"> </span>dst_rank_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// SM 计算远程地址</span>
+<span style="color: #BBB">    </span>mbarrier,<span style="color: #BBB"> </span>size);
+</code></pre></div>
+
+<p><strong>变化</strong>:<br />
+- <strong>不再需要 GPU 作为 Forwarding 中继</strong> — TMA 直接处理跨 rank 传输<br />
+- <strong>不再需要显式 FIFO</strong> — mbarrier 提供更细粒度的生产者-消费者同步<br />
+- <strong>通信与计算更深度融合</strong> — Dispatch Warps 同时做 token routing + 远程拉取</p>
+<hr />
+<h2 id="9">9. 完整数据流对比</h2>
+<h3 id="91-deepep-normal-kernel">9.1 DeepEP Normal Kernel 数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant S as Source GPU
+    participant NIC as NIC (IB)
+    participant NET as RDMA Network
+    participant FWD as Forwarding GPU
+    participant T as Target GPU
+
+    S-&gt;&gt;S: 读取 Dispatch Buffer
+    S-&gt;&gt;NIC: IB Sending (GPU→NIC)
+    NIC-&gt;&gt;NET: RDMA 发送
+    NET-&gt;&gt;FWD: 接收 (可能非目标 GPU)
+    FWD-&gt;&gt;FWD: IB-to-NVLink Forwarding
+    FWD-&gt;&gt;T: NVLink 直写
+    T-&gt;&gt;T: 写入 Receive Buffer
+</code></pre></div>
+
+<h3 id="92-mega-moe">9.2 Mega MoE 数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant D as Dispatch Warp (SM)
+    participant TMA as TMA Engine
+    participant R as Remote Rank Buffer
+    participant L as Local L1 Buffer
+    participant E as Epilogue Warp (SM)
+    participant C as Combine Buffer
+
+    D-&gt;&gt;D: 计算远程 rank + slot
+    D-&gt;&gt;TMA: 发起 TMA Load (sym_buffer.map)
+    TMA-&gt;&gt;R: NVLink/RDMA 读取
+    R-&gt;&gt;L: 写入本地 L1 buffer
+    Note over L: mbarrier 同步
+    L-&gt;&gt;E: MMA + SwiGLU + Epilogue
+    E-&gt;&gt;C: TMA Store 写回远程 (sym_buffer.map)
+    Note over C: Combine 归约
+</code></pre></div>
+
+<hr />
+<h2 id="10">10. 关键差异深度分析</h2>
+<h3 id="101-mega-moe">10.1 为什么 Mega MoE 能消除三阶段?</h3>
+<p><strong>根本原因</strong>: Symmetric Memory + TMA 提供了 <strong>load-store 语义的远程访问</strong></p>
+<table>
+<thead>
+<tr>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RDMA 是 <strong>消息传递</strong> 语义</td>
+<td>Symmetric Memory 是 <strong>load/store</strong> 语义</td>
+</tr>
+<tr>
+<td>需要显式 Send/Recv 操作</td>
+<td>直接 <code>map(ptr, rank)</code> 后 TMA load/store</td>
+</tr>
+<tr>
+<td>NIC 是独立参与者</td>
+<td>TMA 集成在 GPU SM 中</td>
+</tr>
+<tr>
+<td>需要 Forwarding 解决拓扑问题</td>
+<td>UVA 统一地址空间消除拓扑差异</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102-vs-rdma">10.2 对称内存 vs 显式 RDMA 的权衡</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>显式 RDMA (DeepEP)</th>
+<th>对称内存 (Mega MoE)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>控制粒度</td>
+<td>精确 (可优化每个 packet)</td>
+<td>较粗 (依赖 TMA/NCCL)</td>
+</tr>
+<tr>
+<td>灵活性</td>
+<td>高 (可自定义 protocol)</td>
+<td>较低 (受限于 SymMem API)</td>
+</tr>
+<tr>
+<td>实现复杂度</td>
+<td>高 (三阶段 + FIFO + Warp 特化)</td>
+<td>低 (统一 load/store)</td>
+</tr>
+<tr>
+<td>性能上限</td>
+<td>高 (可极致优化)</td>
+<td>高 (TMA 硬件加速)</td>
+</tr>
+<tr>
+<td>通用性</td>
+<td>仅 MoE All-to-All</td>
+<td>通用分布式共享内存</td>
+</tr>
+</tbody>
+</table>
+<h3 id="103-mega-moe-gpu-centric">10.3 Mega MoE 仍保留的 "GPU-Centric" 特征</h3>
+<ol>
+<li><strong>Dispatch Warps 发起通信</strong>: 不是 passive receiver，而是主动 pull</li>
+<li><strong>TMA 代替 NIC</strong>: 通信引擎集成在 GPU 内</li>
+<li><strong>SM 计算远程地址</strong>: <code>sym_buffer.map</code> 在 SM 中执行</li>
+<li><strong>mbarrier 硬件同步</strong>: 不需要 CPU 介入</li>
+</ol>
+<hr />
+<h2 id="11">11. 代码结构映射表</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>DeepEP 实现</th>
+<th>Mega MoE 实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>跨 rank 发送</td>
+<td><code>IB Sending</code> Warp Group</td>
+<td><code>sym_buffer.map</code> + TMA store</td>
+</tr>
+<tr>
+<td>跨 rank 接收</td>
+<td><code>NVLink Receiving</code> Warp Group</td>
+<td><code>sym_buffer.map</code> + TMA load</td>
+</tr>
+<tr>
+<td>转发</td>
+<td><code>IB-to-NVLink Forwarding</code></td>
+<td><strong>消除</strong> (直接远程访问)</td>
+</tr>
+<tr>
+<td>流控</td>
+<td>FIFO (生产者-消费者)</td>
+<td>mbarrier (TMA 完成通知)</td>
+</tr>
+<tr>
+<td>同步</td>
+<td>Barrier + 信号</td>
+<td>nvlink_barrier + grid_sync</td>
+</tr>
+<tr>
+<td>缓冲</td>
+<td>Chunk Buffer + Receive Buffer</td>
+<td>Symmetric Buffer (Token Pool)</td>
+</tr>
+<tr>
+<td>路由</td>
+<td>Router → Dispatch Buffer</td>
+<td>Router → topk_idx → sym_buffer</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12">12. 总结</h2>
+<h3 id="121-mega-moe-deepep">12.1 Mega MoE 对 DeepEP 的继承</h3>
+<ol>
+<li><strong>GPU-Centric 通信</strong>: SM 发起通信 (不是 NIC offload)</li>
+<li><strong>NVLink + RDMA 统一</strong>: 不区分 intra/inter-node</li>
+<li><strong>Warp 特化</strong>: Dispatch / MMA / Epilogue 分离</li>
+<li><strong>异步流水线</strong>: 通信与计算重叠</li>
+</ol>
+<h3 id="122-mega-moe-deepep">12.2 Mega MoE 对 DeepEP 的革新</h3>
+<ol>
+<li><strong>Symmetric Memory 替代显式 RDMA</strong>: 用 load/store 语义替代消息传递</li>
+<li><strong>消除三阶段</strong>: 直接远程访问，无需 Forwarding</li>
+<li><strong>TMA 替代手动 Copy</strong>: 硬件加速远程 load/store</li>
+<li><strong>mbarrier 替代 FIFO</strong>: 更细粒度的生产者-消费者同步</li>
+<li><strong>Pull 模型替代 Push 模型</strong>: 消费方主动拉取，而非生产方推送</li>
+</ol>
+<h3 id="123">12.3 一句话总结</h3>
+<blockquote>
+<p><strong>DeepEP 是 "通信运行时" — 显式管理 NVLink + RDMA 三阶段流水线。Mega MoE 是 "融合运行时" — 通过 Symmetric Memory 将通信隐式融入 GEMM 计算，用 TMA load/store 替代显式 Send/Forward/Receive。</strong></p>
+</blockquote>
+<hr />
+<h2 id="_1">附录: 关键源码位置</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td><code>SymmBuffer</code> 类, <code>symm_mem.empty/rendezvous</code></td>
+</tr>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td><code>get_symm_buffer_size_for_mega_moe</code>, buffer layout</td>
+</tr>
+<tr>
+<td><code>deep_gemm/layout/sym_buffer.cuh</code></td>
+<td><code>SymBuffer::map()</code> — 跨 rank 地址映射</td>
+</tr>
+<tr>
+<td><code>deep_gemm/comm/barrier.cuh</code></td>
+<td><code>nvlink_barrier</code>, <code>grid_sync</code></td>
+</tr>
+<tr>
+<td><code>deep_gemm/layout/mega_moe.cuh</code></td>
+<td><code>Workspace</code> 结构, 内存布局</td>
+</tr>
+<tr>
+<td><code>deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>完整 kernel 实现</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>多进程测试, <code>init_dist</code> + <code>spawn</code></td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

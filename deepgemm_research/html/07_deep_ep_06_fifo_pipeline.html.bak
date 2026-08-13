@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>07 - DeepEP FIFO/Streaming Pipeline 机制深度分析: Blog 论述 vs 源码实现</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="07-deepep-fifostreaming-pipeline-blog-vs">07 - DeepEP FIFO/Streaming Pipeline 机制深度分析: Blog 论述 vs 源码实现</h1>
+<blockquote>
+<p>分析目标: 对比 Blog《DeepEP's First Principles》第 6 节 "FIFO: From Synchronous to Streaming Pipeline" 的论述与 DeepEP 源码的实际同步机制,验证其准确性。</p>
+</blockquote>
+<hr />
+<h2 id="1-blog">1. Blog 核心论述</h2>
+<p>Blog 第 6 节提出了以下核心观点:</p>
+<blockquote>
+<p><strong>Without FIFO</strong>: 前一阶段完成前, 下一阶段必须等待:<br />
+<code>Send → Barrier → Forward → Barrier → Receive</code><br />
+效率低下。</p>
+<p><strong>With FIFO</strong>: 每个阶段只关心自己的写入/读取:<br />
+<code>Send → FIFO → Forward → FIFO → Receive</code><br />
+无需等待整个 Batch。</p>
+<p><strong>FIFO 的本质</strong>: 将通信流水线从同步执行转变为流式执行(streaming execution)。</p>
+</blockquote>
+<p><strong>Blog 的关键主张</strong>:<br />
+1. FIFO 解耦了通信阶段,使流水线从同步变为流式<br />
+2. 每个阶段独立读写,无需等待整个 Batch 完成<br />
+3. 这种转变是 DeepEP 高吞吐的关键</p>
+<hr />
+<h2 id="2-legacy-internodecu">2. Legacy 内核同步模式 (internode.cu)</h2>
+<h3 id="21">2.1 架构概述</h3>
+<p>Legacy 内核 (<code>csrc/kernels/legacy/internode.cu</code>) 使用 <strong>Warp Specialization</strong> 将通信分为三类角色:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">WarpRole</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>kRDMASender,<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送</span>
+<span style="color: #BBB">    </span>kRDMASenderCoordinator,<span style="color: #3D7B7B; font-style: italic">// RDMA 发送协调</span>
+<span style="color: #BBB">    </span>kRDMAAndNVLForwarder,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// RDMA-NVL 转发</span>
+<span style="color: #BBB">    </span>kForwarderCoordinator,<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// 转发协调</span>
+<span style="color: #BBB">    </span>kNVLReceivers<span style="color: #BBB">          </span><span style="color: #3D7B7B; font-style: italic">// NVL 接收</span>
+};
+</code></pre></div>
+
+<h3 id="22-barrier_block">2.2 同步原语: barrier_block</h3>
+<p>Legacy 使用 <strong>barrier_block</strong> 进行跨阶段同步 (<code>utils.cuh:515</code>):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kSyncOnly<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>barrier_block(<span style="color: #B00040">int</span><span style="color: #666">**</span><span style="color: #BBB"> </span>barrier_signal_ptrs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>rank)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 内存 fence + block 同步</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kSyncOnly)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>memory_fence();<span style="color: #BBB">          </span><span style="color: #3D7B7B; font-style: italic">// fence.acq_rel.sys</span>
+<span style="color: #BBB">        </span>__syncthreads();<span style="color: #BBB">         </span><span style="color: #3D7B7B; font-style: italic">// block 级同步</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 原子操作: 通知其他 rank, 减去自己的信号</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>atomicAdd_system(barrier_signal_ptrs[rank]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>thread_id,<span style="color: #BBB"> </span>LEGACY_FINISHED_SUM_TAG);
+<span style="color: #BBB">        </span>atomicSub_system(barrier_signal_ptrs[thread_id]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>rank,<span style="color: #BBB"> </span>LEGACY_FINISHED_SUM_TAG);
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 轮询等待所有 rank 完成</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(barrier_signal_ptrs[rank]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>thread_id);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(__all_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>value<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>))
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">break</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 所有 rank 完成</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// timeout 检查...</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncthreads();
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: 这是典型的 <strong>Barrier 同步</strong>, 不是 FIFO!</p>
+<h3 id="23-notify_dispatch">2.3 notify_dispatch 中的同步流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. 等待所有之前的 RDMA 操作完成</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_id;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>qps_per_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>(kNumRDMARanks<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB"> </span><span style="color: #666">++</span>i)
+<span style="color: #BBB">    </span>nvshmemi_ibgda_quiet(dst_rdma_rank,<span style="color: #BBB"> </span>qp_id);
+__syncthreads();
+
+<span style="color: #3D7B7B; font-style: italic">// 2. 跨节点 barrier</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)
+<span style="color: #BBB">    </span>nvshmem_sync_with_same_gpu_idx(rdma_team);
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 节点内 barrier</span>
+barrier_block<span style="color: #666">&lt;</span>LEGACY_NUM_MAX_NVL_PEERS,<span style="color: #BBB"> </span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(barrier_signal_ptrs,<span style="color: #BBB"> </span>nvl_rank);
+
+<span style="color: #3D7B7B; font-style: italic">// ... 执行发送 ...</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 4. 再次 barrier</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">    </span>nvshmem_sync_with_same_gpu_idx(rdma_team);
+__syncthreads();
+
+<span style="color: #3D7B7B; font-style: italic">// ... NVL 操作 ...</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 5. 最终 barrier</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)
+<span style="color: #BBB">    </span>nvshmem_sync_with_same_gpu_idx(rdma_team);
+barrier_block<span style="color: #666">&lt;</span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #666">&gt;</span>(barrier_signal_ptrs,<span style="color: #BBB"> </span>nvl_rank);
+</code></pre></div>
+
+<p><strong>结论</strong>: Legacy notify 阶段使用 <strong>4 次 barrier</strong> 分隔不同操作阶段。</p>
+<h3 id="24-dispatch">2.4 dispatch 数据阶段的同步</h3>
+<p>dispatch 数据阶段使用 <strong>head/tail 指针</strong> 作为环形缓冲区:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// RDMA sender warp: 使用 head/tail 管理发送窗口</span>
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(is_token_in_rank_uint64<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>
+<span style="color: #BBB">       </span>rdma_tail_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>cached_rdma_channel_head<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>cached_rdma_channel_head<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_head.buffer(lane_id));
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// timeout 检查...</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 发送完成后, 使用锁保护更新 tail</span>
+acquire_lock(rdma_send_channel_lock<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>window<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>rdma_send_channel_window[lane_id]<span style="color: #BBB"> </span><span style="color: #666">|</span><span style="color: #BBB"> </span>(<span style="color: #666">1u</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>offset);
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(offset<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_empty_slots<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(<span style="color: #666">~</span>window)<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>__ffs(<span style="color: #666">~</span>window)<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">    </span>st_release_cta(rdma_send_channel_tail<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id,<span style="color: #BBB"> </span>latest_tail<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_empty_slots);
+<span style="color: #BBB">    </span>window<span style="color: #BBB"> </span><span style="color: #666">&gt;&gt;=</span><span style="color: #BBB"> </span>num_empty_slots;
+}
+rdma_send_channel_window[lane_id]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>window;
+release_lock(rdma_send_channel_lock<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id);
+</code></pre></div>
+
+<p><strong>关键观察</strong>: head/tail 机制确实类似 FIFO, 但这是 <strong>生产者-消费者模式</strong> 的环形缓冲区, 不是 Blog 描述的端到端流式流水线。</p>
+<h3 id="25-forwarder">2.5 Forwarder 的同步模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Forwarder 轮询等待 RDMA 数据</span>
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>src_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(src_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRDMARanks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(__shfl_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>num_tokens_to_recv_from_rdma,<span style="color: #BBB"> </span>src_rdma_rank)<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>src_rdma_rank<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>cached_rdma_channel_head<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>cached_rdma_channel_tail)
+<span style="color: #BBB">            </span>cached_rdma_channel_tail<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_acquire_sys_global(rdma_channel_tail.buffer(src_rdma_rank));
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(__shfl_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>cached_rdma_channel_tail<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>cached_rdma_channel_head,<span style="color: #BBB"> </span>src_rdma_rank))
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">break</span>;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// timeout 检查...</span>
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: Forwarder 使用 <strong>轮询 tail 指针</strong> 判断是否有新数据, 这是典型的 FIFO empty/full 检查。</p>
+<hr />
+<h2 id="3-elastic-dispatchcuh-hybrid_dispatchcuh">3. Elastic 内核同步模式 (dispatch.cuh / hybrid_dispatch.cuh)</h2>
+<h3 id="31-gpu_barrier-sm">3.1 gpu_barrier: 全局跨 SM 同步</h3>
+<p>Elastic 内核 (<code>deep_ep/include/deep_ep/common/comm.cuh</code>) 使用 <strong>gpu_barrier</strong> 进行全局同步:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsScaleupNVLink,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleupRanks,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kTag<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kDeviceBarrierTag,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kFlushStores<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kSyncAtStart<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kSyncAtEnd<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>gpu_barrier(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMA store 等待 (确保数据写入完成)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kFlushStores)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_commit();
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_wait();
+<span style="color: #BBB">        </span>__syncwarp();
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 网格级同步 (所有 SM 等待)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kSyncAtStart)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 网格级 barrier!</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 执行 scaleout/scaleup barrier</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(do_scaleup<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>do_scaleout)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 并行执行: SM 0 做 scaleup, 其他 SM 做 scaleout</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>scaleup_barrier_wo_local_sync(...);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kFlushStores)<span style="color: #BBB"> </span>
+<span style="color: #BBB">                </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>scaleout_barrier_wo_local_sync(...);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. 最终网格级同步</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kSyncAtEnd)
+<span style="color: #BBB">        </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: <code>cooperative_groups::this_grid().sync()</code> 是 <strong>网格级 barrier</strong>, 所有 SM 必须同步等待!</p>
+<h3 id="32-nvlink-barrier">3.2 NVLink barrier 实现</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kTag<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvlink_barrier_wo_local_sync(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 只使用 SM 0</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 读取当前 barrier phase</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>((<span style="color: #666">*</span>workspace.get_nvl_barrier_counter_ptr())<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">3</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>phase<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>sign<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">&gt;&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 每个 thread 原子操作信号</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>workspace.get_nvl_barrier_signal_ptr(phase),<span style="color: #BBB"> </span>thread_idx);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>red_add_rel_sys(dst_ptr,<span style="color: #BBB"> </span>sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">-1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 原子加减</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncthreads();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 增加 phase counter</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">        </span>atomicAdd(workspace.get_nvl_barrier_counter_ptr(),<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 轮询等待信号到达目标值</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>target<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>kNumRanks;
+<span style="color: #BBB">    </span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>[<span style="color: #666">=</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(workspace.get_nvl_barrier_signal_ptr(phase));
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(signal<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// barrier 完成</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// timeout 处理...</span>
+<span style="color: #BBB">    </span>});
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: NVLink barrier 使用 <strong>phase-based 原子计数 + 轮询等待</strong>, 这是典型的 barrier 实现。</p>
+<h3 id="33-nccl-gin-barrier-rdma">3.3 NCCL Gin barrier (RDMA 场景)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kTag,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kFlushStores<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>gin_barrier_wo_local_sync(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 刷新所有 QP (确保 RDMA 操作完成)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kFlushStores)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_qps;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>ncclGin(nccl_dev_comm,<span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>NCCL_GIN_RESOURCE_SHARING_CTA).flush(ncclCoopWarp());
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>(gridDim.x<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync()<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>__syncthreads();
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 使用 QP 0 做 barrier</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>team<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(std<span style="color: #666">::</span>is_same_v<span style="color: #666">&lt;</span>team_t,<span style="color: #BBB"> </span>ncclTeamTagWorld<span style="color: #666">&gt;</span>)<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">            </span>ncclTeamWorld(nccl_dev_comm)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>ncclTeamRail(nccl_dev_comm);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ncclGin<span style="color: #BBB"> </span><span style="color: #00F">gin</span>(nccl_dev_comm,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>NCCL_GIN_RESOURCE_SHARING_CTA);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 发送 signal 给所有 rank</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumThreads)
+<span style="color: #BBB">            </span>gin.signal(team,<span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>ncclGin_SignalInc{<span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>ncclGinSignal_t<span style="color: #666">&gt;</span>(rank_idx)});
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 等待所有 rank 的 signal</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>ncclGinSignal_t<span style="color: #666">&gt;</span>(i);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>shadow_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.getSignalShadowPtr(signal_idx);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>target<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">++</span>(<span style="color: #666">*</span>shadow_ptr);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">*&gt;</span>(...);
+
+<span style="color: #BBB">            </span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>([<span style="color: #666">=</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(signal_ptr);
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(signal<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// signal 到达</span>
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">// timeout 处理...</span>
+<span style="color: #BBB">            </span>});
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: NCCL barrier 使用 <strong>signal/wait 机制</strong>, 仍然是 barrier 语义。</p>
+<h3 id="34-dispatch-barrier">3.4 dispatch 内核中的 barrier 使用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch_impl 开始: 全局 barrier (kDispatchTag0)</span>
+comm<span style="color: #666">::</span>gpu_barrier<span style="color: #666">&lt;</span>kIsScaleupNVLink,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                  </span>kNumQPs,<span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span>comm<span style="color: #666">::</span>kDispatchTag0,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                  </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kSyncAtStart=true</span>
+
+<span style="color: #3D7B7B; font-style: italic">// ... 执行 dispatch 操作 ...</span>
+
+<span style="color: #3D7B7B; font-style: italic">// dispatch_impl 结束: 全局 barrier (kDispatchTag1)</span>
+comm<span style="color: #666">::</span>gpu_barrier<span style="color: #666">&lt;</span>kIsScaleupNVLink,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                  </span>kNumQPs,<span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span>comm<span style="color: #666">::</span>kDispatchTag1,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                  </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kFlushStores=true, kSyncAtStart=true</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 触发 copy epilogue kernel</span>
+cudaTriggerProgrammaticLaunchCompletion();
+</code></pre></div>
+
+<p><strong>关键观察</strong>: dispatch 内核 <strong>首尾各有一个 gpu_barrier</strong>, 这是典型的同步执行模式!</p>
+<h3 id="35-hybrid_dispatch">3.5 hybrid_dispatch 的三阶段流水线</h3>
+<p>hybrid_dispatch 实现了真正的 <strong>三阶段流水线</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 阶段 0: Notify warps - 统计 token 数量</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// atomic add 统计 expert_count / rank_count</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 全局 reduction</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 写入 scaleout rank count</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 阶段 1: Scaleout warps - RDMA 发送</span>
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA load token</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// RDMA put 到远端</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 更新 signaled_tail</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 阶段 2: Forward warps - NVLink 转发</span>
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 轮询 signaled_tail 检查新数据</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA load from scaleout_recv_buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA store to scaleup_buffer</span>
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: 三阶段通过 <strong>warp specialization</strong> 并行执行, 但阶段间存在数据依赖:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Forward warp 轮询等待 scaleout 数据</span>
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((wip_mask<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>gather(
+<span style="color: #BBB">    </span>stored_scaleout_tail_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>stored_scaleout_old_tail_idx<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>stored_finish_flag<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)))<span style="color: #BBB"> </span>{
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 等待该 rank 有数据到达 (或完成)</span>
+<span style="color: #BBB">    </span>comm<span style="color: #666">::</span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>arrived_or_finished<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">            </span>stored_scaleout_tail_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>stored_scaleout_old_tail_idx<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>stored_finish_flag<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>exchange(arrived_or_finished,<span style="color: #BBB"> </span>recv_scaleout_rank_idx))
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 数据到达</span>
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 读取新的 signaled tails</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumScaleoutRanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signaled_tail<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">                </span>workspace_layout.get_scaleout_channel_signaled_tail_ptr(channel_idx,<span style="color: #BBB"> </span>lane_idx));
+<span style="color: #BBB">            </span>math<span style="color: #666">::</span>unpack2<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(signaled_tail,<span style="color: #BBB"> </span>stored_finish_flag,<span style="color: #BBB"> </span>stored_scaleout_tail_idx);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>__syncwarp();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>;
+<span style="color: #BBB">    </span>});
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... 处理数据 ...</span>
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: 这是 <strong>生产者-消费者 FIFO</strong> 模式! Scaleout warp 生产数据, Forward warp 消费数据, 通过 signaled_tail 同步。</p>
+<hr />
+<h2 id="4-mbarrier-tma">4. mbarrier: TMA 流水线同步</h2>
+<h3 id="41-mbarrier">4.1 mbarrier 原语</h3>
+<p>DeepEP 使用 <strong>mbarrier</strong> (memory barrier) 进行 TMA load/store 之间的同步:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// ptx.cuh 中的 mbarrier 原语</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>mbarrier_init_with_fence(mbarrier<span style="color: #666">*</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>arrive_count)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(<span style="color: #BA2121">&quot;mbarrier.init.shared::cta.b64 [%1], %0;&quot;</span><span style="color: #BBB"> </span><span style="color: #666">::</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(arrive_count),<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(...));
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(<span style="color: #BA2121">&quot;fence.mbarrier_init.release.cluster;&quot;</span>);
+}
+
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>mbarrier_arrive_and_set_tx(mbarrier<span style="color: #666">*</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_bytes)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(<span style="color: #BA2121">&quot;mbarrier.arrive.expect_tx.shared::cta.b64 _, [%1], %0;&quot;</span><span style="color: #BBB"> </span><span style="color: #666">::</span><span style="color: #BBB"> </span>
+<span style="color: #BBB">                 </span><span style="color: #BA2121">&quot;r&quot;</span>(num_bytes),<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(...));
+}
+
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>mbarrier_wait_and_flip_phase(mbarrier<span style="color: #666">*</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span>arrival_phase<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>phase)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;{</span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;.reg .pred P1; </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;LAB_WAIT: </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2; </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;@P1 bra DONE; </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;bra LAB_WAIT; </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;DONE: </span><span style="color: #AA5D1F; font-weight: bold">\n\t</span><span style="color: #BA2121">&quot;</span>
+<span style="color: #BBB">        </span><span style="color: #BA2121">&quot;}&quot;</span><span style="color: #BBB"> </span><span style="color: #666">::</span><span style="color: #BA2121">&quot;r&quot;</span>(...),<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(phase),<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(<span style="color: #666">0x989680</span>));
+<span style="color: #BBB">    </span>phase<span style="color: #BBB"> </span><span style="color: #666">^=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// flip phase</span>
+}
+</code></pre></div>
+
+<h3 id="42-dispatch-mbarrier">4.2 dispatch 中的 mbarrier 使用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch_impl 中的 TMA 流水线</span>
+ptx<span style="color: #666">::</span>arrival_phase<span style="color: #BBB"> </span>phase<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>mbarrier_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>tma_buffer.get_mbarrier_ptr();
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier_init_with_fence(mbarrier_ptr,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+__syncwarp();
+
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_start;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>token_stride)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 等待 TMA store 完成</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait();
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Issue TMA load (使用 mbarrier)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_hidden_ptr(),<span style="color: #BBB"> </span>
+<span style="color: #BBB">                         </span>math<span style="color: #666">::</span>advance_ptr(x,<span style="color: #BBB"> </span>token_i64_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes),
+<span style="color: #BBB">                         </span>mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// cp.async.bulk with mbarrier</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 等待 TMA load 完成</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_wait_and_flip_phase(mbarrier_ptr,<span style="color: #BBB"> </span>phase);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 等待数据到达</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. 使用数据: TMA store 到 send buffer</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_commit();
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: mbarrier 实现了 <strong>TMA load → SMEM → TMA store</strong> 的两级流水线, 这是 <strong>生产者-消费者 FIFO</strong> 模式!</p>
+<h3 id="43-combine-mbarrier">4.3 combine 中的 mbarrier 使用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// combine_impl 中的 TMA 流水线</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_start_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>token_end_idx;<span style="color: #BBB"> </span><span style="color: #666">++</span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 等待 TMA store 完成</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait();
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. TMA load</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>load_ptr,<span style="color: #BBB"> </span>mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_wait_and_flip_phase(mbarrier_ptr,<span style="color: #BBB"> </span>phase);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. TMA store 到目标 buffer</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(master_token_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_commit();
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<hr />
+<h2 id="5-named_barrier-warp">5. named_barrier: Warp 组内同步</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// ptx.cuh</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>named_barrier(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(<span style="color: #BA2121">&quot;bar.sync %0, %1;&quot;</span><span style="color: #BBB"> </span><span style="color: #666">::</span><span style="color: #BA2121">&quot;r&quot;</span>(idx),<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;r&quot;</span>(kNumThreads));
+}
+
+<span style="color: #3D7B7B; font-style: italic">// dispatch_impl 中的使用</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNotifyBarrierIndex<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// Notify warps 内部同步</span>
+ptx<span style="color: #666">::</span>named_barrier<span style="color: #666">&lt;</span>kNumNotifyThreads<span style="color: #666">&gt;</span>(kNotifyBarrierIndex);
+
+<span style="color: #3D7B7B; font-style: italic">// 统计 expert count</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>atomicAdd_block(expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+}
+ptx<span style="color: #666">::</span>named_barrier<span style="color: #666">&lt;</span>kNumNotifyThreads<span style="color: #666">&gt;</span>(kNotifyBarrierIndex);
+
+<span style="color: #3D7B7B; font-style: italic">// 全局 reduction</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumExperts;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumNotifyThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>red_add(workspace_layout.get_notify_reduction_workspace_ptr()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>counter);
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: named_barrier 是 <strong>CTA 级 barrier</strong>, 用于 warp 组内同步。</p>
+<hr />
+<h2 id="6-nccl-signalwait">6. NCCL Signal/Wait 机制</h2>
+<h3 id="61">6.1 信号操作</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh 中的 signal 封装</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span>,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">remote_action_t</span><span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>signal(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>remote_action_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>remote_action)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>gin.signal(TEAM_WORLD_RAIL(),<span style="color: #BBB"> </span>dst_rank_idx,<span style="color: #BBB"> </span>remote_action);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// gin_barrier_wo_local_sync 中的使用</span>
+gin.signal(team,<span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>ncclGin_SignalInc{<span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>ncclGinSignal_t<span style="color: #666">&gt;</span>(rank_idx)});
+</code></pre></div>
+
+<h3 id="62">6.2 等待操作</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// gin_barrier_wo_local_sync 中的等待</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>ncclGinSignal_t<span style="color: #666">&gt;</span>(i);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>shadow_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.getSignalShadowPtr(signal_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>target<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">++</span>(<span style="color: #666">*</span>shadow_ptr);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 期望的 signal 值</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">*&gt;</span>(...);
+
+<span style="color: #BBB">    </span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>([<span style="color: #666">=</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(signal_ptr);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(signal<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// signal 到达</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// timeout 处理...</span>
+<span style="color: #BBB">    </span>});
+}
+</code></pre></div>
+
+<p><strong>关键观察</strong>: NCCL signal/wait 是 <strong>单向通知机制</strong>, 一方 signal, 另一方 wait, 这是 barrier 的基础构建块。</p>
+<hr />
+<h2 id="7">7. 同步原语对比表</h2>
+<table>
+<thead>
+<tr>
+<th>同步原语</th>
+<th>作用域</th>
+<th>语义</th>
+<th>使用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gpu_barrier</code></td>
+<td>网格级 (所有 SM)</td>
+<td>全局 barrier</td>
+<td>dispatch/combine 首尾同步</td>
+</tr>
+<tr>
+<td><code>nvlink_barrier_wo_local_sync</code></td>
+<td>SM 0 + 信号</td>
+<td>NVLink barrier</td>
+<td>节点内跨 SM 同步</td>
+</tr>
+<tr>
+<td><code>gin_barrier_wo_local_sync</code></td>
+<td>SM 0 + NCCL signal</td>
+<td>RDMA barrier</td>
+<td>跨节点同步</td>
+</tr>
+<tr>
+<td><code>named_barrier</code></td>
+<td>CTA 级</td>
+<td>Warp 组内 barrier</td>
+<td>Notify warps 内部同步</td>
+</tr>
+<tr>
+<td><code>mbarrier</code></td>
+<td>Warp 级</td>
+<td>TMA load/store 同步</td>
+<td>Token 级流水线</td>
+</tr>
+<tr>
+<td><code>cooperative_groups::this_grid().sync()</code></td>
+<td>网格级</td>
+<td>全局 barrier</td>
+<td>所有 SM 同步</td>
+</tr>
+<tr>
+<td><code>__syncthreads()</code></td>
+<td>Block 级</td>
+<td>CTA 级 barrier</td>
+<td>线程块内同步</td>
+</tr>
+<tr>
+<td><code>__syncwarp()</code></td>
+<td>Warp 级</td>
+<td>Warp 级 barrier</td>
+<td>线程束内同步</td>
+</tr>
+<tr>
+<td>head/tail 指针</td>
+<td>跨 warp/SM</td>
+<td>生产者-消费者 FIFO</td>
+<td>缓冲区管理</td>
+</tr>
+<tr>
+<td>signaled_tail</td>
+<td>跨 scaleout rank</td>
+<td>生产者-消费者 FIFO</td>
+<td>hybrid_dispatch 阶段间</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8">8. 时序图对比</h2>
+<h3 id="81-blog-without-fifo">8.1 Blog 描述的 "Without FIFO" 模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant S as Sender
+    participant F as Forwarder
+    participant R as Receiver
+
+    S-&gt;&gt;S: Send Batch
+    S-&gt;&gt;F: Barrier (等待 Send 完成)
+    F-&gt;&gt;F: Forward Batch
+    F-&gt;&gt;R: Barrier (等待 Forward 完成)
+    R-&gt;&gt;R: Receive Batch
+</code></pre></div>
+
+<h3 id="82-blog-with-fifo">8.2 Blog 描述的 "With FIFO" 模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant S as Sender
+    participant F as Forwarder
+    participant R as Receiver
+
+    loop Streaming
+        S-&gt;&gt;S: Send Chunk
+        S-&gt;&gt;F: FIFO Write
+        F-&gt;&gt;F: Forward Chunk
+        F-&gt;&gt;R: FIFO Write
+        R-&gt;&gt;R: Receive Chunk
+    end
+</code></pre></div>
+
+<h3 id="83-deepep-legacy">8.3 DeepEP Legacy 实际模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant N as Notify Warp
+    participant S as RDMA Sender
+    participant F as Forwarder
+    participant R as NVL Receiver
+
+    N-&gt;&gt;N: Count Tokens
+    N-&gt;&gt;N: Barrier (barrier_block)
+    N-&gt;&gt;S: Send Metadata
+    S-&gt;&gt;S: barrier_block
+    loop Per Token
+        S-&gt;&gt;S: Send to RDMA Buffer
+        S-&gt;&gt;F: Update tail (FIFO)
+        F-&gt;&gt;F: Poll tail (FIFO)
+        F-&gt;&gt;F: Forward to NVL Buffer
+        F-&gt;&gt;R: Update tail (FIFO)
+        R-&gt;&gt;R: Poll tail (FIFO)
+        R-&gt;&gt;R: Receive
+    end
+    R-&gt;&gt;R: barrier_block (final)
+</code></pre></div>
+
+<h3 id="84-deepep-elastic">8.4 DeepEP Elastic 实际模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant N as Notify Warp
+    participant SO as Scaleout Warp
+    participant FW as Forward Warp
+    participant RE as Receiver
+
+    Note over N,RE: gpu_barrier (kDispatchTag0)
+
+    par Parallel Execution
+        N-&gt;&gt;N: Count &amp; Reduce
+    and
+        loop Per Token
+            SO-&gt;&gt;SO: TMA Load
+            SO-&gt;&gt;SO: RDMA Put
+            SO-&gt;&gt;FW: signaled_tail++ (FIFO)
+            FW-&gt;&gt;FW: Poll signaled_tail
+            FW-&gt;&gt;FW: TMA Load/Store
+            FW-&gt;&gt;RE: NVLink Write
+        end
+    end
+
+    Note over N,RE: gpu_barrier (kDispatchTag1)
+</code></pre></div>
+
+<hr />
+<h2 id="9">9. 关键发现总结</h2>
+<h3 id="91-blog">9.1 Blog 论述的准确性评估</h3>
+<table>
+<thead>
+<tr>
+<th>Blog 主张</th>
+<th>实际实现</th>
+<th>准确性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Without FIFO: Send → Barrier → Forward → Barrier → Receive"</td>
+<td>Legacy 确实使用 barrier_block 分隔阶段</td>
+<td><strong>准确</strong></td>
+</tr>
+<tr>
+<td>"With FIFO: Send → FIFO → Forward → FIFO → Receive"</td>
+<td>部分准确: 使用 head/tail 指针管理缓冲区</td>
+<td><strong>部分准确</strong></td>
+</tr>
+<tr>
+<td>"FIFO 将同步执行转变为流式执行"</td>
+<td>部分准确: 阶段内流式, 阶段间仍然同步</td>
+<td><strong>过度简化</strong></td>
+</tr>
+<tr>
+<td>"每个阶段只关心自己的写入/读取"</td>
+<td>准确: warp specialization 实现解耦</td>
+<td><strong>准确</strong></td>
+</tr>
+<tr>
+<td>"无需等待整个 Batch"</td>
+<td>不准确: gpu_barrier 仍然等待整个 Batch</td>
+<td><strong>不准确</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="92-deepep">9.2 DeepEP 实际的同步层次</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│                    网格级 Barrier                            │
+│  gpu_barrier / cooperative_groups::this_grid().sync()       │
+│  使用场景: dispatch/combine 首尾, 阶段间大同步               │
+├─────────────────────────────────────────────────────────────┤
+│                    节点级 Barrier                            │
+│  nvlink_barrier / gin_barrier / barrier_block               │
+│  使用场景: 跨 SM 同步, 跨节点同步                            │
+├─────────────────────────────────────────────────────────────┤
+│                    Warp 组内 Barrier                         │
+│  named_barrier / __syncthreads / __syncwarp                 │
+│  使用场景: Notify warps 内部, TMA 操作前后                   │
+├─────────────────────────────────────────────────────────────┤
+│                    生产者-消费者 FIFO                        │
+│  head/tail 指针 / signaled_tail / mbarrier                  │
+│  使用场景: 缓冲区管理, Token 级流水线                        │
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="93-fifo-vs-barrier">9.3 FIFO vs Barrier 的准确理解</h3>
+<p><strong>DeepEP 实际使用的同步机制</strong>:</p>
+<ol>
+<li>
+<p><strong>阶段间 (Inter-stage)</strong>: <strong>Barrier 主导</strong><br />
+   - <code>gpu_barrier</code> 在 dispatch/combine 首尾<br />
+   - <code>barrier_block</code> 在 Legacy notify 阶段之间<br />
+   - 这些是 <strong>全局同步点</strong>, 所有 SM/warp 必须等待</p>
+</li>
+<li>
+<p><strong>阶段内 (Intra-stage)</strong>: <strong>FIFO 主导</strong><br />
+   - head/tail 指针管理环形缓冲区<br />
+   - signaled_tail 通知新数据到达<br />
+   - mbarrier 同步 TMA load/store<br />
+   - 这些是 <strong>局部同步点</strong>, 生产者-消费者解耦</p>
+</li>
+<li>
+<p><strong>Token 级</strong>: <strong>流水线并行</strong><br />
+   - mbarrier 实现 TMA load → SMEM → TMA store 流水线<br />
+   - 不同 token 的不同阶段可以重叠执行</p>
+</li>
+</ol>
+<h3 id="94-blog">9.4 Blog 论述的问题</h3>
+<ol>
+<li>
+<p><strong>过度简化</strong>: Blog 将 DeepEP 的同步机制简化为 "FIFO vs Barrier" 的二元对立, 实际上 DeepEP 是 <strong>多层混合</strong> 的同步体系。</p>
+</li>
+<li>
+<p><strong>忽略网格级 barrier</strong>: Blog 没有提到 <code>gpu_barrier</code> 和 <code>cooperative_groups::this_grid().sync()</code> 这些 <strong>全局同步点</strong>, 它们仍然是 "等待整个 Batch" 的同步操作。</p>
+</li>
+<li>
+<p><strong>混淆不同层次的 FIFO</strong>: <br />
+   - Token 级 mbarrier 流水线 (真正的流式)<br />
+   - 缓冲区 head/tail 指针 (生产者-消费者 FIFO)<br />
+   - 阶段间 barrier (同步)</p>
+</li>
+</ol>
+<p>Blog 没有区分这些不同层次的同步机制。</p>
+<ol start="4">
+<li><strong>"无需等待整个 Batch" 不准确</strong>: <br />
+   - <code>gpu_barrier</code> 要求所有 SM 同步<br />
+   - <code>barrier_block</code> 要求所有 rank 同步<br />
+   - 这些仍然是 Batch 级同步</li>
+</ol>
+<hr />
+<h2 id="10">10. 代码证据汇总</h2>
+<h3 id="101-barrier">10.1 Barrier 证据</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>代码</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>227</td>
+<td><code>cooperative_groups::this_grid().sync()</code></td>
+<td>网格级 barrier</td>
+</tr>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>89-129</td>
+<td><code>nvlink_barrier_wo_local_sync</code></td>
+<td>NVLink barrier 实现</td>
+</tr>
+<tr>
+<td><code>comm.cuh</code></td>
+<td>135-181</td>
+<td><code>gin_barrier_wo_local_sync</code></td>
+<td>NCCL barrier 实现</td>
+</tr>
+<tr>
+<td><code>utils.cuh</code></td>
+<td>515-544</td>
+<td><code>barrier_block</code></td>
+<td>Legacy barrier 实现</td>
+</tr>
+<tr>
+<td><code>ptx.cuh</code></td>
+<td>170-173</td>
+<td><code>named_barrier</code></td>
+<td>Warp 组内 barrier</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102-fifo">10.2 FIFO 证据</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>代码</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>internode.cu</code></td>
+<td>529-530</td>
+<td><code>rdma_channel_head/tail</code></td>
+<td>RDMA 缓冲区指针</td>
+</tr>
+<tr>
+<td><code>internode.cu</code></td>
+<td>557-560</td>
+<td><code>nvl_channel_head/tail</code></td>
+<td>NVL 缓冲区指针</td>
+</tr>
+<tr>
+<td><code>internode.cu</code></td>
+<td>649</td>
+<td><code>rdma_tail_idx - cached_rdma_channel_head &gt;= num_max_rdma_chunked_recv_tokens</code></td>
+<td>FIFO full 检查</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>338-351</td>
+<td><code>update_scaleout_tail</code></td>
+<td>signaled_tail 更新</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>493-526</td>
+<td>forward warp 轮询</td>
+<td>FIFO empty 检查</td>
+</tr>
+<tr>
+<td><code>ptx.cuh</code></td>
+<td>56-90</td>
+<td><code>mbarrier_*</code></td>
+<td>TMA 流水线同步</td>
+</tr>
+</tbody>
+</table>
+<h3 id="103">10.3 混合证据</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>代码</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>74-76</td>
+<td><code>gpu_barrier&lt;..., kDispatchTag0&gt;</code></td>
+<td>dispatch 起始 barrier</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>397-400</td>
+<td><code>gpu_barrier&lt;..., kDispatchTag1&gt;</code></td>
+<td>dispatch 结束 barrier</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>82-84</td>
+<td><code>gpu_barrier&lt;..., kHybridDispatchTag0&gt;</code></td>
+<td>hybrid dispatch 起始 barrier</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>663-665</td>
+<td><code>gpu_barrier&lt;..., kHybridDispatchTag1&gt;</code></td>
+<td>hybrid dispatch 结束 barrier</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="11">11. 结论</h2>
+<h3 id="111-blog">11.1 Blog 论述的评价</h3>
+<p><strong>优点</strong>:<br />
+- 正确识别了 FIFO 在解耦通信阶段中的作用<br />
+- 准确描述了生产者-消费者模式的核心思想<br />
+- 对 warp specialization 的解释清晰</p>
+<p><strong>不足</strong>:<br />
+- <strong>过度简化</strong>: 将多层同步体系简化为 "FIFO vs Barrier"<br />
+- <strong>忽略全局 barrier</strong>: 没有提到 <code>gpu_barrier</code> 等全局同步点<br />
+- <strong>"无需等待整个 Batch" 不准确</strong>: 全局 barrier 仍然是 Batch 级同步<br />
+- <strong>混淆层次</strong>: 没有区分 Token 级 FIFO、缓冲区 FIFO、阶段间 Barrier</p>
+<h3 id="112-deepep">11.2 DeepEP 同步机制的真实图景</h3>
+<p>DeepEP 的同步机制是 <strong>多层混合</strong> 的:</p>
+<ol>
+<li><strong>Token 级</strong>: mbarrier 实现真正的流式流水线</li>
+<li><strong>缓冲区级</strong>: head/tail 指针实现生产者-消费者 FIFO</li>
+<li><strong>阶段间</strong>: gpu_barrier 实现全局同步</li>
+<li><strong>跨节点</strong>: NCCL signal/wait 实现分布式同步</li>
+</ol>
+<p><strong>FIFO 和 Barrier 不是对立关系, 而是协同工作</strong>:<br />
+- FIFO 管理缓冲区, 实现阶段内流式<br />
+- Barrier 分隔阶段, 实现全局同步<br />
+- 两者共同构成 DeepEP 的高效通信流水线</p>
+<h3 id="113">11.3 对 "同步→流式" 的准确理解</h3>
+<p>Blog 的 "同步→流式" 转变应该更准确地表述为:</p>
+<blockquote>
+<p><strong>DeepEP 通过 warp specialization 和 FIFO 缓冲区, 在阶段内实现流式执行, 同时在阶段间保留必要的 barrier 同步, 形成 "阶段内流式 + 阶段间同步" 的混合执行模式。</strong></p>
+</blockquote>
+<p>这种混合模式是 DeepEP 的实际设计, 而不是简单的 "FIFO 替代 Barrier"。</p>
+<hr />
+<h2 id="_1">附录: 关键源码路径</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/impls/barrier.cuh</code></td>
+<td>Elastic barrier 入口</td>
+</tr>
+<tr>
+<td><code>comm.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td>gpu_barrier 实现</td>
+</tr>
+<tr>
+<td><code>ptx.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/common/ptx.cuh</code></td>
+<td>mbarrier/named_barrier 原语</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>Elastic dispatch 内核</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>Hybrid dispatch 内核</td>
+</tr>
+<tr>
+<td><code>combine.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>Elastic combine 内核</td>
+</tr>
+<tr>
+<td><code>internode.cu</code></td>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>Legacy dispatch/combine 内核</td>
+</tr>
+<tr>
+<td><code>utils.cuh</code></td>
+<td><code>csrc/kernels/legacy/utils.cuh</code></td>
+<td>Legacy barrier/mbarrier 原语</td>
+</tr>
+<tr>
+<td><code>handle.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/common/handle.cuh</code></td>
+<td>NCCL signal/wait 封装</td>
+</tr>
+<tr>
+<td><code>layout.cuh</code></td>
+<td><code>deep_ep/include/deep_ep/common/layout.cuh</code></td>
+<td>工作空间布局 (含 barrier 信号)</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

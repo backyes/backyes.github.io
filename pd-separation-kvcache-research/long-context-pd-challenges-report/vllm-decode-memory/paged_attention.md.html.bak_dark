@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>paged_attention.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">paged_attention.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/paged_attention.md</span> <span class="src-tag">8499 chars</span></div>
+
+<h1>Paged Attention</h1>
+
+<p>!!! warning</p>
+<p>    This is a historical document based on the [original paper for vLLM](https://arxiv.org/abs/2309.06180).</p>
+<p>    It no longer describes the code used in vLLM today.</p>
+
+<p>Currently, vLLM utilizes its own implementation of a multi-head query</p>
+<p>attention kernel (`csrc/attention/attention_kernels.cu`).</p>
+<p>This kernel is designed to be compatible with</p>
+<p>vLLM&#x27;s paged KV caches, where the key and value cache are stored in</p>
+<p>separate blocks (note that this block concept differs from the GPU</p>
+<p>thread block. So in a later document, I will refer to vLLM paged</p>
+<p>attention block as &quot;block&quot;, while refer to GPU thread block as</p>
+<p>&quot;thread block&quot;).</p>
+
+<p>To achieve high performance, this kernel relies on a specially</p>
+<p>designed memory layout and access method, specifically when threads</p>
+<p>read data from global memory to shared memory. The purpose of this</p>
+<p>document is to provide a high-level explanation of the kernel</p>
+<p>implementation step by step, aiding those who wish to learn about the</p>
+<p>vLLM multi-head query attention kernel. After going through this</p>
+<p>document, users will likely have a better understanding and feel easier</p>
+<p>to follow the actual implementation.</p>
+
+<p>Please note that this document may not cover all details, such as how</p>
+<p>to calculate the correct index for the corresponding data or the dot</p>
+<p>multiplication implementation. However, after reading this document</p>
+<p>and becoming familiar with the high-level logic flow, it should be</p>
+<p>easier for you to read the actual code and understand the details.</p>
+
+<h2>Inputs</h2>
+
+<p>The kernel function takes a list of arguments for the current thread</p>
+<p>to perform its assigned work. The three most important arguments are</p>
+<p>the input pointers `q`, `k_cache`, and `v_cache`, which point</p>
+<p>to query, key, and value data on global memory that need to be read</p>
+<p>and processed. The output pointer `out` points to global memory</p>
+<p>where the result should be written. These four pointers actually</p>
+<p>refer to multidimensional arrays, but each thread only accesses the</p>
+<p>portion of data assigned to it. I have omitted all other runtime</p>
+<p>parameters here for simplicity.</p>
+
+<pre>template&lt;typename scalar_t, int HEAD_SIZE, int BLOCK_SIZE, int NUM_THREADS, int PARTITION_SIZE = 0&gt;
+__device__ void paged_attention_kernel(
+    ... // Other side args.
+    const scalar_t* __restrict__ out,       // [num_seqs, num_heads, max_num_partitions, head_size]
+    const scalar_t* __restrict__ q,         // [num_seqs, num_heads, head_size]
+    const scalar_t* __restrict__ k_cache,   // [num_blocks, num_kv_heads, head_size/x, block_size, x]
+    const scalar_t* __restrict__ v_cache,   // [num_blocks, num_kv_heads, head_size, block_size]
+    ... // Other side args.
+)</pre>
+
+<p>There is also a list of template arguments above the function</p>
+<p>signature that are determined during compilation time. `scalar_t`</p>
+<p>represents the data type of the query, key, and value data elements,</p>
+<p>such as FP16. `HEAD_SIZE` indicates the number of elements in each</p>
+<p>head. `BLOCK_SIZE` refers to the number of tokens in each block.</p>
+<p>`NUM_THREADS` denotes the number of threads in each thread block.</p>
+<p>`PARTITION_SIZE` represents the number of tensor parallel GPUs (For</p>
+<p>simplicity, we assume this is 0 and tensor parallel is disabled).</p>
+
+<p>With these arguments, we need to perform a sequence of preparations.</p>
+<p>This includes calculating the current head index, block index, and</p>
+<p>other necessary variables. However, for now, we can ignore these</p>
+<p>preparations and proceed directly to the actual calculations. It will</p>
+<p>be easier to understand them once we grasp the entire flow.</p>
+
+<h2>Concepts</h2>
+
+<p>Just before we dive into the calculation flow, I want to describe a</p>
+<p>few concepts that are needed for later sections. However, you may</p>
+<p>skip this section and return later if you encounter any confusing</p>
+<p>terminologies.</p>
+
+<p>- **Sequence**: A sequence represents a client request. For example,</p>
+<p>  the data pointed to by `q` has a shape of</p>
+<p>  `[num_seqs, num_heads, head_size]`. That represents there are total</p>
+<p>  `num_seqs` of query sequence data are pointed by `q`. Since this</p>
+<p>  kernel is a single query attention kernel, each sequence only has one</p>
+<p>  query token. Hence, the `num_seqs` equals the total number of tokens</p>
+<p>  that are processed in the batch.</p>
+<p>- **Context**: The context consists of the generated tokens from the</p>
+<p>  sequence. For instance, `[&quot;What&quot;, &quot;is&quot;, &quot;your&quot;]` are the context</p>
+<p>  tokens, and the input query token is `&quot;name&quot;`. The model might</p>
+<p>  generate the token `&quot;?&quot;`.</p>
+<p>- **Vec**: The vec is a list of elements that are fetched and</p>
+<p>  calculated together. For query and key data, the vec size</p>
+<p>  (`VEC_SIZE`) is determined so that each thread group can fetch and</p>
+<p>  calculate 16 bytes of data at a time. For value data, the vec size</p>
+<p>  (`V_VEC_SIZE`) is determined so that each thread can fetch and</p>
+<p>  calculate 16 bytes of data at a time. For example, if the</p>
+<p>  `scalar_t` is FP16 (2 bytes) and `THREAD_GROUP_SIZE` is 2, the</p>
+<p>  `VEC_SIZE` will be 4, while the `V_VEC_SIZE` will be 8.</p>
+<p>- **Thread group**: The thread group is a small group of</p>
+<p>  threads(`THREAD_GROUP_SIZE`) that fetches and calculates one</p>
+<p>  query token and one key token at a time. Each thread handles only a</p>
+<p>  portion of the token data. The total number of elements processed by</p>
+<p>  one thread group is referred as `x`. For example, if the thread</p>
+<p>  group contains 2 threads and the head size is 8, then thread 0</p>
+<p>  handles the query and key elements at index 0, 2, 4, 6, while thread</p>
+<p>  1 handles the elements at index 1, 3, 5, 7.</p>
+<p>- **Block**: The key and value cache data in vLLM are split into</p>
+<p>  blocks. Each block stores data for a fixed number(`BLOCK_SIZE`)</p>
+<p>  of tokens at one head. Each block may contain only a portion of the</p>
+<p>  whole context tokens. For example, if the block size is 16 and the</p>
+<p>  head size is 128, then for one head, one block can store 16 * 128 =</p>
+<p>  2048 elements.</p>
+<p>- **Warp**: A warp is a group of 32 threads(`WARP_SIZE`) that</p>
+<p>  execute simultaneously on a stream multiprocessor (SM). In this</p>
+<p>  kernel, each warp processes the calculation between one query token</p>
+<p>  and key tokens of one entire block at a time (it may process multiple</p>
+<p>  blocks in multiple iterations). For example, if there are 4 warps and</p>
+<p>  6 blocks for one context, the assignment would be like warp 0 handles</p>
+<p>  the 0th, 4th blocks, warp 1 handles the 1st, 5th blocks, warp 2</p>
+<p>  handles the 2nd block and warp 3 handles the 3rd block.</p>
+<p>- **Thread block**: A thread block is a group of</p>
+<p>  threads(`NUM_THREADS`) that can access the same shared memory.</p>
+<p>  Each thread block contains multiple warps(`NUM_WARPS`), and in</p>
+<p>  this kernel, each thread block processes the calculation between one</p>
+<p>  query token and key tokens of a whole context.</p>
+<p>- **Grid**: A grid is a collection of thread blocks and defines the</p>
+<p>  shape of the collection. In this kernel, the shape is</p>
+<p>  `(num_heads, num_seqs, max_num_partitions)`. Therefore, each thread</p>
+<p>  block only handles the calculation for one head, one sequence, and</p>
+<p>  one partition.</p>
+
+<h2>Query</h2>
+
+<p>This section will introduce how query data is stored in memory and</p>
+<p>fetched by each thread. As mentioned above, each thread group fetches</p>
+<p>one query token data, while each thread itself only handles a part of</p>
+<p>one query token data. Within each warp, every thread group will fetch</p>
+<p>the same query token data, but will multiply it with different key</p>
+<p>token data.</p>
+
+<pre>const scalar_t* q_ptr = q + seq_idx * q_stride + head_idx * HEAD_SIZE;</pre>
+
+<p>![query](../assets/design/paged_attention/query.png)</p>
+
+<p>Each thread defines its own `q_ptr` which points to the assigned</p>
+<p>query token data on global memory. For example, if `VEC_SIZE` is 4</p>
+<p>and `HEAD_SIZE` is 128, the `q_ptr` points to data that contains</p>
+<p>total of 128 elements divided into 128 / 4 = 32 vecs.</p>
+
+<p>![q_vecs](../assets/design/paged_attention/q_vecs.png)</p>
+
+<pre>__shared__ Q_vec q_vecs[THREAD_GROUP_SIZE][NUM_VECS_PER_THREAD];</pre>
+
+<p>Next, we need to read the global memory data pointed to by `q_ptr`</p>
+<p>into shared memory as `q_vecs`. It is important to note that each</p>
+<p>vecs is assigned to a different row. For example, if the</p>
+<p>`THREAD_GROUP_SIZE` is 2, thread 0 will handle the 0th row vecs,</p>
+<p>while thread 1 handles the 1st row vecs. By reading the query data in</p>
+<p>this way, neighboring threads like thread 0 and thread 1 can read</p>
+<p>neighbor memory, achieving the memory coalescing to improve</p>
+<p>performance.</p>
+
+<h2>Key</h2>
+
+<p>Similar to the &quot;Query&quot; section, this section introduces memory layout</p>
+<p>and assignment for keys. While each thread group only handle one</p>
+<p>query token one kernel run, it may handle multiple key tokens across</p>
+<p>multiple iterations. Meanwhile, </p>
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>

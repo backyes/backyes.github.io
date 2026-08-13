@@ -1,0 +1,45 @@
+Deploying DeepSeek with PD Disaggregation and Large-Scale Expert Parallelism on 96 H100 GPUs
+The SGLang Team
+May 5, 2025
+
+[Key sections extracted from the page]
+
+PARALLELISM DESIGN - Attention Layers:
+- DP Attention eliminates KV cache duplication across devices, significantly reducing memory overhead
+- Memory formula: Memory = N_param/TP + (1+k) * N_hidden_state * DP
+  where N_hidden_state = n_token × n_hidden_size, N_param = n_intermediate_size × n_hidden_size
+  k is coefficient for CUDA Graph duplication overhead
+- For prefill: k=0, token size per device can exceed 2,048 → optimal TP ≤ 3
+- For decode: 128 tokens per device, k=3 → memory-optimal TP = 6
+- Lower TP degree minimizes memory usage per device; DP offers more memory-efficient scaling
+
+PARALLELISM DESIGN - Dense FFNs:
+- Use DP over TP to avoid fragmentation (intermediate dim 18,432 not divisible by 128 at high TP)
+- DP reduces communication from 2 all-reduce to 1 reduce-scatter + 1 all-gather
+
+PREFILL AND DECODE DISAGGREGATION:
+- Decode Server pre-allocates the KV cache, signaling the Prefill Server to begin forward pass
+- Once computed, KV data transfers to Decode Server for iterative token generation
+- Non-blocking transfer via background thread
+- RDMA-based transfer with queue pairs and scatter-gather elements (SGE) for non-contiguous memory
+- Flexible APIs: Mooncake, NIXL
+
+DEEPSEEK PROFILE RESULTS (Decode):
+- Batch Size: 128 (DeepSeek), 256 (SGLang default)
+- KV Cache Length: 4,989 (DeepSeek blog), 4,096 (DeepSeek profile), 2,000 (SGLang default), 4,000 (SGLang+MTP)
+- Number of Nodes: 18 (DeepSeek), 16 (DeepSeek profile), 9 (SGLang)
+- Throughput per node: 14,800 / 18,598 / 22,282 / 17,373 tokens/sec
+- Performance gains attributed to 4× larger batch sizes enabled by EP, reducing per-GPU memory consumption of model weights
+
+TWO-BATCH OVERLAP (TBO):
+- Splits a single batch into two micro-batches, overlapping computation and communication
+- Lowers peak memory usage by halving effective batch size
+- Decode speedup requires batch size > 64-128 tokens threshold
+- At 256 tokens: 25.5% speedup, 22,310 tokens/sec
+- At 32 tokens/device: -27% (negative gain)
+
+LIMITATIONS:
+- TTFT at 2-5 seconds, ITL at ~100ms
+- Limited to shorter sequences due to 96 GPUs
+- MTP not fully integrated with DP attention
+- Only supports Hopper architecture (Blackwell in progress)

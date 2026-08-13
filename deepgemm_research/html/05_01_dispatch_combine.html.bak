@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dispatch/Combine 在 DeepGEMM Mega MoE 内核中的实现与融合</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="dispatchcombine-deepgemm-mega-moe">Dispatch/Combine 在 DeepGEMM Mega MoE 内核中的实现与融合</h1>
+<h2 id="_1">概述</h2>
+<blockquote>
+<p><em>"Every MoE Layer must perform a dynamic data layout transformation."</em><br />
+—— 《Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles》§1</p>
+</blockquote>
+<p>DeepEP 将 MoE 的数据运动分解为 Dispatch（Token-major → Destination-major → Expert-major）与 Combine（Expert-major → Destination-major → Token-major）两个显式阶段。DeepGEMM 的 Mega MoE 内核在 Blackwell SM100 上将这两者<strong>全部融合进单个 GPU Kernel</strong>，借助 symmetric memory（NVLink）消除显式通信缓冲区，将"动态布局变换"转化为"直接远程读取 + 本地池化写入"。</p>
+<p>本文逐行追踪 Mega MoE 内核中 Dispatch/Combine 的实现位置、数据流拓扑、以及博客所述 3-step 变换被"坍缩"的方式。</p>
+<hr />
+<h2 id="1-dispatch-combine">1. 博客概念回顾：Dispatch / Combine 三步变换</h2>
+<p>博客 §1.1 给出的抽象模型：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Router 输出:  Token → Expert  (topk_idx, topk_weights)
+
+Dispatch:      Token-major → Destination-major → Expert-major
+Combine:       Expert-major → Destination-major → Token-major
+</code></pre></div>
+
+<p>其中三个角色的 layout 需求：<br />
+| 角色 | 期望 Layout |<br />
+|------|-------------|<br />
+| Communication | Destination-major（按目标 GPU 组织） |<br />
+| Expert GEMM | Expert-major（连续的 [M, K] 矩阵） |<br />
+| Next Layer | Token-major（按 Token 组织） |</p>
+<p>博客强调：<em>"This is not simple communication — it is a </em><em>dynamic data layout transformation</em><em>."</em></p>
+<hr />
+<h2 id="2-mega-moe-warp-role">2. Mega MoE 内核整体架构：三组 Warp Role</h2>
+<p>Mega MoE 将线程分为三组截然不同的 Warp 角色，在一个 kernel 内完成全部工作：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:356-360</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Dispatch warps: 负责 Token 拉取与布局变换</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp (tokens + SFA)</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp (weights + SFB)</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM MMA issue warp</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Epilogue warps: 负责 GEMM 后处理 + Combine</span>
+}
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Mega MoE Single Kernel&quot;
+        D[&quot;Dispatch Warps&lt;br/&gt;(Token → Expert Pool)&quot;]
+        TMA1[&quot;TMA Load Warp&lt;br/&gt;(Tokens + SFA)&quot;]
+        TMA2[&quot;TMA Load Warp&lt;br/&gt;(Weights + SFB)&quot;]
+        MMA[&quot;MMA Issue Warp&lt;br/&gt;(Tensor Core 计算)&quot;]
+        EPI[&quot;Epilogue Warps&lt;br/&gt;(SwiGLU / NVLink 回写 / Combine)&quot;]
+    end
+
+    D --&gt;|&quot;l1_token_buffer&lt;br/&gt;(Expert Pool)&quot;| TMA1
+    TMA1 --&gt;|&quot;smem_a&quot;| MMA
+    TMA2 --&gt;|&quot;smem_b&quot;| MMA
+    MMA --&gt;|&quot;TMEM accum&quot;| EPI
+    EPI --&gt;|&quot;combine_token_buffer&quot;| EPI
+    EPI --&gt;|&quot;y (Token-major)&quot;| OUT[&quot;Output&quot;]
+</code></pre></div>
+
+<hr />
+<h2 id="3-dispatch-dispatch-warps">3. Dispatch 在哪里？——融合进 Dispatch Warps</h2>
+<h3 id="31-dispatch-kernel">3.1 结论：Dispatch 不是独立步骤，而是 kernel 内的前半段</h3>
+<p>在 DeepEP 中，Dispatch 是一个独立的通信 kernel，显式产出 Dispatch Buffer（Destination-major）和 Expert Buffer（Expert-major）。</p>
+<p>在 Mega MoE 中，<strong>Dispatch 被坍缩为 kernel 内 Dispatch Warps 的一段协作逻辑</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:356-649</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumDispatchRegisters<span style="color: #666">&gt;</span>();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 读取 topk_idx，按 expert 计数</span>
+<span style="color: #BBB">    </span>read_topk_idx([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_topk_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">       </span>atomicAdd_block(smem_expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">    </span>});
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 全局 offset 分配 (atomicAdd on workspace)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... ptx::atomic_add(workspace.get_expert_send_count_ptr(i), send_value)</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 将 src_token_topk_idx 写入远端 rank 的 workspace (NVLink)</span>
+<span style="color: #BBB">    </span>read_topk_idx([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_topk_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>atomicAdd_block(smem_expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">            </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumExpertsPerRank,<span style="color: #BBB"> </span>sym_buffer.rank_idx,<span style="color: #BBB"> </span>dst_slot_idx);
+<span style="color: #BBB">        </span><span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_topk_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 远端写入！</span>
+<span style="color: #BBB">    </span>});
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. Grid sync + NVLink barrier (跨 rank 同步)</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 5. Pull token data: 从远端 rank 的 input_token_buffer 读到本地 l1_token_buffer</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">        </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">        </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                       </span>current_rank_in_expert_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 远端地址</span>
+<span style="color: #BBB">        </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 6. 存储 topk_weights 与 src_metadata (供 Combine 使用)</span>
+<span style="color: #BBB">    </span><span style="color: #666">*</span>workspace.get_token_src_metadata_ptr(pool_token_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">        </span>{current_rank_in_expert_idx,<span style="color: #BBB"> </span>src_token_idx,<span style="color: #BBB"> </span>src_topk_idx};
+}
+</code></pre></div>
+
+<h3 id="32-dispatch">3.2 Dispatch 的数据流（坍缩版本）</h3>
+<p>博客的 3-step 变换在 Mega MoE 中被<strong>坍缩为 1 步</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;DeepEP (3步显式)&quot;
+        A1[&quot;Token Buffer&lt;br/&gt;(Token-major)&quot;]
+        A2[&quot;Dispatch Buffer&lt;br/&gt;(Destination-major)&quot;]
+        A3[&quot;Expert Buffer&lt;br/&gt;(Expert-major)&quot;]
+        A1 --&gt; A2 --&gt; A3
+    end
+
+    subgraph &quot;Mega MoE (1步坍缩)&quot;
+        B1[&quot;远端 input_token_buffer&lt;br/&gt;(Token-major)&quot;]
+        B2[&quot;本地 l1_token_buffer&lt;br/&gt;(Expert Pool / Expert-major)&quot;]
+        B1 --&gt;|&quot;TMA Load + symmetric memory&quot;| B2
+    end
+</code></pre></div>
+
+<p><strong>关键洞察</strong>：Mega MoE 完全<strong>跳过了 Destination-major 中间缓冲区</strong>。Dispatch Warps 直接从远端 rank 的 Token-major buffer（<code>input_token_buffer</code>）通过 NVLink TMA load 写入本地按 Expert 分块的 pool buffer（<code>l1_token_buffer</code>）。"Destination" 信息被编码在：<br />
+- 远端 rank 选择：<code>sym_buffer.map(ptr, dst_rank_idx)</code><br />
+- 本地 Expert 池偏移：<code>expert_pool_block_offset * BLOCK_M + token_idx_in_expert</code></p>
+<hr />
+<h2 id="4-token-expert-destination">4. Token → Expert → Destination 变换的具体实现</h2>
+<h3 id="41-topk_idx">4.1 topk_idx 的双重作用</h3>
+<p><code>topk_idx</code> 是 Router 输出的 Token→Expert 映射，在 Mega MoE 中被两个阶段消费：</p>
+<p><strong>Dispatch 阶段</strong>（决定 Token 从哪来）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:372-376</span>
+expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>__ldg(input_topk_idx_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx));
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">    </span>process(i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx,<span style="color: #BBB"> </span>expert_idx);
+</code></pre></div>
+
+<p><strong>Combine 阶段</strong>（决定结果写回哪）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1183-1187</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_metadata<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_token_src_metadata_ptr(m_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>m_idx_in_block);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.rank_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>dst_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.token_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>dst_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.topk_idx;
+</code></pre></div>
+
+<h3 id="42-topk_weights">4.2 topk_weights 的作用</h3>
+<p><code>topk_weights</code> 在 L1 epilogue 中被用于<strong>加权 SwiGLU 输出</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:984-1011</span>
+<span style="color: #3D7B7B; font-style: italic">// Apply SwiGLU: silu(gate) * up</span>
+gate<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__fmul2_rn(gate,<span style="color: #BBB"> </span>{math<span style="color: #666">::</span>fast_rcp(denom.x),<span style="color: #BBB"> </span>math<span style="color: #666">::</span>fast_rcp(denom.y)});
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>up<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__bfloat1622float2(bf16_up);
+swiglu_values[i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>k]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__fmul2_rn(__fmul2_rn(gate,<span style="color: #BBB"> </span>up),<span style="color: #BBB"> </span>weights);
+<span style="color: #3D7B7B; font-style: italic">//                                                              ^^^^^^</span>
+<span style="color: #3D7B7B; font-style: italic">//                                            来自 topk_weights 的 gate weight</span>
+</code></pre></div>
+
+<p>这对应博客 §1.2 中的语义恢复：</p>
+<blockquote>
+<p><em>"Output(T0) = 0.73 × Expert2(T0) + 0.27 × Expert7(T0)"</em></p>
+</blockquote>
+<p>在 Mega MoE 中，这个权重被<strong>提前应用到 L1 输出</strong>（per-expert 加权），而 L2 输出到 combine buffer 时是 BF16 无权重，最终 Combine 只做 topk 累加。</p>
+<hr />
+<h2 id="5-combine-epilogue-warps">5. Combine 在哪里？——融合进 Epilogue Warps</h2>
+<h3 id="51-combine">5.1 Combine 的两阶段实现</h3>
+<p><strong>阶段 A：L2 Epilogue 将结果写入远端 combine buffer</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1196-1202</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>combine_token_buffer.get_rank_buffer(dst_topk_idx)
+<span style="color: #BBB">                       </span>.get_data_buffer(token_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;</span>(...);
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// NVLink 写入远端</span>
+</code></pre></div>
+
+<p><strong>阶段 B：本地 Combine 累加 + 写回 Token-major 输出</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1226-1356</span>
+<span style="color: #3D7B7B; font-style: italic">// Combine: reduce top-k results and write back</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>epilogue_warp_idx;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 读取 topk_idx 确定该 token 有几个 expert 贡献</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>stored_topk_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(__ldg(input_topk_idx_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()
+<span style="color: #BBB">                               </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 遍历 topk，从 combine_token_buffer[slot_idx] 加载并累加</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>chunk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>float2<span style="color: #BBB"> </span>reduced[kNumUint4PerLane<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumElemsPerUint4]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{};
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(do_reduce)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// Prefetch next top-k</span>
+<span style="color: #BBB">            </span>do_reduce<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>move_mask_and_load(load_stage_idx<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// Accumulate</span>
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumUint4PerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>j)
+<span style="color: #BBB">                </span>ptx<span style="color: #666">::</span>accumulate(reduced[j<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumElemsPerUint4<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>l],<span style="color: #BBB"> </span>bf16_values[l]);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Cast to BF16, TMA store 到 y[token_idx] (Token-major)</span>
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">            </span>math<span style="color: #666">::</span>advance_ptr(y,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(token_idx)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...),
+<span style="color: #BBB">            </span>combine_store_buffer,<span style="color: #BBB"> </span>kNumChunkBytes);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="52-combine">5.2 Combine 数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;Combine Phase A: L2 Epilogue → Remote Combine Buffer&quot;
+        L2[&quot;L2 GEMM Output&lt;br/&gt;(本地 Expert Pool)&quot;]
+        L2 --&gt;|&quot;STSM + TMA Store&quot;| CB[&quot;combine_token_buffer&lt;br/&gt;[topk, num_tokens] BF16&lt;br/&gt;via NVLink to remote rank&quot;]
+    end
+
+    subgraph &quot;Combine Phase B: Local Reduction → Token-major Output&quot;
+        CB --&gt;|&quot;TMA Load&quot;| ACC[&quot;Accumulate topk&lt;br/&gt;in float registers&quot;]
+        ACC --&gt;|&quot;Cast BF16 + TMA Store&quot;| Y[&quot;y[token_idx]&lt;br/&gt;(Token-major)&quot;]
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="6-symmetric-memory">6. Symmetric Memory 如何替代显式通信</h2>
+<h3 id="61">6.1 核心机制</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sym_buffer.cuh:34-37</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ptr_t</span><span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+}
+</code></pre></div>
+
+<p>每个 GPU 持有一份 symmetric buffer，通过 <code>sym_buffer.map(ptr, dst_rank_idx)</code> 将本地指针映射到远端 rank 的 NVLink 可访问地址。</p>
+<h3 id="62-deepep">6.2 对比 DeepEP 的通信模型</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通信缓冲区</td>
+<td>Dispatch Buffer / Receive Buffer / Expert Buffer</td>
+<td>无独立缓冲区</td>
+</tr>
+<tr>
+<td>通信原语</td>
+<td>显式 all-to-All / RDMA</td>
+<td><code>sym_buffer.map()</code> + TMA load/store</td>
+</tr>
+<tr>
+<td>同步</td>
+<td>FIFO + Barrier</td>
+<td>NVLink barrier (<code>nvlink_barrier</code>)</td>
+</tr>
+<tr>
+<td>数据粒度</td>
+<td>Chunk（聚合后发送）</td>
+<td>单 Token TMA load</td>
+</tr>
+</tbody>
+</table>
+<p>博客 §4.3 描述的 <em>"GPU-centric communication fabric: NVLink + RDMA + GPU SM together form the data path"</em> 在 Mega MoE 中被推向极致：<strong>SM 直接执行 TMA 指令访问远端显存</strong>，无需独立通信 kernel。</p>
+<h3 id="63-nvlink">6.3 三次 NVLink 同步点</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:430-436</span>
+comm<span style="color: #666">::</span>nvlink_barrier<span style="color: #666">&lt;</span>kNumRanks,<span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kNumDispatchThreads,
+<span style="color: #BBB">                     </span>kDispatchGridSyncIndex,<span style="color: #BBB"> </span>kBeforeDispatchPullBarrierTag<span style="color: #666">&gt;</span>(...);
+
+<span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:643-649</span>
+comm<span style="color: #666">::</span>nvlink_barrier<span style="color: #666">&lt;</span>kNumRanks,<span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kNumDispatchThreads,
+<span style="color: #BBB">                     </span>kDispatchGridSyncIndex,<span style="color: #BBB"> </span>kAfterWorkspaceCleanBarrierTag<span style="color: #666">&gt;</span>(...);
+
+<span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1217-1221</span>
+comm<span style="color: #666">::</span>nvlink_barrier<span style="color: #666">&lt;</span>kNumRanks,<span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kNumEpilogueThreads,
+<span style="color: #BBB">                     </span>kEpilogueGridSyncIndex,<span style="color: #BBB"> </span>kBeforeCombineReduceBarrierTag<span style="color: #666">&gt;</span>(...);
+</code></pre></div>
+
+<p>对应三个阶段的跨 rank 同步：<br />
+1. <strong>kBeforeDispatchPullBarrierTag</strong>：确保所有 rank 写完 src_token_topk_idx 后再开始 pull<br />
+2. <strong>kAfterWorkspaceCleanBarrierTag</strong>：确保 workspace 清理完成后再进入 epilogue<br />
+3. <strong>kBeforeCombineReduceBarrierTag</strong>：确保所有 rank 写完 combine buffer 后再开始 reduce</p>
+<hr />
+<h2 id="7-3-step">7. 博客 3-step 变换的坍缩分析</h2>
+<h3 id="71">7.1 变换路径对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;DeepEP: 显式 3-step&quot;
+        direction TB
+        T1[&quot;Token Buffer&lt;br/&gt;Token-major&quot;]
+        D1[&quot;Dispatch Buffer&lt;br/&gt;Destination-major&quot;]
+        E1[&quot;Expert Buffer&lt;br/&gt;Expert-major&quot;]
+        T1 -- &quot;Step 1: 按目标 GPU 分组&quot; --&gt; D1
+        D1 -- &quot;Step 2: 按 Expert 分组&quot; --&gt; E1
+    end
+
+    subgraph &quot;Mega MoE: 坍缩 1-step&quot;
+        direction TB
+        T2[&quot;远端 input_token_buffer&lt;br/&gt;Token-major&quot;]
+        E2[&quot;本地 l1_token_buffer&lt;br/&gt;Expert Pool&lt;br/&gt;(Expert-major)&quot;]
+        T2 -- &quot;直接 TMA Load&lt;br/&gt;+ sym_buffer.map&quot; --&gt; E2
+    end
+</code></pre></div>
+
+<h3 id="72">7.2 为什么可以坍缩？</h3>
+<ol>
+<li><strong>Symmetric memory 消除了"Destination"的物理边界</strong>：远端 Token buffer 可通过 NVLink 直接访问，无需先搬到本地</li>
+<li><strong>TMA 硬件支持 2D 跨步加载</strong>：可以直接从远端 Token-major buffer 按 <code>src_token_idx</code> 索引加载，无需中间转置</li>
+<li><strong>Expert Pool 布局天然是 Expert-major</strong>：<code>l1_token_buffer</code> 按 <code>[num_max_pool_tokens, hidden]</code> 组织，每个 Expert 占据连续的 <code>ceil_div(num_tokens, BLOCK_M) * BLOCK_M</code> 个 slot</li>
+</ol>
+<h3 id="73">7.3 坍缩后的代价转移</h3>
+<table>
+<thead>
+<tr>
+<th>被消除的</th>
+<th>新增的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dispatch Buffer 分配</td>
+<td>Workspace 元数据（expert count, src_token_topk_idx）</td>
+</tr>
+<tr>
+<td>Destination-major 中间布局</td>
+<td><code>sym_buffer.map()</code> 地址计算</td>
+</tr>
+<tr>
+<td>显式通信 kernel 启动开销</td>
+<td>NVLink barrier 同步</td>
+</tr>
+<tr>
+<td>多次 HBM 读写</td>
+<td>TMA 直传（远端 HBM → 本地 SMEM）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-mega-moe-vs-deepep">8. 什么被融合了？Mega MoE vs DeepEP 对比</h2>
+<h3 id="81">8.1 融合全景图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;DeepEP (多 kernel)&quot;
+        D1[&quot;Dispatch&lt;br/&gt;Kernel&quot;]
+        C1[&quot;Communicate&lt;br/&gt;(NVLink/RDMA)&quot;]
+        G1[&quot;Expert GEMM&lt;br/&gt;Kernel&quot;]
+        CO1[&quot;Combine&lt;br/&gt;Kernel&quot;]
+        D1 --&gt; C1 --&gt; G1 --&gt; CO1
+    end
+
+    subgraph &quot;Mega MoE (单 kernel)&quot;
+        D2[&quot;Dispatch Warps&quot;]
+        G2[&quot;MMA Warps&lt;br/&gt;(L1 GEMM + SwiGLU + L2 GEMM)&quot;]
+        CO2[&quot;Epilogue Warps&lt;br/&gt;(Combine)&quot;]
+        D2 --&gt; G2 --&gt; CO2
+    end
+</code></pre></div>
+
+<h3 id="82">8.2 详细功能对照</h3>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Token → Expert 映射</td>
+<td>Dispatch kernel 显式排序</td>
+<td>Dispatch Warps 直接 pull</td>
+</tr>
+<tr>
+<td>跨节点通信</td>
+<td>RDMA all-to-All</td>
+<td><code>sym_buffer.map()</code> TMA</td>
+</tr>
+<tr>
+<td>Expert GEMM</td>
+<td>独立 GEMM kernel</td>
+<td>MMA Warps 内联</td>
+</tr>
+<tr>
+<td>激活函数</td>
+<td>独立 SwiGLU kernel</td>
+<td>L1 Epilogue 内联</td>
+</tr>
+<tr>
+<td>Expert → Token 恢复</td>
+<td>Combine kernel 显式 reduce</td>
+<td>Epilogue Warps 内联</td>
+</tr>
+<tr>
+<td>通信-计算重叠</td>
+<td>Chunk 流水线</td>
+<td>Warp 角色间 barrier 同步</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83">8.3 关键代码位置索引</h3>
+<table>
+<thead>
+<tr>
+<th>博客概念</th>
+<th>Mega MoE 代码位置</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Token-major input</td>
+<td><code>input_token_buffer</code> (line 107-110)</td>
+<td>FP8, <code>[num_max_tokens_per_rank, hidden]</code></td>
+</tr>
+<tr>
+<td>topk_idx 读取</td>
+<td><code>read_topk_idx</code> lambda (line 363-380)</td>
+<td>Dispatch Warps 消费</td>
+</tr>
+<tr>
+<td>Expert 计数</td>
+<td><code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code> (line 384)</td>
+<td>Counting sort 的 count 阶段</td>
+</tr>
+<tr>
+<td>全局 offset</td>
+<td><code>ptx::atomic_add(workspace.get_expert_send_count_ptr(i), ...)</code> (line 393)</td>
+<td>Prefix sum + scatter</td>
+</tr>
+<tr>
+<td>远端写入</td>
+<td><code>*sym_buffer.map(dst_ptr, dst_rank_idx) = token_topk_idx</code> (line 403)</td>
+<td>NVLink 直接写入</td>
+</tr>
+<tr>
+<td>Token pull</td>
+<td><code>ptx::tma_load_1d(pull_buffer, sym_buffer.map(...), ...)</code> (line 546-550)</td>
+<td>远端 Token → 本地 SMEM</td>
+</tr>
+<tr>
+<td>Expert Pool 存储</td>
+<td><code>ptx::tma_store_1d(l1_token_buffer.get_data_buffer(pool_token_idx), ...)</code> (line 585-587)</td>
+<td>SMEM → 本地 Expert Pool</td>
+</tr>
+<tr>
+<td>L1 GEMM</td>
+<td><code>ptx::SM100_MMA_MXF8F6F4_2x1SM_SS::fma(...)</code> (line 853-856)</td>
+<td>Tensor Core</td>
+</tr>
+<tr>
+<td>SwiGLU</td>
+<td><code>swiglu_values[i * 2 + k] = __fmul2_rn(__fmul2_rn(gate, up), weights)</code> (line 1011)</td>
+<td>L1 Epilogue</td>
+</tr>
+<tr>
+<td>L2 GEMM</td>
+<td>同上 MMA issue (line 820-864)</td>
+<td>第二层 GEMM</td>
+</tr>
+<tr>
+<td>Combine buffer 写入</td>
+<td><code>*sym_buffer.map(dst_ptr, dst_rank_idx) = packed</code> (line 1202)</td>
+<td>NVLink 回写</td>
+</tr>
+<tr>
+<td>Combine reduce</td>
+<td><code>ptx::accumulate(reduced[...], bf16_values[l])</code> (line 1321)</td>
+<td>topk 累加</td>
+</tr>
+<tr>
+<td>Token-major 输出</td>
+<td><code>ptx::tma_store_1d(math::advance_ptr(y, token_idx * kNumHiddenBytes), ...)</code> (line 1349-1350)</td>
+<td>最终输出</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9">9. 核心结论</h2>
+<h3 id="91-dispatchcombine">9.1 Dispatch/Combine 的命运</h3>
+<blockquote>
+<p><em>"Dispatch performs: Token-major → Destination-major → Expert-major"</em></p>
+</blockquote>
+<p>在 Mega MoE 中，这个 3-step 变换被<strong>坍缩为 1 步</strong>：<br />
+- <strong>Token-major → Expert-major</strong>：通过 <code>sym_buffer.map()</code> 直接远端 Token 读取 + 本地 Expert Pool 写入<br />
+- <strong>Destination-major 被完全消除</strong>：不再存在按 GPU 分组的中间缓冲区，"Destination" 被编码在 NVLink 地址映射中</p>
+<h3 id="92">9.2 融合的本质</h3>
+<p>Mega MoE 的融合不是简单的"把多个 kernel 拼在一起"，而是<strong>利用 symmetric memory 重新定义了数据所有权</strong>：</p>
+<ol>
+<li><strong>数据不再"移动"，而是"被访问"</strong>：Token 留在原 rank 的 buffer 中，远端 SM 通过 TMA 直接读取</li>
+<li><strong>布局变换不再"分步执行"，而是"即时计算"</strong>：从 Token-major 到 Expert-major 的映射在 Dispatch Warps 的寄存器中完成</li>
+<li><strong>通信不再"独立阶段"，而是"计算 kernel 的内存操作"</strong>：NVLink barrier 替代了显式通信 kernel 的启动/同步</li>
+</ol>
+<h3 id="93">9.3 与博客论点的呼应</h3>
+<blockquote>
+<p><em>"DeepEP represents MoE systems' evolution from 'communication optimization' to 'dataflow execution.'"</em> (§10)</p>
+</blockquote>
+<p>Mega MoE 延续并深化了这一演化：<br />
+- DeepEP：将通信优化为 <strong>dataflow pipeline</strong>（Chunk → FIFO → Warp Specialization）<br />
+- Mega MoE：将 dataflow 进一步融合为 <strong>single-kernel dataflow execution</strong>（symmetric memory + TMA + Warp Role）</p>
+<p>博客 §9 的总结精准预见了这一方向：</p>
+<blockquote>
+<p><em>"System trends are further fusing Communication + Compute. In DeepGEMM, Mega MoE Kernel targets Blackwell SM100, fusing: Token Routing → Dispatch → Linear1 → Activation → Linear2 → Combine"</em></p>
+</blockquote>
+<hr />
+<h2 id="_2">附录：关键数据结构布局</h2>
+<h3 id="a1-symmetric-buffer-rank">A.1 Symmetric Buffer 布局（每个 rank 一份）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│ Workspace (barrier, expert count, src_token_topk_idx, ...)  │
+├─────────────────────────────────────────────────────────────┤
+│ input_token_buffer    [num_max_tokens_per_rank, hidden]     │  ← Token-major (FP8)
+├─────────────────────────────────────────────────────────────┤
+│ input_sf_buffer       [num_max_tokens_per_rank, hidden/128] │
+├─────────────────────────────────────────────────────────────┤
+│ input_topk_idx        [num_max_tokens_per_rank, num_topk]   │
+├─────────────────────────────────────────────────────────────┤
+│ input_topk_weights    [num_max_tokens_per_rank, num_topk]   │
+├─────────────────────────────────────────────────────────────┤
+│ l1_token_buffer       [num_max_pool_tokens, hidden]         │  ← Expert Pool (FP8)
+├─────────────────────────────────────────────────────────────┤
+│ l1_sf_buffer          [num_padded_sf_pool_tokens, hidden/128│
+├─────────────────────────────────────────────────────────────┤
+│ l1_topk_weights       [num_max_pool_tokens, 1]              │
+├─────────────────────────────────────────────────────────────┤
+│ l2_token_buffer       [num_max_pool_tokens, intermediate]   │  ← L1 输出 / L2 输入
+├─────────────────────────────────────────────────────────────┤
+│ l2_sf_buffer          [num_padded_sf_pool_tokens, ...]      │
+├─────────────────────────────────────────────────────────────┤
+│ combine_token_buffer  [num_topk, num_max_tokens_per_rank]   │  ← Combine 中间结果 (BF16)
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="a2-expert-pool">A.2 Expert Pool 内部布局</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>l1_token_buffer (Expert-major pool):
+┌──────────────────────────────────────────┐
+│ Expert 0: token_0, token_1, ..., token_n │  ← pool_block_offset = 0
+│ Expert 1: token_0, token_1, ..., token_m │  ← pool_block_offset = ceil_div(n, BLOCK_M)
+│ Expert 2: ...                            │
+│ ...                                      │
+└──────────────────────────────────────────┘
+每个 Expert 的 slot 数对齐到 BLOCK_M（padding 用于 TMA 对齐）
+</code></pre></div>
+
+<hr />
+<p><em>分析基于 DeepGEMM 源码（commit 待确认）与博客《Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles》</em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

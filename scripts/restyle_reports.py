@@ -51,29 +51,33 @@ REPORT_DIRS = [
     "vllm_research",
 ]
 
-# Directories to completely exclude from restyling (keep original warm-paper styling)
-# 所有报告都已统一为暖纸色风格，全部排除 Notion restyle
+# 完全停用 Notion 风格 - 不再对任何报告应用 restyle
+# 所有报告使用暖纸色风格（Libre Baskerville + Manrope + 墨绿主题）
 EXCLUDE_DIRS = [
-    "umdk",
-    "deep-ep",
-    "deepepv2",
-    "vllm_research/vllm_analysis",
-    "pd-separation",
-    "mlsys2026",
-    "deepseek-mtp",
-    "moe-clos",
-    "generative-rec",
-    "sparse-clos",
-    "ai-supernode-bus",
-    "supernode-metrics",
-    "mtp-survey",
     "3dls",
-    "space-ecom",
-    "pd-routing",
-    "trillium",
-    "spacex",
+    "ai-supernode-bus",
+    "amd-latest-tech-2026",
+    "deep-ep",
+    "deepseek-mtp",
+    "deepepv2",
+    "generative-rec",
     "hbm-cxl",
     "inference-community",
+    "mlsys2026",
+    "moe-clos",
+    "mtp-survey",
+    "nvidia-specs-research",
+    "pd-routing",
+    "pd-separation",
+    "space-ecom",
+    "spacex",
+    "sparse-clos",
+    "supernode-metrics",
+    "trillium",
+    "umdk",
+    "vllm_research/vllm_analysis",
+    "ai-supernode-bus",
+    "deepgemm_research",
 ]
 
 # External CSS hosts — files with <link rel="stylesheet"> to these are scraped
@@ -258,6 +262,9 @@ def discover_files() -> list:
 # Main                                                                        #
 # --------------------------------------------------------------------------- #
 def main():
+    print("Notion restyle 已停用 - 所有报告使用暖纸色风格")
+    return
+    # --- 以下代码保留但不再执行 ---
     ap = argparse.ArgumentParser(
         description="Batch-apply Notion style to Survey-by-AI report HTML files."
     )

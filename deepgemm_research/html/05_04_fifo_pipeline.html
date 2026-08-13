@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FIFO Pipeline Analysis: From DeepEP's Streaming Concept to Mega MoE's Implementation · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">FIFO Pipeline Analysis: From D</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#fifo-pipeline-analysis-from-deepeps-streaming-conc" class="toc-h1">FIFO Pipeline Analysis: From DeepEP's Streaming Concept to Mega MoE's Implementation</a></li><li><a href="#1-tldr" class="toc-h2">1. TL;DR</a></li><li><a href="#2-博客核心概念回顾fifo-的流式本质" class="toc-h2">2. 博客核心概念回顾：FIFO 的流式本质</a></li><li><a href="#3-mega-moe-的-pipeline-架构" class="toc-h2">3. Mega MoE 的 Pipeline 架构</a></li><li><a href="#31-整体-pipeline-结构" class="toc-h3">3.1 整体 Pipeline 结构</a></li><li><a href="#32-warp-specialization-角色分配" class="toc-h3">3.2 Warp Specialization 角色分配</a></li><li><a href="#4-mega-moe-中的fifo机制" class="toc-h2">4. Mega MoE 中的"FIFO"机制</a></li><li><a href="#41-不是显式-fifo而是-mbarrier-based-producer-consumer" class="toc-h3">4.1 不是显式 FIFO，而是 mbarrier-based Producer-Consumer</a></li><li><a href="#42-producer-consumer-协议等效-fifo" class="toc-h3">4.2 Producer-Consumer 协议（等效 FIFO）</a></li><li><a href="#43-这就是-fifo" class="toc-h3">4.3 这就是 FIFO！</a></li><li><a href="#5-stage-解耦机制详解" class="toc-h2">5. Stage 解耦机制详解</a></li><li><a href="#51-dispatch--linear1-的解耦" class="toc-h3">5.1 Dispatch → Linear1 的解耦</a></li><li><a href="#52-linear1--linear2-的解耦" class="toc-h3">5.2 Linear1 → Linear2 的解耦</a></li><li><a href="#53-linear2--combine-的解耦" class="toc-h3">5.3 Linear2 → Combine 的解耦</a></li><li><a href="#6-barriercuh-的角色分析" class="toc-h2">6. barrier.cuh 的角色分析</a></li><li><a href="#61-两个核心函数" class="toc-h3">6.1 两个核心函数</a></li><li><a href="#62-grid_syncsm-间全局同步" class="toc-h3">6.2 grid_sync：SM 间全局同步</a></li><li><a href="#63-nvlink_barrier跨-rank-同步" class="toc-h3">6.3 nvlink_barrier：跨 Rank 同步</a></li><li><a href="#64-barriercuh-的使用场景" class="toc-h3">6.4 barrier.cuh 的使用场景</a></li><li><a href="#7-同步原语全景" class="toc-h2">7. 同步原语全景</a></li><li><a href="#71-同步原语使用总结" class="toc-h3">7.1 同步原语使用总结</a></li><li><a href="#8-无需等待整个-batch的流式行为" class="toc-h2">8. "无需等待整个 Batch"的流式行为</a></li><li><a href="#81-证据一per-token-粒度-dispatch" class="toc-h3">8.1 证据一：Per-Token 粒度 Dispatch</a></li><li><a href="#82-证据二per-block-粒度-gemm-启动" class="toc-h3">8.2 证据二：Per-Block 粒度 GEMM 启动</a></li><li><a href="#83-证据三per-n-block-粒度-l2-启动" class="toc-h3">8.3 证据三：Per-N-Block 粒度 L2 启动</a></li><li><a href="#84-流式行为总结" class="toc-h3">8.4 流式行为总结</a></li><li><a href="#9-symmetric-memory-如何改变-fifo-模型" class="toc-h2">9. Symmetric Memory 如何改变 FIFO 模型</a></li><li><a href="#91-deepep-的显式-fifo-模型" class="toc-h3">9.1 DeepEP 的显式 FIFO 模型</a></li><li><a href="#92-mega-moe-的-symmetric-memory-模型" class="toc-h3">9.2 Mega MoE 的 Symmetric Memory 模型</a></li><li><a href="#93-对比总结" class="toc-h3">9.3 对比总结</a></li><li><a href="#10-完整-pipeline-数据流图" class="toc-h2">10. 完整 Pipeline 数据流图</a></li><li><a href="#11-核心结论" class="toc-h2">11. 核心结论</a></li><li><a href="#111-mega-moe-是否使用了-fifo" class="toc-h3">11.1 Mega MoE 是否使用了 FIFO？</a></li><li><a href="#112-stage-解耦是同步还是流式" class="toc-h3">11.2 Stage 解耦是同步还是流式？</a></li><li><a href="#113-barriercuh-的角色" class="toc-h3">11.3 barrier.cuh 的角色</a></li><li><a href="#114-symmetric-memory-对-fifo-模型的影响" class="toc-h3">11.4 Symmetric Memory 对 FIFO 模型的影响</a></li><li><a href="#115-与博客概念的映射" class="toc-h3">11.5 与博客概念的映射</a></li><li><a href="#12-关键代码索引" class="toc-h2">12. 关键代码索引</a></li><li><a href="#13-参考" class="toc-h2">13. 参考</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="fifo-pipeline-analysis-from-deepeps-streaming-concept-to-mega-moes-implementation">FIFO Pipeline Analysis: From DeepEP's Streaming Concept to Mega MoE's Implementation</h1>
+<blockquote>
+<p><strong>分析目标</strong>：探究博客"FIFO: From Synchronous to Streaming Pipeline"概念如何映射到 DeepGEMM Mega MoE 的实现中。</p>
+<p><strong>核心问题</strong>：Mega MoE 是否使用了 FIFO 队列？如何实现 stage 解耦？是同步还是流式执行？</p>
+</blockquote>
+<hr />
+<h2 id="1-tldr">1. TL;DR</h2>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mega MoE 是否使用 FIFO 队列？</td>
+<td><strong>是，但形式不同</strong>——不使用显式 FIFO，而是用 <strong>mbarrier-based producer-consumer</strong> 实现等效 FIFO 语义</td>
+</tr>
+<tr>
+<td>Stage 解耦方式？</td>
+<td><strong>异步流式</strong>——通过 <code>full_barriers</code> / <code>empty_barriers</code> 实现 double-buffering pipeline</td>
+</tr>
+<tr>
+<td>barrier.cuh 的角色？</td>
+<td><strong>全局同步点</strong>（grid_sync + nvlink_barrier），用于跨 SM/跨 rank 的 phase 切换，不是 FIFO</td>
+</tr>
+<tr>
+<td>是否"无需等待整个 Batch"？</td>
+<td><strong>是</strong>——per-token / per-block 粒度流式处理，<code>l1_arrival_count</code> / <code>l2_arrival_mask</code> 实现细粒度依赖</td>
+</tr>
+<tr>
+<td>Symmetric Memory 如何改变 FIFO 模型？</td>
+<td>消除了显式 Receive Buffer → Expert Buffer 的拷贝，<strong>NVLink 直接远程读取</strong>替代了 FIFO 队列</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-fifo">2. 博客核心概念回顾：FIFO 的流式本质</h2>
+<p>博客 Section 6 描述了 FIFO 的核心思想：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>无 FIFO（同步）:
+Send → Barrier → Forward → Barrier → Receive
+      ↑ 必须等前一阶段全部完成
+
+有 FIFO（流式）:
+Send → FIFO → Forward → FIFO → Receive
+      ↑ 每个阶段只关心自己的读写，无需等待整个 Batch
+</code></pre></div>
+
+<p><strong>FIFO 的本质</strong>：将通信 pipeline 从同步执行转变为流式执行（streaming execution）。</p>
+<p>在 DeepEP 中，这体现为：<br />
+- <strong>Chunk Buffer</strong> 作为显式 FIFO 队列<br />
+- Token 以 Chunk 为粒度流过各个阶段<br />
+- Warp Specialization 中不同 Warp Group 通过 FIFO 解耦</p>
+<hr />
+<h2 id="3-mega-moe-pipeline">3. Mega MoE 的 Pipeline 架构</h2>
+<h3 id="31-pipeline">3.1 整体 Pipeline 结构</h3>
+<p>Mega MoE 将 MoE 的整个计算流程融合到<strong>单个 kernel</strong> 中：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    A[Token Routing] --&gt; B[Dispatch&lt;br/&gt;NVLink Pull]
+    B --&gt; C[Linear1 GEMM&lt;br/&gt;FP8]
+    C --&gt; D[SwiGLU Epilogue&lt;br/&gt;+ FP8 Cast]
+    D --&gt; E[Linear2 GEMM&lt;br/&gt;FP8]
+    E --&gt; F[Combine&lt;br/&gt;Top-K Reduce]
+    F --&gt; G[Output]
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#e8f5e9
+    style D fill:#f3e5f5
+    style E fill:#e8f5e9
+    style F fill:#fff3e0
+    style G fill:#e1f5fe
+</code></pre></div>
+
+<h3 id="32-warp-specialization">3.2 Warp Specialization 角色分配</h3>
+<p>Mega MoE 使用 <strong>Warp Specialization</strong> 将不同阶段分配给不同的 Warp：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;SM 内 Warp 角色&quot;
+        W0[&quot;Warp 0..N-1&lt;br/&gt;Dispatch Warps&lt;br/&gt;Token路由 + NVLink Pull&quot;]
+        WN[&quot;Warp N&lt;br/&gt;TMA Load Warp (Tokens + SFA)&quot;]
+        WN1[&quot;Warp N+1&lt;br/&gt;TMA Load Warp (Weights + SFB)&quot;]
+        WN2[&quot;Warp N+2&lt;br/&gt;MMA Issue Warp&lt;br/&gt;UMMA 指令发射&quot;]
+        WE[&quot;Warp N+3..N+E&lt;br/&gt;Epilogue Warps&lt;br/&gt;SwiGLU + Combine&quot;]
+    end
+</code></pre></div>
+
+<p><strong>关键代码</strong>（<code>sm100_fp8_fp4_mega_moe.cuh</code>）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Dispatch warps: Token 路由 + NVLink 远程拉取</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp for tokens with SFA</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp for weights with SFB</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM MMA issue warp (only leader CTA)</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Epilogue warps: SwiGLU + Combine</span>
+}
+</code></pre></div>
+
+<hr />
+<h2 id="4-mega-moe-fifo">4. Mega MoE 中的"FIFO"机制</h2>
+<h3 id="41-fifo-mbarrier-based-producer-consumer">4.1 不是显式 FIFO，而是 mbarrier-based Producer-Consumer</h3>
+<p>Mega MoE <strong>没有使用显式的 FIFO 队列数据结构</strong>，而是通过 <strong>CUTLASS 的 <code>ClusterTransactionBarrier</code>（mbarrier）</strong> 实现了等效的 FIFO 语义：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Barrier 定义（sm100_fp8_fp4_mega_moe.cuh）</span>
+<span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>Barrier<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>ClusterTransactionBarrier;
+
+<span style="color: #3D7B7B; font-style: italic">// 核心 barrier 数组</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dispatch_barriers<span style="color: #BBB">      </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* dispatch warps 的 pull mbarrier */</span>;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>full_barriers<span style="color: #BBB">          </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* TMA load 完成信号 */</span>;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>empty_barriers<span style="color: #BBB">         </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* consumer 释放信号（可重用 buffer）*/</span>;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tmem_full_barriers<span style="color: #BBB">     </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* Tensor Memory 累积完成 */</span>;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tmem_empty_barriers<span style="color: #BBB">    </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* Tensor Memory 可被重用 */</span>;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>combine_barriers<span style="color: #BBB">       </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* Combine 阶段 double-buffering */</span>;
+</code></pre></div>
+
+<h3 id="42-producer-consumer-fifo">4.2 Producer-Consumer 协议（等效 FIFO）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant P as Producer (TMA Load)
+    participant B as full_barrier / empty_barrier
+    participant C as Consumer (MMA/Epilogue)
+
+    P-&gt;&gt;B: arrive_and_expect_tx(size)&lt;br/&gt;TMA 加载完成
+    C-&gt;&gt;B: wait(phase)&lt;br/&gt;等待数据就绪
+    C-&gt;&gt;C: 消费数据
+    C-&gt;&gt;B: arrive(0)&lt;br/&gt;释放 buffer
+    P-&gt;&gt;B: wait(phase ^ 1)&lt;br/&gt;等待 buffer 可重用
+    P-&gt;&gt;P: 加载下一批数据
+</code></pre></div>
+
+<p><strong>关键代码</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Producer (TMA Load Warp): 加载数据并 signal</span>
+full_barriers[stage_idx]<span style="color: #666">-&gt;</span>arrive_and_expect_tx(SMEM_A_SIZE_PER_STAGE<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>SF_BLOCK_M<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">uint32_t</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+
+<span style="color: #3D7B7B; font-style: italic">// Consumer (MMA Issue Warp): 等待数据就绪</span>
+full_barriers[stage_idx]<span style="color: #666">-&gt;</span>wait(phase);
+
+<span style="color: #3D7B7B; font-style: italic">// Consumer 完成后释放 buffer</span>
+empty_barriers[stage_idx]<span style="color: #666">-&gt;</span>arrive(<span style="color: #666">0u</span>);
+
+<span style="color: #3D7B7B; font-style: italic">// Producer 等待 buffer 可重用</span>
+empty_barriers[stage_idx]<span style="color: #666">-&gt;</span>wait(phase<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+</code></pre></div>
+
+<h3 id="43-fifo">4.3 这就是 FIFO！</h3>
+<p>对比博客中的 FIFO 模型：</p>
+<table>
+<thead>
+<tr>
+<th>DeepEP 显式 FIFO</th>
+<th>Mega MoE 等效 FIFO</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chunk Buffer（显式队列）</td>
+<td>smem_a/smem_b/smem_cd（shared memory buffer）</td>
+</tr>
+<tr>
+<td>写入 FIFO</td>
+<td><code>full_barriers[i]-&gt;arrive_and_expect_tx()</code></td>
+</tr>
+<tr>
+<td>从 FIFO 读取</td>
+<td><code>full_barriers[i]-&gt;wait(phase)</code></td>
+</tr>
+<tr>
+<td>FIFO 空位可用</td>
+<td><code>empty_barriers[i]-&gt;arrive()</code> + <code>wait(phase ^ 1)</code></td>
+</tr>
+<tr>
+<td>Chunk 粒度</td>
+<td>BLOCK 粒度（BLOCK_M × BLOCK_K）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：Mega MoE 使用 <strong>mbarrier + double-buffering</strong> 实现了与 FIFO 完全等效的流式语义。</p>
+<hr />
+<h2 id="5-stage">5. Stage 解耦机制详解</h2>
+<h3 id="51-dispatch-linear1">5.1 Dispatch → Linear1 的解耦</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Dispatch Stage&quot;
+        D1[&quot;Dispatch Warps&lt;br/&gt;NVLink Pull Token&quot;]
+        D2[&quot;写入 l1_token_buffer&lt;br/&gt;+ l1_sf_buffer&quot;]
+        D3[&quot;atomicAdd&lt;br/&gt;l1_arrival_count&quot;]
+        D1 --&gt; D2 --&gt; D3
+    end
+
+    subgraph &quot;Linear1 Stage&quot;
+        L1[&quot;TMA Load Warp&lt;br/&gt;等待 l1_arrival_count&quot;]
+        L2[&quot;TMA 从 l1_token_buffer&lt;br/&gt;加载到 smem_a&quot;]
+        L3[&quot;MMA Issue Warp&lt;br/&gt;执行 GEMM&quot;]
+        L1 --&gt; L2 --&gt; L3
+    end
+
+    D3 --&gt;|&quot;per-block 粒度&lt;br/&gt;count == expected&quot;| L1
+</code></pre></div>
+
+<p><strong>关键代码</strong>（<code>sm100_fp8_fp4_mega_moe.cuh</code>）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Dispatch Warp: 每完成一个 token 的 pull，增加 arrival count</span>
+ptx<span style="color: #666">::</span>red_add_rel(
+<span style="color: #BBB">    </span>workspace.get_l1_arrival_count_ptr(expert_pool_block_offset<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx_in_expert<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>BLOCK_M),<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+
+<span style="color: #3D7B7B; font-style: italic">// TMA Load Warp (Linear1): 等待整个 block 的 token 全部到达</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_arrival_count_ptr(pool_block_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expected<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scheduler.<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span>get_valid_m<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>expected);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 自旋等待</span>
+}
+</code></pre></div>
+
+<h3 id="52-linear1-linear2">5.2 Linear1 → Linear2 的解耦</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Linear1 Epilogue&quot;
+        E1[&quot;SwiGLU + FP8 Cast&quot;]
+        E2[&quot;TMA Store 到&lt;br/&gt;l2_acts (即 l1_output)&quot;]
+        E3[&quot;red_or_rel_gpu&lt;br/&gt;设置 l2_arrival_mask bit&quot;]
+        E1 --&gt; E2 --&gt; E3
+    end
+
+    subgraph &quot;Linear2 Stage&quot;
+        L1[&quot;TMA Load Warp&lt;br/&gt;等待 l2_arrival_mask&quot;]
+        L2[&quot;检查 needed bits&lt;br/&gt;是否全部置位&quot;]
+        L3[&quot;TMA 从 l2_acts&lt;br/&gt;加载到 smem_a&quot;]
+        L1 --&gt; L2 --&gt; L3
+    end
+
+    E3 --&gt;|&quot;per-n_block 粒度&lt;br/&gt;bitmask check&quot;| L1
+</code></pre></div>
+
+<p><strong>关键代码</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Linear1 Epilogue: 完成一个 n_block 后设置 arrival mask</span>
+ptx<span style="color: #666">::</span>red_or_rel_gpu(
+<span style="color: #BBB">    </span>workspace.get_l2_arrival_mask_ptr(pool_block_idx),
+<span style="color: #BBB">    </span><span style="color: #666">1ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>n_block_idx
+);
+
+<span style="color: #3D7B7B; font-style: italic">// Linear2 TMA Load Warp: 等待所需的 L1 output 全部就绪</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear2)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>needed<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>(k_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l2_arrival_mask_ptr(pool_block_idx);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acq_gpu(ptr);
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="53-linear2-combine">5.3 Linear2 → Combine 的解耦</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Linear2 Epilogue&quot;
+        E1[&quot;BF16 Output&quot;]
+        E2[&quot;NVLink 写入&lt;br/&gt;远程 combine_token_buffer&quot;]
+        E1 --&gt; E2
+    end
+
+    subgraph &quot;Combine Stage&quot;
+        C1[&quot;Epilogue Warps&lt;br/&gt;遍历所有 token&quot;]
+        C2[&quot;TMA Load&lt;br/&gt;combine_token_buffer&quot;]
+        C3[&quot;Top-K Reduce&lt;br/&gt;累加 + 写回&quot;]
+        C1 --&gt; C2 --&gt; C3
+    end
+
+    E2 --&gt;|&quot;隐式：遍历 token 时&lt;br/&gt;数据已就绪&quot;| C1
+</code></pre></div>
+
+<p>Combine 阶段使用 <strong>double-buffering + mbarrier</strong> 实现流式处理：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Combine: 2-slot double buffering</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>combine_load_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>utils<span style="color: #666">::</span>PatternVisitor([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>uint4<span style="color: #666">&gt;</span>(smem_buffer,<span style="color: #BBB"> </span>(epilogue_warp_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumChunkBytes);
+});
+
+<span style="color: #3D7B7B; font-style: italic">// 加载 top-k 数据并等待</span>
+ptx<span style="color: #666">::</span>tma_load_1d(combine_load_buffer[i],<span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span>combine_load_barriers[i],<span style="color: #BBB"> </span>kNumChunkBytes);
+ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(combine_load_barriers[i],<span style="color: #BBB"> </span>kNumChunkBytes);
+<span style="color: #3D7B7B; font-style: italic">// ...</span>
+combine_load_barriers[load_stage_idx]<span style="color: #666">-&gt;</span>wait(combine_phase);
+</code></pre></div>
+
+<hr />
+<h2 id="6-barriercuh">6. barrier.cuh 的角色分析</h2>
+<h3 id="61">6.1 两个核心函数</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;barrier.cuh&quot;
+        G[&quot;grid_sync&lt;br/&gt;SM 间 Grid 同步&quot;]
+        N[&quot;nvlink_barrier&lt;br/&gt;跨 Rank NVLink 同步&quot;]
+    end
+
+    G --&gt;|&quot;atomic_add_rel + 自旋等待&lt;br/&gt;基于 kFinishSumTag 翻转&quot;| G
+    N --&gt;|&quot;SM 0 发起&lt;br/&gt;red_add_rel_sys 远程 signal&lt;br/&gt;+ 自旋等待 arrival&quot;| N
+</code></pre></div>
+
+<h3 id="62-grid_syncsm">6.2 grid_sync：SM 间全局同步</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">sync_scope_t</span><span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>grid_sync(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>Workspace<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>workspace,
+<span style="color: #BBB">                              </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>thread_idx,
+<span style="color: #BBB">                              </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>sync_scope_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sync_scope)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kFinishSumTag<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0x80000000u</span>;
+<span style="color: #BBB">    </span>sync_scope();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>count_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_grid_sync_count_ptr<span style="color: #666">&lt;</span>kGridSyncIndex<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>old_value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>atomic_add_rel(
+<span style="color: #BBB">            </span>count_ptr,<span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(kFinishSumTag<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>new_value;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>new_value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acq(count_ptr);
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(((new_value<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span>old_value)<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>kFinishSumTag)<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>sync_scope();
+}
+</code></pre></div>
+
+<p><strong>这是一个 Barrier（同步），不是 FIFO！</strong></p>
+<ul>
+<li>所有 SM 必须到达才能继续</li>
+<li>基于 <code>kFinishSumTag</code> 翻转的 phase 检测</li>
+<li>用于 <strong>phase 切换点</strong>，不是数据流传递</li>
+</ul>
+<h3 id="63-nvlink_barrier-rank">6.3 nvlink_barrier：跨 Rank 同步</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvlink_barrier(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>Workspace<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>workspace,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>SymBuffer<span style="color: #666">&lt;</span>kNumRanks<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sym_buffer,<span style="color: #BBB"> </span>...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Grid sync before NVLink signaling</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_prologue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink cross-rank barrier, only SM 0 participates</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Send signals to remote ranks</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add_rel_sys(sym_buffer.map(signal_ptr,<span style="color: #BBB"> </span>thread_idx),<span style="color: #BBB"> </span>signal_sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">-1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Wait arrival (with 30s timeout)</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq_sys(signal_ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* spin */</span><span style="color: #BBB"> </span>}
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Grid sync after NVLink completion</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_epilogue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(...);
+}
+</code></pre></div>
+
+<p><strong>这也是 Barrier（同步），不是 FIFO！</strong></p>
+<h3 id="64-barriercuh">6.4 barrier.cuh 的使用场景</h3>
+<table>
+<thead>
+<tr>
+<th>使用点</th>
+<th>Tag</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dispatch 完成后</td>
+<td><code>kBeforeDispatchPullBarrierTag</code></td>
+<td>确保所有 rank 的 metadata 就绪，开始 pull token</td>
+</tr>
+<tr>
+<td>Combine 开始前</td>
+<td><code>kBeforeCombineReduceBarrierTag</code></td>
+<td>确保所有 rank 的 L2 output 写入完成</td>
+</tr>
+<tr>
+<td>Workspace 清理后</td>
+<td><code>kAfterWorkspaceCleanBarrierTag</code></td>
+<td>确保清理完成，kernel 安全退出</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：<code>barrier.cuh</code> 提供的是<strong>全局同步点</strong>（synchronous barriers），用于跨 SM/跨 rank 的 <strong>phase 边界同步</strong>。它与 FIFO 是<strong>互补关系</strong>：<br />
+- <strong>barrier.cuh</strong>：粗粒度 phase 同步（kernel 级）<br />
+- <strong>mbarrier (full/empty)</strong>：细粒度数据流 FIFO（block 级）</p>
+<hr />
+<h2 id="7">7. 同步原语全景</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Mega MoE 同步原语&quot;
+        direction TB
+
+        subgraph &quot;全局同步 (barrier.cuh)&quot;
+            A1[&quot;grid_sync&lt;br/&gt;SM 间 Grid 同步&lt;br/&gt;atomic_add_rel + ld_acq 自旋&quot;]
+            A2[&quot;nvlink_barrier&lt;br/&gt;跨 Rank 同步&lt;br/&gt;red_add_rel_sys + ld_acq_sys 自旋&quot;]
+        end
+
+        subgraph &quot;数据流 FIFO (mbarrier)&quot;
+            B1[&quot;full_barriers[]&lt;br/&gt;TMA Load 完成信号&lt;br/&gt;arrive_and_expect_tx / wait&quot;]
+            B2[&quot;empty_barriers[]&lt;br/&gt;Consumer 释放信号&lt;br/&gt;arrive / wait&quot;]
+            B3[&quot;tmem_full_barriers[]&lt;br/&gt;TMEM 累积完成&quot;]
+            B4[&quot;tmem_empty_barriers[]&lt;br/&gt;TMEM 可重用&quot;]
+            B5[&quot;combine_barriers[]&lt;br/&gt;Combine double-buffering&quot;]
+            B6[&quot;dispatch_barriers[]&lt;br/&gt;Dispatch pull mbarrier&quot;]
+        end
+
+        subgraph &quot;细粒度依赖 (原子计数)&quot;
+            C1[&quot;l1_arrival_count[]&lt;br/&gt;per-block token 到达计数&lt;br/&gt;red_add_rel + ld_acq 自旋&quot;]
+            C2[&quot;l2_arrival_mask[]&lt;br/&gt;per-n_block L1 output 就绪&lt;br/&gt;red_or_rel_gpu + ld_acq_gpu 自旋&quot;]
+            C3[&quot;expert_send_count[]&lt;br/&gt;per-expert token 发送计数&lt;br/&gt;atomicAdd&quot;]
+            C4[&quot;expert_recv_count[]&lt;br/&gt;per-expert token 接收计数&lt;br/&gt;atomicAdd&quot;]
+        end
+
+        subgraph &quot;Warp 内同步&quot;
+            D1[&quot;__syncwarp()&lt;br/&gt;Warp 内线程同步&quot;]
+            D2[&quot;ptx::sync_aligned()&lt;br/&gt;SM 内 mbarrier 同步&quot;]
+        end
+    end
+</code></pre></div>
+
+<h3 id="71">7.1 同步原语使用总结</h3>
+<table>
+<thead>
+<tr>
+<th>原语</th>
+<th>类型</th>
+<th>粒度</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grid_sync</code></td>
+<td>Barrier</td>
+<td>所有 SM</td>
+<td>Phase 切换</td>
+</tr>
+<tr>
+<td><code>nvlink_barrier</code></td>
+<td>Barrier</td>
+<td>所有 Rank</td>
+<td>跨节点 phase 切换</td>
+</tr>
+<tr>
+<td><code>full_barriers</code></td>
+<td>FIFO (mbarrier)</td>
+<td>per-stage</td>
+<td>TMA load 完成</td>
+</tr>
+<tr>
+<td><code>empty_barriers</code></td>
+<td>FIFO (mbarrier)</td>
+<td>per-stage</td>
+<td>Buffer 释放</td>
+</tr>
+<tr>
+<td><code>tmem_full/empty</code></td>
+<td>FIFO (mbarrier)</td>
+<td>per-stage</td>
+<td>TMEM 累积/释放</td>
+</tr>
+<tr>
+<td><code>l1_arrival_count</code></td>
+<td>原子计数</td>
+<td>per-block</td>
+<td>Token 到达</td>
+</tr>
+<tr>
+<td><code>l2_arrival_mask</code></td>
+<td>原子位图</td>
+<td>per-n_block</td>
+<td>L1 output 就绪</td>
+</tr>
+<tr>
+<td><code>__syncwarp</code></td>
+<td>Warp sync</td>
+<td>warp</td>
+<td>Warp 内同步</td>
+</tr>
+<tr>
+<td><code>ptx::sync_aligned</code></td>
+<td>mbarrier</td>
+<td>SM 内</td>
+<td>SM 内跨 warp 同步</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-batch">8. "无需等待整个 Batch"的流式行为</h2>
+<h3 id="81-per-token-dispatch">8.1 证据一：Per-Token 粒度 Dispatch</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Dispatch Warps: 每个 token 独立处理，无需等待其他 token</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumGlobalWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_idx;<span style="color: #BBB"> </span>;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumGlobalWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 计算当前 token 属于哪个 expert</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(token_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>expert_end_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #666">++</span><span style="color: #BBB"> </span>current_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumExpertsPerRank)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">break</span>;
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 更新 expert 范围...</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(current_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumExpertsPerRank)
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">break</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 从远程 rank 拉取 token 数据</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(pull_buffer.get_base_ptr(),
+<span style="color: #BBB">                     </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                                    </span>current_rank_in_expert_idx),
+<span style="color: #BBB">                     </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 写入本地 L1 buffer，增加 arrival count</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>red_add_rel(
+<span style="color: #BBB">        </span>workspace.get_l1_arrival_count_ptr(expert_pool_block_offset<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx_in_expert<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>BLOCK_M),<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：每个 token 独立被 pull，<strong>不需要等待整个 Batch 的 token 就绪</strong>。</p>
+<h3 id="82-per-block-gemm">8.2 证据二：Per-Block 粒度 GEMM 启动</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMA Load Warp (Linear1): 等待一个 block 的 token 全部到达就启动</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_arrival_count_ptr(pool_block_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expected<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scheduler.<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span>get_valid_m<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>expected);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 只等当前 block</span>
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：只等待<strong>当前 block</strong> 的 token 到达，不是等待所有 token。</p>
+<h3 id="83-per-n-block-l2">8.3 证据三：Per-N-Block 粒度 L2 启动</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Linear2: 只等待当前 k_block 对应的 2 个 L1 output n_block</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear2)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>needed<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>(k_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acq_gpu(ptr);
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：只等待<strong>当前 k_block 所需的 2 个 n_block</strong>，不是等待整个 expert 的所有 output。</p>
+<h3 id="84">8.4 流式行为总结</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;同步模式（假设）&quot;
+        S1[&quot;等待所有 Token&lt;br/&gt;到达&quot;] --&gt; S2[&quot;启动所有 GEMM&quot;]
+        S2 --&gt; S3[&quot;等待所有 GEMM&lt;br/&gt;完成&quot;]
+        S3 --&gt; S4[&quot;启动 Combine&quot;]
+    end
+
+    subgraph &quot;Mega MoE 流式模式&quot;
+        T1[&quot;Token A 到达&lt;br/&gt;Block 0&quot;] --&gt; T2[&quot;启动 Block 0&lt;br/&gt;GEMM&quot;]
+        T3[&quot;Token B 到达&lt;br/&gt;Block 1&quot;] --&gt; T4[&quot;启动 Block 1&lt;br/&gt;GEMM&quot;]
+        T2 --&gt; T5[&quot;Block 0 完成&lt;br/&gt;立即 Combine&quot;]
+        T4 --&gt; T6[&quot;Block 1 完成&lt;br/&gt;立即 Combine&quot;]
+    end
+
+    style S1 fill:#ffcdd2
+    style S3 fill:#ffcdd2
+    style T1 fill:#c8e6c9
+    style T3 fill:#c8e6c9
+    style T5 fill:#c8e6c9
+    style T6 fill:#c8e6c9
+</code></pre></div>
+
+<hr />
+<h2 id="9-symmetric-memory-fifo">9. Symmetric Memory 如何改变 FIFO 模型</h2>
+<h3 id="91-deepep-fifo">9.1 DeepEP 的显式 FIFO 模型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;DeepEP (Normal Kernel)&quot;
+        A[&quot;Token Buffer&quot;] --&gt; B[&quot;Dispatch Buffer&lt;br/&gt;Token→Dest major&quot;]
+        B --&gt; C[&quot;Chunk Buffer&lt;br/&gt;显式 FIFO&quot;]
+        C --&gt; D[&quot;NVLink/RDMA&lt;br/&gt;通信&quot;]
+        D --&gt; E[&quot;Receive Buffer&lt;br/&gt;显式 FIFO&quot;]
+        E --&gt; F[&quot;Expert Buffer&lt;br/&gt;Dest→Expert major&quot;]
+    end
+</code></pre></div>
+
+<p>DeepEP 需要：<br />
+1. <strong>Chunk Buffer</strong>：显式 FIFO 队列，聚合 token 为 chunk<br />
+2. <strong>Receive Buffer</strong>：显式 FIFO 队列，接收远程 chunk<br />
+3. <strong>多次数据拷贝</strong>：Token → Dispatch → Chunk → Receive → Expert</p>
+<h3 id="92-mega-moe-symmetric-memory">9.2 Mega MoE 的 Symmetric Memory 模型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Mega MoE&quot;
+        A[&quot;input_token_buffer&lt;br/&gt;本地 Token&quot;]
+        B[&quot;SymBuffer.map()&lt;br/&gt;NVLink 远程映射&quot;]
+        C[&quot;TMA Load&lt;br/&gt;直接远程读取&quot;]
+        D[&quot;l1_token_buffer&lt;br/&gt;本地 L1 Pool&quot;]
+
+        A --&gt; B --&gt; C --&gt; D
+    end
+
+    style B fill:#bbdefb
+</code></pre></div>
+
+<p><strong>关键代码</strong>（<code>sym_buffer.cuh</code>）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>base;
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>offsets[kNumMaxRanks];
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rank_idx;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 将本地指针映射到远程 rank 的地址空间</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ptr_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong>使用方式</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Dispatch Warp: 直接通过 NVLink 读取远程 rank 的 token</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">    </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                   </span>current_rank_in_expert_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 远程 rank</span>
+<span style="color: #BBB">    </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+</code></pre></div>
+
+<h3 id="93">9.3 对比总结</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FIFO 形式</strong></td>
+<td>显式 Chunk/Receive Buffer</td>
+<td>隐式 mbarrier + shared memory</td>
+</tr>
+<tr>
+<td><strong>数据拷贝</strong></td>
+<td>多次（Token→Dispatch→Chunk→Receive→Expert）</td>
+<td><strong>零拷贝</strong>（NVLink 直接远程读取）</td>
+</tr>
+<tr>
+<td><strong>通信粒度</strong></td>
+<td>Chunk（多个 token 聚合）</td>
+<td><strong>Per-Token</strong>（单 token 粒度）</td>
+</tr>
+<tr>
+<td><strong>Buffer 层级</strong></td>
+<td>多层（5+）</td>
+<td>少层（L1 Pool + L2）</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td>Warp Specialization + FIFO</td>
+<td>Warp Specialization + mbarrier</td>
+</tr>
+<tr>
+<td><strong>跨节点通信</strong></td>
+<td>RDMA（显式）</td>
+<td>NVLink（Symmetric Memory 隐式）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心变化</strong>：Symmetric Memory 使得 Mega MoE 可以<strong>直接远程读取</strong>，消除了 DeepEP 中显式 FIFO 队列的需求。FIFO 语义从"数据拷贝到本地队列"变为"通过地址映射直接访问"。</p>
+<hr />
+<h2 id="10-pipeline">10. 完整 Pipeline 数据流图</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Phase 1: Dispatch (Warp 0..N-1)&quot;
+        D1[&quot;读取 topk_idx&lt;br/&gt;计算 expert 分配&quot;]
+        D2[&quot;atomicAdd&lt;br/&gt;smem_expert_count&quot;]
+        D3[&quot;grid_sync&lt;br/&gt;同步所有 SM&quot;]
+        D4[&quot;写入远程&lt;br/&gt;expert_recv_count&quot;]
+        D5[&quot;nvlink_barrier&lt;br/&gt;跨 rank 同步&quot;]
+        D6[&quot;TMA Load&lt;br/&gt;远程 pull token&quot;]
+        D7[&quot;写入 l1_token_buffer&lt;br/&gt;red_add_rel l1_arrival_count&quot;]
+
+        D1 --&gt; D2 --&gt; D3 --&gt; D4 --&gt; D5 --&gt; D6 --&gt; D7
+    end
+
+    subgraph &quot;Phase 2: Linear1 GEMM (Warp N, N+1, N+2)&quot;
+        L1A[&quot;TMA Load Warp (A)&lt;br/&gt;等待 l1_arrival_count&lt;br/&gt;加载 token + SFA&quot;]
+        L1B[&quot;TMA Load Warp (B)&lt;br/&gt;加载 weight + SFB&quot;]
+        L1C[&quot;MMA Issue Warp&lt;br/&gt;等待 full_barrier&lt;br/&gt;发射 UMMA&quot;]
+
+        L1A --&gt; L1C
+        L1B --&gt; L1C
+    end
+
+    subgraph &quot;Phase 3: L1 Epilogue (Epilogue Warps)&quot;
+        E1[&quot;TMEM Load&lt;br/&gt;读取 GEMM 结果&quot;]
+        E2[&quot;SwiGLU + FP8 Cast&lt;br/&gt;+ Amax Reduction&quot;]
+        E3[&quot;TMA Store&lt;br/&gt;写入 l2_acts&quot;]
+        E4[&quot;red_or_rel_gpu&lt;br/&gt;设置 l2_arrival_mask&quot;]
+
+        E1 --&gt; E2 --&gt; E3 --&gt; E4
+    end
+
+    subgraph &quot;Phase 4: Linear2 GEMM (Warp N, N+1, N+2)&quot;
+        L2A[&quot;TMA Load Warp (A)&lt;br/&gt;等待 l2_arrival_mask&lt;br/&gt;加载 l2_acts&quot;]
+        L2B[&quot;TMA Load Warp (B)&lt;br/&gt;加载 l2_weights&quot;]
+        L2C[&quot;MMA Issue Warp&lt;br/&gt;发射 UMMA&quot;]
+
+        L2A --&gt; L2C
+        L2B --&gt; L2C
+    end
+
+    subgraph &quot;Phase 5: L2 Epilogue + Combine (Epilogue Warps)&quot;
+        C1[&quot;TMEM Load&lt;br/&gt;读取 GEMM 结果&quot;]
+        C2[&quot;NVLink 写入&lt;br/&gt;远程 combine_token_buffer&quot;]
+        C3[&quot;nvlink_barrier&lt;br/&gt;跨 rank 同步&quot;]
+        C4[&quot;TMA Load&lt;br/&gt;combine_token_buffer&quot;]
+        C5[&quot;Top-K Reduce&lt;br/&gt;累加&quot;]
+        C6[&quot;TMA Store&lt;br/&gt;写回输出 y&quot;]
+
+        C1 --&gt; C2 --&gt; C3 --&gt; C4 --&gt; C5 --&gt; C6
+    end
+
+    D7 --&gt;|&quot;l1_arrival_count&lt;br/&gt;per-block&quot;| L1A
+    E4 --&gt;|&quot;l2_arrival_mask&lt;br/&gt;per-n_block&quot;| L2A
+    C2 --&gt;|&quot;隐式就绪&quot;| C4
+</code></pre></div>
+
+<hr />
+<h2 id="11">11. 核心结论</h2>
+<h3 id="111-mega-moe-fifo">11.1 Mega MoE 是否使用了 FIFO？</h3>
+<p><strong>是的，但形式不同于 DeepEP 的显式 FIFO 队列。</strong></p>
+<p>Mega MoE 使用 <strong>mbarrier-based producer-consumer 协议</strong> 实现了等效的 FIFO 语义：<br />
+- <code>full_barriers</code> / <code>empty_barriers</code> 构成 double-buffering pipeline<br />
+- Producer（TMA Load）通过 <code>arrive_and_expect_tx</code> 通知数据就绪<br />
+- Consumer（MMA/Epilogue）通过 <code>wait</code> 等待数据<br />
+- Consumer 完成后通过 <code>arrive</code> 释放 buffer</p>
+<h3 id="112-stage">11.2 Stage 解耦是同步还是流式？</h3>
+<p><strong>流式（Streaming）</strong>。</p>
+<p>证据：<br />
+1. <strong>Per-token 粒度</strong>：Dispatch warps 独立处理每个 token<br />
+2. <strong>Per-block 粒度</strong>：GEMM 只等待当前 block 的数据<br />
+3. <strong>Per-n_block 粒度</strong>：L2 只等待当前 k_block 所需的 L1 output<br />
+4. <strong>Double-buffering</strong>：多个 stage 可以并行处理不同的 block</p>
+<h3 id="113-barriercuh">11.3 barrier.cuh 的角色</h3>
+<p><strong>barrier.cuh 提供的是全局同步点（synchronous barriers），不是 FIFO。</strong></p>
+<ul>
+<li><code>grid_sync</code>：SM 间 Grid 同步</li>
+<li><code>nvlink_barrier</code>：跨 Rank NVLink 同步</li>
+<li>用于 <strong>phase 边界</strong>（dispatch → pull → combine → clean）</li>
+</ul>
+<p>它与 FIFO 是<strong>互补关系</strong>：<br />
+- <strong>barrier.cuh</strong>：粗粒度 phase 同步<br />
+- <strong>mbarrier (full/empty)</strong>：细粒度数据流 FIFO</p>
+<h3 id="114-symmetric-memory-fifo">11.4 Symmetric Memory 对 FIFO 模型的影响</h3>
+<p>Symmetric Memory <strong>消除了显式 FIFO 队列的需求</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>显式 Chunk Buffer</td>
+<td>隐式 mbarrier + shared memory</td>
+</tr>
+<tr>
+<td>显式 Receive Buffer</td>
+<td>NVLink 直接远程读取</td>
+</tr>
+<tr>
+<td>多次数据拷贝</td>
+<td>零拷贝</td>
+</tr>
+<tr>
+<td>Chunk 粒度通信</td>
+<td>Per-Token 粒度通信</td>
+</tr>
+</tbody>
+</table>
+<h3 id="115">11.5 与博客概念的映射</h3>
+<table>
+<thead>
+<tr>
+<th>博客概念</th>
+<th>Mega MoE 实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Send → FIFO → Forward</td>
+<td>Dispatch → l1_token_buffer (mbarrier) → Linear1</td>
+</tr>
+<tr>
+<td>Forward → FIFO → Receive</td>
+<td>Linear1 Epilogue → l2_acts (arrival_mask) → Linear2</td>
+</tr>
+<tr>
+<td>每个阶段只关心自己的读写</td>
+<td>Warp Specialization + mbarrier producer-consumer</td>
+</tr>
+<tr>
+<td>无需等待整个 Batch</td>
+<td>per-token/per-block 粒度流式处理</td>
+</tr>
+<tr>
+<td>FIFO 本质：同步→流式</td>
+<td>mbarrier double-buffering 实现流式 pipeline</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12">12. 关键代码索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>263-268</td>
+<td>Barrier 数组定义</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>275-310</td>
+<td>Barrier 初始化</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>356-600</td>
+<td>Dispatch Warp 逻辑</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>655-718</td>
+<td>TMA Load Warp (Tokens)</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>720-762</td>
+<td>TMA Load Warp (Weights)</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>763-872</td>
+<td>MMA Issue Warp</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>877-1357</td>
+<td>Epilogue Warps</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>670-675</td>
+<td>l1_arrival_count 等待</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>680-690</td>
+<td>l2_arrival_mask 等待</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>596-598</td>
+<td>l1_arrival_count 增加</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1100-1106</td>
+<td>l2_arrival_mask 设置</td>
+</tr>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td>9-26</td>
+<td>grid_sync 实现</td>
+</tr>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td>28-72</td>
+<td>nvlink_barrier 实现</td>
+</tr>
+<tr>
+<td><code>sym_buffer.cuh</code></td>
+<td>9-39</td>
+<td>SymBuffer 定义</td>
+</tr>
+<tr>
+<td><code>mega_moe.cuh</code></td>
+<td>32-168</td>
+<td>Workspace 布局</td>
+</tr>
+<tr>
+<td><code>mega_moe.cuh</code></td>
+<td>140-150</td>
+<td>l1_arrival_count / l2_arrival_mask 指针</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13">13. 参考</h2>
+<ul>
+<li>博客原文：<code>/tmp/deep_ep_blog_text.txt</code> Section 6</li>
+<li>DeepGEMM 源码：<code>/Users/backyes/work/triton/DeepGEMM/</code></li>
+<li>CUTLASS ClusterTransactionBarrier 文档</li>
+<li>NVIDIA SM100 / Blackwell 架构手册</li>
+</ul>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

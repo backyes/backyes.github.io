@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepEP Buffer 系统深度分析：代码实证 vs 博客"第一性原理"模型 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">DeepEP Buffer 系统深度分析：代码实证 vs 博</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#deepep-buffer-系统深度分析代码实证-vs-博客第一性原理模型" class="toc-h1">DeepEP Buffer 系统深度分析：代码实证 vs 博客"第一性原理"模型</a></li><li><a href="#0-摘要" class="toc-h2">0. 摘要</a></li><li><a href="#1-博客原文引用5-层-buffer-模型" class="toc-h2">1. 博客原文引用：5 层 Buffer 模型</a></li><li><a href="#2-elasticbuffer-内部结构真实内存布局" class="toc-h2">2. ElasticBuffer 内部结构：真实内存布局</a></li><li><a href="#21-整体内存排布" class="toc-h3">2.1 整体内存排布</a></li><li><a href="#22-构造函数中的分配逻辑" class="toc-h3">2.2 构造函数中的分配逻辑</a></li><li><a href="#3-buffer-段映射博客模型-vs-实际实现" class="toc-h2">3. Buffer 段映射：博客模型 vs 实际实现</a></li><li><a href="#31-bufferlayout-模板核心组织单元" class="toc-h3">3.1 BufferLayout 模板：核心组织单元</a></li><li><a href="#32-tokenlayout单个-token-的内部结构" class="toc-h3">3.2 TokenLayout：单个 token 的内部结构</a></li><li><a href="#33-direct-模式的-buffer-段分配单节点--scaleout_ranks--1" class="toc-h3">3.3 Direct 模式的 Buffer 段分配（单节点 / scaleout_ranks == 1）</a></li><li><a href="#34-hybrid-模式的-buffer-段分配多节点--scaleout_ranks-gt-1" class="toc-h3">3.4 Hybrid 模式的 Buffer 段分配（多节点 / scaleout_ranks &gt; 1）</a></li><li><a href="#4-v1-legacy-vs-v2-elastic-buffer-组织对比" class="toc-h2">4. V1 (Legacy) vs V2 (Elastic) Buffer 组织对比</a></li><li><a href="#41-legacy-buffernvshmem-通道环形队列" class="toc-h3">4.1 Legacy Buffer：NVSHMEM 通道环形队列</a></li><li><a href="#42-elastic-buffernccl-gin-对称内存" class="toc-h3">4.2 Elastic Buffer：NCCL Gin 对称内存</a></li><li><a href="#43-对比表" class="toc-h3">4.3 对比表</a></li><li><a href="#5-bufferlayout-模板深度解析" class="toc-h2">5. BufferLayout 模板深度解析</a></li><li><a href="#51-rank_buffer-vs-token_buffer" class="toc-h3">5.1 rank_buffer vs token_buffer</a></li><li><a href="#52-kwithmbarrier-模板参数" class="toc-h3">5.2 kWithMBarrier 模板参数</a></li><li><a href="#53-channel-buffer-的-stride-访问" class="toc-h3">5.3 Channel Buffer 的 stride 访问</a></li><li><a href="#6-workspacelayout元数据专用空间" class="toc-h2">6. WorkspaceLayout：元数据专用空间</a></li><li><a href="#61-整体结构" class="toc-h3">6.1 整体结构</a></li><li><a href="#62-workspace-各段用途" class="toc-h3">6.2 Workspace 各段用途</a></li><li><a href="#63-host_workspace-的双重映射" class="toc-h3">6.3 host_workspace 的双重映射</a></li><li><a href="#7-代码实证buffer-分配与使用的完整链路" class="toc-h2">7. 代码实证：Buffer 分配与使用的完整链路</a></li><li><a href="#71-dispatch-调用链" class="toc-h3">7.1 dispatch 调用链</a></li><li><a href="#72-combine-调用链" class="toc-h3">7.2 combine 调用链</a></li><li><a href="#8-博客模型准确性评估" class="toc-h2">8. 博客模型准确性评估</a></li><li><a href="#81-映射关系" class="toc-h3">8.1 映射关系</a></li><li><a href="#82-博客简化了什么" class="toc-h3">8.2 博客简化了什么</a></li><li><a href="#83-博客捕捉到了什么" class="toc-h3">8.3 博客捕捉到了什么</a></li><li><a href="#9-mermaid-图真实-buffer-层级结构" class="toc-h2">9. Mermaid 图：真实 Buffer 层级结构</a></li><li><a href="#91-elasticbuffer-物理布局" class="toc-h3">9.1 ElasticBuffer 物理布局</a></li><li><a href="#92-dispatch-数据流" class="toc-h3">9.2 dispatch 数据流</a></li><li><a href="#93-hybrid-dispatch-三阶段流水" class="toc-h3">9.3 Hybrid dispatch 三阶段流水</a></li><li><a href="#10-总结" class="toc-h2">10. 总结</a></li><li><a href="#101-博客模型的教学价值" class="toc-h3">10.1 博客模型的教学价值</a></li><li><a href="#102-实际实现的复杂性" class="toc-h3">10.2 实际实现的复杂性</a></li><li><a href="#103-核心洞察" class="toc-h3">10.3 核心洞察</a></li><li><a href="#附录关键文件索引" class="toc-h2">附录：关键文件索引</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="deepep-buffer-vs">DeepEP Buffer 系统深度分析：代码实证 vs 博客"第一性原理"模型</h1>
+<blockquote>
+<p>分析日期：2026-07-30<br />
+代码版本：DeepEP main branch<br />
+博客来源：<em>Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles</em></p>
+</blockquote>
+<hr />
+<h2 id="0">0. 摘要</h2>
+<p>博客中提出的 5 层 Buffer 模型（Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink/RDMA → Receive Buffer → Expert Buffer）是一个<strong>教学简化模型</strong>。在实际的 DeepEP 代码实现中，Buffer 的组织方式与该模型存在显著差异。本文通过直接引用 <code>csrc/elastic/buffer.hpp</code>、<code>deep_ep/include/deep_ep/common/layout.cuh</code>、<code>deep_ep/include/deep_ep/impls/dispatch.cuh</code> 等核心代码，逐层还原真实的 Buffer 架构，并评估博客模型的准确性。</p>
+<p><strong>核心结论</strong>：<br />
+- 博客的 5 层模型捕获了数据流的<strong>逻辑阶段</strong>，但混淆了"用户输入/输出 Buffer"与"EP 内部通信 Buffer"的边界<br />
+- 实际实现中不存在独立的"Chunk Buffer"——chunk 是通信 kernel 的<strong>调度粒度</strong>而非独立 Buffer 段<br />
+- ElasticBuffer 的真实布局由 <code>BufferLayout&lt;kWithMBarrier&gt;</code> 模板参数化，分为 <strong>Direct 模式</strong>（3 段）和 <strong>Hybrid 模式</strong>（4 段）<br />
+- Legacy Buffer（NVSHMEM）与 Elastic Buffer（NCCL Gin）在组织哲学上根本不同：前者是"通道环形队列"，后者是"rank-token 二维数组"</p>
+<hr />
+<h2 id="1-5-buffer">1. 博客原文引用：5 层 Buffer 模型</h2>
+<p>博客 section 2.1 对 Normal Kernel 数据路径的描述：</p>
+<blockquote>
+<p><strong>Data path:</strong><br />
+<code>Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink / RDMA Pipeline → Receive Buffer → Expert Buffer</code></p>
+<p><strong>Token Buffer</strong>: Stores Router output. Layout: Token-major.</p>
+<p><strong>Dispatch Buffer</strong>: First layout transformation: Token-major → Destination-major.</p>
+<p><strong>Chunk Buffer</strong>: Critically important. The network is unsuitable for single-Token sends — produces small packets, high startup overhead, low bandwidth utilization. Tokens are aggregated: <code>Token Stream → Chunk → Network Transfer</code>. Token is the <strong>scheduling granularity</strong>; Chunk is the <strong>communication granularity</strong>.</p>
+<p><strong>Receive Buffer</strong>: Destination GPU receives Chunks from multiple GPUs.</p>
+<p><strong>Expert Buffer</strong>: Final transformation: Destination-major → Expert-major, forming Expert GEMM input.</p>
+</blockquote>
+<p>博客 section 2.2 对 Low-Latency Kernel 的描述：</p>
+<blockquote>
+<p><strong>Low-Latency Kernel reduces intermediate layers:</strong><br />
+<code>Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer</code></p>
+<p>Goal: minimize <strong>end-to-end Token latency</strong>.</p>
+</blockquote>
+<hr />
+<h2 id="2-elasticbuffer">2. ElasticBuffer 内部结构：真实内存布局</h2>
+<h3 id="21">2.1 整体内存排布</h3>
+<p>代码位置：<code>csrc/elastic/buffer.hpp:19-34</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ElasticBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Buffer bytes = GPU buffer + CPU buffer (excludes workspace)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Memory layout: [[[Workspace] GPU buffer] CPU buffer]</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_buffer_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_gpu_buffer_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_cpu_buffer_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>buffer;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #666">*</span>host_workspace,<span style="color: #BBB"> </span><span style="color: #666">*</span>mapped_host_workspace;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+};
+</code></pre></div>
+
+<p><strong>关键洞察</strong>：整体内存排布是 <code>[[Workspace] GPU buffer] CPU buffer]</code>，其中：<br />
+- <strong>Workspace</strong>：位于最前端，用于 barrier、notify reduction、rank/expert 计数器等元数据<br />
+- <strong>GPU buffer</strong>：实际通信数据区（dispatch/combine 交替复用同一段）<br />
+- <strong>CPU buffer</strong>：仅用于 Engram（远程 KV cache 存储）</p>
+<blockquote>
+<p><strong>与博客对比</strong>：博客完全没有提及 Workspace。实际上 Workspace 占据独立空间，且被所有 kernel 共享使用。</p>
+</blockquote>
+<h3 id="22">2.2 构造函数中的分配逻辑</h3>
+<p>代码位置：<code>csrc/elastic/buffer.hpp:81-140</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>ElasticBuffer(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Workspace is aligned to 2 MB so that it sits cleanly at the front of the GPU segment</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_workspace_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>layout<span style="color: #666">::</span>WorkspaceLayout<span style="color: #666">::</span>get_num_bytes(),<span style="color: #BBB"> </span>symmetric<span style="color: #666">::</span>kNumAlignmentBytes);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Create NCCL symmetric memory context</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Symmetric memory layout: [[[Workspace] GPU buffer] CPU buffer]</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_sym_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_workspace_bytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_buffer_bytes;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>nccl_context<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>make_shared<span style="color: #666">&lt;</span>nccl<span style="color: #666">::</span>NCCLSymmetricMemoryContext<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>nccl_comm,<span style="color: #BBB"> </span>cpu_comm,<span style="color: #BBB"> </span>num_ranks,<span style="color: #BBB"> </span>rank_idx,
+<span style="color: #BBB">        </span>num_sym_bytes,<span style="color: #BBB"> </span>num_cpu_buffer_bytes,<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Assign workspaces and buffers</span>
+<span style="color: #BBB">    </span>workspace<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>nccl_context<span style="color: #666">-&gt;</span>mapped_window_ptr;
+<span style="color: #BBB">    </span>workspace_layout_wo_expert<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>make_shared<span style="color: #666">&lt;</span>layout<span style="color: #666">::</span>WorkspaceLayout<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>workspace,<span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_scaleout_ranks,<span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_scaleup_ranks,<span style="color: #BBB"> </span><span style="color: #666">0</span>);
+<span style="color: #BBB">    </span>buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">*&gt;</span>(workspace)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_workspace_bytes;
+<span style="color: #BBB">    </span>CUDA_RUNTIME_CHECK(cudaMemset(workspace,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>num_workspace_bytes));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Allocate host workspaces</span>
+<span style="color: #BBB">    </span>CUDA_RUNTIME_CHECK(cudaMallocHost(<span style="color: #666">&amp;</span>host_workspace,<span style="color: #BBB"> </span>layout<span style="color: #666">::</span>WorkspaceLayout<span style="color: #666">::</span>get_num_bytes(),<span style="color: #BBB"> </span>cudaHostAllocMapped));
+<span style="color: #BBB">    </span>CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(<span style="color: #666">&amp;</span>mapped_host_workspace,<span style="color: #BBB"> </span>host_workspace,<span style="color: #BBB"> </span><span style="color: #666">0</span>));
+<span style="color: #BBB">    </span>std<span style="color: #666">::</span>memset(host_workspace,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>layout<span style="color: #666">::</span>WorkspaceLayout<span style="color: #666">::</span>get_num_bytes());
+}
+</code></pre></div>
+
+<p><strong>关键分配规则</strong>：<br />
+1. <code>workspace</code> 从 <code>mapped_window_ptr</code>（NCCL 对称内存窗口起始）开始<br />
+2. <code>buffer</code> = <code>workspace + num_workspace_bytes</code>（2 MB 对齐）<br />
+3. <code>host_workspace</code> 是额外分配的 CUDA host-mapped 内存，用于 CPU 侧同步读取计数器<br />
+4. 整个 <code>num_sym_bytes = num_workspace_bytes + num_buffer_bytes</code> 注册到 NCCL 对称内存</p>
+<hr />
+<h2 id="3-buffer-vs">3. Buffer 段映射：博客模型 vs 实际实现</h2>
+<h3 id="31-bufferlayout">3.1 BufferLayout 模板：核心组织单元</h3>
+<p>代码位置：<code>deep_ep/include/deep_ep/common/layout.cuh:251-311</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithMBarrier<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">BufferLayout</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>TokenLayout<span style="color: #BBB"> </span>token_layout;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_tokens_per_rank;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>base;
+
+<span style="color: #BBB">    </span>__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span>__host__
+<span style="color: #BBB">    </span>BufferLayout(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>TokenLayout<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_layout,
+<span style="color: #BBB">                 </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_ranks,
+<span style="color: #BBB">                 </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>max_num_tokens_per_rank,
+<span style="color: #BBB">                 </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>base<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span><span style="color: #666">:</span>
+<span style="color: #BBB">        </span>token_layout(token_layout),
+<span style="color: #BBB">        </span>num_ranks(num_ranks),<span style="color: #BBB"> </span>num_max_tokens_per_rank(max_num_tokens_per_rank),
+<span style="color: #BBB">        </span>base(base)<span style="color: #BBB"> </span>{}
+
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>get_num_bytes_per_rank()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>num_max_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #00F">get_num_bytes_per_token</span>();
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>get_num_bytes()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_num_bytes_per_rank()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span>BufferLayout<span style="color: #BBB"> </span>get_rank_buffer(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>BufferLayout(token_layout,
+<span style="color: #BBB">                            </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">                            </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int8_t</span><span style="color: #666">*&gt;</span>(base)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>get_num_bytes_per_rank()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>rank_idx);
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span>TokenLayout<span style="color: #BBB"> </span>get_token_buffer(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>global<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>EP_UNIFIED_ASSERT(num_ranks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>global);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>TokenLayout(token_layout.num_hidden_bytes,<span style="color: #BBB"> </span>token_layout.num_sf_bytes,
+<span style="color: #BBB">                           </span>token_layout.num_topk,<span style="color: #BBB"> </span>token_layout.with_metadata,
+<span style="color: #BBB">                           </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int8_t</span><span style="color: #666">*&gt;</span>(base)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span>kWithMBarrier,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>token_idx);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong>BufferLayout 的维度含义</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>BufferLayout = [num_ranks] × [num_max_tokens_per_rank] × [TokenLayout]
+</code></pre></div>
+
+<ul>
+<li>第一维 <code>num_ranks</code>：每个 rank 一个"逻辑通道"</li>
+<li>第二维 <code>num_max_tokens_per_rank</code>：每个 rank 最多接收的 token 数</li>
+<li>第三维 <code>TokenLayout</code>：每个 token 的字节布局</li>
+</ul>
+<h3 id="32-tokenlayout-token">3.2 TokenLayout：单个 token 的内部结构</h3>
+<p>代码位置：<code>deep_ep/include/deep_ep/common/layout.cuh:179-249</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">TokenLayout</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_hidden_bytes,<span style="color: #BBB"> </span>num_sf_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>with_metadata;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_topk,<span style="color: #BBB"> </span>num_metadata_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>base;
+
+<span style="color: #BBB">    </span>__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span>__host__
+<span style="color: #BBB">    </span>TokenLayout(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_hidden_bytes,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_sf_bytes,
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>with_metadata,<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>base<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span><span style="color: #666">:</span>
+<span style="color: #BBB">        </span>num_hidden_bytes(num_hidden_bytes),
+<span style="color: #BBB">        </span>num_sf_bytes(num_sf_bytes),
+<span style="color: #BBB">        </span>with_metadata(with_metadata),
+<span style="color: #BBB">        </span>num_topk(num_topk),
+<span style="color: #BBB">        </span>num_metadata_bytes(num_topk<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">float</span>))<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                           </span>(with_metadata<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(<span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_topk)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)),
+<span style="color: #BBB">        </span>base(base)<span style="color: #BBB"> </span>{}
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithMBarrier,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span>__host__<span style="color: #BBB"> </span>dtype_t<span style="color: #BBB"> </span>get_num_bytes()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(num_hidden_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                               </span>math<span style="color: #666">::</span>align(num_sf_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                               </span>math<span style="color: #666">::</span>align(num_metadata_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                               </span>math<span style="color: #666">::</span>align<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(kWithMBarrier<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(ptx<span style="color: #666">::</span>mbarrier)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>dtype_t<span style="color: #666">&gt;</span>(num_bytes);
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_hidden_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_base_ptr();<span style="color: #BBB"> </span>}
+<span style="color: #BBB">    </span>sf_pack_t<span style="color: #666">*</span><span style="color: #BBB"> </span>get_sf_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>sf_pack_t<span style="color: #666">&gt;</span>(base,<span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(num_hidden_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes));
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_topk_idx_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_metadata_ptr();<span style="color: #BBB"> </span>}
+<span style="color: #BBB">    </span><span style="color: #B00040">float</span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_topk_weights_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">float</span><span style="color: #666">&gt;</span>(get_metadata_ptr(),<span style="color: #BBB"> </span>num_topk<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>));
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_src_token_global_idx_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(get_topk_weights_ptr(),<span style="color: #BBB"> </span>num_topk<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">float</span>));
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_linked_list_idx_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_src_token_global_idx_ptr()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier<span style="color: #666">*</span><span style="color: #BBB"> </span>get_mbarrier_ptr()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>ptx<span style="color: #666">::</span>mbarrier<span style="color: #666">&gt;</span>(get_metadata_ptr(),<span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(num_metadata_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes));
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong>TokenLayout 内存排布</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>[hidden_bytes | SF_bytes | metadata_bytes | mbarrier?]
+     ↓              ↓            ↓
+   hidden     scale factors   topk_idx[num_topk]
+                              topk_weights[num_topk]
+                              src_token_global_idx
+                              linked_list_idx[num_topk]
+</code></pre></div>
+
+<blockquote>
+<p><strong>关键发现</strong>：每个 token 自带 topk_idx、topk_weights 等 metadata。这意味着 Buffer 不是纯数据区，而是"数据+元数据"交错的打包结构。博客中的"Layout Transformation"实际上是在 kernel 中通过 TMA store 到不同 slot 完成的。</p>
+</blockquote>
+<h3 id="33-direct-buffer-scaleout_ranks-1">3.3 Direct 模式的 Buffer 段分配（单节点 / scaleout_ranks == 1）</h3>
+<p>代码位置：<code>csrc/elastic/buffer.hpp:586-613</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_dispatch_buffer_size</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">                                        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>hidden,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_sf_packs,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,
+<span style="color: #BBB">                                        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>elem_size,
+<span style="color: #BBB">                                        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_scaleout_ranks,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_scaleup_ranks,
+<span style="color: #BBB">                                        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_scaleup_nvlink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_scaleup_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_scaleout_ranks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_dispatch_token_layout(hidden,<span style="color: #BBB"> </span>elem_size,<span style="color: #BBB"> </span>num_sf_packs,<span style="color: #BBB"> </span>num_topk);
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Direct dispatch</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>token_layout,<span style="color: #BBB"> </span>is_scaleup_nvlink<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>recv_buffer_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>token_layout,<span style="color: #BBB"> </span>num_ranks,<span style="color: #BBB"> </span>num_max_tokens_per_rank);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>send_buffer_layout.get_num_bytes()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>recv_buffer_layout.get_num_bytes();
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<p><strong>Direct 模式 Buffer 结构</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>GPU buffer = [recv_buffer (num_ranks × max_tokens) | send_buffer (1 × max_tokens)]
+</code></pre></div>
+
+<p>代码位置：<code>deep_ep/include/deep_ep/impls/dispatch.cuh:264-268</code>（实际 kernel 中的使用）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Buffer layouts</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>TokenLayout(kNumHiddenBytes,<span style="color: #BBB"> </span>kNumSFPacks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(sf_pack_t),<span style="color: #BBB"> </span>kNumTopk,<span style="color: #BBB"> </span><span style="color: #008000">true</span>);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tma_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumDispatchWarps,<span style="color: #BBB"> </span><span style="color: #666">1</span>,
+<span style="color: #BBB">    </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(smem,<span style="color: #BBB"> </span>kNumSmemBytesForNotify)).get_rank_buffer(dispatch_warp_idx).get_token_buffer(<span style="color: #666">0</span>);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>buffer);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>recv_buffer.get_buffer_end_ptr());
+recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_rank_buffer(rank_idx);
+</code></pre></div>
+
+<p><strong>Direct 模式 kernel 数据流</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>输入 x (用户 Tensor)
+    ↓ TMA load
+smem tma_buffer (warp 本地 staging)
+    ↓ TMA store
+recv_buffer[dst_rank][dst_slot]  (NVLink 直达目标 rank 的对称内存)
+    ↓ gin.put (RDMA)
+recv_buffer[...]  (对于 NVLink 不可达的 rank，先写入 send_buffer 再 RDMA)
+</code></pre></div>
+
+<h3 id="34-hybrid-buffer-scaleout_ranks-1">3.4 Hybrid 模式的 Buffer 段分配（多节点 / scaleout_ranks &gt; 1）</h3>
+<p>代码位置：<code>csrc/elastic/buffer.hpp:601-613</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Hybrid dispatch</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleup_recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>token_layout,<span style="color: #BBB"> </span>num_scaleup_ranks,<span style="color: #BBB"> </span>num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_tokens_per_rank);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>token_layout,<span style="color: #BBB"> </span>num_scaleout_ranks,
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">/* kNumChannels * kNumMaxTokensPerChannel */</span><span style="color: #BBB"> </span>num_max_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMaxChannels);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>scaleup_recv_buffer.get_num_bytes()<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">           </span>scaleout_send_buffer.get_num_bytes()<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">           </span>scaleout_recv_buffer.get_num_bytes();
+}
+</code></pre></div>
+
+<p><strong>Hybrid 模式 Buffer 结构</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>GPU buffer = [scaleup_recv_buffer | scaleout_send_buffer | scaleout_recv_buffer]
+</code></pre></div>
+
+<p>代码位置：<code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:92-97</code>（kernel 实际使用）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// All the buffers</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleup_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span>kNumScaleupRanks,<span style="color: #BBB"> </span>kNumScaleoutRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>buffer);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>scaleup_buffer.get_buffer_end_ptr());
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span>kNumChannels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTokensPerChannel,<span style="color: #BBB"> </span>scaleout_send_buffer.get_buffer_end_ptr());
+</code></pre></div>
+
+<p><strong>Hybrid 模式 kernel 数据流（三阶段流水线）</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>输入 x
+    ↓ (scaleout warps)
+scaleout_send_buffer → gin.put(RDMA) → 远端 scaleout_recv_buffer
+    ↓ (forward warps 轮询各 scaleout peer)
+scaleout_recv_buffer → TMA store → scaleup_buffer[dst_scaleup_rank][slot]
+    ↓ (copy epilogue)
+scaleup_buffer → recv_x (用户 Tensor)
+</code></pre></div>
+
+<hr />
+<h2 id="4-v1-legacy-vs-v2-elastic-buffer">4. V1 (Legacy) vs V2 (Elastic) Buffer 组织对比</h2>
+<h3 id="41-legacy-buffernvshmem">4.1 Legacy Buffer：NVSHMEM 通道环形队列</h3>
+<p>代码位置：<code>csrc/legacy/buffer.hpp:22-81</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Buffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Low-latency mode buffer</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>low_latency_buffer_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>low_latency_mode<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink Buffer</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_nvl_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>buffer_ptrs[LEGACY_NUM_MAX_NVL_PEERS]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{<span style="color: #008000">nullptr</span>};
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">**</span><span style="color: #BBB"> </span>buffer_ptrs_gpu<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVSHMEM Buffer</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_rdma_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>rdma_buffer_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Workspace</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>workspace<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Host-side MoE info</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">volatile</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>moe_recv_counter<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>moe_recv_counter_mapped<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">volatile</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>moe_recv_expert_counter<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">volatile</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>moe_recv_rdma_counter<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+};
+</code></pre></div>
+
+<p>代码位置：<code>csrc/legacy/config.hpp:53-73</code>（NVL buffer size hint）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">size_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_nvl_buffer_size_hint</span>(<span style="color: #B00040">size_t</span><span style="color: #BBB"> </span>hidden_bytes,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_ranks)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_sms<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;
+<span style="color: #BBB">    </span><span style="color: #B00040">size_t</span><span style="color: #BBB"> </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>(<span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_rdma_ranks<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">3</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// metadata</span>
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>hidden_bytes;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// data</span>
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>internode<span style="color: #666">::</span>get_source_meta_bytes();
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTopK<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(topk_idx_t);
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTopK<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">float</span>);
+<span style="color: #BBB">    </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_channels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxScales<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">float</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>num_bytes;
+}
+</code></pre></div>
+
+<p><strong>Legacy NVLink Buffer 布局</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>num_nvl_bytes = Σ_channels Σ_ranks [
+    metadata (start/end/head/tail)
+    + data[num_max_nvl_chunked_recv_tokens]
+    + source_meta[...]
+    + topk_idx[...]
+    + topk_weights[...]
+    + scales[...]
+]
+</code></pre></div>
+
+<p><strong>Legacy 的关键特征</strong>：<br />
+1. <strong>通道分离</strong>：每个 channel 有独立的 queue head/tail，形成环形缓冲<br />
+2. <strong>chunk 显式化</strong>：<code>num_max_nvl_chunked_recv_tokens</code> 是实际的 chunk 大小参数<br />
+3. <strong>IPC 共享</strong>：通过 <code>buffer_ptrs[LEGACY_NUM_MAX_NVL_PEERS]</code> 直接打开对端内存<br />
+4. <strong>NVSHMEM 分配</strong>：RDMA buffer 通过 <code>nvshmem::alloc()</code> 分配</p>
+<h3 id="42-elastic-buffernccl-gin">4.2 Elastic Buffer：NCCL Gin 对称内存</h3>
+<p><strong>Elastic 的关键特征</strong>：<br />
+1. <strong>模板化布局</strong>：<code>BufferLayout&lt;kWithMBarrier&gt;</code> 编译期确定排布<br />
+2. <strong>对称内存</strong>：通过 NCCL Symmetric Memory (<code>ncclWinAllocate</code>) 注册<br />
+3. <strong>rank × token 二维索引</strong>：<code>buffer[rank_idx][token_idx]</code> 直接寻址，无环形队列<br />
+4. <strong>TMA 硬件加速</strong>：利用 Tensor Memory Accelerator 做全局内存拷贝<br />
+5. <strong>mbarrier 同步</strong>：每个 token slot 自带 mbarrier，支持异步等待</p>
+<h3 id="43">4.3 对比表</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Legacy (V1)</th>
+<th>Elastic (V2)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通信后端</td>
+<td>NVSHMEM (<code>nvshmem_*</code>)</td>
+<td>NCCL Gin (<code>ncclDevComm</code> + <code>ncclWindow</code>)</td>
+</tr>
+<tr>
+<td>内存注册</td>
+<td><code>nvshmem::alloc</code></td>
+<td><code>ncclWinAllocate</code> (Symmetric)</td>
+</tr>
+<tr>
+<td>Buffer 组织</td>
+<td>通道环形队列 (head/tail)</td>
+<td>rank × token 二维数组</td>
+</tr>
+<tr>
+<td>Chunk 概念</td>
+<td>显式 <code>num_max_*_chunked_*_tokens</code></td>
+<td>隐式（warp 轮询 tokens）</td>
+</tr>
+<tr>
+<td>同步机制</td>
+<td><code>nvshmem</code> barrier + 显式 flag</td>
+<td>mbarrier + NCCL barrier + atomic counter</td>
+</tr>
+<tr>
+<td>元数据位置</td>
+<td>与 data 交错在同一 queue</td>
+<td>TokenLayout 内 data 后紧跟 metadata</td>
+</tr>
+<tr>
+<td>拓扑感知</td>
+<td>固定 8 NVLink peers</td>
+<td>动态 scaleout/scaleup 逻辑域</td>
+</tr>
+<tr>
+<td>CPU 同步</td>
+<td><code>moe_recv_counter</code> (host-mapped)</td>
+<td><code>host_workspace</code> (mapped) + <code>encode_decode_positive</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-bufferlayout">5. BufferLayout 模板深度解析</h2>
+<h3 id="51-rank_buffer-vs-token_buffer">5.1 rank_buffer vs token_buffer</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 获取某个 rank 的子 BufferLayout（维度退化为 1 × num_max_tokens_per_rank）</span>
+BufferLayout<span style="color: #BBB"> </span><span style="color: #00F">get_rank_buffer</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>BufferLayout(token_layout,
+<span style="color: #BBB">                        </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">                        </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int8_t</span><span style="color: #666">*&gt;</span>(base)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>get_num_bytes_per_rank()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>rank_idx);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 获取某个 token 的 TokenLayout（维度退化为单个 token）</span>
+TokenLayout<span style="color: #BBB"> </span><span style="color: #00F">get_token_buffer</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>global<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>EP_UNIFIED_ASSERT(num_ranks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>global);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>TokenLayout(token_layout.num_hidden_bytes,<span style="color: #BBB"> </span>token_layout.num_sf_bytes,
+<span style="color: #BBB">                       </span>token_layout.num_topk,<span style="color: #BBB"> </span>token_layout.with_metadata,
+<span style="color: #BBB">                       </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int8_t</span><span style="color: #666">*&gt;</span>(base)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span>kWithMBarrier,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>token_idx);
+}
+</code></pre></div>
+
+<p><strong>维度链</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>BufferLayout(num_ranks, max_tokens)
+    ├── .get_rank_buffer(i) → BufferLayout(1, max_tokens)
+    │       └── .get_token_buffer(j) → TokenLayout(single token)
+    └── .get_channel_buffer&lt;kTokensPerChannel&gt;(c) → BufferLayout(num_ranks, max_tokens)
+            // 注意：channel 不是降维，而是 stride 访问
+</code></pre></div>
+
+<h3 id="52-kwithmbarrier">5.2 kWithMBarrier 模板参数</h3>
+<p><code>kWithMBarrier</code> 控制是否在 TokenLayout 末尾预留 mbarrier 空间：<br />
+- <strong><code>BufferLayout&lt;true&gt;</code></strong>（smem 中的 TMA staging buffer）：需要 mbarrier 做 load/store 同步<br />
+- <strong><code>BufferLayout&lt;false&gt;</code></strong>（global memory 中的 recv/send buffer）：不需要 mbarrier</p>
+<p>代码位置：<code>deep_ep/include/deep_ep/common/layout.cuh:201-208</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithMBarrier,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span>__host__<span style="color: #BBB"> </span>dtype_t<span style="color: #BBB"> </span>get_num_bytes()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(num_hidden_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                           </span>math<span style="color: #666">::</span>align(num_sf_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                           </span>math<span style="color: #666">::</span>align(num_metadata_bytes,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                           </span>math<span style="color: #666">::</span>align<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(kWithMBarrier<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(ptx<span style="color: #666">::</span>mbarrier)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>kNumTMAAlignBytes);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>dtype_t<span style="color: #666">&gt;</span>(num_bytes);
+}
+</code></pre></div>
+
+<h3 id="53-channel-buffer-stride">5.3 Channel Buffer 的 stride 访问</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumTokensPerChannel<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span>__host__
+BufferLayout<span style="color: #BBB"> </span>get_channel_buffer(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>channel_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>EP_UNIFIED_ASSERT(num_max_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumTokensPerChannel<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>BufferLayout(token_layout,
+<span style="color: #BBB">                        </span>num_ranks,<span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">                        </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int8_t</span><span style="color: #666">*&gt;</span>(base)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>get_num_bytes_per_token()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTokensPerChannel<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>channel_idx);
+}
+</code></pre></div>
+
+<blockquote>
+<p><strong>重要</strong>：<code>get_channel_buffer</code> 返回的 BufferLayout 仍然保持 <code>num_ranks × num_max_tokens_per_rank</code> 维度，但 base 指针偏移了 <code>kNumTokensPerChannel * channel_idx</code>。这意味着 channel 是<strong>交错排布</strong>而非连续分块的——第 <code>kNumTokensPerChannel * c</code> 个 token 属于 channel c。</p>
+</blockquote>
+<hr />
+<h2 id="6-workspacelayout">6. WorkspaceLayout：元数据专用空间</h2>
+<h3 id="61">6.1 整体结构</h3>
+<p>代码位置：<code>deep_ep/include/deep_ep/common/layout.cuh:10-177</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">WorkspaceLayout</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>workspace;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_scaleout_ranks,<span style="color: #BBB"> </span>num_scaleup_ranks;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span>num_experts_per_rank;
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1024</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxExperts<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2048</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxInflightAGRS<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">32</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumBarrierSignalBytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">16</span>;
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_num_bytes</span>()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumBarrierSignalBytes;<span style="color: #BBB">                                    </span><span style="color: #3D7B7B; font-style: italic">// NVLink barrier</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>(kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMaxExperts)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int64_t</span>);<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Notify reduction</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int64_t</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">                       </span><span style="color: #3D7B7B; font-style: italic">// Scaleup rank count</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxExperts<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int64_t</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">                     </span><span style="color: #3D7B7B; font-style: italic">// Scaleup expert count</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>);<span style="color: #BBB">                                </span><span style="color: #3D7B7B; font-style: italic">// Scaleup atomic sender</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">                           </span><span style="color: #3D7B7B; font-style: italic">// Scaleout rank count</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxExperts<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">                         </span><span style="color: #3D7B7B; font-style: italic">// Scaleout expert count</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxChannels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int64_t</span>);<span style="color: #BBB">         </span><span style="color: #3D7B7B; font-style: italic">// Scaleout channel tails</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxChannels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>);<span style="color: #BBB">             </span><span style="color: #3D7B7B; font-style: italic">// Channel scaleup tails</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int64_t</span>);<span style="color: #BBB">                                   </span><span style="color: #3D7B7B; font-style: italic">// PP counts</span>
+<span style="color: #BBB">        </span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>(kNumMaxInflightAGRS<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">int</span>);<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// AGRS signals</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>num_bytes;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+};
+</code></pre></div>
+
+<h3 id="62-workspace">6.2 Workspace 各段用途</h3>
+<table>
+<thead>
+<tr>
+<th>偏移段</th>
+<th>用途</th>
+<th>消费者</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nvl_barrier_counter</code> (16B)</td>
+<td>NVLink 全局 barrier</td>
+<td><code>gpu_barrier</code></td>
+</tr>
+<tr>
+<td><code>notify_reduction_workspace</code></td>
+<td>SM 间原子加归约</td>
+<td>notify warps</td>
+</tr>
+<tr>
+<td><code>scaleup_rank_expert_count</code></td>
+<td>scaleup 域 rank/expert 接收计数</td>
+<td>notify + copy epilogue</td>
+</tr>
+<tr>
+<td><code>scaleup_atomic_sender_counter</code></td>
+<td>发送端 slot 原子分配</td>
+<td>dispatch warps</td>
+</tr>
+<tr>
+<td><code>scaleout_rank_expert_count</code></td>
+<td>scaleout 域 rank/expert 接收计数</td>
+<td>hybrid notify warps</td>
+</tr>
+<tr>
+<td><code>scaleout_channel_signaled_tail</code></td>
+<td>scaleout channel 完成通知</td>
+<td>forward warps</td>
+</tr>
+<tr>
+<td><code>channel_scaleup_tail</code></td>
+<td>channel → scaleup 链表尾</td>
+<td>copy epilogue</td>
+</tr>
+<tr>
+<td><code>pp_send/recv_count</code></td>
+<td>Pipeline Parallel 计数</td>
+<td>PP kernel</td>
+</tr>
+<tr>
+<td><code>agrs_recv/session_signal</code></td>
+<td>All-Gather Reduce-Scatter 会话</td>
+<td>AGRS kernel</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63-host_workspace">6.3 host_workspace 的双重映射</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Allocate host workspaces</span>
+CUDA_RUNTIME_CHECK(cudaMallocHost(<span style="color: #666">&amp;</span>host_workspace,<span style="color: #BBB"> </span>layout<span style="color: #666">::</span>WorkspaceLayout<span style="color: #666">::</span>get_num_bytes(),<span style="color: #BBB"> </span>cudaHostAllocMapped));
+CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(<span style="color: #666">&amp;</span>mapped_host_workspace,<span style="color: #BBB"> </span>host_workspace,<span style="color: #BBB"> </span><span style="color: #666">0</span>));
+</code></pre></div>
+
+<p><strong>设计意图</strong>：<br />
+- <code>host_workspace</code>：CPU 端虚拟地址，用于 <code>cudaDeviceSynchronize()</code> 后读取计数器<br />
+- <code>mapped_host_workspace</code>：GPU 端虚拟地址，用于 GPU kernel 写入<br />
+- 两者指向同一物理内存（zero-copy），实现 CPU 无锁轮询</p>
+<hr />
+<h2 id="7-buffer">7. 代码实证：Buffer 分配与使用的完整链路</h2>
+<h3 id="71-dispatch">7.1 dispatch 调用链</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Python: buffer.dispatch(x, topk_idx, topk_weights, ...)
+    ↓
+C++: ElasticBuffer::dispatch (csrc/elastic/buffer.hpp:702)
+    ├── 计算 num_sms, num_qps
+    ├── 分配 psum_num_recv_tokens_per_scaleup_rank
+    ├── 分配 psum_num_recv_tokens_per_expert
+    ├── 分配 dst_buffer_slot_idx (non-hybrid) 或 [num_channels][num_scaleout][max_tokens_per_channel][topk] (hybrid)
+    ├── 分配 token_metadata_at_forward (hybrid only)
+    ├── 分配 channel_linked_list (hybrid only)
+    ├── 清理 host_workspace 计数器
+    ├── launch_dispatch(...) → dispatch_impl kernel
+    │       ├── notify warps: 统计 expert/rank 接收数 → 写 workspace
+    │       ├── dispatch warps: TMA load x → TMA store recv_buffer/send_buffer → gin.put (RDMA)
+    │       └── cudaTriggerProgrammaticLaunchCompletion (触发 epilogue)
+    ├── CPU 等待 host_workspace 计数器 (do_cpu_sync)
+    ├── 分配 recv_x, recv_sf, recv_topk_idx, recv_topk_weights, recv_src_metadata
+    └── launch_dispatch_copy_epilogue → dispatch_copy_epilogue_impl
+            ├── 从 scaleup_buffer TMA load → smem
+            ├── expand 模式: atomicAdd psum expert 计数器 → 分配 slot
+            └── TMA store → recv_x
+</code></pre></div>
+
+<h3 id="72-combine">7.2 combine 调用链</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Python: buffer.combine(x, handle, topk_weights, ...)
+    ↓
+C++: ElasticBuffer::combine (csrc/elastic/buffer.hpp:1180)
+    ├── launch_combine(...) → combine_impl kernel
+    │       ├── 读取 src_metadata 获取 (src_token_idx, src_rank_idx, src_topk_idx)
+    │       ├── NVLink bypass: TMA store 到对端 scaleup_buffer
+    │       ├── RDMA: TMA store 到 send_buffer → gin.put
+    │       └── barrier
+    ├── 分配 combined_x, combined_topk_weights
+    └── launch_combine_reduce_epilogue → combine_reduce_epilogue_impl
+            ├── 从 comm_buffer TMA load 多个 rank 的数据
+            ├── combine_reduce: 本地归约 (allow_multiple_reduction)
+            ├── 加 bias_0, bias_1
+            └── TMA store → combined_x
+</code></pre></div>
+
+<hr />
+<h2 id="8">8. 博客模型准确性评估</h2>
+<h3 id="81">8.1 映射关系</h3>
+<table>
+<thead>
+<tr>
+<th>博客术语</th>
+<th>实际代码对应</th>
+<th>准确性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td>用户输入 Tensor <code>x</code>（不在 EP Buffer 内）</td>
+<td>部分准确——逻辑上是，但物理上不属于 EP Buffer</td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td><code>recv_buffer</code> / <code>scaleup_buffer</code>（按目标 rank 索引）</td>
+<td>准确——Destination-major 布局</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td>不存在独立 Buffer；chunk 是 warp 调度策略</td>
+<td><strong>不准确</strong>——chunk 是通信粒度，不是独立存储段</td>
+</tr>
+<tr>
+<td><strong>NVLink/RDMA Pipeline</strong></td>
+<td><code>gin.put&lt;team_t&gt;()</code> / <code>tma_store_1d()</code> + NCCL 对称内存</td>
+<td>准确——但"Pipeline"是 gin 硬件抽象</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>recv_buffer</code>（与 Dispatch Buffer 同段）</td>
+<td><strong>混淆</strong>——Dispatch/Receive 是同一 Buffer 的两面</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer</strong></td>
+<td>用户输出 Tensor <code>recv_x</code>（不在 EP Buffer 内）</td>
+<td>部分准确——逻辑上是，但物理上是 copy epilogue 的输出</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 博客简化了什么</h3>
+<ol>
+<li>
+<p><strong>合并了 Dispatch Buffer 与 Receive Buffer</strong>：<br />
+   - 博客描述为两个独立段<br />
+   - 实际是 <code>recv_buffer</code> 同一块内存，发送端 TMA store 到对端 <code>recv_buffer</code> 的某个 slot，接收端从同一 <code>recv_buffer</code> 读取</p>
+</li>
+<li>
+<p><strong>虚构了 "Chunk Buffer"</strong>：<br />
+   - 博客暗示存在一个独立的 chunk 聚合区<br />
+   - 实际 chunk 是 warp 的调度单位（每次处理 <code>kNumTokensPerChannel</code> 个 token），数据始终驻留在 rank × token 的二维数组中</p>
+</li>
+<li>
+<p><strong>未区分 user Tensor 与 EP internal Buffer</strong>：<br />
+   - Token Buffer (x) 和 Expert Buffer (recv_x) 是用户分配的 Tensor<br />
+   - EP Buffer 只包含 workspace + GPU buffer + CPU buffer</p>
+</li>
+<li>
+<p><strong>忽略了 Workspace</strong>：<br />
+   - Workspace 是独立的元数据区，承担 barrier、counter、notify 等关键功能<br />
+   - 博客模型完全没有体现这个"控制平面"</p>
+</li>
+<li>
+<p><strong>未区分 Direct 与 Hybrid 模式</strong>：<br />
+   - Hybrid 模式下存在 3 个独立 Buffer 段（scaleup_recv / scaleout_send / scaleout_recv）<br />
+   - 博客的线性流水线描述无法体现三阶段流水</p>
+</li>
+</ol>
+<h3 id="83">8.3 博客捕捉到了什么</h3>
+<ol>
+<li><strong>Token 是调度粒度</strong>：kernel 中 <code>for (int token_idx = token_start; token_idx &lt; num_tokens; token_stride)</code> 确实以 token 为单位迭代</li>
+<li><strong>Destination-major 布局</strong>：<code>recv_buffer.get_rank_buffer(dst_rank).get_token_buffer(slot)</code> 确实是按目标 rank 索引</li>
+<li><strong>通信粒度 vs 调度粒度分离</strong>：chunk（warp 批量）确实是通信硬件高效利用的关键</li>
+</ol>
+<hr />
+<h2 id="9-mermaid-buffer">9. Mermaid 图：真实 Buffer 层级结构</h2>
+<h3 id="91-elasticbuffer">9.1 ElasticBuffer 物理布局</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;NCCL Symmetric Memory (num_sym_bytes)&quot;
+        W[&quot;Workspace&lt;br/&gt;(barrier + counters + tails)&lt;br/&gt;2MB aligned&quot;]
+        GPU[&quot;GPU Buffer&lt;br/&gt;(dispatch/combine 复用)&quot;]
+        CPU[&quot;CPU Buffer&lt;br/&gt;(Engram storage)&quot;]
+    end
+
+    subgraph &quot;GPU Buffer: Direct Mode&quot;
+        RBUF[&quot;recv_buffer&lt;br/&gt;[num_ranks × max_tokens]&lt;br/&gt;TokenLayout&quot;]
+        SBUF[&quot;send_buffer&lt;br/&gt;[1 × max_tokens]&lt;br/&gt;RDMA staging&quot;]
+    end
+
+    subgraph &quot;GPU Buffer: Hybrid Mode&quot;
+        SRBUF[&quot;scaleup_recv_buffer&lt;br/&gt;[num_scaleup_ranks × scaleout×max_tokens]&quot;]
+        SSOUT[&quot;scaleout_send_buffer&lt;br/&gt;[1 × max_tokens]&lt;br/&gt;RDMA staging&quot;]
+        SRECV[&quot;scaleout_recv_buffer&lt;br/&gt;[num_scaleout_ranks × channels×tokens_per_channel]&quot;]
+    end
+
+    subgraph &quot;TokenLayout (per token)&quot;
+        HID[&quot;hidden_bytes&quot;]
+        SF[&quot;sf_bytes&lt;br/&gt;(FP8 scale factors)&quot;]
+        META[&quot;metadata&lt;br/&gt;topk_idx + topk_weights&lt;br/&gt;+ src_token_global_idx&lt;br/&gt;+ linked_list_idx&quot;]
+        MBAR[&quot;mbarrier&lt;br/&gt;(仅 smem staging)&quot;]
+    end
+
+    W --&gt; GPU --&gt; CPU
+    GPU --&gt; RBUF &amp; SBUF
+    GPU --&gt; SRBUF --&gt; SSOUT --&gt; SRECV
+    RBUF --&gt; HID --&gt; SF --&gt; META --&gt; MBAR
+</code></pre></div>
+
+<h3 id="92-dispatch">9.2 dispatch 数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;User Space&quot;
+        X[&quot;x&lt;br/&gt;[num_tokens, hidden]&quot;]
+        RX[&quot;recv_x&lt;br/&gt;[num_recv, hidden]&quot;]
+    end
+
+    subgraph &quot;EP Buffer (Direct)&quot;
+        RB[&quot;recv_buffer&lt;br/&gt;[rank][slot]&quot;]
+        SB[&quot;send_buffer&lt;br/&gt;[0][token]&quot;]
+    end
+
+    subgraph &quot;Hardware&quot;
+        NVL[&quot;NVLink&lt;br/&gt;(对称内存直通)&quot;]
+        RDMA[&quot;RDMA&lt;br/&gt;gin.put&quot;]
+    end
+
+    X --&gt;|&quot;TMA load → smem&quot;| RB
+    X --&gt;|&quot;TMA load → smem&quot;| SB
+    RB --&gt;|&quot;TMA store → gin.get_sym_ptr&quot;| NVL
+    SB --&gt;|&quot;gin.put&quot;| RDMA
+    NVL --&gt;|&quot;远端 RB&quot;| RB
+    RDMA --&gt;|&quot;远端 RB&quot;| RB
+    RB --&gt;|&quot;copy epilogue&quot;| RX
+</code></pre></div>
+
+<h3 id="93-hybrid-dispatch">9.3 Hybrid dispatch 三阶段流水</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;Stage 1: Scaleout Send (RDMA)&quot;
+        X[&quot;x&lt;br/&gt;输入&quot;]
+        SSOUT[&quot;scaleout_send_buffer&lt;br/&gt;RDMA staging&quot;]
+        X --&gt;|&quot;TMA store&quot;| SSOUT
+        SSOUT --&gt;|&quot;gin.put(ncclTeamTagRail)&quot;| NET[&quot;RDMA Network&quot;]
+    end
+
+    subgraph &quot;Stage 2: Forward (NVLink)&quot;
+        SRECV[&quot;scaleup_recv_buffer&lt;br/&gt;[scaleout_rank][slot]&quot;]
+        SRBUF[&quot;scaleup_buffer&lt;br/&gt;[scaleup_rank][slot]&quot;]
+        NET --&gt;|&quot;远端写入&quot;| SRECV
+        SRECV --&gt;|&quot;TMA store&lt;br/&gt;轮询各 scaleout peer&quot;| SRBUF
+    end
+
+    subgraph &quot;Stage 3: Copy Epilogue&quot;
+        RX[&quot;recv_x&quot;]
+        SRBUF --&gt;|&quot;TMA load → expand/sort&lt;br/&gt;TMA store&quot;| RX
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="10">10. 总结</h2>
+<h3 id="101">10.1 博客模型的教学价值</h3>
+<p>博客的 5 层模型作为<strong>第一性原理抽象</strong>具有以下价值：<br />
+- 清晰分离了"调度粒度 (Token)"与"通信粒度 (Chunk)"<br />
+- 突出了 Layout Transformation 的核心地位<br />
+- 为理解 Normal vs Low-Latency 的 trade-off 提供了框架</p>
+<h3 id="102">10.2 实际实现的复杂性</h3>
+<p>实际代码中的 Buffer 系统远比博客复杂：<br />
+1. <strong>模板元编程</strong>：<code>BufferLayout&lt;kWithMBarrier&gt;</code> 编译期多态<br />
+2. <strong>拓扑自适应</strong>：Direct vs Hybrid 两种完全不同的分段策略<br />
+3. <strong>数据元数据打包</strong>：TokenLayout 内 data + metadata 交错<br />
+4. <strong>双层同步</strong>：Workspace 控制面 + Buffer 数据面<br />
+5. <strong>SM 间协作</strong>：notify warps / dispatch warps / forward warps 各司其职</p>
+<h3 id="103">10.3 核心洞察</h3>
+<blockquote>
+<p><strong>DeepEP Buffer 的本质不是"多层转换"，而是一个 rank × token 的二维对称内存数组，通过 TMA + NCCL Gin 硬件原语实现零拷贝的布局变换。</strong></p>
+</blockquote>
+<p>博客描述的"Token → Dispatch → Chunk → Network → Receive → Expert"流水线实际上是以下代码路径的<strong>逻辑抽象</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>用户 x → smem staging → recv_buffer[rank][slot] (NVLink/RDMA) → smem staging → 用户 recv_x
+         ↑ TMA load          ↑ TMA store / gin.put        ↑ TMA load     ↑ TMA store
+</code></pre></div>
+
+<p>中间两步（smem staging）是同一个 <code>recv_buffer</code> 的两面，而非两个独立 Buffer。</p>
+<hr />
+<h2 id="_1">附录：关键文件索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>核心内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td>ElasticBuffer C++ 类，分配逻辑，buffer size 计算</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/layout.cuh</code></td>
+<td>BufferLayout, TokenLayout, WorkspaceLayout</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>Direct dispatch kernel，Buffer 使用</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>Hybrid dispatch kernel，三阶段流水</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch_copy_epilogue.cuh</code></td>
+<td>Copy epilogue，Buffer → 用户 Tensor</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>Combine kernel，数据回传</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>Hybrid combine kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/combine_reduce_epilogue.cuh</code></td>
+<td>Reduce epilogue，归约 + bias</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/buffer.hpp</code></td>
+<td>Legacy Buffer (NVSHMEM)</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>Legacy Config + LowLatencyLayout</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>Python 封装</td>
+</tr>
+<tr>
+<td><code>tests/elastic/test_ep.py</code></td>
+<td>测试用例，Buffer 使用模式</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

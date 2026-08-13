@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP 整体架构分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepep">DeepEP 整体架构分析</h1>
+<blockquote>
+<p>本文档是对 DeepEP（DeepEveryParallel）通信库的独立架构分析，聚焦其作为 MoE Data Movement Runtime 的系统设计。<br />
+分析基于 DeepEP v2.1.0 源码，覆盖 Python API → C++ binding → JIT 编译 → CUDA kernel 全链路。</p>
+</blockquote>
+<hr />
+<h2 id="1-deepep">1. 项目定位：DeepEP 是什么</h2>
+<p>DeepEP 是一个<strong>面向 MoE（Mixture of Experts）的数据搬运运行时（Data Movement Runtime）</strong>，核心定位为：</p>
+<ul>
+<li><strong>高性能 Expert Parallelism（EP）all-to-all 通信库</strong>：提供 dispatch（token 路由到对应 expert 所在 rank）与 combine（expert 输出 reduce 回原 rank）两个基本原语</li>
+<li><strong>低精度支持</strong>：原生 FP8 dispatch + BF16 combine</li>
+<li><strong>极低 SM 占用</strong>：通信 kernel 仅占用极少 SM（4-64 个），将计算资源留给 GEMM</li>
+<li><strong>实验性扩展</strong>：PP send/recv、Engram（RDMA 远程内存访问）、CP、AGRS</li>
+</ul>
+<p>DeepEP 的设计哲学是<strong>通信 kernel 不应与计算争抢 SM</strong>。这与传统集合通信库（NCCL）的设计目标有本质区别——NCCL 追求通用性与全吞吐，DeepEP 追求"刚好够用"的通信能力 + 最小 SM 开销。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph 目标[&quot;DeepEP 设计目标&quot;]
+        A[&quot;高吞吐 all-to-all&lt;br/&gt;逼近硬件带宽极限&quot;]
+        B[&quot;低延迟&lt;br/&gt;RDMA 直连&quot;]
+        C[&quot;极低 SM 占用&lt;br/&gt;4-64 SMs for comm&quot;]
+        D[&quot;FP8/BF16 混合精度&quot;]
+    end
+
+    subgraph 场景[&quot;应用场景&quot;]
+        E[&quot;MoE Training&quot;]
+        F[&quot;MoE Inference Prefill&quot;]
+        G[&quot;MoE Inference Decode&quot;]
+        H[&quot;实验: PP/CP/Engram&quot;]
+    end
+
+    A --&gt; E
+    B --&gt; G
+    C --&gt; E
+    D --&gt; F
+</code></pre></div>
+
+<hr />
+<h2 id="2">2. 架构分层总览</h2>
+<p>DeepEP 采用经典的四层架构，从上到下依次为：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph L1[&quot;Layer 1: Python API&quot;]
+        P1[&quot;ElasticBuffer / Buffer&quot;]
+        P2[&quot;EPHandle / EventOverlap&quot;]
+        P3[&quot;Utils: envs, event, math, comm&quot;]
+    end
+
+    subgraph L2[&quot;Layer 2: C++ Binding (pybind11)&quot;]
+        B1[&quot;python_api.cpp&quot;]
+        B2[&quot;jit::register_apis&quot;]
+        B3[&quot;elastic::register_apis&quot;]
+        B4[&quot;legacy::register_apis&quot;]
+    end
+
+    subgraph L3[&quot;Layer 3: JIT Compilation&quot;]
+        J1[&quot;Compiler / NVCCCompiler&quot;]
+        J2[&quot;KernelRuntimeCache&quot;]
+        J3[&quot;KernelRuntime (cubin load)&quot;]
+        J4[&quot;IncludeParser / DeviceRuntime&quot;]
+    end
+
+    subgraph L4[&quot;Layer 4: CUDA Kernels + Backend&quot;]
+        K1[&quot;elastic/dispatch.hpp · combine.hpp&quot;]
+        K2[&quot;elastic/engram.hpp · pp_send_recv.hpp&quot;]
+        K3[&quot;legacy/internode.cu · intranode.cu&quot;]
+        K4[&quot;NCCL Gin Backend / NVSHMEM Backend&quot;]
+    end
+
+    L1 --&gt; L2 --&gt; L3 --&gt; L4
+</code></pre></div>
+
+<h3 id="21-layer-1python-api">2.1 Layer 1：Python API 层</h3>
+<p>入口文件 <code>deep_ep/__init__.py</code> 在 import 时完成三件关键事情：</p>
+<ol>
+<li><strong>NCCL 版本校验</strong>（<code>check_nccl_so</code>）：读取 <code>/proc/self/maps</code> 检查运行时加载的 <code>libnccl.so</code> 是否唯一，并与链接时的 NCCL 二进制对比，防止 PyTorch 自带 NCCL 与系统 NCCL 冲突</li>
+<li><strong>JIT 运行时初始化</strong>（<code>init_jit</code>）：调用 <code>_C.init_jit(library_root, cuda_home, nccl_root)</code> 设置编译器路径</li>
+<li><strong>导出符号</strong>：<code>ElasticBuffer</code>、<code>Buffer</code>、<code>EPHandle</code>、<code>EventOverlap</code>、<code>Config</code>、<code>topk_idx_t</code></li>
+</ol>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># __init__.py 核心初始化流程</span>
+check_nccl_so()          <span style="color: #3D7B7B; font-style: italic"># 1. 确保 NCCL 版本一致</span>
+init_jit()                <span style="color: #3D7B7B; font-style: italic"># 2. 初始化 JIT 编译器路径</span>
+<span style="color: #008000; font-weight: bold">from</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">.buffers.legacy</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">import</span> Buffer          <span style="color: #3D7B7B; font-style: italic"># V1</span>
+<span style="color: #008000; font-weight: bold">from</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">.buffers.elastic</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">import</span> ElasticBuffer, EPHandle  <span style="color: #3D7B7B; font-style: italic"># V2</span>
+<span style="color: #008000; font-weight: bold">from</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">.utils.event</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">import</span> EventOverlap
+</code></pre></div>
+
+<h3 id="22-layer-2c-binding">2.2 Layer 2：C++ Binding 层</h3>
+<p><code>csrc/python_api.cpp</code> 是唯一的 pybind11 模块入口，注册四个类别的 API：</p>
+<table>
+<thead>
+<tr>
+<th>注册函数</th>
+<th>命名空间</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>is_sm90_compiled</code></td>
+<td>全局</td>
+<td>是否编译 SM90 特性</td>
+</tr>
+<tr>
+<td><code>register_apis(m)</code></td>
+<td><code>jit</code></td>
+<td><code>init_jit</code></td>
+</tr>
+<tr>
+<td><code>register_apis(m)</code></td>
+<td><code>elastic</code></td>
+<td>ElasticBuffer 全套方法</td>
+</tr>
+<tr>
+<td><code>register_apis(m)</code></td>
+<td><code>legacy</code></td>
+<td>Buffer 全套方法</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-layer-3jit">2.3 Layer 3：JIT 编译层</h3>
+<p>详见第 6 节。</p>
+<h3 id="24-layer-4cuda-kernel">2.4 Layer 4：CUDA Kernel + 后端层</h3>
+<p>详见第 5、7 节。</p>
+<hr />
+<h2 id="3-v1-vs-v2-legacy-vs-elastic">3. V1 vs V2 架构对比（Legacy vs Elastic）</h2>
+<p>DeepEP 存在两套完整实现，代表两种截然不同的设计哲学：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph V1[&quot;V1: Legacy (NVSHMEM-based)&quot;]
+        V1P[&quot;Buffer (Python)&quot;]
+        V1C[&quot;legacy::Buffer (C++)&quot;]
+        V1K[&quot;legacy/internode.cu&lt;br/&gt;legacy/intranode.cu&quot;]
+        V1B[&quot;NVSHMEM Backend&lt;br/&gt;+ IBGDA&quot;]
+        V1P --&gt; V1C --&gt; V1K --&gt; V1B
+    end
+
+    subgraph V2[&quot;V2: Elastic (NCCL Gin-based)&quot;]
+        V2P[&quot;ElasticBuffer (Python)&quot;]
+        V2C[&quot;elastic::ElasticBuffer (C++)&quot;]
+        V2K[&quot;elastic/dispatch.hpp&lt;br/&gt;elastic/combine.hpp&quot;]
+        V2B[&quot;NCCL Gin Backend&lt;br/&gt;+ Symmetric Memory&quot;]
+        V2P --&gt; V2C --&gt; V2K --&gt; V2B
+    end
+</code></pre></div>
+
+<h3 id="31">3.1 核心设计差异</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 (Legacy)</th>
+<th>V2 (Elastic)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>后端</strong></td>
+<td>NVSHMEM + IBGDA</td>
+<td>NCCL Gin (Header-only)</td>
+</tr>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>显式 NVLink buffer + RDMA buffer</td>
+<td>NCCL Symmetric Memory (统一 VA)</td>
+</tr>
+<tr>
+<td><strong>Buffer 大小</strong></td>
+<td>较小</td>
+<td>较大（README 明示）</td>
+</tr>
+<tr>
+<td><strong>SM 占用</strong></td>
+<td>20-24 SMs (normal)</td>
+<td>4-64 SMs (分析式计算)</td>
+</tr>
+<tr>
+<td><strong>QP 数量</strong></td>
+<td>手动配置</td>
+<td>分析式自动计算 (17 / 65 / 129)</td>
+</tr>
+<tr>
+<td><strong>Scale 能力</strong></td>
+<td>EP ≤ 160</td>
+<td>EP 可达 2048</td>
+</tr>
+<tr>
+<td><strong>Config 调优</strong></td>
+<td>查表法 (config_map)</td>
+<td>无需 auto-tuning</td>
+</tr>
+<tr>
+<td><strong>0 SM RDMA EP</strong></td>
+<td>支持 (low_latency mode)</td>
+<td>不再支持</td>
+</tr>
+<tr>
+<td><strong>通信模式</strong></td>
+<td>显式 internode/intranode 分支</td>
+<td>hybrid/direct 统一</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-v1-legacy">3.2 V1 Legacy 架构细节</h3>
+<p><code>legacy::Buffer</code> 的核心设计：</p>
+<ul>
+<li><strong>双缓冲结构</strong>：NVLink buffer（节点内）+ RDMA buffer（节点间），物理分离</li>
+<li><strong>NVSHMEM team 管理</strong>：通过 <code>NVSHMEM_IBGDA_NUM_RC_PER_PE</code> 配置 QP 数，<code>NVSHMEM_QP_DEPTH</code> 控制 WQ 深度</li>
+<li><strong>IPC handle 交换</strong>：<code>sync()</code> 阶段交换 device_id、IPC handle、NVSHMEM unique_id</li>
+<li><strong>Low-latency mode</strong>：基于 IBGDA 的 RDMA 直连，双 buffer ping-pong（只能同时持有 2 个结果 tensor）</li>
+<li><strong>Config 查表</strong>：<code>get_dispatch_config(num_ranks)</code> 和 <code>get_combine_config(num_ranks)</code> 是硬编码映射表</li>
+</ul>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// V1 的 Config 查表是硬编码的</span>
+config_map<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #666">2:</span><span style="color: #BBB"> </span>Config(Buffer.num_sms,<span style="color: #BBB"> </span><span style="color: #666">24</span>,<span style="color: #BBB"> </span><span style="color: #666">256</span>,<span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>),
+<span style="color: #BBB">    </span><span style="color: #666">4:</span><span style="color: #BBB"> </span>Config(Buffer.num_sms,<span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB"> </span><span style="color: #666">256</span>,<span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>),
+<span style="color: #BBB">    </span><span style="color: #666">8:</span><span style="color: #BBB"> </span>Config(Buffer.num_sms,<span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB"> </span><span style="color: #666">256</span>,<span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>),
+<span style="color: #BBB">    </span><span style="color: #666">16:</span><span style="color: #BBB"> </span>Config(Buffer.num_sms,<span style="color: #BBB"> </span><span style="color: #666">36</span>,<span style="color: #BBB"> </span><span style="color: #666">288</span>,<span style="color: #BBB"> </span><span style="color: #666">20</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>),
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... 一直到 160</span>
+}
+</code></pre></div>
+
+<h3 id="33-v2-elastic">3.3 V2 Elastic 架构细节</h3>
+<p><code>elastic::ElasticBuffer</code> 的核心设计（详见第 4 节）：</p>
+<ul>
+<li><strong>统一 Symmetric Memory</strong>：通过 NCCL Gin 的 <code>ncclWindow_t</code> 实现跨 rank 对称内存</li>
+<li><strong>逻辑/物理域分离</strong>：物理域（RDMA ranks × NVLink ranks）→ 逻辑域（scaleout × scaleup）</li>
+<li><strong>分析式 SM/QP 计算</strong>：基于带宽建模自动推导最优 SM 数</li>
+<li><strong>Hybrid 模式</strong>：scaleout 走 RDMA，scaleup 走 NVLink，分层 reduce</li>
+</ul>
+<hr />
+<h2 id="4">4. 核心抽象</h2>
+<h3 id="41-elasticbufferv2">4.1 ElasticBuffer（V2 核心）</h3>
+<p><code>ElasticBuffer</code> 是 V2 的统一接口，封装了所有 EP 操作：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>classDiagram
+    class ElasticBuffer {
+        +group: ProcessGroup
+        +rank_idx, num_ranks: int
+        +num_bytes, num_cpu_buffer_bytes: int64
+        +allow_hybrid_mode: bool
+        +allow_multiple_reduction: bool
+        +prefer_overlap_with_compute: bool
+        +num_allocated_qps: int
+        +runtime: C++ ElasticBuffer
+        +nccl_comm_handle: NCCLCommHandle
+        +num_scaleout/num_scaleup_ranks: int
+        +num_rdma/num_nvl_ranks: int
+
+        +__init__(group, num_max_tokens_per_rank, hidden, ...)
+        +destroy()
+        +dispatch(x, topk_idx, ...) → (recv_x, handle, event)
+        +combine(x, handle, ...) → (combined_x, event)
+        +barrier()
+        +engram_write(storage) [实验]
+        +engram_fetch(indices) → hook [实验]
+        +pp_send/pp_recv [实验]
+        +all_gather [实验]
+        +get_theoretical_num_sms() → int
+        +get_buffer_size_hint() → int
+    }
+
+    class NCCLSymmetricMemoryContext {
+        +rank_idx, num_ranks: int
+        +num_scaleout/num_scaleup_ranks: int
+        +num_rdma/num_nvl_ranks: int
+        +is_scaleup_nvlink: bool
+        +comm: ncclComm_t
+        +dev_comm: ncclDevComm_t
+        +window: ncclWindow_t
+        +mapped_window_ptr: void*
+        +num_allocated_qps: int
+    }
+
+    ElasticBuffer --&gt; NCCLSymmetricMemoryContext : nccl_context
+    ElasticBuffer --&gt; EPHandle : dispatch returns
+    ElasticBuffer --&gt; EventOverlap : returns
+</code></pre></div>
+
+<h4 id="_1">内存布局</h4>
+<p>ElasticBuffer 的内存布局是理解其设计的核心：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>[Workspace (2MB-aligned)] [GPU Buffer] [CPU Buffer (可选)]
+         ↑ mapped_window_ptr
+</code></pre></div>
+
+<ul>
+<li><strong>Workspace</strong>：存放 barrier signals、rank/expert 接收计数、channel metadata、PP 信号、AGRS 信号</li>
+<li><strong>GPU Buffer</strong>：dispatch/combine 的 send/recv 区域</li>
+<li><strong>CPU Buffer</strong>：Engram 存储区（可选，位于 GPU buffer 之后）</li>
+</ul>
+<p><code>SymmetricMemory</code> 的三种实现：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>类</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纯 GPU</td>
+<td><code>GPUSymmetricMemory</code></td>
+<td><code>ncclMemAlloc</code>，默认模式</td>
+</tr>
+<tr>
+<td>GPU + CPU</td>
+<td><code>ElasticSymmetricMemory</code></td>
+<td>CUDA Driver API <code>cuMemCreate</code>，连续 VA</td>
+</tr>
+<tr>
+<td>GPU + 多 CPU (Hybrid)</td>
+<td><code>HybridElasticSymmetricMemory</code></td>
+<td>各 rank CPU segment 通过 POSIX FD import</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-ephandle">4.2 EPHandle（通信句柄）</h3>
+<p><code>EPHandle</code> 是 dispatch 返回的<strong>路由元数据</strong>，combine 消费它来完成反向 reduce：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">EPHandle</span>:
+    do_expand: <span style="color: #008000">bool</span>                    <span style="color: #3D7B7B; font-style: italic"># 是否使用 expand 布局</span>
+    num_experts: <span style="color: #008000">int</span>
+    expert_alignment: <span style="color: #008000">int</span>              <span style="color: #3D7B7B; font-style: italic"># expert token 对齐</span>
+    num_max_tokens_per_rank: <span style="color: #008000">int</span>
+    num_sms: <span style="color: #008000">int</span>
+    topk_idx: Tensor                   <span style="color: #3D7B7B; font-style: italic"># [num_tokens, num_topk]，克隆的 expert 索引</span>
+    psum_num_recv_tokens_per_scaleup_rank: Tensor  <span style="color: #3D7B7B; font-style: italic"># scaleup rank 前缀和</span>
+    psum_num_recv_tokens_per_expert: Tensor        <span style="color: #3D7B7B; font-style: italic"># expert 前缀和</span>
+    num_unaligned_recv_tokens_perpert: Tensor      <span style="color: #3D7B7B; font-style: italic"># expand 模式下未对齐计数</span>
+    recv_src_metadata: Tensor          <span style="color: #3D7B7B; font-style: italic"># [num_recv_tokens, topk+2]，源 token 索引 + slot</span>
+    dst_buffer_slot_idx: Tensor        <span style="color: #3D7B7B; font-style: italic"># 目标 buffer slot</span>
+    token_metadata_at_forward          <span style="color: #3D7B7B; font-style: italic"># hybrid 模式元数据</span>
+    channel_linked_list                <span style="color: #3D7B7B; font-style: italic"># hybrid 模式链表</span>
+    num_recv_tokens: <span style="color: #008000">int</span>
+    num_expanded_tokens: <span style="color: #008000">int</span>
+</code></pre></div>
+
+<p>EPHandle 支持 <strong>cached mode</strong>：当 gating decision 不变时，可复用 handle 跳过 layout 重算与 CPU sync，这对 inference decoding 场景至关重要。</p>
+<h3 id="43-eventoverlap">43. EventOverlap（事件重叠）</h3>
+<p><code>EventOverlap</code> 封装了 CUDA event，提供通信-计算重叠的 Python 友好接口：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 典型用法：先做不依赖 recv_x 的计算，再等待通信完成</span>
+recv_x, <span style="color: #666">...</span>, handle, event <span style="color: #666">=</span> buffer<span style="color: #666">.</span>dispatch(<span style="color: #666">...</span>)
+
+<span style="color: #008000; font-weight: bold">with</span> event:                    <span style="color: #3D7B7B; font-style: italic"># __exit__ 时 current_stream_wait()</span>
+    do_other_compute()         <span style="color: #3D7B7B; font-style: italic"># 与通信重叠执行</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 退出 with 后，recv_x 安全可用</span>
+recv_x <span style="color: #666">=</span> forward_experts(recv_x, <span style="color: #666">...</span>)
+</code></pre></div>
+
+<p>内部机制：<br />
+- <code>event.current_stream_wait()</code>：compute stream 等待 comm stream 上的 event<br />
+- <code>record_stream()</code>：确保 tensor 在 compute/comm 两个 stream 上的访问安全<br />
+- <code>EP_AVOID_RECORD_STREAM</code> 环境变量可切换为 manual tensor tracking（CUDA graph 兼容）<br />
+- <code>hook_after_wait</code>：支持 deterministic dispatch 的 post-wait sort</p>
+<hr />
+<h2 id="5-kernel">5. Kernel 组织</h2>
+<h3 id="51">5.1 目录结构</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>csrc/kernels/
+├── elastic/                    # V2 kernels
+│   ├── api.hpp                 # kernel 总入口 (launch 函数)
+│   ├── dispatch.hpp            # dispatch + dispatch_copy_epilogue
+│   ├── combine.hpp             # combine + combine_reduce_epilogue
+│   ├── engram.hpp              # Engram fetch (实验)
+│   ├── pp_send_recv.hpp        # PP send/recv (实验)
+│   ├── barrier.hpp             # GPU barrier
+│   └── utils.hpp               # kernel utilities
+├── legacy/                     # V1 kernels
+│   ├── api.cuh                 # V1 kernel 入口
+│   ├── internode.cu            # 节点间 (RDMA + NVLink)
+│   ├── intranode.cu            # 节点内 (NVLink)
+│   ├── buffer.cuh              # V1 buffer 管理
+│   ├── compiled.cuh            # V1 编译配置
+│   ├── ibgda_device.cuh        # IBGDA low-latency
+│   ├── launch.cuh              # V1 launch 逻辑
+│   ├── layout.cu               # V1 layout 计算
+│   └── utils.cuh               # V1 utilities
+└── backend/                    # 后端抽象
+    ├── api.cuh                 # nvshmem / nccl / cuda_driver API
+    ├── symmetric.hpp           # SymmetricMemory 分配器
+    ├── cuda_driver.cu          # CUDA Driver API 封装
+    ├── nccl.cu                 # NCCL 初始化/销毁
+    └── nvshmem.cu              # NVSHMEM 初始化/销毁
+</code></pre></div>
+
+<h3 id="52-elastic-kernel">5.2 Elastic Kernel 结构</h3>
+<p>每个 Elastic kernel 由两个阶段组成（以 dispatch 为例）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph Dispatch[&quot;dispatch (2-phase)&quot;]
+        D1[&quot;Phase 1: dispatch_impl&lt;br/&gt;notify warps + dispatch warps&lt;br/&gt;写对称内存 + 计数&quot;]
+        D2[&quot;Phase 2: dispatch_copy_epilogue&lt;br/&gt;从对称内存拷贝到用户 tensor&lt;br/&gt;full SMs&quot;]
+        D1 --&gt;|&quot;named barrier&quot;| D2
+    end
+
+    subgraph Combine[&quot;combine (2-phase)&quot;]
+        C1[&quot;Phase 1: combine_impl&lt;br/&gt;从本地 push 数据到远端&quot;]
+        C2[&quot;Phase 2: combine_reduce_epilogue&lt;br/&gt;reduce + bias + 写回&quot;]
+        C1 --&gt;|&quot;named barrier&quot;| C2
+    end
+</code></pre></div>
+
+<h4 id="dispatch-warp">Dispatch 的 warp 角色分配</h4>
+<table>
+<thead>
+<tr>
+<th>Warp 角色</th>
+<th>数量</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Notify warps</td>
+<td>4 (kNumNotifyWarps)</td>
+<td>原子累加 rank/expert 接收计数，通知对端</td>
+</tr>
+<tr>
+<td>Dispatch warps</td>
+<td>自动计算</td>
+<td>通过 Gin QP 执行 RDMA/NVLink 数据传输</td>
+</tr>
+<tr>
+<td>Scaleout warps</td>
+<td>num_channels_per_sm</td>
+<td>hybrid 模式：跨节点 forwarding</td>
+</tr>
+<tr>
+<td>Forward warps</td>
+<td>num_channels_per_sm</td>
+<td>hybrid 模式：节点内转发</td>
+</tr>
+</tbody>
+</table>
+<h4 id="channel-qp">Channel 与 QP 的映射</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// comm::get_qp_mode: 决定每个 SM 的每个 channel 使用哪个 QP</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>kNumAvailableQPs)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// SM 少：每个 SM 独占 QP，channel 间 round-robin</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// e.g., 3 SMs, 10 QPs: SM0→{0,3,6,9}, SM1→{1,4,7}, SM2→{2,5,8}</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// SM 多：所有 SM 共享所有 QP</span>
+<span style="color: #BBB">    </span>qp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kQPStartIdx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(global_channel_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumAvailableQPs)
+}
+</code></pre></div>
+
+<h3 id="53-hybrid-vs-direct">5.3 Hybrid vs Direct 模式</h3>
+<p>Elastic 内核根据 <code>num_scaleout_ranks</code> 自动选择：</p>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th>模式</th>
+<th>内核</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>num_scaleout_ranks == 1</code></td>
+<td>Direct</td>
+<td><code>dispatch_impl</code> / <code>combine_impl</code></td>
+</tr>
+<tr>
+<td><code>num_scaleout_ranks &gt; 1</code></td>
+<td>Hybrid</td>
+<td><code>hybrid_dispatch_impl</code> / <code>hybrid_combine_impl</code></td>
+</tr>
+</tbody>
+</table>
+<p>Hybrid 模式的分层通信：<br />
+1. <strong>Scaleup 层</strong>（NVLink）：节点内各 GPU 先做局部 reduce<br />
+2. <strong>Scaleout 层</strong>（RDMA）：跨节点 forwarding，每个 channel 负责一个 scaleout peer 的数据转发</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph HybridDispatch[&quot;Hybrid Dispatch 数据流&quot;]
+        T0[&quot;Token on Rank 0&quot;]
+        T1[&quot;Notify Warps: 计算目标 slot&quot;]
+        T2[&quot;Scaleout Warps: RDMA 写到&lt;br/&gt;远端 scaleout rank 的 buffer&quot;]
+        T3[&quot;Forward Warps: NVLink 转发&lt;br/&gt;到目标 scaleup rank&quot;]
+        T4[&quot;最终到达目标 expert 所在 rank&quot;]
+    end
+    T0 --&gt; T1 --&gt; T2 --&gt; T3 --&gt; T4
+</code></pre></div>
+
+<hr />
+<h2 id="6-jit">6. JIT 编译管线</h2>
+<p>DeepEP 的 JIT 系统是其"安装时无需 CUDA 编译"的关键。整个管线设计精巧：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph Init[&quot;初始化阶段&quot;]
+        I1[&quot;__init__.py: init_jit()&quot;]
+        I2[&quot;jit::init(library_root, cuda_home, nccl_root)&quot;]
+        I3[&quot;Compiler::prepare_init()&quot;]
+        I4[&quot;IncludeParser::prepare_init()&quot;]
+        I5[&quot;DeviceRuntime::prepare_init()&quot;]
+        I1 --&gt; I2 --&gt; I3 &amp; I4 &amp; I5
+    end
+
+    subgraph Build[&quot;内核构建阶段&quot;]
+        B1[&quot;generate_impl(args) → 生成 kernel.cu 源码&quot;]
+        B2[&quot;计算 kernel_signature = name$$sig$$flags$$code&quot;]
+        B3[&quot;计算 cache 路径: ~/.deep_ep/cache/kernel.{name}.{hash}/&quot;]
+        B4{&quot;KernelRuntimeCache 命中?&quot;}
+        B5[&quot;是: 返回缓存的 KernelRuntime&quot;]
+        B6[&quot;否: NVCCCompiler::compile() → kernel.cubin&quot;]
+        B7[&quot;cuobjdump 反汇编 → kernel.sass (可选)&quot;]
+        B8[&quot;原子 rename tmp_dir → cache_dir&quot;]
+        B9[&quot;KernelRuntime 加载 cubin&quot;]
+        B1 --&gt; B2 --&gt; B3 --&gt; B4
+        B4 --&gt;|Yes| B5
+        B4 --&gt;|No| B6 --&gt; B7 --&gt; B8 --&gt; B9
+    end
+
+    subgraph Launch[&quot;内核启动阶段&quot;]
+        L1[&quot;construct_launch_config()&quot;]
+        L2[&quot;launch_kernel(kernel, config, args...)&quot;]
+        L1 --&gt; L2
+    end
+
+    Init --&gt; Build --&gt; Launch
+</code></pre></div>
+
+<h3 id="61-code-generation">6.1 源码生成（Code Generation）</h3>
+<p>每个 kernel 的源码是<strong>运行时生成</strong>的，通过模板参数实现编译期优化：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.hpp 生成的 kernel.cu 示例</span>
+<span style="color: #9C6500">#include</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">&lt;deep_ep/impls/dispatch.cuh&gt;</span>
+<span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">namespace</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">deep_ep</span><span style="color: #666">::</span><span style="color: #00F; font-weight: bold">elastic</span>;
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">__instantiate_kernel</span>()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">void</span><span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>dispatch_impl<span style="color: #666">&lt;</span>
+<span style="color: #BBB">        </span><span style="color: #008000">true</span>,<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// is_scaleup_nvlink</span>
+<span style="color: #BBB">        </span><span style="color: #008000">false</span>,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// do_cpu_sync</span>
+<span style="color: #BBB">        </span><span style="color: #008000">false</span>,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// reuse_slot_indices</span>
+<span style="color: #BBB">        </span><span style="color: #666">12</span>,<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// num_sms</span>
+<span style="color: #BBB">        </span><span style="color: #666">4</span>,<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// num_notify_warps</span>
+<span style="color: #BBB">        </span><span style="color: #666">28</span>,<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// num_dispatch_warps</span>
+<span style="color: #BBB">        </span><span style="color: #666">16</span>,<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// num_scaleup_ranks</span>
+<span style="color: #BBB">        </span><span style="color: #666">14336</span>,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// num_hidden_bytes (7168*2)</span>
+<span style="color: #BBB">        </span><span style="color: #666">0</span>,<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// num_sf_packs</span>
+<span style="color: #BBB">        </span><span style="color: #666">2048</span>,<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// num_max_tokens_per_rank</span>
+<span style="color: #BBB">        </span><span style="color: #666">256</span>,<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// num_experts</span>
+<span style="color: #BBB">        </span><span style="color: #666">8</span>,<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// num_topk</span>
+<span style="color: #BBB">        </span><span style="color: #666">128</span>,<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// expert_alignment</span>
+<span style="color: #BBB">        </span><span style="color: #666">65</span>,<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// num_qps</span>
+<span style="color: #BBB">        </span>cycles<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// num_timeout_cycles</span>
+<span style="color: #BBB">    </span><span style="color: #666">&gt;</span>);
+}
+</code></pre></div>
+
+<p><strong>关键设计</strong>：所有可变参数都变成模板参数，NVCC 可做激进优化（循环展开、分支消除、常量传播）。</p>
+<h3 id="62">6.2 缓存机制</h3>
+<p>缓存签名由四部分构成：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>kernel_signature = &quot;{name}$${signature}$${flags}$${code}&quot;
+</code></pre></div>
+
+<ul>
+<li><code>name</code>：kernel 名称（dispatch, combine, ...）</li>
+<li><code>signature</code>：编译器版本（NVCC12.9）</li>
+<li><code>flags</code>：编译标志</li>
+<li><code>code</code>：生成的源码</li>
+</ul>
+<p>缓存目录结构：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>~/.deep_ep/
+├── cache/
+│   └── kernel.dispatch.{hex_digest}/
+│       ├── kernel.cu        # 生成的源码
+│       ├── kernel.cubin     # 编译产物
+│       └── kernel.sass      # 可选的反汇编
+└── tmp/                     # 临时目录（原子 rename 用）
+</code></pre></div>
+
+<p><strong>分布式文件系统安全</strong>：<br />
+- 先编译到 <code>tmp/{uuid}/</code>，再原子 <code>rename</code> 到 cache 目录<br />
+- <code>fsync_dir()</code> 确保 data + directory entry 可见<br />
+- 多 rank 并发时，若 rename 失败则复用已有目录</p>
+<h3 id="63-include-hash">6.3 Include Hash 机制</h3>
+<p><code>IncludeParser</code> 解析生成代码中的所有 <code>#include &lt;deep_ep/*&gt;</code>，递归计算头文件内容的哈希值。当任何头文件改变时，哈希变化 → cache miss → 重新编译。这保证了头文件修改后的正确重建。</p>
+<hr />
+<h2 id="7">7. 后端抽象层</h2>
+<h3 id="71">7.1 三种后端</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph Backends[&quot;DeepEP 后端&quot;]
+        direction TB
+        N1[&quot;NCCL Gin Backend&lt;br/&gt;(V2 主力)&quot;]
+        N2[&quot;NVSHMEM Backend&lt;br/&gt;(V1 专用)&quot;]
+        N3[&quot;CUDA Driver API&lt;br/&gt;(辅助)&quot;]
+    end
+
+    N1 --- N1D[&quot;ncclMemAlloc / ncclCommWindowRegister&lt;br/&gt;ncclGin (QP 抽象)&lt;br/&gt;Header-only, 复用 NCCL communicator&quot;]
+    N2 --- N2D[&quot;nvshmem_init / ibgda&lt;br/&gt;NVSHMEM team / QP&lt;br/&gt;独立初始化&quot;]
+    N3 --- N3D[&quot;cuMemCreate / cuMemMap&lt;br/&gt;cuMemcpyBatchAsync&lt;br/&gt;batched_write_and_wait&quot;]
+</code></pre></div>
+
+<h3 id="72-nccl-gin">7.2 NCCL Gin 后端（核心创新）</h3>
+<p>NCCL Gin 是 NCCL 内部的一个<strong>轻量级 GDAKI 接口</strong>，DeepEP V2 的全部通信都构建其上：</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Header-only</td>
+<td>只需 <code>nccl.h</code> + <code>nccl_device.h</code>，无额外链接</td>
+</tr>
+<tr>
+<td>Communicator 复用</td>
+<td>直接复用 PyTorch 的 NCCL communicator</td>
+</tr>
+<tr>
+<td>QP 抽象</td>
+<td><code>ncclGin</code> handle + <code>ncclGinRequest_t</code></td>
+</tr>
+<tr>
+<td>Resource Sharing</td>
+<td>CTA 级 / GPU 级 QP 共享模式</td>
+</tr>
+<tr>
+<td>Symmetric Memory</td>
+<td><code>ncclWindow_t</code> 提供跨 rank 对称内存视图</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gin 的使用模式</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. 获取 Gin handle（per-warp）</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>[qp_idx,<span style="color: #BBB"> </span>sharing_mode]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>comm<span style="color: #666">::</span>get_qp_mode<span style="color: #666">&lt;</span>...<span style="color: #666">&gt;</span>(sm_idx,<span style="color: #BBB"> </span>channel_idx,<span style="color: #BBB"> </span>is_notify);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>gin<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>handle<span style="color: #666">::</span>NCCLGin(nccl_dev_comm,<span style="color: #BBB"> </span>nccl_window,<span style="color: #BBB"> </span>qp_idx,<span style="color: #BBB"> </span>sharing_mode);
+
+<span style="color: #3D7B7B; font-style: italic">// 2. 发起 RDMA 请求</span>
+ncclGinRequest_t<span style="color: #BBB"> </span>req;
+gin.get(dst_ptr,<span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span>size,<span style="color: #BBB"> </span>dst_rank,<span style="color: #BBB"> </span>req);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// RDMA get</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 等待完成</span>
+gin.wait(req);
+</code></pre></div>
+
+<h3 id="73-symmetric-memory">7.3 Symmetric Memory 分配</h3>
+<p><code>symmetric.hpp</code> 定义了三种 <code>SymmetricMemory</code> 实现：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>类</th>
+<th>分配方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纯 GPU</td>
+<td><code>GPUSymmetricMemory</code></td>
+<td><code>ncclMemAlloc</code></td>
+</tr>
+<tr>
+<td>GPU + CPU (单节点)</td>
+<td><code>ElasticSymmetricMemory</code></td>
+<td><code>cuMemCreate</code> + <code>cuMemMap</code></td>
+</tr>
+<tr>
+<td>GPU + CPU (Hybrid)</td>
+<td><code>HybridElasticSymmetricMemory</code></td>
+<td>POSIX FD import + <code>cuMemImportFromShareableHandle</code></td>
+</tr>
+</tbody>
+</table>
+<p>Hybrid 模式的 CPU segment 跨 rank 共享通过 <strong>POSIX file descriptor</strong> 实现：<br />
+1. 每个 rank 创建 NUMA-local CPU allocation → export 为 FD<br />
+2. <code>dist.all_gather_object</code> 交换 (pid, fd)<br />
+3. 远端 rank 通过 <code>pidfd_open</code> + <code>pidfd_getfd</code> 导入 FD<br />
+4. <code>cuMemImportFromShareableHandle</code> 导入 CUDA 并 map 到本地 VA</p>
+<h3 id="74-cuda-driver-api">7.4 CUDA Driver API</h3>
+<p><code>cuda_driver</code> 命名空间提供两个关键原语：<br />
+- <code>batched_write</code>：批量 CUDA 信号写入<br />
+- <code>batched_wait</code>：批量 CUDA 信号等待（用于 AGRS session 同步）</p>
+<p>这些使用 CUDA Driver 的 virtual address management 能力，直接操作 symmetric memory 上的信号量。</p>
+<hr />
+<h2 id="8">8. 性能特征</h2>
+<h3 id="81-readme">8.1 README 性能数据</h3>
+<p>基于 V3 配置（8K tokens/batch, 7168 hidden, top-8 experts, FP8 dispatch, BF16 combine）：</p>
+<table>
+<thead>
+<tr>
+<th>Arch</th>
+<th>NIC</th>
+<th>Topo</th>
+<th>Dispatch BW</th>
+<th>Combine BW</th>
+<th>#SMs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8×2</td>
+<td>90 GB/s (RDMA)</td>
+<td>81 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM90</td>
+<td>CX7</td>
+<td>EP 8×4</td>
+<td>61 GB/s (RDMA)</td>
+<td>61 GB/s (RDMA)</td>
+<td>6</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>CX7</td>
+<td>EP 8×2</td>
+<td>90 GB/s (RDMA)</td>
+<td>91 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td>726 GB/s (NVLink)</td>
+<td>740 GB/s (NVLink)</td>
+<td>64 (Max)</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>N/A</td>
+<td>EP 8</td>
+<td>643 GB/s (NVLink)</td>
+<td>675 GB/s (NVLink)</td>
+<td>24 (Min)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82-v2-vs-v1">8.2 V2 vs V1 对比</h3>
+<ul>
+<li><strong>峰值性能提升</strong>：最高 1.3x</li>
+<li><strong>SM 节省</strong>：最高 4x（V3 训练从 24 SM 降到 4-6 SM）</li>
+</ul>
+<h3 id="83">8.3 性能分析</h3>
+<p>这些数字揭示了 DeepEP 的设计权衡：</p>
+<ol>
+<li><strong>RDMA 场景 90 GB/s</strong>：接近 CX7 100Gb/s 的理论带宽（~100 GB/s），说明 kernel 效率极高</li>
+<li><strong>NVLink 726 GB/s</strong>：接近 H100 NVLink 理论带宽（~900 GB/s），效率 ~80%</li>
+<li><strong>SM 数与带宽的 trade-off</strong>：<br />
+   - 64 SM → 726 GB/s（峰值带宽）<br />
+   - 24 SM → 643 GB/s（~89% 峰值，节省 62.5% SM）</li>
+<li><strong>Hybrid 模式 61-90 GB/s</strong>：受限于 RDMA 带宽，但 SM 占用仅 6-12</li>
+</ol>
+<hr />
+<h2 id="9-sm">9. SM 占用哲学</h2>
+<p>DeepEP 的核心设计哲学是<strong>"通信不应与计算争抢 SM"</strong>。这体现在多个层面：</p>
+<h3 id="91-sm">9.1 分析式 SM 计算</h3>
+<p><code>get_theoretical_num_sms()</code> 基于带宽建模：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 核心公式（简化）</span>
+<span style="color: #3D7B7B; font-style: italic"># 假设 balanced gate，计算 expected top-k 数量</span>
+num_expected_topk <span style="color: #666">=</span> num_groups <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> C(num_experts <span style="color: #666">-</span> num_experts<span style="color: #666">//</span>num_groups, num_topk) <span style="color: #666">/</span> C(num_experts, num_topk))
+
+<span style="color: #3D7B7B; font-style: italic"># 计算各层流量</span>
+sm_read <span style="color: #666">+=</span> <span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk
+sm_write <span style="color: #666">+=</span> <span style="color: #666">...</span>
+rdma_traffic <span style="color: #666">+=</span> <span style="color: #666">...</span>
+nvlink_traffic <span style="color: #666">+=</span> <span style="color: #666">...</span>
+
+<span style="color: #3D7B7B; font-style: italic"># SM 数 = ceil(max(sm_read/sm_read_bw, sm_write/sm_write_bw, rdma_traffic/rdma_bw, nvlink_traffic/nvlink_bw))</span>
+</code></pre></div>
+
+<h3 id="92-sm">9.2 SM 分配的运行时决策</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.hpp: 根据共享内存消耗计算每个 SM 的 channel 数</span>
+num_channels_per_sm<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(
+<span style="color: #BBB">    </span>(smem_bytes<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>notify_smem_bytes)<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>dispatch_token_layout_size,
+<span style="color: #BBB">    </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumNotifyWarps
+);
+num_channels_per_sm<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(
+<span style="color: #BBB">    </span>smem_bytes<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>combine_token_layout_size,
+<span style="color: #BBB">    </span>num_channels_per_sm
+);
+num_channels_per_sm<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(num_channels_per_sm<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">2</span>,<span style="color: #BBB"> </span>kNumMaxChannelsPerSM);
+</code></pre></div>
+
+<h3 id="93-prefer_overlap_with_compute">9.3 <code>prefer_overlap_with_compute</code> 标志</h3>
+<p>当该标志开启时，kernel 倾向于使用更少的 SM 和更多的 channel（最多 4 channels/SM），通过时间换空间的方式让出 SM 给计算。</p>
+<h3 id="94-nccl">9.4 与 NCCL 的对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>NCCL</th>
+<th>DeepEP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM 策略</td>
+<td>尽可能多占用 SM</td>
+<td>分析式最小化 SM</td>
+</tr>
+<tr>
+<td>带宽目标</td>
+<td>饱和硬件带宽</td>
+<td>饱和硬件带宽（同等）</td>
+</tr>
+<tr>
+<td>计算影响</td>
+<td>可能影响 GEMM</td>
+<td>几乎不影响 GEMM</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>通用集合通信</td>
+<td>MoE all-to-all 专用</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10">10. 实验性特性</h2>
+<h3 id="101-engram0-sm-rdma">10.1 Engram（0 SM RDMA 远程内存访问）</h3>
+<p>Engram 提供<strong>远程 CPU 内存的 RDMA 读取</strong>能力，用于 KV cache 等场景：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    E1[&quot;engram_write(storage)&lt;br/&gt;写入 CPU buffer&quot;]
+    E2[&quot;engram_fetch(indices)&lt;br/&gt;发起 RDMA get&quot;]
+    E3[&quot;返回 hook 闭包&lt;br/&gt;延迟等待&quot;]
+    E4[&quot;hook() → 阻塞等待&lt;br/&gt;RDMA 完成&quot;]
+    E5[&quot;返回 (data, sf)&quot;]
+    E1 --&gt; E2 --&gt; E3 --&gt; E4 --&gt; E5
+</code></pre></div>
+
+<ul>
+<li><strong>0 SM 哲学</strong>：RDMA get 由 NIC 直接完成，不占用 SM</li>
+<li><strong>CPU buffer</strong>：通过 <code>HybridElasticSymmetricMemory</code> 分配 NUMA-local CPU 内存</li>
+<li><strong>FP8 支持</strong>：支持 FP8 storage + globally-replicated scaling factors</li>
+</ul>
+<h3 id="102-pp-sendrecv0-sm-pipeline-parallelism">10.2 PP Send/Recv（0 SM Pipeline Parallelism）</h3>
+<p>基于 NVLink 的 pipeline parallelism 原语：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>buffer<span style="color: #666">.</span>pp_set_config(num_max_tensor_bytes, num_max_inflight_tensors)
+buffer<span style="color: #666">.</span>pp_send(t, dst_rank_idx, num_sms<span style="color: #666">=0</span>)  <span style="color: #3D7B7B; font-style: italic"># 0 = 全部 SM</span>
+buffer<span style="color: #666">.</span>pp_recv(t, src_rank_idx, num_sms<span style="color: #666">=0</span>)
+</code></pre></div>
+
+<ul>
+<li>仅支持 ring 上的 prev/next rank</li>
+<li>使用 <code>num_max_inflight_tensors * 2 * 2</code> 的 buffer 空间（send/recv × prev/next）</li>
+</ul>
+<h3 id="103-agrsall-gather-reduce-scatter">10.3 AGRS（All-Gather Reduce-Scatter）</h3>
+<p>基于 NVLink symmetric memory 的 all-gather 实现：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>buffer<span style="color: #666">.</span>agrs_set_config(num_max_session_bytes, num_max_all_gathers)
+buffer<span style="color: #666">.</span>create_agrs_session()
+t <span style="color: #666">=</span> buffer<span style="color: #666">.</span>agrs_get_inplace_tensor(shape, dtype)  <span style="color: #3D7B7B; font-style: italic"># zero-copy</span>
+gathered, handle <span style="color: #666">=</span> buffer<span style="color: #666">.</span>all_gather(t)
+handle()  <span style="color: #3D7B7B; font-style: italic"># wait for data arrival</span>
+buffer<span style="color: #666">.</span>destroy_agrs_session()
+</code></pre></div>
+
+<p>实现使用 <code>cudaMemcpyBatchAsync</code>（CUDA 13+）+ signal-based session 同步。</p>
+<h3 id="104-cpcontext-parallelism">10.4 CP（Context Parallelism）</h3>
+<p>README 提到 "0 SM CP (with Copy Engine)"，使用 copy engine 而非 SM 完成数据传输。</p>
+<hr />
+<h2 id="11">11. 环境变量体系</h2>
+<p>DeepEP 提供了丰富的环境变量用于调试与调优：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>关键变量</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用</td>
+<td><code>EP_BUFFER_DEBUG</code></td>
+<td>buffer 初始化调试</td>
+</tr>
+<tr>
+<td>通用</td>
+<td><code>EP_SUPPRESS_NCCL_CHECK</code></td>
+<td>跳过 NCCL 版本校验</td>
+</tr>
+<tr>
+<td>通用</td>
+<td><code>EP_AVOID_RECORD_STREAM</code></td>
+<td>避免 CUDA graph 不兼容的 record_stream</td>
+</tr>
+<tr>
+<td>网络</td>
+<td><code>EP_NIC_NAME</code></td>
+<td>NIC 名称（默认 mlx5_0）</td>
+</tr>
+<tr>
+<td>网络</td>
+<td><code>EP_OVERRIDE_RDMA_SL</code></td>
+<td>覆盖 RDMA 服务级别</td>
+</tr>
+<tr>
+<td>网络</td>
+<td><code>EP_DISABLE_GIN</code></td>
+<td>禁用 NCCL Gin 后端</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td><code>EP_JIT_CACHE_DIR</code></td>
+<td>编译缓存目录（默认 ~/.deep_ep）</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td><code>EP_JIT_CPP_STANDARD</code></td>
+<td>C++ 标准（默认 20）</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td><code>EP_JIT_NVCC_COMPILER</code></td>
+<td>NVCC 路径</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td><code>EP_JIT_DUMP_PTX/SASS</code></td>
+<td>导出编译产物</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td><code>EP_JIT_PTXAS_CHECK</code></td>
+<td>检查 local memory 使用</td>
+</tr>
+<tr>
+<td>构建</td>
+<td><code>DISABLE_SM90_FEATURES</code></td>
+<td>禁用 SM90 特性</td>
+</tr>
+<tr>
+<td>构建</td>
+<td><code>EP_NCCL_ROOT_DIR</code></td>
+<td>NCCL 安装路径</td>
+</tr>
+</tbody>
+</table>
+<p><strong>持久化环境变量</strong>（构建时烘焙到包中）：<code>EP_JIT_CACHE_DIR</code>、<code>EP_JIT_PRINT_COMPILER_COMMAND</code>、<code>EP_NUM_TOPK_IDX_BITS</code>、<code>EP_NCCL_ROOT_DIR</code>。</p>
+<hr />
+<h2 id="12">12. 数据流全景</h2>
+<p>以 V2 的 dispatch + combine 为例，完整数据流如下：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph DispatchFlow[&quot;Dispatch 数据流&quot;]
+        direction TB
+        D0[&quot;输入: x[num_tokens, hidden], topk_idx, topk_weights&quot;]
+        D1[&quot;notify warps: 解析 topk_idx&lt;br/&gt;原子累加 rank/expert 计数&lt;br/&gt;写入 host_workspace (mapped)&quot;]
+        D2[&quot;dispatch warps: 打包 token data + sf&lt;br/&gt;通过 Gin QP 发起 RDMA/NVLink get&quot;]
+        D3[&quot;数据到达远端对称内存 buffer&quot;]
+        D4[&quot;CPU sync 或 cached mode&lt;br/&gt;确定 num_recv_tokens&quot;]
+        D5[&quot;dispatch_copy_epilogue: 从 buffer 拷贝&lt;br/&gt;到 recv_x, recv_topk_idx, recv_topk_weights&quot;]
+        D6[&quot;输出: recv_x, EPHandle, EventOverlap&quot;]
+    end
+
+    subgraph CombineFlow[&quot;Combine 数据流&quot;]
+        direction TB
+        C0[&quot;输入: expert 计算结果 + EPHandle&quot;]
+        C1[&quot;combine warps: 读取 handle 中的路由元数据&lt;br/&gt;通过 Gin push 数据到远端 buffer&quot;]
+        C2[&quot;combine_reduce_epilogue: 从 buffer reduce&lt;br/&gt;按 topk_weights 加权 + bias&quot;]
+        C3[&quot;输出: combined_x, EventOverlap&quot;]
+    end
+
+    D6 --&gt;|&quot;EPHandle 包含路由元数据&quot;| C0
+    DispatchFlow --&gt; CombineFlow
+</code></pre></div>
+
+<hr />
+<h2 id="13">13. 关键设计洞察</h2>
+<h3 id="131-nccl-gin-rdma">13.1 为什么用 NCCL Gin 而非原生 RDMA</h3>
+<ol>
+<li><strong>Communicator 复用</strong>：直接复用 PyTorch 已创建的 NCCL communicator，无需独立初始化</li>
+<li><strong>Header-only</strong>：无需链接额外库，部署简单</li>
+<li><strong>QP 抽象</strong>：Gin 提供比 raw GDAKI 更高层的接口，自动处理 QP 共享与资源管理</li>
+<li><strong>与 NCCL 协同</strong>：复用 NCCL 的 transport 层、congestion control、adaptive routing</li>
+</ol>
+<h3 id="132-v2-buffer">13.2 为什么 V2 buffer 更大</h3>
+<p>V2 的 buffer 需要同时容纳：<br />
+- Scaleup recv buffer（节点内）<br />
+- Scaleout send buffer（跨节点发送）<br />
+- Scaleout recv buffer（跨节点接收，含 channel 元数据 padding）</p>
+<p>Hybrid 模式下的分层通信需要多份中间 buffer，但换来了<strong>可扩展性</strong>（EP2048）和<strong>SM 节省</strong>。</p>
+<h3 id="133-cached-mode">13.3 Cached Mode 的意义</h3>
+<p>Inference decoding 场景中，gating decision 可能在多轮迭代间不变。Cached mode 允许：<br />
+- 跳过 layout 重算（<code>topk_idx</code> 解析、prefix sum）<br />
+- 跳过 CPU sync（直接复用 handle 中的计数）<br />
+- 减少 CPU-GPU 交互延迟</p>
+<p>这对低延迟 decoding 至关重要。</p>
+<h3 id="134-deterministic-mode">13.4 Deterministic Mode</h3>
+<p>DeepEP 支持 deterministic dispatch：<br />
+- 对 <code>recv_src_metadata[:, 0]</code>（源 token 全局索引）排序<br />
+- 根据排序结果重排 <code>recv_x</code>, <code>recv_sf</code>, <code>recv_topk_weights</code>, <code>recv_topk_idx</code><br />
+- Expand 模式：按 expert 分组排序，更新 slot 指针</p>
+<hr />
+<h2 id="14">14. 总结</h2>
+<p>DeepEP 是一个设计精良的 MoE 通信运行时，其核心优势在于：</p>
+<ol>
+<li><strong>极致的 SM 效率</strong>：4-64 SM 即可饱和硬件带宽</li>
+<li><strong>统一的架构</strong>：V2 的 ElasticBuffer 统一了 high-throughput / low-latency / hybrid / direct 多种模式</li>
+<li><strong>运行时 JIT</strong>：安装时无需编译，自动缓存编译产物</li>
+<li><strong>分析式调参</strong>：SM 数、QP 数均自动计算，无需 auto-tuning</li>
+<li><strong>NCCL Gin 创新</strong>：利用 NCCL 内部接口实现轻量级高性能通信</li>
+</ol>
+<p>其代价是 buffer 占用增大、0 SM RDMA low-latency 模式不再支持，但这些 trade-off 在大规模 MoE 训练场景下是合理的。</p>
+<hr />
+<h2 id="_2">附录：关键文件索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_ep/__init__.py</code></td>
+<td>包入口，NCCL 检查，JIT 初始化</td>
+</tr>
+<tr>
+<td><code>csrc/python_api.cpp</code></td>
+<td>pybind11 模块注册</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>V2 ElasticBuffer Python 接口</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td>V1 Buffer Python 接口</td>
+</tr>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td>V2 C++ 核心实现</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/buffer.hpp</code></td>
+<td>V1 C++ 核心实现</td>
+</tr>
+<tr>
+<td><code>csrc/jit/compiler.hpp</code></td>
+<td>JIT 编译器（NVCC）</td>
+</tr>
+<tr>
+<td><code>csrc/jit/cache.hpp</code></td>
+<td>KernelRuntimeCache</td>
+</tr>
+<tr>
+<td><code>csrc/jit/kernel_runtime.hpp</code></td>
+<td>CUBIN 加载与符号解析</td>
+</tr>
+<tr>
+<td><code>csrc/jit/launch_runtime.hpp</code></td>
+<td>Launch 框架（CRTP）</td>
+</tr>
+<tr>
+<td><code>csrc/jit/include_parser.hpp</code></td>
+<td>头文件依赖哈希</td>
+</tr>
+<tr>
+<td><code>csrc/jit/device_runtime.hpp</code></td>
+<td>GPU 属性查询</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>V2 dispatch 内核</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/combine.hpp</code></td>
+<td>V2 combine 内核</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/engram.hpp</code></td>
+<td>Engram fetch 内核</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/pp_send_recv.hpp</code></td>
+<td>PP send/recv 内核</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/backend/symmetric.hpp</code></td>
+<td>SymmetricMemory 分配器</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/backend/api.cuh</code></td>
+<td>后端 API 抽象</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/layout.cuh</code></td>
+<td>Workspace/Buffer 布局</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td>Gin 通信原语</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>dispatch_impl 定义</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/event.py</code></td>
+<td>EventOverlap 封装</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/envs.py</code></td>
+<td>环境检测与分布式初始化</td>
+</tr>
+<tr>
+<td><code>tests/elastic/test_ep.py</code></td>
+<td>EP 正确性与性能测试</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepEP 辅助工具测试源码分析：Barrier / Engram / Gate · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">DeepEP 辅助工具测试源码分析：Barrier / En</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#deepep-辅助工具测试源码分析barrier--engram--gate" class="toc-h1">DeepEP 辅助工具测试源码分析：Barrier / Engram / Gate</a></li><li><a href="#1-概览" class="toc-h2">1. 概览</a></li><li><a href="#2-barrier-测试分析" class="toc-h2">2. Barrier 测试分析</a></li><li><a href="#21-测试目标" class="toc-h3">2.1 测试目标</a></li><li><a href="#22-关键代码与流程" class="toc-h3">2.2 关键代码与流程</a></li><li><a href="#23-底层实现路径" class="toc-h3">2.3 底层实现路径</a></li><li><a href="#24-与主-ep-测试的关系" class="toc-h3">2.4 与主 EP 测试的关系</a></li><li><a href="#3-engram-测试分析" class="toc-h2">3. Engram 测试分析</a></li><li><a href="#31-engram-是什么" class="toc-h3">3.1 Engram 是什么</a></li><li><a href="#32-测试流程" class="toc-h3">3.2 测试流程</a></li><li><a href="#33-正确性验证" class="toc-h3">3.3 正确性验证</a></li><li><a href="#34-性能测量" class="toc-h3">3.4 性能测量</a></li><li><a href="#35-底层-kernel-实现" class="toc-h3">3.5 底层 kernel 实现</a></li><li><a href="#36-与主-ep-测试的关系" class="toc-h3">3.6 与主 EP 测试的关系</a></li><li><a href="#4-gate-测试分析" class="toc-h2">4. Gate 测试分析</a></li><li><a href="#41-gate-工具是什么" class="toc-h3">4.1 Gate 工具是什么</a></li><li><a href="#42-测试目标" class="toc-h3">4.2 测试目标</a></li><li><a href="#43-关键代码" class="toc-h3">4.3 关键代码</a></li><li><a href="#44-底层算法" class="toc-h3">4.4 底层算法</a></li><li><a href="#45-与主-ep-测试的关系" class="toc-h3">4.5 与主 EP 测试的关系</a></li><li><a href="#5-api-使用模式总结" class="toc-h2">5. API 使用模式总结</a></li><li><a href="#51-分布式测试模式" class="toc-h3">5.1 分布式测试模式</a></li><li><a href="#52-性能测量模式" class="toc-h3">5.2 性能测量模式</a></li><li><a href="#53-正确性验证模式" class="toc-h3">5.3 正确性验证模式</a></li><li><a href="#6-三者协作关系图" class="toc-h2">6. 三者协作关系图</a></li><li><a href="#7-关键发现与洞察" class="toc-h2">7. 关键发现与洞察</a></li><li><a href="#71-barrier-的测试模式设计" class="toc-h3">7.1 Barrier 的"测试模式"设计</a></li><li><a href="#72-engram-的异步-hook模式" class="toc-h3">7.2 Engram 的"异步 hook"模式</a></li><li><a href="#73-gate-的精确-vs-随机双模式" class="toc-h3">7.3 Gate 的"精确 vs 随机"双模式</a></li><li><a href="#74-测试覆盖的参数空间" class="toc-h3">7.4 测试覆盖的参数空间</a></li><li><a href="#8-与博客理论的对应关系" class="toc-h2">8. 与博客理论的对应关系</a></li><li><a href="#9-文件路径索引" class="toc-h2">9. 文件路径索引</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="deepep-barrier-engram-gate">DeepEP 辅助工具测试源码分析：Barrier / Engram / Gate</h1>
+<blockquote>
+<p>分析范围：<code>tests/elastic/test_barrier.py</code>、<code>tests/elastic/test_engram.py</code>、<code>tests/utils/test_gate.py</code><br />
+关联实现：<code>csrc/kernels/elastic/barrier.hpp</code>、<code>csrc/kernels/elastic/engram.hpp</code>、<code>deep_ep/utils/gate.py</code></p>
+</blockquote>
+<hr />
+<h2 id="1">1. 概览</h2>
+<table>
+<thead>
+<tr>
+<th>测试文件</th>
+<th>行数</th>
+<th>测试对象</th>
+<th>核心目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/elastic/test_barrier.py</code></td>
+<td>62</td>
+<td><code>ElasticBuffer.barrier</code></td>
+<td>跨 rank GPU barrier 同步延迟</td>
+</tr>
+<tr>
+<td><code>tests/elastic/test_engram.py</code></td>
+<td>124</td>
+<td><code>ElasticBuffer.engram_write</code> / <code>engram_fetch</code></td>
+<td>远端内存（RDMA）访问的正确性与带宽</td>
+</tr>
+<tr>
+<td><code>tests/utils/test_gate.py</code></td>
+<td>57</td>
+<td><code>get_unbalanced_scores</code></td>
+<td>MoE 负载不均衡分布生成的统计正确性</td>
+</tr>
+</tbody>
+</table>
+<p>这三个测试是 DeepEP <strong>弹性 EP（Elastic EP）</strong> 基础设施的"基石性"测试——barrier 是同步原语，engram 是 RDMA 单边通信原语，gate 是 MoE 负载生成的参考实现。它们共同支撑了主 EP 测试 <code>test_ep.py</code> 中的 dispatch/combine 行为。</p>
+<hr />
+<h2 id="2-barrier">2. Barrier 测试分析</h2>
+<h3 id="21">2.1 测试目标</h3>
+<p><code>test_barrier.py</code> 是一个<strong>纯延迟基准</strong>：测量 <code>buffer.barrier()</code> 在 1000 次连续调用下的平均耗时（微秒级）。</p>
+<h3 id="22">2.2 关键代码与流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L19-26: 核心测试逻辑</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">loop_barrier</span>(num_tests<span style="color: #666">=1000</span>):
+    <span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests):
+        buffer<span style="color: #666">.</span>barrier()
+
+t <span style="color: #666">=</span> bench_kineto(<span style="color: #008000; font-weight: bold">lambda</span>: loop_barrier(), <span style="color: #BA2121">&#39;barrier&#39;</span>,
+                 barrier_comm_profiling<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, barrier<span style="color: #666">=</span>buffer<span style="color: #666">.</span>barrier)
+dist_print(<span style="color: #BA2121">f&#39; &gt; EP: </span><span style="color: #A45A77; font-weight: bold">{</span>buffer<span style="color: #666">.</span>rank_idx<span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">3</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">/</span><span style="color: #A45A77; font-weight: bold">{</span>buffer<span style="color: #666">.</span>num_ranks<span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">3</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">, &#39;</span>
+           <span style="color: #BA2121">f&#39;barrier time: </span><span style="color: #A45A77; font-weight: bold">{</span>t<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">1e6</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.3f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> us&#39;</span>)
+</code></pre></div>
+
+<p><strong>设计要点</strong>：<br />
+- <code>bench_kineto</code> 的 <code>barrier_comm_profiling=True</code> 会在每次迭代前插入 <code>torch.cuda._sleep(int(2e7))</code>（~10ms）+ <code>buffer.barrier()</code>，消除 CPU 启动不平衡带来的测量噪声（参见 <code>utils/testing.py</code> L163-171）。<br />
+- 默认 8 进程（L54 <code>--num-processes 8</code>），对应单节点 8 GPU 场景。<br />
+- 支持 <code>--do-pressure-test</code> 无限循环压力测试（L35 <code>int(1e9)</code>）。</p>
+<h3 id="23">2.3 底层实现路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>buffer.barrier()  (elastic.py L497)
+  → runtime.barrier(use_comm_stream, with_cpu_sync, sequential)
+    → launch_barrier(...)  (barrier.hpp L56)
+      → barrier_impl&lt;kIsScaleupNVLink, kNumSMs, kNumThreads,
+                      kNumScaleoutRanks, kNumScaleupRanks,
+                      kNumTimeoutCycles, kSequential&gt;  (barrier.cuh L17)
+</code></pre></div>
+
+<p><strong><code>barrier_impl</code> 的关键设计</strong>（<code>barrier.cuh</code> L24-39）：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>行为</th>
+<th>SM 数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kSequential=True</code></td>
+<td>先 scaleout barrier，再 scaleup barrier（串行）</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>kSequential=False</code></td>
+<td>scaleout + scaleup 并行执行</td>
+<td>2（仅当 <code>num_scaleout_ranks &gt; 1</code>）</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// barrier.cuh L24-39: 串行 vs 并行</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kSequential)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kNumScaleoutRanks<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)
+<span style="color: #BBB">        </span>comm<span style="color: #666">::</span>gpu_barrier<span style="color: #666">&lt;</span>...,<span style="color: #BBB"> </span>kKernelBarrierTag,<span style="color: #BBB"> </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(...);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// scaleup barrier 需要 flush RDMA 请求</span>
+<span style="color: #BBB">    </span>comm<span style="color: #666">::</span>gpu_barrier<span style="color: #666">&lt;</span>...,<span style="color: #BBB"> </span>kKernelBarrierTag,<span style="color: #BBB"> </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #008000">true</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(...);
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>comm<span style="color: #666">::</span>gpu_barrier<span style="color: #666">&lt;</span>...,<span style="color: #BBB"> </span>kKernelBarrierTag,<span style="color: #BBB"> </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(...);
+}
+</code></pre></div>
+
+<p><strong>测试默认使用 <code>sequential=True</code></strong>（<code>elastic.py</code> L497 默认值），对应 <code>barrier.hpp</code> L70 的 <code>num_sms = 1</code>，即单 SM 串行执行——这是<strong>测试同步</strong>场景的最安全选择（参见 <code>elastic.py</code> L505-506 注释）。</p>
+<h3 id="24-ep">2.4 与主 EP 测试的关系</h3>
+<p><code>test_ep.py</code> 中 <code>bench_kineto</code> 调用均传入 <code>barrier=buffer.barrier</code>（L258-341），用于：<br />
+- 消除 CPU 启动偏斜（launch skew）<br />
+- 在 dispatch/combine 各阶段之间建立同步点</p>
+<hr />
+<h2 id="3-engram">3. Engram 测试分析</h2>
+<h3 id="31-engram">3.1 Engram 是什么</h3>
+<p>Engram 是 DeepEP 弹性模式的<strong>远端内存访问原语</strong>——通过 NCCL Gin（GPU-initiated RDMA）直接读取远端 GPU 的存储窗口（<code>ncclWindow</code>），无需 CPU 介入。</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>engram_write(storage, sf)</code></td>
+<td>将本地数据注册到 NCCL window，供远端读取</td>
+</tr>
+<tr>
+<td><code>engram_fetch(indices)()</code></td>
+<td>异步发起 RDMA get，返回 callable <code>hook</code>；调用 <code>hook()</code> 阻塞等待完成</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 测试流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L17-37: 配置与 buffer 创建</span>
+num_gpu_bytes, num_cpu_bytes <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer<span style="color: #666">.</span>get_engram_storage_size_hint(
+    args<span style="color: #666">.</span>num_entries, args<span style="color: #666">.</span>hidden, args<span style="color: #666">.</span>num_tokens <span style="color: #666">*</span> args<span style="color: #666">.</span>num_entries_per_token, dtype)
+buffer <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer(
+    group, num_bytes<span style="color: #666">=</span>num_gpu_bytes <span style="color: #666">+</span> num_cpu_bytes, num_cpu_bytes<span style="color: #666">=</span>num_cpu_bytes,
+    explicitly_destroy<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, num_allocated_qps<span style="color: #666">=</span>num_qps, <span style="color: #666">...</span>)
+
+<span style="color: #3D7B7B; font-style: italic"># L40-53: 写入阶段</span>
+local_bf16 <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((args<span style="color: #666">.</span>num_entries, args<span style="color: #666">.</span>hidden), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+<span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>use_fp8:
+    local_storage, local_sf <span style="color: #666">=</span> per_token_cast_to_fp8(local_bf16)
+buffer<span style="color: #666">.</span>engram_write(local_storage, sf<span style="color: #666">=</span>sf)
+
+<span style="color: #3D7B7B; font-style: italic"># L56-57: 生成随机索引</span>
+indices <span style="color: #666">=</span> torch<span style="color: #666">.</span>randint(<span style="color: #666">0</span>, num_ranks <span style="color: #666">*</span> args<span style="color: #666">.</span>num_entries,
+                        (args<span style="color: #666">.</span>num_tokens, args<span style="color: #666">.</span>num_entries_per_token), device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int)
+</code></pre></div>
+
+<h3 id="33">3.3 正确性验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L60-71: 基于 all_gather 的参考实现</span>
+<span style="color: #008000; font-weight: bold">if</span> <span style="color: #A2F; font-weight: bold">not</span> args<span style="color: #666">.</span>skip_check:
+    global_storage <span style="color: #666">=</span> torch<span style="color: #666">.</span>empty((num_ranks <span style="color: #666">*</span> args<span style="color: #666">.</span>num_entries, args<span style="color: #666">.</span>hidden), dtype<span style="color: #666">=</span>dtype, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+    dist<span style="color: #666">.</span>all_gather_into_tensor(global_storage, local_storage, group)
+    ref_data <span style="color: #666">=</span> global_storage[indices<span style="color: #666">.</span>view(<span style="color: #666">-1</span>)]<span style="color: #666">.</span>view(args<span style="color: #666">.</span>num_tokens, <span style="color: #666">-1</span>)
+
+    <span style="color: #008000; font-weight: bold">for</span> use_tma_aligned_col_major_sf <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #008000; font-weight: bold">False</span>, <span style="color: #008000; font-weight: bold">True</span>) <span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>use_fp8 <span style="color: #008000; font-weight: bold">else</span> (<span style="color: #008000; font-weight: bold">False</span>,):
+        data, fetched_sf <span style="color: #666">=</span> buffer<span style="color: #666">.</span>engram_fetch(indices,
+                                               use_tma_aligned_col_major_sf<span style="color: #666">=</span>use_tma_aligned_col_major_sf)()
+        <span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(ref_data, data), <span style="color: #BA2121">&#39;data mismatch&#39;</span>
+</code></pre></div>
+
+<p><strong>关键设计</strong>：<br />
+- 使用 <code>dist.all_gather_into_tensor</code> 作为<strong>ground truth</strong>，与 RDMA get 结果逐元素比较<br />
+- FP8 模式下测试两种 SF layout（row-major vs TMA-aligned column-major）<br />
+- 默认参数：<code>num_entries=524288</code>, <code>hidden=128</code>, <code>num_tokens=512</code>, <code>num_entries_per_token=24</code>（L108-111）</p>
+<h3 id="34">3.4 性能测量</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L79-96: issue + wait 端到端测量</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">fetch_and_wait</span>():
+    hook <span style="color: #666">=</span> buffer<span style="color: #666">.</span>engram_fetch(indices, use_tma_aligned_col_major_sf<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>)
+    hook()
+
+issue_t, wait_t <span style="color: #666">=</span> bench_kineto(
+    fetch_and_wait,
+    kernel_names<span style="color: #666">=</span>(<span style="color: #BA2121">&#39;engram_fetch_impl&#39;</span>, <span style="color: #BA2121">&#39;engram_fetch_wait_impl&#39;</span>),
+    barrier_comm_profiling<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, barrier<span style="color: #666">=</span>buffer<span style="color: #666">.</span>barrier,
+    trace_path<span style="color: #666">=...</span>)
+mpps <span style="color: #666">=</span> args<span style="color: #666">.</span>num_tokens <span style="color: #666">*</span> args<span style="color: #666">.</span>num_entries_per_token <span style="color: #666">/</span> (issue_t <span style="color: #666">+</span> wait_t) <span style="color: #666">/</span> <span style="color: #666">1e6</span>
+</code></pre></div>
+
+<p><strong>指标</strong>：<br />
+- <code>issue_t</code>：<code>engram_fetch_impl</code> kernel 耗时（发起 RDMA get）<br />
+- <code>wait_t</code>：<code>engram_fetch_wait_impl</code> kernel 耗时（等待完成）<br />
+- <code>MPPS</code>：Million Packets Per Second<br />
+- <code>GB/s</code>：有效带宽</p>
+<h3 id="35-kernel">3.5 底层 kernel 实现</h3>
+<p><strong><code>engram_fetch_impl</code></strong>（<code>engram_fetch.cuh</code> L22-80）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// L29-35: 每个 block 对应一个 QP，warp 级并行</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>qp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>static_cast<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(<span style="color: #008000">blockIdx</span>.x);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>get_warp_idx();
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>global_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>qp_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>gin<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>handle<span style="color: #666">::</span>NCCLGin(nccl_dev_comm,<span style="color: #BBB"> </span>nccl_window,<span style="color: #BBB"> </span>qp_idx,<span style="color: #BBB"> </span>NCCL_GIN_RESOURCE_SHARING_CTA);
+
+<span style="color: #3D7B7B; font-style: italic">// L55-74: 每个 warp 协作 fetch 一个 token 的多个 entry</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEntriesPerToken;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumQPs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>global_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(indices<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>owner_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumEntriesPerRank;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>local_entry_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumEntriesPerRank;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>peer_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>owner_rank_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumRanksPerRDMAPeer;
+<span style="color: #BBB">    </span>gin.get<span style="color: #666">&lt;</span>team_t,<span style="color: #BBB"> </span>ncclCoopThread,<span style="color: #BBB"> </span>ncclGin_SegmentMixed<span style="color: #666">&gt;</span>(...);
+}
+</code></pre></div>
+
+<p><strong>核心特征</strong>：<br />
+- 1 block = 1 QP（<code>blockIdx.x</code> 映射到 <code>qp_idx</code>）<br />
+- Warp 级分工：每个 warp 负责不同 token/entry 的 RDMA get<br />
+- 支持 request 聚合（<code>ncclGinOptFlagsAggregateRequests</code>）与周期性 flush（<code>kGinQPFlushDepth</code>）<br />
+- FP8 SF packs 由 <code>elect_one_sync()</code> 选出的 leader warp 串行收集（L78-80 TODO 注释表明未来可优化为 warp 并行）</p>
+<h3 id="36-ep">3.6 与主 EP 测试的关系</h3>
+<p>Engram 是弹性模式下<strong>跨节点参数/激活拉取</strong>的实验性原语。<code>test_ep.py</code> 未直接使用 engram，但 engram 的底层机制（NCCL Gin RDMA get）与 dispatch/combine 的 NVLink/RDMA 通信共享同一套 <code>ncclDevComm</code> + <code>ncclWindow</code> 基础设施。</p>
+<hr />
+<h2 id="4-gate">4. Gate 测试分析</h2>
+<h3 id="41-gate">4.1 Gate 工具是什么</h3>
+<p><code>deep_ep/utils/gate.py</code> 提供 <strong>MoE top-k 路由的负载分布生成器</strong>，用于：<br />
+- 生成具有指定不均衡比（<code>ratio</code>）的 expert 选择 scores<br />
+- 为 <code>test_ep.py</code> 提供可控的、可复现的 routing 分布</p>
+<h3 id="42">4.2 测试目标</h3>
+<p>验证 <code>get_unbalanced_scores</code> 生成的 top-k 分布满足：<br />
+1. <strong>实际不均衡比</strong> <code>practical_ratio</code> 与期望 <code>ratio</code> 的相对误差 &lt; 10%<br />
+2. <strong>rank 间不均匀性</strong> <code>inequality</code> &lt; 1.02（非特殊 rank 间几乎均匀）</p>
+<h3 id="43">4.3 关键代码</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L7-53: 穷举参数空间测试</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">test_unbalanced_scores</span>():
+    <span style="color: #008000; font-weight: bold">for</span> num_tokens <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">1</span>, <span style="color: #666">4096</span>]:
+        <span style="color: #008000; font-weight: bold">for</span> num_experts_per_rank <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">1</span>, <span style="color: #666">4</span>, <span style="color: #666">8</span>, <span style="color: #666">16</span>]:
+            <span style="color: #008000; font-weight: bold">for</span> num_ranks <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">2</span>, <span style="color: #666">4</span>, <span style="color: #666">8</span>, <span style="color: #666">16</span>, <span style="color: #666">64</span>, <span style="color: #666">72</span>]:
+                num_experts <span style="color: #666">=</span> num_experts_per_rank <span style="color: #666">*</span> num_ranks
+                <span style="color: #008000; font-weight: bold">for</span> num_topk <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">1</span>, <span style="color: #666">2</span>, <span style="color: #666">4</span>, <span style="color: #666">6</span>, <span style="color: #666">8</span>, <span style="color: #666">9</span>]:
+                    <span style="color: #008000; font-weight: bold">for</span> ratio <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">1.0</span>, <span style="color: #666">2.0</span>, <span style="color: #666">4.0</span>]:
+                        <span style="color: #008000; font-weight: bold">for</span> precise <span style="color: #A2F; font-weight: bold">in</span> [<span style="color: #666">1</span>, <span style="color: #666">0</span>]:
+                            <span style="color: #3D7B7B; font-style: italic"># L18-25: 边界条件检查</span>
+                            lower_bound_per_token <span style="color: #666">=</span> <span style="color: #008000">max</span>(<span style="color: #666">1</span>, ceil_div(num_topk, num_experts_per_rank))
+                            upper_bound_per_token <span style="color: #666">=</span> <span style="color: #008000">min</span>(<span style="color: #008000">min</span>(num_topk, num_ranks), <span style="color: #008000">int</span>((num_ranks <span style="color: #666">-</span> <span style="color: #666">1</span>) <span style="color: #666">/</span> ratio) <span style="color: #666">+</span> <span style="color: #666">1</span>)
+                            <span style="color: #008000; font-weight: bold">if</span> lower_bound_per_token <span style="color: #666">&gt;</span> upper_bound_per_token:
+                                <span style="color: #008000; font-weight: bold">continue</span>
+
+                            <span style="color: #3D7B7B; font-style: italic"># L27-36: 逐 rank 生成并统计</span>
+                            <span style="color: #008000; font-weight: bold">for</span> rank_idx <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks):
+                                scores <span style="color: #666">=</span> get_unbalanced_scores(num_tokens, num_experts, num_ranks, num_topk, ratio, precise)
+                                _topk_weights, topk_idx <span style="color: #666">=</span> torch<span style="color: #666">.</span>topk(scores, num_topk, dim<span style="color: #666">=-1</span>, <span style="color: #666">...</span>)
+                                topk_idx <span style="color: #666">=</span> topk_idx <span style="color: #666">//</span> num_experts_per_rank
+                                <span style="color: #666">...</span>  <span style="color: #3D7B7B; font-style: italic"># 统计每个 rank 被选中次数</span>
+
+                            <span style="color: #3D7B7B; font-style: italic"># L39-52: 验证 ratio 与 inequality</span>
+                            practical_ratio <span style="color: #666">=</span> total_rank_count[<span style="color: #666">0</span>]<span style="color: #666">.</span>item() <span style="color: #666">/</span> <span style="color: #008000">max</span>(total_rank_count[<span style="color: #666">1</span>:]<span style="color: #666">.</span>min()<span style="color: #666">.</span>item(), <span style="color: #666">1</span>)
+                            inequality <span style="color: #666">=</span> total_rank_count[<span style="color: #666">1</span>:]<span style="color: #666">.</span>max()<span style="color: #666">.</span>item() <span style="color: #666">/</span> <span style="color: #008000">max</span>(total_rank_count[<span style="color: #666">1</span>:]<span style="color: #666">.</span>min()<span style="color: #666">.</span>item(), <span style="color: #666">1</span>)
+                            <span style="color: #008000; font-weight: bold">if</span> precise:
+                                <span style="color: #008000; font-weight: bold">assert</span> <span style="color: #008000">abs</span>(practical_ratio <span style="color: #666">-</span> ratio) <span style="color: #666">/</span> ratio <span style="color: #666">&lt;</span> <span style="color: #666">0.1</span> <span style="color: #A2F; font-weight: bold">and</span> inequality <span style="color: #666">&lt;</span> <span style="color: #666">1.02</span>
+</code></pre></div>
+
+<h3 id="44">4.4 底层算法</h3>
+<p><code>gate.py</code> 提供两种模式（L176-180）：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>函数</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>precise=True</code></td>
+<td><code>get_precise_unbalanced_scores</code></td>
+<td>精确控制 rank count 分布，保证 ratio 精度</td>
+</tr>
+<tr>
+<td><code>precise=False</code></td>
+<td><code>get_random_unbalanced_scores</code></td>
+<td>通过 factor 二分搜索逼近 ratio，更随机</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>generate_rank_count</code></strong>（L32-113）的核心逻辑：<br />
+1. 随机生成 top-k indices，统计每个 token 覆盖的 rank 数 <code>a[i]</code><br />
+2. 根据 <code>ratio</code> 计算 special rank 的 token 数 <code>special_token_count</code><br />
+3. 通过 permutation 将 special rank 插入到选定 token 的 top-k 中<br />
+4. <code>scatter_add_</code> 统计最终 rank count</p>
+<p><strong><code>generate_topk_idx</code></strong>（L4-29）将 rank count 映射为具体 expert indices：<br />
+- 在每个 rank 内随机排列 expert 顺序<br />
+- 按 rank count 截断得到 topk_idx</p>
+<h3 id="45-ep">4.5 与主 EP 测试的关系</h3>
+<p><code>test_ep.py</code> L13 导入、L75 调用：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>scores <span style="color: #666">=</span> get_unbalanced_scores(num_tokens, num_experts, buffer<span style="color: #666">.</span>num_ranks, num_topk,
+                               args<span style="color: #666">.</span>unbalanced_ratio, args<span style="color: #666">.</span>precise_unbalanced_ratio)
+</code></pre></div>
+
+<p>这使得主 EP 测试可以模拟<strong>真实 MoE 场景中的负载不均衡</strong>（如某些 expert 被过度选中），验证 dispatch/combine 在极端分布下的正确性与性能。</p>
+<hr />
+<h2 id="5-api">5. API 使用模式总结</h2>
+<h3 id="51">5.1 分布式测试模式</h3>
+<p>三个测试均采用 <code>torch.multiprocessing.spawn</code> 启动多进程：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 标准入口模式</span>
+<span style="color: #A2F">@torch</span><span style="color: #666">.</span>inference_mode()
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">test_loop</span>(local_rank, num_ranks, args):
+    rank, num_ranks, group <span style="color: #666">=</span> init_dist(local_rank, num_ranks)
+    buffer <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer(group, <span style="color: #666">...</span>)
+    <span style="color: #3D7B7B; font-style: italic"># ... 测试逻辑</span>
+    buffer<span style="color: #666">.</span>destroy()
+    dist<span style="color: #666">.</span>destroy_process_group()
+
+<span style="color: #008000; font-weight: bold">if</span> <span style="color: #19177C">__name__</span> <span style="color: #666">==</span> <span style="color: #BA2121">&#39;__main__&#39;</span>:
+    torch<span style="color: #666">.</span>multiprocessing<span style="color: #666">.</span>spawn(test_loop, args<span style="color: #666">=</span>(num_processes, args), nprocs<span style="color: #666">=</span>num_processes)
+</code></pre></div>
+
+<h3 id="52">5.2 性能测量模式</h3>
+<p>统一使用 <code>bench_kineto</code> + <code>buffer.barrier</code> 消除 CPU 启动偏斜：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>t <span style="color: #666">=</span> bench_kineto(fn, kernel_names<span style="color: #666">=...</span>,
+                 barrier_comm_profiling<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, barrier<span style="color: #666">=</span>buffer<span style="color: #666">.</span>barrier,
+                 trace_path<span style="color: #666">=...</span>)
+</code></pre></div>
+
+<h3 id="53">5.3 正确性验证模式</h3>
+<ul>
+<li><strong>Barrier</strong>：无显式正确性断言（barrier 的正确性由 NCCL 保证），纯性能测量</li>
+<li><strong>Engram</strong>：<code>torch.equal</code> 与 <code>all_gather</code> 参考实现逐元素比较</li>
+<li><strong>Gate</strong>：统计检验 <code>practical_ratio</code> 与 <code>inequality</code> 的数值边界</li>
+</ul>
+<hr />
+<h2 id="6">6. 三者协作关系图</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>                    ┌─────────────────────┐
+                    │   test_ep.py        │
+                    │   (主 EP 测试)       │
+                    └─────────┬───────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+   ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
+   │ barrier     │    │ engram       │    │ gate         │
+   │ (同步原语)   │    │ (RDMA 原语)   │    │ (负载生成)    │
+   └──────┬──────┘    └──────┬───────┘    └──────┬───────┘
+          │                  │                   │
+          ▼                  ▼                   ▼
+   ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
+   │ barrier_impl│    │engram_fetch_ │    │generate_rank_│
+   │ (NCCL Gin   │    │impl / wait   │    │count /       │
+   │  GPU barrier)│    │(RDMA get)    │    │topk_idx      │
+   └─────────────┘    └──────────────┘    └──────────────┘
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>原语</th>
+<th>角色</th>
+<th>被谁依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>barrier</td>
+<td>跨 rank 同步 + 性能测量校准</td>
+<td>test_ep.py, test_engram.py</td>
+</tr>
+<tr>
+<td>engram</td>
+<td>远端内存访问（实验性）</td>
+<td>独立测试，基础设施共享</td>
+</tr>
+<tr>
+<td>gate</td>
+<td>可控负载分布生成</td>
+<td>test_ep.py</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7">7. 关键发现与洞察</h2>
+<h3 id="71-barrier">7.1 Barrier 的"测试模式"设计</h3>
+<p><code>barrier(sequential=True)</code> 是<strong>测试专用路径</strong>：单 SM 串行执行 scaleout + scaleup barrier，牺牲性能换取同步确定性。这揭示了 DeepEP 的一个设计哲学——<strong>生产路径追求并行度，测试路径追求可预测性</strong>。</p>
+<h3 id="72-engram-hook">7.2 Engram 的"异步 hook"模式</h3>
+<p><code>engram_fetch</code> 返回 callable 而非直接阻塞，这是 <strong>lazy evaluation</strong> 模式：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>hook <span style="color: #666">=</span> buffer<span style="color: #666">.</span>engram_fetch(indices)  <span style="color: #3D7B7B; font-style: italic"># 异步发起</span>
+<span style="color: #3D7B7B; font-style: italic"># ... 可插入计算 ...</span>
+hook()  <span style="color: #3D7B7B; font-style: italic"># 阻塞等待，返回 (data, sf)</span>
+</code></pre></div>
+
+<p>这与 dispatch/combine 的 <code>event</code> 参数（<code>with_previous_event</code>）设计一脉相承，允许用户重叠计算与通信。</p>
+<h3 id="73-gate-vs">7.3 Gate 的"精确 vs 随机"双模式</h3>
+<p><code>precise=True</code> 通过 <code>generate_rank_count</code> 直接构造 rank count 矩阵，保证统计精度；<code>precise=False</code> 通过 factor 二分搜索逼近，更贴近真实 routing 的随机性。这种双模式设计使得测试既能<strong>精确验证边界条件</strong>，又能<strong>模拟真实场景的统计波动</strong>。</p>
+<h3 id="74">7.4 测试覆盖的参数空间</h3>
+<p><code>test_gate.py</code> 的穷举参数空间极广：<br />
+- <code>num_tokens</code> × <code>num_experts_per_rank</code> × <code>num_ranks</code> × <code>num_topk</code> × <code>ratio</code> × <code>precise</code><br />
+- 总计约 2 × 4 × 6 × 6 × 3 × 2 = <strong>1728 种组合</strong>（经边界条件过滤后仍有数百种）</p>
+<p>这种<strong>组合爆炸式测试</strong>确保了 <code>get_unbalanced_scores</code> 在各种极端配置下的鲁棒性。</p>
+<hr />
+<h2 id="8">8. 与博客理论的对应关系</h2>
+<table>
+<thead>
+<tr>
+<th>博客概念</th>
+<th>测试体现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU-centric fabric</td>
+<td><code>engram_fetch_impl</code> 中 SM 直接操作 Gin QP，无 CPU 介入</td>
+</tr>
+<tr>
+<td>三阶段流水线</td>
+<td><code>barrier_impl</code> 的 scaleout → scaleup 串行执行</td>
+</tr>
+<tr>
+<td>对称内存</td>
+<td><code>engram_write</code> 注册到 <code>ncclWindow</code>，远端可直接访问</td>
+</tr>
+<tr>
+<td>MoE 负载不均衡</td>
+<td><code>get_unbalanced_scores</code> 的 <code>ratio</code> 参数直接建模</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9">9. 文件路径索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/elastic/test_barrier.py</code></td>
+<td>62</td>
+<td>Barrier 延迟测试</td>
+</tr>
+<tr>
+<td><code>tests/elastic/test_engram.py</code></td>
+<td>124</td>
+<td>Engram 正确性 + 带宽测试</td>
+</tr>
+<tr>
+<td><code>tests/utils/test_gate.py</code></td>
+<td>57</td>
+<td>Gate 统计正确性测试</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>L497-604</td>
+<td>barrier / engram_write / engram_fetch Python API</td>
+</tr>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td>L181-208</td>
+<td>C++ barrier 实现</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/barrier.hpp</code></td>
+<td>87</td>
+<td>Barrier JIT runtime</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/engram.hpp</code></td>
+<td>160+</td>
+<td>Engram fetch/wait JIT runtime</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/barrier.cuh</code></td>
+<td>42</td>
+<td>barrier_impl CUDA kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/engram_fetch.cuh</code></td>
+<td>80+</td>
+<td>engram_fetch_impl CUDA kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/gate.py</code></td>
+<td>181</td>
+<td>负载分布生成算法</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/testing.py</code></td>
+<td>L111-190</td>
+<td>bench_kineto 性能测量框架</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05.10 Counting Sort / Bucketization 在 DeepGEMM Mega MoE 中的映射 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">05.10 Counting Sort / Bucketiz</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#0510-counting-sort--bucketization-在-deepgemm-mega-" class="toc-h1">05.10 Counting Sort / Bucketization 在 DeepGEMM Mega MoE 中的映射</a></li><li><a href="#1-核心结论" class="toc-h2">1. 核心结论</a></li><li><a href="#2-代码定位count--prefix-sum--scatter-在哪里" class="toc-h2">2. 代码定位：Count → Prefix Sum → Scatter 在哪里？</a></li><li><a href="#21-step-1-count--每个-sm-本地计数" class="toc-h3">2.1 Step 1: COUNT — 每个 SM 本地计数</a></li><li><a href="#22-step-2-prefix-sum--跨-sm-聚合得到全局偏移" class="toc-h3">2.2 Step 2: PREFIX SUM — 跨 SM 聚合得到全局偏移</a></li><li><a href="#23-step-3-scatter--写入源-token-topk-索引" class="toc-h3">2.3 Step 3: SCATTER — 写入源 token-topk 索引</a></li><li><a href="#3-gpu-vs-cpupreprocessing-vs-inline" class="toc-h2">3. GPU vs CPU？Preprocessing vs Inline？</a></li><li><a href="#4-内核如何知道-token-去哪个-expert" class="toc-h2">4. 内核如何知道 token 去哪个 expert？</a></li><li><a href="#5-bucketizationtoken-分配到-expert-buckets" class="toc-h2">5. Bucketization：Token 分配到 Expert Buckets</a></li><li><a href="#51-全局-bucketization跨-rank" class="toc-h3">5.1 全局 Bucketization（跨 Rank）</a></li><li><a href="#52-本地-bucketizationpool-buffer" class="toc-h3">5.2 本地 Bucketization（Pool Buffer）</a></li><li><a href="#6-连续-layout-的产生从稀疏路由到连续访问" class="toc-h2">6. 连续 Layout 的产生：从稀疏路由到连续访问</a></li><li><a href="#61-完整数据流" class="toc-h3">6.1 完整数据流</a></li><li><a href="#62-pull-阶段的连续化" class="toc-h3">6.2 Pull 阶段的连续化</a></li><li><a href="#7-preprocessing-vs-inline-routing" class="toc-h2">7. Preprocessing vs Inline Routing？</a></li><li><a href="#71-mega-moe-是纯-inline-routing" class="toc-h3">7.1 Mega MoE 是纯 Inline Routing</a></li><li><a href="#72-为什么不用-cpu-预处理" class="toc-h3">7.2 为什么不用 CPU 预处理？</a></li><li><a href="#8-关键数据结构" class="toc-h2">8. 关键数据结构</a></li><li><a href="#81-prefix-sum-数据结构" class="toc-h3">8.1 Prefix Sum 数据结构</a></li><li><a href="#82-scatter-数据结构" class="toc-h3">8.2 Scatter 数据结构</a></li><li><a href="#9-scheduler-中的-prefix-sum" class="toc-h2">9. Scheduler 中的 Prefix Sum</a></li><li><a href="#91-pool-block-offset-计算prefix-sum" class="toc-h3">9.1 Pool Block Offset 计算（Prefix Sum）</a></li><li><a href="#10-完整流程图" class="toc-h2">10. 完整流程图</a></li><li><a href="#11-与-deepep-博客的对比" class="toc-h2">11. 与 DeepEP 博客的对比</a></li><li><a href="#12-核心发现总结" class="toc-h2">12. 核心发现总结</a></li><li><a href="#附录关键代码位置索引" class="toc-h2">附录：关键代码位置索引</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="0510-counting-sort-bucketization-deepgemm-mega-moe">05.10 Counting Sort / Bucketization 在 DeepGEMM Mega MoE 中的映射</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 验证博客中 "Count → Prefix Sum → Scatter" 概念在 Mega MoE 中的具体实现位置与形态</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 核心结论</h2>
+<p><strong>是的，Mega MoE 中存在完整的 Count → Prefix Sum → Scatter 流程</strong>，但它以 <strong>GPU 内联（inline）</strong> 方式实现，而非 CPU 预处理。整个流程发生在 kernel 内部的 <strong>dispatch warp</strong> 中，通过 <strong>两阶段原子操作</strong> 完成从稀疏路由到连续 layout 的转换。</p>
+<p>Mega MoE 的设计哲学与 DeepEP 的博客描述一致：<br />
+- <strong>不是传统排序</strong>，而是 Counting Sort / Bucketization<br />
+- <strong>目标：产生连续 layout</strong>，而非按大小排序<br />
+- <strong>核心数据结构</strong>：<code>smem_expert_count</code>（计数 + prefix sum）、<code>src_token_topk_idx</code>（scatter 索引）</p>
+<hr />
+<h2 id="2-count-prefix-sum-scatter">2. 代码定位：Count → Prefix Sum → Scatter 在哪里？</h2>
+<p>整个流程位于 <code>sm100_fp8_fp4_mega_moe.cuh</code> 的 <strong>dispatch warp 阶段</strong>（<code>warp_idx &lt; kNumDispatchWarps</code>），分为三步：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Dispatch Warp (warp_idx &lt; kNumDispatchWarps)              │
+│                                                                             │
+│  Step 1: COUNT          Step 2: PREFIX SUM         Step 3: SCATTER          │
+│  ┌──────────────┐       ┌───────────────────┐      ┌──────────────────┐     │
+│  │ atomicAdd to │  ──▶  │ atomicAdd to global│ ──▶ │ atomicAdd to get │     │
+│  │ smem_expert  │       │ expert_send_count  │      │ dst slot, write  │     │
+│  │ _count[expert]│      │ → get global offset │      │ src_token_topk_idx│    │
+│  └──────────────┘       └───────────────────┘      └──────────────────┘     │
+│                                                                             │
+│  Result: 每个 token-topk pair 被写入目标 rank 的 scatter 索引表              │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="21-step-1-count-sm">2.1 Step 1: COUNT — 每个 SM 本地计数</h3>
+<p><strong>文件</strong>: <code>sm100_fp8_fp4_mega_moe.cuh</code>，约 line 382-386</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Count experts&#39; tokens</span>
+read_topk_idx([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_topk_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">   </span>atomicAdd_block(smem_expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+});
+ptx<span style="color: #666">::</span>sync_aligned(kNumDispatchThreads,<span style="color: #BBB"> </span>kDispatchBarrierIdx);
+</code></pre></div>
+
+<p><strong>机制</strong>：<br />
+- <code>smem_expert_count</code> 是一个 smem 数组，大小为 <code>kNumExperts</code><br />
+- 每个 SM 的 dispatch warp 遍历本地 token 的 topk_idx<br />
+- 对每个 <code>(token, expert)</code> pair，执行 <code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code><br />
+- 结果：<code>smem_expert_count[i]</code> = 本 SM 发往 expert i 的 token 数量</p>
+<p><strong>为什么用 smem 而非 global？</strong><br />
+- 减少 global memory 原子操作的竞争<br />
+- 每个 SM 先本地聚合，再与全局同步</p>
+<h3 id="22-step-2-prefix-sum-sm">2.2 Step 2: PREFIX SUM — 跨 SM 聚合得到全局偏移</h3>
+<p><strong>文件</strong>: <code>sm100_fp8_fp4_mega_moe.cuh</code>，约 line 388-395</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Get SM offset (~6.5 us)</span>
+<span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExperts;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumDispatchThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>send_value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(<span style="color: #666">1ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)<span style="color: #BBB"> </span><span style="color: #666">|</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(smem_expert_count[i]);
+<span style="color: #BBB">    </span>smem_expert_count[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>atomic_add(workspace.get_expert_send_count_ptr(i),<span style="color: #BBB"> </span>send_value));
+}
+ptx<span style="color: #666">::</span>sync_aligned(kNumDispatchThreads,<span style="color: #BBB"> </span>kDispatchBarrierIdx);
+</code></pre></div>
+
+<p><strong>机制</strong>：<br />
+- <code>expert_send_count</code> 是一个 global 数组（在 workspace 中），每个 entry 是 64-bit<br />
+- 高 32-bit 存储 "完成信号"（SM count），低 32-bit 存储 "累计 token 数"<br />
+- <code>atomic_add</code> 返回值 = 该 SM 在全局序列中的 <strong>起始偏移</strong><br />
+- 结果写回 <code>smem_expert_count[i]</code>，此时它不再是计数，而是 <strong>本 SM 在全局 scatter 中的起始 offset</strong></p>
+<p><strong>这是经典的 parallel prefix sum 的两级实现</strong>：<br />
+1. Level 1: SM 内部原子加（smem）<br />
+2. Level 2: SM 之间原子加（global）</p>
+<h3 id="23-step-3-scatter-token-topk">2.3 Step 3: SCATTER — 写入源 token-topk 索引</h3>
+<p><strong>文件</strong>: <code>sm100_fp8_fp4_mega_moe.cuh</code>，约 line 397-404</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Write source indices (~2 us with 512 tokens)</span>
+read_topk_idx([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>token_topk_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>atomicAdd_block(smem_expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">        </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumExpertsPerRank,<span style="color: #BBB"> </span>sym_buffer.rank_idx,<span style="color: #BBB"> </span>dst_slot_idx);
+<span style="color: #BBB">    </span><span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_topk_idx;
+});
+</code></pre></div>
+
+<p><strong>机制</strong>：<br />
+- 再次遍历本地 token 的 topk_idx<br />
+- <code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code> 返回当前可用的 slot index<br />
+- 将 <code>token_topk_idx</code>（编码了 src_token_idx + src_topk_idx）写入目标 rank 的 <code>src_token_topk_idx</code> 表<br />
+- 写入通过 NVLink（<code>sym_buffer.map</code>）直达目标 rank 的对称内存</p>
+<p><strong>Scatter 索引表结构</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>src_token_topk_idx[local_expert][src_rank][slot] = token_topk_idx
+                                                    └── (src_token_idx * num_topk + src_topk_idx)
+</code></pre></div>
+
+<hr />
+<h2 id="3-gpu-vs-cpupreprocessing-vs-inline">3. GPU vs CPU？Preprocessing vs Inline？</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP (博客描述)</th>
+<th>Mega MoE (实际实现)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>执行位置</strong></td>
+<td>GPU kernel 内</td>
+<td>GPU kernel 内（dispatch warp）</td>
+</tr>
+<tr>
+<td><strong>时机</strong></td>
+<td>Inline（与通信/计算融合）</td>
+<td>Inline（与 pull GEMM 融合）</td>
+</tr>
+<tr>
+<td><strong>预处理</strong></td>
+<td>无 CPU 预处理</td>
+<td>无 CPU 预处理</td>
+</tr>
+<tr>
+<td><strong>排序算法</strong></td>
+<td>Counting Sort</td>
+<td>Counting Sort（两级原子）</td>
+</tr>
+<tr>
+<td><strong>输出</strong></td>
+<td>Expert Buffer（连续 layout）</td>
+<td>Pool Buffer（连续 layout）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键区别</strong>：<br />
+- DeepEP 的 Counting Sort 产物是 <strong>Expert GEMM 的输入 Buffer</strong><br />
+- Mega MoE 的 Counting Sort 产物是 <strong>scatter 索引表</strong>（<code>src_token_topk_idx</code>），后续的 "连续 layout" 由 <strong>pull 阶段</strong> 完成</p>
+<hr />
+<h2 id="4-token-expert">4. 内核如何知道 token 去哪个 expert？</h2>
+<p>Mega MoE 的输入包含：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># Python 侧 (tests/test_mega_moe.py)</span>
+buffer<span style="color: #666">.</span>topk_idx[:num_tokens]<span style="color: #666">.</span>copy_(topk_idx)        <span style="color: #3D7B7B; font-style: italic"># [num_tokens, num_topk]</span>
+buffer<span style="color: #666">.</span>topk_weights[:num_tokens]<span style="color: #666">.</span>copy_(topk_weights) <span style="color: #3D7B7B; font-style: italic"># [num_tokens, num_topk]</span>
+</code></pre></div>
+
+<p><strong>数据流</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Router 输出
+    │
+    ▼
+topk_idx[token] = [expert_0, expert_1, ..., expert_k]   ← 每个 token 选择的 expert ID
+topk_weights[token] = [w_0, w_1, ..., w_k]              ← 对应的 gate 权重
+    │
+    ▼
+Kernel 内 dispatch warp 读取 topk_idx
+    │
+    ▼
+Counting Sort → scatter 索引表写入目标 rank
+    │
+    ▼
+Pull 阶段根据 scatter 索引表拉取 token
+</code></pre></div>
+
+<p><strong>关键洞察</strong>：Kernel 不需要 "排序"，只需要知道每个 <code>(token, topk_slot)</code> 对的目标 expert。<code>topk_idx</code> 就是路由决策本身。</p>
+<hr />
+<h2 id="5-bucketizationtoken-expert-buckets">5. Bucketization：Token 分配到 Expert Buckets</h2>
+<p><strong>Bucketization 发生在两个层面</strong>：</p>
+<h3 id="51-bucketization-rank">5.1 全局 Bucketization（跨 Rank）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>                    Rank 0                          Rank 1
+            ┌─────────────────┐             ┌─────────────────┐
+            │ Expert 0: 5 tok │             │ Expert 2: 3 tok │
+            │ Expert 1: 3 tok │             │ Expert 3: 7 tok │
+            └─────────────────┘             └─────────────────┘
+                     │                               │
+                     └───────────┬───────────────────┘
+                                 ▼
+                     src_token_topk_idx[expert][rank][slot]
+                                 │
+                                 ▼
+                    按 expert 聚合的全局 scatter 表
+</code></pre></div>
+
+<h3 id="52-bucketizationpool-buffer">5.2 本地 Bucketization（Pool Buffer）</h3>
+<p><strong>文件</strong>: <code>sm100_fp8_fp4_mega_moe.cuh</code>，约 line 572</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Store token data</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expert_pool_block_offset<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>BLOCK_M<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx_in_expert;
+</code></pre></div>
+
+<p><strong>Pool Buffer 布局</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌────────────────────────────────────────────────────────────────┐
+│                     l1_token_buffer (Pool)                      │
+├──────────────────┬──────────────────┬──────────────────────────┤
+│   Expert 0       │   Expert 1       │   Expert 2               │
+│   [0..n0-1]      │   [n0..n0+n1-1]  │   [n0+n1..n0+n1+n2-1]   │
+│                  │                  │                          │
+│  expert_pool_    │  expert_pool_    │  expert_pool_            │
+│  block_offset=0  │  block_offset=n0 │  block_offset=n0+n1      │
+└──────────────────┴──────────────────┴──────────────────────────┘
+</code></pre></div>
+
+<p><strong><code>expert_pool_block_offset</code> 的计算</strong>（scheduler/mega_moe.cuh）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_pool_block_offset(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>get_lane_idx()<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>expert_idx)
+<span style="color: #BBB">            </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>ceil_div(stored_num_tokens_per_expert[i],<span style="color: #BBB"> </span>BLOCK_M);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>__reduce_add_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>num_blocks);
+}
+</code></pre></div>
+
+<p><strong>这就是 Prefix Sum！</strong> 对每个 expert 之前的 token 数做累加，得到该 expert 在 pool 中的起始 block offset。</p>
+<hr />
+<h2 id="6-layout">6. 连续 Layout 的产生：从稀疏路由到连续访问</h2>
+<h3 id="61">6.1 完整数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>                        Rank 0 (Local)
+                        ┌─────────────────────────────────────┐
+                        │  x[token_idx] = fp8 token data      │
+                        │  topk_idx[token] = [e2, e5, e1]     │
+                        └──────────────┬──────────────────────┘
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    ▼                  ▼                  ▼
+              expert=2            expert=5            expert=1
+           ┌────────────┐    ┌────────────┐    ┌────────────┐
+           │ Count += 1 │    │ Count += 1 │    │ Count += 1 │
+           └─────┬──────┘    └─────┬──────┘    └─────┬──────┘
+                 │                 │                 │
+                 ▼                 ▼                 ▼
+           ┌─────────────────────────────────────────────────┐
+           │         Prefix Sum (跨 SM 聚合)                  │
+           │  smem_expert_count[i] → global offset           │
+           └─────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+           ┌─────────────────────────────────────────────────┐
+           │         Scatter (写入目标 rank)                  │
+           │  src_token_topk_idx[expert][rank][slot] =       │
+           │      token_topk_idx                             │
+           └─────────────────────────────────────────────────┘
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+        Rank 2 (Remote)                           Rank 0 (Local)
+    ┌─────────────────────────┐             ┌─────────────────────────┐
+    │ Pull 阶段读取 scatter 表 │             │ Pull 阶段读取 scatter 表 │
+    │ 按 expert 聚合 token     │             │ 按 expert 聚合 token     │
+    │ 写入 pool buffer         │             │ 写入 pool buffer         │
+    └─────────────────────────┘             └─────────────────────────┘
+              │                                         │
+              ▼                                         ▼
+    ┌─────────────────────────┐             ┌─────────────────────────┐
+    │ Pool Buffer:            │             │ Pool Buffer:            │
+    │ Expert 0 | Expert 1 |.. │             │ Expert 0 | Expert 1 |.. │
+    │ (连续 layout)            │             │ (连续 layout)            │
+    └─────────────────────────┘             └─────────────────────────┘
+              │                                         │
+              └─────────────────┬───────────────────────┘
+                                ▼
+                    ┌───────────────────────┐
+                    │  GEMM: 按 expert 切 block │
+                    │  每个 expert 的 token 连续  │
+                    │  访问 → Tensor Core 高效    │
+                    └───────────────────────┘
+</code></pre></div>
+
+<h3 id="62-pull">6.2 Pull 阶段的连续化</h3>
+<p><strong>文件</strong>: <code>sm100_fp8_fp4_mega_moe.cuh</code>，约 line 544-598</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Read source token-topk index (written by remote dispatch via NVLink)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">    </span>current_expert_idx,<span style="color: #BBB"> </span>current_rank_in_expert_idx,<span style="color: #BBB"> </span>token_idx_in_rank);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumTopk;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumTopk;
+
+<span style="color: #3D7B7B; font-style: italic">// TMA load token from remote rank into shared memory</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">    </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                   </span>current_rank_in_expert_idx),
+<span style="color: #BBB">    </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+
+<span style="color: #3D7B7B; font-style: italic">// Store token to local L1 buffer via TMA</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expert_pool_block_offset<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>BLOCK_M<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx_in_expert;
+ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">    </span>l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),<span style="color: #BBB"> </span>pull_buffer.get_num_bytes());
+</code></pre></div>
+
+<p><strong>这就是 "contiguous layout" 的最终产物</strong>：<br />
+- 每个 expert 的 token 在 pool buffer 中连续排列<br />
+- <code>expert_pool_block_offset</code> 确保不同 expert 的 token 不重叠<br />
+- <code>token_idx_in_expert</code> 确保同一 expert 内的 token 紧凑排列</p>
+<hr />
+<h2 id="7-preprocessing-vs-inline-routing">7. Preprocessing vs Inline Routing？</h2>
+<h3 id="71-mega-moe-inline-routing">7.1 Mega MoE 是纯 Inline Routing</h3>
+<p><strong>证据 1</strong>：Python 侧只准备 <code>topk_idx</code> 和 <code>topk_weights</code>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># tests/test_mega_moe.py, line 82-83</span>
+scores <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((num_tokens, num_experts), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>float, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+topk_weights, topk_idx <span style="color: #666">=</span> torch<span style="color: #666">.</span>topk(scores, num_topk, dim<span style="color: #666">=-1</span>, largest<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, <span style="color: #008000">sorted</span><span style="color: #666">=</span><span style="color: #008000; font-weight: bold">False</span>)
+</code></pre></div>
+
+<p>没有任何预处理排序操作。<code>topk_idx</code> 直接拷贝进 symmetric buffer。</p>
+<p><strong>证据 2</strong>：Kernel 入口不做任何排序：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh, line 363-380</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>read_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>process)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_idx)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTokensPerWarp;
+<span style="color: #BBB">         </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;
+<span style="color: #BBB">         </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTokensPerWarp)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumTopk)<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumActivateLanes)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">                </span>__ldg(input_topk_idx_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx));
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">                </span>process(i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx,<span style="color: #BBB"> </span>expert_idx);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>__syncwarp();
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p>Kernel 直接读取原始 <code>topk_idx</code>，然后在 GPU 上完成 Counting Sort。</p>
+<h3 id="72-cpu">7.2 为什么不用 CPU 预处理？</h3>
+<ol>
+<li><strong>Data Locality</strong>：<code>topk_idx</code> 已经在 GPU global memory 中</li>
+<li><strong>避免 CPU-GPU 同步</strong>：CPU 预处理需要 sync，破坏 pipeline</li>
+<li><strong>与 NVLink 通信融合</strong>：scatter 写入目标 rank 的对称内存，直接利用 NVLink</li>
+<li><strong>SM 利用率</strong>：dispatch warp 专门做 routing，与其他 warp 角色并行</li>
+</ol>
+<hr />
+<h2 id="8">8. 关键数据结构</h2>
+<h3 id="81-prefix-sum">8.1 Prefix Sum 数据结构</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>位置</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smem_expert_count[kNumExperts]</code></td>
+<td>smem</td>
+<td>本地计数 → 全局偏移（复用）</td>
+</tr>
+<tr>
+<td><code>expert_send_count[kNumExperts]</code></td>
+<td>global workspace</td>
+<td>跨 SM 聚合（64-bit，高32位是 SM 计数）</td>
+</tr>
+<tr>
+<td><code>expert_recv_count[src_rank][local_expert]</code></td>
+<td>global workspace</td>
+<td>每个 rank 发给本 rank 某 expert 的 token 数</td>
+</tr>
+<tr>
+<td><code>expert_recv_count_sum[local_expert]</code></td>
+<td>global workspace</td>
+<td>所有 rank 发给本 rank 某 expert 的总数</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>expert_send_count</code> 的 64-bit 编码</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────┬─────────────────────┐
+│ 高 32-bit           │ 低 32-bit           │
+│ SM 完成计数          │ 累计 token 数        │
+│ (到达 kNumSMs*kNumRanks │ (prefix sum 结果)    │
+│  表示全部完成)        │                     │
+└─────────────────────┴─────────────────────┘
+</code></pre></div>
+
+<h3 id="82-scatter">8.2 Scatter 数据结构</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>位置</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src_token_topk_idx[local_expert][src_rank][slot]</code></td>
+<td>global workspace</td>
+<td>目标 rank 读取源 rank token 的索引表</td>
+</tr>
+<tr>
+<td><code>token_src_metadata[pool_token_idx]</code></td>
+<td>global workspace</td>
+<td>记录 pool 中每个 token 的来源（用于 combine）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>src_token_topk_idx</code> 的值编码</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>token_topk_idx = src_token_idx * num_topk + src_topk_idx
+                 │                │
+                 │                └── 该 token 的第几个 topk 选择
+                 └── 源 rank 中的 token 位置
+</code></pre></div>
+
+<p><strong><code>TokenSrcMetadata</code> 结构</strong>（layout/mega_moe.cuh）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">TokenSrcMetadata</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rank_idx;<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 来源 rank</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 来源 token</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>topk_idx;<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 来源 topk slot</span>
+};
+</code></pre></div>
+
+<hr />
+<h2 id="9-scheduler-prefix-sum">9. Scheduler 中的 Prefix Sum</h2>
+<p><strong>文件</strong>: <code>scheduler/mega_moe.cuh</code></p>
+<p>Scheduler 是 "连续 layout" 的消费者。它通过读取 <code>expert_recv_count_sum</code> 来获取每个 expert 的 token 数，然后计算 pool block offset：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>fetch_expert_recv_count()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NOTES: each lane caches experts at indices (i * 32 + lane_idx)</span>
+<span style="color: #BBB">    </span><span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>get_lane_idx();
+<span style="color: #BBB">        </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(expert_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerRank)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_volatile(workspace.get_expert_recv_count_sum_ptr(expert_idx));
+<span style="color: #BBB">            </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(value<span style="color: #BBB"> </span><span style="color: #666">&gt;&gt;</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumRanks);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>stored_num_tokens_per_expert[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(value);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<p><strong>注意等待条件</strong>：<code>(value &gt;&gt; 32) != kNumSMs * kNumRanks</code><br />
+- 高 32-bit 是 SM 完成计数<br />
+- 当所有 SM 都完成 dispatch 后，才开始调度 GEMM</p>
+<h3 id="91-pool-block-offset-prefix-sum">9.1 Pool Block Offset 计算（Prefix Sum）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_pool_block_offset(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>get_lane_idx()<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>expert_idx)
+<span style="color: #BBB">            </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>ceil_div(stored_num_tokens_per_expert[i],<span style="color: #BBB"> </span>BLOCK_M);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>__reduce_add_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>num_blocks);
+}
+</code></pre></div>
+
+<p><strong>这是对 <code>stored_num_tokens_per_expert</code> 的 prefix sum</strong>：<br />
+- 输入：每个 expert 的 token 数<br />
+- 输出：该 expert 在 pool 中的起始 block 位置<br />
+- 用途：GEMM 计算时确定 token 在 pool buffer 中的位置</p>
+<hr />
+<h2 id="10">10. 完整流程图</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              Mega MoE Kernel                                     │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐   │
+│  │                    Dispatch Warp (Counting Sort)                          │   │
+│  │                                                                          │   │
+│  │   topk_idx[token]                                                        │   │
+│  │        │                                                                 │   │
+│  │        ▼                                                                 │   │
+│  │   ┌─────────┐    ┌─────────────┐    ┌──────────────────┐                │   │
+│  │   │ COUNT   │──▶│ PREFIX SUM  │──▶│     SCATTER      │                │   │
+│  │   │ (smem   │    │ (global     │    │ (写入目标 rank    │                │   │
+│  │   │  atomic)│    │  atomic)    │    │  对称内存)        │                │   │
+│  │   └─────────┘    └─────────────┘    └──────────────────┘                │   │
+│  │        │                                      │                          │   │
+│  │        ▼                                      ▼                          │   │
+│  │   smem_expert_count[i]              src_token_topk_idx                   │   │
+│  │   = 本 SM 发给 expert i 的 token 数   [expert][rank][slot]              │   │
+│  │                                             │                            │   │
+│  └─────────────────────────────────────────────┼────────────────────────────┘   │
+│                                                │                                │
+│                                                ▼                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐   │
+│  │                    Pull Warp (连续化)                                     │   │
+│  │                                                                          │   │
+│  │   读取 scatter 表 → TMA pull token → 写入 pool buffer                    │   │
+│  │                                                                          │   │
+│  │   ┌────────────────────────────────────────────────────────────┐         │   │
+│  │   │              Pool Buffer (连续 layout)                      │         │   │
+│  │   ├────────────┬────────────┬────────────┬─────────────────────┤         │   │
+│  │   │  Expert 0  │  Expert 1  │  Expert 2  │  ...                │         │   │
+│  │   │  token0..n │  token0..m │  token0..k │                     │         │   │
+│  │   └────────────┴────────────┴────────────┴─────────────────────┘         │   │
+│  │                         ▲                                                │   │
+│  │                         │ expert_pool_block_offset (prefix sum)          │   │
+│  └─────────────────────────┼────────────────────────────────────────────────┘   │
+│                            │                                                    │
+│                            ▼                                                    │
+│  ┌──────────────────────────────────────────────────────────────────────────┐   │
+│  │                    GEMM Scheduler + MMA Warp                              │   │
+│  │                                                                          │   │
+│  │   按 expert 切 block，每个 expert 的 token 连续访问 → Tensor Core          │   │
+│  └──────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="11-deepep">11. 与 DeepEP 博客的对比</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP 博客描述</th>
+<th>Mega MoE 实际实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Count</strong></td>
+<td><code>Count[expert]++</code></td>
+<td><code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code></td>
+</tr>
+<tr>
+<td><strong>Prefix Sum</strong></td>
+<td><code>prefix[expert] = sum(count[0..expert-1])</code></td>
+<td>两级：SM 内 atomic + SM 间 atomic to global</td>
+</tr>
+<tr>
+<td><strong>Scatter</strong></td>
+<td><code>dst = prefix[expert]++</code></td>
+<td><code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code> 返回 slot</td>
+</tr>
+<tr>
+<td><strong>连续 layout</strong></td>
+<td>Expert Buffer (Expert-major)</td>
+<td>Pool Buffer (Expert-major, per-expert 连续)</td>
+</tr>
+<tr>
+<td><strong>通信融合</strong></td>
+<td>分离的 Dispatch/Combine</td>
+<td>与 NVLink pull/store 融合</td>
+</tr>
+<tr>
+<td><strong>计算融合</strong></td>
+<td>分离的 Expert GEMM</td>
+<td>与 GEMM 在同一 kernel</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键演化</strong>：<br />
+- DeepEP 的 Counting Sort 是 <strong>通信准备</strong>（为 NVLink/RDMA 准备数据）<br />
+- Mega MoE 的 Counting Sort 是 <strong>计算准备</strong>（为 Tensor Core 准备连续 layout）<br />
+- Mega MoE 的 Counting Sort 产物（scatter 索引表）<strong>同时服务于通信和计算</strong></p>
+<hr />
+<h2 id="12">12. 核心发现总结</h2>
+<ol>
+<li><strong>Count → Prefix Sum → Scatter 存在于 Mega MoE</strong>，位于 dispatch warp 的前三步</li>
+<li><strong>完全在 GPU 上 inline 执行</strong>，无 CPU 预处理，无 CPU-GPU 同步</li>
+<li><strong>两级 Prefix Sum</strong>：SM 内 smem atomic → SM 间 global atomic</li>
+<li><strong>Bucketization 通过 scatter 索引表实现</strong>：每个 <code>(token, topk)</code> pair 被写入目标 rank 的 expert-specific slot</li>
+<li><strong>连续 layout 由 pull 阶段产生</strong>：根据 scatter 索引表拉取 token 到 pool buffer，按 expert 连续排列</li>
+<li><strong>Scheduler 也使用 prefix sum</strong>：计算 <code>expert_pool_block_offset</code>，让 GEMM 直接访问连续 layout</li>
+<li><strong>数据结构与博客一致</strong>：<code>smem_expert_count</code>（计数+prefix sum）、<code>src_token_topk_idx</code>（scatter 索引）</li>
+</ol>
+<hr />
+<h2 id="_1">附录：关键代码位置索引</h2>
+<table>
+<thead>
+<tr>
+<th>代码位置</th>
+<th>行号</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>382-386</td>
+<td>COUNT: <code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code></td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>388-395</td>
+<td>PREFIX SUM: <code>atomic_add(workspace.get_expert_send_count_ptr(i), send_value)</code></td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>397-404</td>
+<td>SCATTER: <code>atomicAdd_block(smem_expert_count + expert_idx, 1)</code> 返回 slot</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>572</td>
+<td>Pool layout: <code>pool_token_idx = expert_pool_block_offset * BLOCK_M + token_idx_in_expert</code></td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>539-542</td>
+<td>读取 scatter 索引表: <code>get_src_token_topk_idx_ptr</code></td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>80-88</td>
+<td><code>get_pool_block_offset</code>: prefix sum 计算 expert 起始 block</td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>183-197</td>
+<td><code>fetch_expert_recv_count</code>: 等待所有 SM 完成 dispatch</td>
+</tr>
+<tr>
+<td><code>layout/mega_moe.cuh</code></td>
+<td>26-30</td>
+<td><code>TokenSrcMetadata</code> 结构定义</td>
+</tr>
+<tr>
+<td><code>layout/mega_moe.cuh</code></td>
+<td>153-160</td>
+<td><code>get_src_token_topk_idx_ptr</code> scatter 表访问</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>82-83</td>
+<td>Router 输出 <code>topk_idx</code> 直接作为 kernel 输入</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

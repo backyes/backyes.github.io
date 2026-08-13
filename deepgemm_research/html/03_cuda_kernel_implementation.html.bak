@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepGEMM CUDA 内核实现深度分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepgemm-cuda">DeepGEMM CUDA 内核实现深度分析</h1>
+<blockquote>
+<p>本文档面向 AI 系统研究人员和芯片架构师，对 DeepGEMM 项目的 CUDA/GPU 内核实现进行全面的架构级分析。</p>
+</blockquote>
+<hr />
+<h2 id="_1">目录</h2>
+<ol>
+<li><a href="#1-项目概览与代码结构">项目概览与代码结构</a></li>
+<li><a href="#2-内核架构模式mainloop--epilogue--scheduler">内核架构模式：Mainloop → Epilogue → Scheduler</a></li>
+<li><a href="#3-sm90-vs-sm100-架构差异">SM90 vs SM100 架构差异</a></li>
+<li><a href="#4-tmatensor-memory-accelerator使用模式">TMA（Tensor Memory Accelerator）使用模式</a></li>
+<li><a href="#5-mma-指令模式">MMA 指令模式</a></li>
+<li><a href="#6-fp8fp4-量化与缩放因子">FP8/FP4 量化与缩放因子</a></li>
+<li><a href="#7-grouped-gemm-实现">Grouped GEMM 实现</a></li>
+<li><a href="#8-mega-moe-内核">Mega MoE 内核</a></li>
+<li><a href="#9-mqa-attention-实现">MQA Attention 实现</a></li>
+<li><a href="#10-启发式配置系统">启发式配置系统</a></li>
+<li><a href="#11-存储层次与数据移动优化">存储层次与数据移动优化</a></li>
+<li><a href="#12-总结">总结</a></li>
+</ol>
+<hr />
+<h2 id="1">1. 项目概览与代码结构</h2>
+<p>DeepGEMM 是一个针对 NVIDIA Hopper（SM90）和 Blackwell（SM100）架构的高性能 GEMM/MoE/Attention 内核库，核心设计哲学是 <strong>JIT（Just-In-Time）编译 + 启发式配置选择</strong>，为每个具体问题形状生成最优内核。</p>
+<h3 id="11">1.1 代码分层架构</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_gemm/
+├── common/          # 公共工具层（类型、数学、调度、TMA、架构工具）
+├── mma/             # MMA 指令抽象（SM90 WGMMA / SM100 UMMA）
+├── ptx/             # PTX 内联汇编封装（WGMMA、TCGen05、TMA、LD/ST）
+├── impls/           # 内核实现（GEMM、MQA、MegaMoE）
+├── scheduler/       # 块调度器（GEMM、MegaMoE、Paged MQA）
+├── epilogue/        # 后处理（变换、SM100 TMEM→SMEM→GMEM 写回）
+├── layout/          # 内存布局（MegaMoE workspace、对称缓冲）
+├── comm/            # 通信原语（grid sync、NVLink barrier）
+└── csrc/jit_kernels/# JIT C++ 端（启发式配置选择）
+</code></pre></div>
+
+<h3 id="12">1.2 核心枚举类型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">MmaKind</span><span style="color: #BBB"> </span>{<span style="color: #BBB"> </span>BF16<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>MXFP8FP4<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span>};
+<span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">GemmType</span><span style="color: #BBB"> </span>{<span style="color: #BBB"> </span>Normal,<span style="color: #BBB"> </span>MGroupedContiguous,<span style="color: #BBB"> </span>MGroupedMasked,<span style="color: #BBB"> </span>KGroupedContiguous,<span style="color: #BBB"> </span>Batched,<span style="color: #BBB"> </span>MGroupedContiguousWithPsumLayout<span style="color: #BBB"> </span>};
+<span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">KernelType</span><span style="color: #BBB"> </span>{<span style="color: #BBB"> </span>Kernel1D1D<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>Kernel1D2D<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>KernelNoSF<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span>};
+</code></pre></div>
+
+<hr />
+<h2 id="2-mainloop-epilogue-scheduler">2. 内核架构模式：Mainloop → Epilogue → Scheduler</h2>
+<p>DeepGEMM 的所有内核遵循统一的 <strong>生产者-消费者流水线</strong> 架构，通过 <code>ClusterTransactionBarrier</code>（mbarrier）实现异步 TMA 与同步 MMA 的解耦。</p>
+<h3 id="21">2.1 通用内核数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;CTA 线程分组&quot;
+        TMA[&quot;TMA Warp-Group&lt;br&gt;(数据加载)&quot;]
+        MMA[&quot;Math Warp-Groups&lt;br&gt;(矩阵计算)&quot;]
+        EPI[&quot;Epilogue Warp-Groups&lt;br&gt;(结果写回)&quot;]
+    end
+
+    subgraph &quot;流水线阶段&quot;
+        PREFETCH[&quot;TMA Descriptor&lt;br&gt;Prefetch&quot;]
+        LOAD[&quot;TMA Load&lt;br&gt;GMEM → SMEM&quot;]
+        COMPUTE[&quot;MMA Compute&lt;br&gt;SMEM → Registers/TMEM&quot;]
+        STORE[&quot;TMA Store&lt;br&gt;SMEM → GMEM&quot;]
+    end
+
+    SCHED[&quot;Scheduler&lt;br&gt;(Block Assignment)&quot;]
+
+    SCHED --&gt; TMA
+    PREFETCH --&gt; LOAD
+    LOAD --&gt;|&quot;full_barrier&quot;| MMA
+    MMA --&gt;|&quot;empty_barrier&quot;| LOAD
+    MMA --&gt;|&quot;tmem_full_barrier&quot;| EPI
+    EPI --&gt;|&quot;tmem_empty_barrier&quot;| MMA
+    EPI --&gt; STORE
+</code></pre></div>
+
+<h3 id="22">2.2 线程角色划分</h3>
+<p>每个 CTA 的线程被划分为不同角色，通过 <code>warp_idx</code> 区分：</p>
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>线程数</th>
+<th>寄存器配额</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TMA 加载 warp</td>
+<td>32 (1 warp)</td>
+<td>24-40 regs</td>
+<td>发起 TMA 描述符预取、数据加载</td>
+</tr>
+<tr>
+<td>MMA 计算 warps</td>
+<td>128-256</td>
+<td>232-240 regs</td>
+<td>执行 WGMMA/UMMA 指令</td>
+</tr>
+<tr>
+<td>Epilogue warps</td>
+<td>128+</td>
+<td>动态</td>
+<td>TMEM 读取、STSM、TMA store</td>
+</tr>
+<tr>
+<td>Dispatch warps (MoE)</td>
+<td>128+</td>
+<td>动态</td>
+<td>EP dispatch/combine 通信</td>
+</tr>
+</tbody>
+</table>
+<p>关键实现细节：<br />
+- <strong>寄存器重配置</strong>：<code>warpgroup_reg_dealloc</code> / <code>warpgroup_reg_alloc</code> 在 TMA 和 Math warps 间动态分配寄存器文件<br />
+- <strong>SM90</strong>：TMA 线程 128，Math 线程 128/256（BLOCK_M ≤ 64 时为 128，否则 256）<br />
+- <strong>SM100</strong>：固定 256 线程（32 TMA + 128 MMA + 128 Epilogue）</p>
+<h3 id="23">2.3 共享内存布局</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;Shared Memory (≤232KB)&quot;
+        D[&quot;D (Output)&quot;]
+        A[&quot;A Stages&lt;br&gt;(ping-pong)&quot;]
+        B[&quot;B Stages&lt;br&gt;(ping-pong)&quot;]
+        SFA[&quot;SFA Stages&quot;]
+        SFB[&quot;SFB Stages&quot;]
+        BARR[&quot;Barriers&lt;br&gt;(full/empty)&quot;]
+        TMEM[&quot;TMEM Ptr&lt;br&gt;(SM100)&quot;]
+    end
+
+    D --&gt; A --&gt; B --&gt; SFA --&gt; SFB --&gt; BARR --&gt; TMEM
+</code></pre></div>
+
+<p>以 SM90 FP8 GEMM 1D1D 为例：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>smem = TensorMap(optional) + D + [A × kNumStages] + [B × kNumStages] + [SFA × kNumStages] + [SFB × kNumStages] + Barriers
+</code></pre></div>
+
+<hr />
+<h2 id="3-sm90-vs-sm100">3. SM90 vs SM100 架构差异</h2>
+<h3 id="31">3.1 核心架构对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;SM90 (Hopper)&quot;
+        direction TB
+        S90_MMA[&quot;WGMMA&lt;br&gt;wgmma.mma_async&lt;br&gt;Accumulator: 寄存器&quot;]
+        S90_SF[&quot;Float32 SF&lt;br&gt;per-128-channel&quot;]
+        S90_MULTICAST[&quot;TMA Multicast&lt;br&gt;动态 2-CTA&quot;]
+        S90_EPI[&quot;直接寄存器写回&lt;br&gt;STSM → SMEM → TMA Store&quot;]
+    end
+
+    subgraph &quot;SM100 (Blackwell)&quot;
+        direction TB
+        S100_MMA[&quot;UMMA (tcgen05.mma)&lt;br&gt;Accumulator: TMEM (Tensor Memory)&quot;]
+        S100_SF[&quot;UE8M0 SF&lt;br&gt;Block-Scaled MXFP8/FP4&quot;]
+        S100_MULTICAST[&quot;2-CTA Mode&lt;br&gt;静态双 SM 协作&quot;]
+        S100_EPI[&quot;TMEM Load → STSM&lt;br&gt;→ SMEM → TMA Store&quot;]
+    end
+</code></pre></div>
+
+<h3 id="32">3.2 详细差异表</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>SM90 (Hopper)</th>
+<th>SM100 (Blackwell)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MMA 指令</strong></td>
+<td><code>wgmma.mma_async</code> (WGMMA)</td>
+<td><code>tcgen05.mma</code> (UMMA)</td>
+</tr>
+<tr>
+<td><strong>累加器存储</strong></td>
+<td>寄存器（float）</td>
+<td>TMEM（Tensor Memory，2KB/SM）</td>
+</tr>
+<tr>
+<td><strong>SF 数据格式</strong></td>
+<td>float32（1D1D: per-128-chan）</td>
+<td>UE8M0（block-scaled, packed uint32）</td>
+</tr>
+<tr>
+<td><strong>SF 应用时机</strong></td>
+<td>MMA 后乘法</td>
+<td>MMA 中硬件 block-scaling</td>
+</tr>
+<tr>
+<td><strong>多 CTA 协作</strong></td>
+<td>TMA Multicast（动态）</td>
+<td>2-CTA Mode（静态，双 SM）</td>
+</tr>
+<tr>
+<td><strong>SF 加载</strong></td>
+<td>TMA 直接加载 float</td>
+<td>TMA → SMEM → UTCCP → TMEM</td>
+</tr>
+<tr>
+<td><strong>SF 粒度</strong></td>
+<td>固定 per-128-channel</td>
+<td>32 或 128 可配（kGranKA/B）</td>
+</tr>
+<tr>
+<td><strong>输出写回</strong></td>
+<td>寄存器 → STSM → TMA Store</td>
+<td>TMEM Load → STSM → TMA Store</td>
+</tr>
+<tr>
+<td><strong>Swap AB</strong></td>
+<td>不支持</td>
+<td>支持（优化 m-grouped GEMM）</td>
+</tr>
+<tr>
+<td><strong>TMEM 列分配</strong></td>
+<td>N/A</td>
+<td>累加器 + SFA + SFB ≤ 512 cols</td>
+</tr>
+<tr>
+<td><strong>UTCCP</strong></td>
+<td>N/A</td>
+<td>SMEM → TMEM 的 DMA 引擎</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-sm90-wgmma">3.3 SM90 WGMMA 流水线</h3>
+<p>SM90 的 WGMMA 是典型的 <strong>流水线异步 MMA</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. 发射前 fence</span>
+warpgroup_fence_operand(accum[i]);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 防止编译器重排</span>
+warpgroup_arrive();<span style="color: #BBB">                   </span><span style="color: #3D7B7B; font-style: italic">// wgmma.fence.sync.aligned</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 2. 发射 K 维度循环</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(k<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>k<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>BLOCK_K<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>WGMMA<span style="color: #666">::</span>K;<span style="color: #BBB"> </span>k<span style="color: #666">++</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>desc_a<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>make_smem_desc(smem_a<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>desc_b<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>make_smem_desc(smem_b<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>WGMMA<span style="color: #666">::</span>wgmma(desc_a,<span style="color: #BBB"> </span>desc_b,<span style="color: #BBB"> </span>accum,<span style="color: #BBB"> </span>k);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 异步发射</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 提交并等待</span>
+warpgroup_commit_batch();<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// wgmma.commit_group</span>
+warpgroup_fence_operand(accum[i]);
+warpgroup_wait<span style="color: #666">&lt;0&gt;</span>();<span style="color: #BBB">          </span><span style="color: #3D7B7B; font-style: italic">// wgmma.wait_group 0</span>
+</code></pre></div>
+
+<h3 id="34-sm100-umma-tmem">3.4 SM100 UMMA + TMEM 流水线</h3>
+<p>SM100 引入了 <strong>TMEM</strong> 作为 MMA 累加器，实现了计算与写回的完全解耦：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. TMEM 分配（一次性）</span>
+Allocator().allocate(kNumTmemCols,<span style="color: #BBB"> </span>tmem_ptr_in_smem);
+
+<span style="color: #3D7B7B; font-style: italic">// 2. SF 通过 UTCCP 加载到 TMEM</span>
+cute_utccp_t<span style="color: #666">::</span>copy(sf_desc,<span style="color: #BBB"> </span>kTmemStartColOfSFA<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">4</span>);
+
+<span style="color: #3D7B7B; font-style: italic">// 3. UMMA 发射（结果累加到 TMEM）</span>
+mma_t<span style="color: #666">::</span>fma(a_desc,<span style="color: #BBB"> </span>b_desc,<span style="color: #BBB"> </span>tmem_c_offset,<span style="color: #BBB"> </span>scale_c,<span style="color: #BBB"> </span>runtime_instr_desc,<span style="color: #BBB"> </span>tmem_sfa,<span style="color: #BBB"> </span>tmem_sfb);
+
+<span style="color: #3D7B7B; font-style: italic">// 4. 提交到 mbarrier</span>
+empty_barrier_arrive(is_last_k_block);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// tcgen05.commit</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 5. Epilogue: TMEM → 寄存器 → STSM → SMEM → TMA Store</span>
+SM100_TMEM_LOAD_32dp32b4x<span style="color: #666">::</span>copy(tmem_addr,<span style="color: #BBB"> </span>values...);
+st_shared(smem_ptr,<span style="color: #BBB"> </span>values...);
+SM90_TMA_STORE_2D<span style="color: #666">::</span>copy(<span style="color: #666">&amp;</span>tensor_map_cd,<span style="color: #BBB"> </span>smem_ptr,<span style="color: #BBB"> </span>n_idx,<span style="color: #BBB"> </span>m_idx);
+</code></pre></div>
+
+<h3 id="35-sm100-swap-ab">3.5 SM100 的 Swap AB 优化</h3>
+<p>对于 m-grouped GEMM，SM100 支持 <strong>Swap AB</strong>（交换 A/B 矩阵角色）：<br />
+- 原因：m-grouped 布局中 A 必须是 K-major，但 UMMA 的 layout A/D 有 128 行对齐要求<br />
+- 方案：交换 A/B 角色，让 B（权重）作为 layout A/D，block_N 固定为 128<br />
+- 效果：避免 A 矩阵的 padding 浪费，提升内存效率</p>
+<hr />
+<h2 id="4-tmatensor-memory-accelerator">4. TMA（Tensor Memory Accelerator）使用模式</h2>
+<h3 id="41-tma">4.1 TMA 描述符与对齐</h3>
+<p>TMA 是 Hopper 引入的硬件加速数据搬运引擎，支持：<br />
+- <strong>2D/3D 张量切片</strong>：带 swizzle 的 block copy<br />
+- <strong>Multicast</strong>：单发射多 CTA 共享（SM90）<br />
+- <strong>2-CTA Mode</strong>：双 SM 硬件级同步（SM100）<br />
+- <strong>Reduce/Add</strong>：TMA store 时原子累加</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMA copy 函数签名</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>BLOCK_INNER,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>BLOCK_OUTER,
+<span style="color: #BBB">          </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kSwizzleMode,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span>,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIs3DTMA<span style="color: #666">&gt;</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>tma_copy(<span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #666">*</span><span style="color: #BBB"> </span>desc_ptr,<span style="color: #BBB"> </span>ClusterTransactionBarrier<span style="color: #666">*</span><span style="color: #BBB"> </span>barrier_ptr,
+<span style="color: #BBB">              </span>dtype_t<span style="color: #666">*</span><span style="color: #BBB"> </span>smem_ptr,<span style="color: #BBB"> </span>inner_idx,<span style="color: #BBB"> </span>outer_idx,<span style="color: #BBB"> </span>num_tma_multicast,<span style="color: #BBB"> </span>batch_idx);
+</code></pre></div>
+
+<h3 id="42-swizzle">4.2 Swizzle 模式</h3>
+<p>Swizzle 是 TMA 的关键优化，用于避免 shared memory bank conflicts：</p>
+<table>
+<thead>
+<tr>
+<th>kSwizzleMode</th>
+<th>LayoutType</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>INTERLEAVE</td>
+<td>无 swizzle（仅 SM90）</td>
+</tr>
+<tr>
+<td>16</td>
+<td>INTERLEAVE</td>
+<td>交错但无 swizzle</td>
+</tr>
+<tr>
+<td>32</td>
+<td>B32</td>
+<td>32B swizzle atom</td>
+</tr>
+<tr>
+<td>64</td>
+<td>B64</td>
+<td>64B swizzle atom</td>
+</tr>
+<tr>
+<td>128</td>
+<td>B128</td>
+<td>128B swizzle atom（默认最优）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键约束</strong>：<br />
+- K-major 布局：swizzle 必须等于 <code>BLOCK_K * sizeof(dtype)</code>（通常 128B）<br />
+- MN-major 布局：swizzle 必须 ≥ 64B（32B 性能差）<br />
+- SM100 FP4：swizzle 必须为 128B</p>
+<h3 id="43-tma-atom">4.3 TMA 内部分块 Atom</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>BLOCK_INNER,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kSwizzleMode,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_inner_block_atom_size()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>kSwizzleMode<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>BLOCK_INNER<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>kSwizzleMode<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(dtype_t);
+}
+</code></pre></div>
+
+<p>当启用 swizzle 时，TMA 每次搬运 <code>kSwizzleMode</code> 字节的内循环块，外层循环 <code>BLOCK_INNER / BLOCK_INNER_ATOM</code> 次。</p>
+<h3 id="44-tma-multicast-vs-2-cta">4.4 TMA Multicast vs 2-CTA</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;SM90 TMA Multicast&quot;
+        GMEM1[&quot;GMEM&quot;] --&gt;|&quot;single TMA&quot;| L2
+        L2 --&gt;|&quot;multicast&quot;| CTA1[&quot;CTA 0&quot;]
+        L2 --&gt;|&quot;multicast&quot;| CTA2[&quot;CTA 1&quot;]
+    end
+
+    subgraph &quot;SM100 2-CTA Mode&quot;
+        GMEM2[&quot;GMEM&quot;] --&gt;|&quot;2SM TMA&quot;| SM1[&quot;SM 0&quot;]
+        GMEM2 --&gt;|&quot;2SM TMA&quot;| SM2[&quot;SM 1&quot;]
+        SM1 &lt;--&gt;|&quot;cluster_sync&quot;| SM2
+    end
+</code></pre></div>
+
+<ul>
+<li><strong>SM90 Multicast</strong>：动态可关闭（<code>is_tma_multicast_valid</code>），通过 <code>SM90_TMA_LOAD_MULTICAST_2D</code> 实现</li>
+<li><strong>SM100 2-CTA</strong>：静态绑定，通过 <code>SM100_TMA_2SM_LOAD_2D</code> 实现，leader CTA 发信号</li>
+</ul>
+<h3 id="45-tma-store">4.5 TMA Store 写回</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// SM90: 使用 TMA reduce-add 实现累加写回</span>
+cute<span style="color: #666">::</span>SM90_TMA_REDUCE_ADD_2D<span style="color: #666">::</span>copy(<span style="color: #666">&amp;</span>tensor_map_cd,<span style="color: #BBB"> </span>smem_d,<span style="color: #BBB"> </span>n_idx,<span style="color: #BBB"> </span>m_idx);
+cute<span style="color: #666">::</span>tma_store_arrive();
+
+<span style="color: #3D7B7B; font-style: italic">// SM100: 支持 2D/3D TMA store</span>
+<span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>cute_tma_t<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>conditional_t<span style="color: #666">&lt;</span>kWithAccumulation,
+<span style="color: #BBB">    </span>cute<span style="color: #666">::</span>SM90_TMA_REDUCE_ADD_2D,<span style="color: #BBB"> </span>cute<span style="color: #666">::</span>SM90_TMA_STORE_2D<span style="color: #666">&gt;</span>;
+cute_tma_t<span style="color: #666">::</span>copy(<span style="color: #666">&amp;</span>tensor_map_cd,<span style="color: #BBB"> </span>smem_cd,<span style="color: #BBB"> </span>n_idx,<span style="color: #BBB"> </span>m_idx);
+</code></pre></div>
+
+<hr />
+<h2 id="5-mma">5. MMA 指令模式</h2>
+<h3 id="51-wgmmasm90">5.1 WGMMA（SM90）指令选择</h3>
+<p>WGMMA 指令通过 CuTe 的 MMA 描述符选择：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// FP8: 64×N×32, K=32, SS_TN (Shared-Shared, TN layout)</span>
+MMA_64xNx32_F32E4M3E4M3_SS_TN()
+
+<span style="color: #3D7B7B; font-style: italic">// BF16: 64×N×16, K=16, SS (支持 K/MN major)</span>
+MMA_64xNx16_F32BF16BF16_SS<span style="color: #666">&lt;</span>MajorA,<span style="color: #BBB"> </span>MajorB<span style="color: #666">&gt;</span>()
+
+<span style="color: #3D7B7B; font-style: italic">// TF32: 64×N×8, K=8, RS (Register-Shared)</span>
+MMA_64xNx8_F32TF32TF32_RS_TN()
+</code></pre></div>
+
+<p><strong>关键参数</strong>：<br />
+- <strong>M = 64</strong>：固定（对应 1 个 warpgroup 的 M 维度）<br />
+- <strong>N = 8~256</strong>：可配（步长 8）<br />
+- <strong>K = 32/16/8</strong>：由数据类型决定<br />
+- <strong>kNumAccum = M × N / 128</strong>：每个线程的 float 累加器数量</p>
+<h3 id="52-ummasm100">5.2 UMMA（SM100）指令选择</h3>
+<p>SM100 使用 <code>tcgen05.mma</code> 指令，通过指令描述符（<code>InstrDescriptorBlockScaled</code>）配置：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 非量化: tcgen05.mma.cta_group::1.kind::f16</span>
+<span style="color: #3D7B7B; font-style: italic">// MXFP8/FP4: tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale</span>
+<span style="color: #3D7B7B; font-style: italic">// FP8: tcgen05.mma.cta_group::1.kind::f8f6f4</span>
+<span style="color: #3D7B7B; font-style: italic">// WS (Warp Specialization): tcgen05.mma.ws.cta_group::1.kind::f16</span>
+</code></pre></div>
+
+<p><strong>UMMA 形状约束</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>UMMA_M = 64  → UMMA_N ∈ [8, 256], step 8
+UMMA_M = 128 → UMMA_N ∈ [16, 256], step 16
+UMMA_M = 256 → UMMA_N ∈ [16, 256], step 16
+UMMA_K = 32 (固定)
+</code></pre></div>
+
+<h3 id="53-shared-memory-descriptor">5.3 Shared Memory Descriptor 构建</h3>
+<p>WGMMA/UMMA 通过 <strong>SmemDescriptor</strong> 描述 shared memory 中的矩阵布局：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// K-major 布局（A 矩阵典型）</span>
+<span style="color: #3D7B7B; font-style: italic">// Atom: 8 × (kSwizzleMode bytes on K)</span>
+<span style="color: #3D7B7B; font-style: italic">// SBO = num_non_contiguous × BLOCK_K × sizeof(dtype)</span>
+<span style="color: #3D7B7B; font-style: italic">// LBO = 0 (K 维度仅 1 个 atom)</span>
+make_smem_desc(base_ptr,<span style="color: #BBB"> </span>layout_type,<span style="color: #BBB"> </span>LBO<span style="color: #666">=0</span>,<span style="color: #BBB"> </span>SBO);
+
+<span style="color: #3D7B7B; font-style: italic">// MN-major 布局（B 矩阵典型）</span>
+<span style="color: #3D7B7B; font-style: italic">// Atom: (kSwizzleMode bytes on MN) × 8</span>
+<span style="color: #3D7B7B; font-style: italic">// SBO = num_non_contiguous × BLOCK_MN_ATOM × sizeof(dtype)</span>
+<span style="color: #3D7B7B; font-style: italic">// LBO = BLOCK_K × BLOCK_MN_ATOM × sizeof(dtype)</span>
+make_smem_desc(base_ptr,<span style="color: #BBB"> </span>layout_type,<span style="color: #BBB"> </span>LBO,<span style="color: #BBB"> </span>SBO);
+</code></pre></div>
+
+<h3 id="54-mma">5.4 MMA 累加器管理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;SM90: 寄存器累加&quot;
+        WGMMA_IN[&quot;WGMMA 输出&quot;] --&gt; REG[&quot;float accum[N]&lt;br&gt;驻留寄存器&quot;]
+        REG --&gt; SCALE[&quot;Scale 乘法&lt;br&gt;final += sa * sb * accum&quot;]
+        REG --&gt; STSM[&quot;STSM → SMEM&quot;]
+    end
+
+    subgraph &quot;SM100: TMEM 累加&quot;
+        UMMA_IN[&quot;UMMA 输出&quot;] --&gt; TMEM[&quot;TMEM 累加器&lt;br&gt;2KB/SM, 512 cols&quot;]
+        TMEM --&gt; TLOAD[&quot;TMEM Load&lt;br&gt;→ 寄存器&quot;]
+        TLOAD --&gt; STSM2[&quot;STSM → SMEM&quot;]
+        STSM2 --&gt; TMASTORE[&quot;TMA Store → GMEM&quot;]
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="6-fp8fp4">6. FP8/FP4 量化与缩放因子</h2>
+<h3 id="61">6.1 量化类型系统</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">KernelType</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>Kernel1D1D<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// A/B 都有 per-channel scaling</span>
+<span style="color: #BBB">    </span>Kernel1D2D<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// A per-channel, B per-tile scaling</span>
+<span style="color: #BBB">    </span>KernelNoSF<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 无 scaling factor（BF16）</span>
+};
+</code></pre></div>
+
+<h3 id="62-1d1d-scalingsm90-fp8">6.2 1D1D Scaling（SM90 FP8）</h3>
+<p>每个 128 通道的 block 对应一个 float32 scaling factor：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>A: [BLOCK_M, BLOCK_K] → SFA: [BLOCK_M, BLOCK_K/128] (per-row)
+B: [BLOCK_N, BLOCK_K] → SFB: [BLOCK_N, BLOCK_K/128] (per-col)
+</code></pre></div>
+
+<p><strong>计算流程</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. WGMMA 计算 int/raw 结果</span>
+WGMMA<span style="color: #666">::</span>wgmma(desc_a,<span style="color: #BBB"> </span>desc_b,<span style="color: #BBB"> </span>accum,<span style="color: #BBB"> </span>k);
+
+<span style="color: #3D7B7B; font-style: italic">// 2. MMA 后应用 scaling</span>
+final_accum[i<span style="color: #666">*4+0</span>]<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>scale_a_0<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_b_0<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>accum[i<span style="color: #666">*4+0</span>];
+final_accum[i<span style="color: #666">*4+1</span>]<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>scale_a_0<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_b_1<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>accum[i<span style="color: #666">*4+1</span>];
+final_accum[i<span style="color: #666">*4+2</span>]<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>scale_a_1<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_b_0<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>accum[i<span style="color: #666">*4+2</span>];
+final_accum[i<span style="color: #666">*4+3</span>]<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>scale_a_1<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_b_1<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>accum[i<span style="color: #666">*4+3</span>];
+</code></pre></div>
+
+<h3 id="63-ue8m0-sm100">6.3 UE8M0 格式（SM100）</h3>
+<p>SM100 引入 <strong>UE8M0</strong>（8-bit exponent, 0 mantissa）作为 block-scaled 的 SF 格式：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// UE8M0 SF 计算：仅保留指数部分</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">get_e4m3_sf_and_sf_inv</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>float2<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>amax,<span style="color: #BBB"> </span>float2<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sf,<span style="color: #BBB"> </span>float2<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sf_inv)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>float2<span style="color: #BBB"> </span>finfo_factor<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{<span style="color: #666">1.0</span><span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">448.0</span>,<span style="color: #BBB"> </span><span style="color: #666">1.0</span><span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">448.0</span>};
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaled<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__fmul2_rn(amax,<span style="color: #BBB"> </span>finfo_factor);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>exp_x<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fast_log2_ceil(scaled.x);
+<span style="color: #BBB">    </span>sf.x<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fast_pow2(exp_x);<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 2^ceil(log2(amax/448))</span>
+<span style="color: #BBB">    </span>sf_inv.x<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fast_pow2(<span style="color: #666">-</span>exp_x);<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// 2^(-exp)</span>
+}
+</code></pre></div>
+
+<p><strong>UE8M0 特点</strong>：<br />
+- 仅存储指数，硬件自动解析<br />
+- SF 在 MMA 指令内部应用（<code>block_scale</code> 模式）<br />
+- 支持 32 或 128 通道的 block 粒度（<code>kGranKA/B</code>）</p>
+<h3 id="64-utccpsf-smem-tmem">6.4 UTCCP：SF 的 SMEM → TMEM 传输</h3>
+<p>SM100 使用 <strong>UTCCP</strong>（Unified Tensor Copy and Convert Pipeline）将 SF 从 SMEM 搬到 TMEM：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// UTCCP 4x32dp128bit: 每次搬运 128 个 SF 元素到 TMEM</span>
+<span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>cute_utccp_t<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>SM100_UTCCP_4x32dp128bit_1cta;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 1-CTA</span>
+<span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>cute_utccp_t<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>SM100_UTCCP_4x32dp128bit_2cta;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 2-CTA</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 需要 warp-level transpose 使 SF 布局匹配 UTCCP 要求</span>
+utccp_required_smem_warp_transpose(smem_ptr);
+cute_utccp_t<span style="color: #666">::</span>copy(sf_desc,<span style="color: #BBB"> </span>tmem_col_offset);
+</code></pre></div>
+
+<h3 id="65-fp4">6.5 FP4 支持</h3>
+<p>SM100 支持 FP4（E2M1）作为 B 矩阵：<br />
+- 存储格式：<code>float_e2m1_unpacksmem_t</code>（sub-byte 解包）<br />
+- MMA 指令：<code>tcgen05.mma.cta_group::1.kind::mxf4.block_scale</code><br />
+- Swizzle 要求：必须 128B<br />
+- Scale vector：支持 <code>block32</code> 或 <code>scale_vec::2X</code> 模式</p>
+<hr />
+<h2 id="7-grouped-gemm">7. Grouped GEMM 实现</h2>
+<h3 id="71">7.1 分组类型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">GemmType</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>Normal,<span style="color: #BBB">                              </span><span style="color: #3D7B7B; font-style: italic">// 普通 GEMM</span>
+<span style="color: #BBB">    </span>MGroupedContiguous,<span style="color: #BBB">                  </span><span style="color: #3D7B7B; font-style: italic">// M 维度连续分组（指针跳转）</span>
+<span style="color: #BBB">    </span>MGroupedMasked,<span style="color: #BBB">                      </span><span style="color: #3D7B7B; font-style: italic">// M 维度 masked 分组（cumsum 边界）</span>
+<span style="color: #BBB">    </span>KGroupedContiguous,<span style="color: #BBB">                  </span><span style="color: #3D7B7B; font-style: italic">// K 维度连续分组（变长 K）</span>
+<span style="color: #BBB">    </span>Batched,<span style="color: #BBB">                             </span><span style="color: #3D7B7B; font-style: italic">// Batched GEMM</span>
+<span style="color: #BBB">    </span>MGroupedContiguousWithPsumLayout<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// 带 partial sum 的连续分组</span>
+};
+</code></pre></div>
+
+<h3 id="72-scheduler">7.2 Scheduler 的块分配策略</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    START[&quot;get_next_block()&quot;] --&gt; IDX[&quot;next_block_idx =&lt;br&gt;++iter * kNumSMs + blockIdx.x&quot;]
+    IDX --&gt; CHECK{&quot;GemmType?&quot;}
+
+    CHECK --&gt;|&quot;Normal&quot;| SWIZZLE[&quot;swizzled_block_idx&lt;br&gt;L2 局部性优化&quot;]
+    CHECK --&gt;|&quot;MGroupedContiguous&quot;| GROUP_OFFSET[&quot;grouped_layout[m_idx]&lt;br&gt;获取组偏移&quot;]
+    CHECK --&gt;|&quot;MGroupedMasked&quot;| MASKED[&quot;cumsum 边界检查&lt;br&gt;跳过无效组&quot;]
+    CHECK --&gt;|&quot;KGroupedContiguous&quot;| KGROUP[&quot;current_k_cumsum&lt;br&gt;current_sf_k_cumsum&quot;]
+    CHECK --&gt;|&quot;Batched&quot;| BATCH[&quot;current_group_idx&lt;br&gt;= block_idx / num_blocks&quot;]
+
+    SWIZZLE --&gt; RETURN[&quot;返回 m/n_block_idx&quot;]
+    GROUP_OFFSET --&gt; RETURN
+    MASKED --&gt; RETURN
+    KGROUP --&gt; RETURN
+    BATCH --&gt; RETURN
+</code></pre></div>
+
+<h3 id="73-swizzle">7.3 Swizzle 策略</h3>
+<p>为优化 L2 cache 命中率，Scheduler 实现了 <strong>swizzled block ordering</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 将 block_idx 重映射为 (group, in_group) 形式</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_blocks_per_group<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>secondary_num_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNum1DBlocksPerGroup;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>group_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>num_blocks_per_group;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>first_block_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>group_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNum1DBlocksPerGroup;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>in_group_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_blocks_per_group;
+
+<span style="color: #3D7B7B; font-style: italic">// kNum1DBlocksPerGroup ∈ {8, 16}，选择使 SM 利用率最高的值</span>
+</code></pre></div>
+
+<h3 id="74-k-grouped-gemm">7.4 K-Grouped GEMM 的特殊处理</h3>
+<p>K-Grouped GEMM 支持每个 group 有不同的 K 维度：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMA 描述符动态更新（tensormap.replace）</span>
+ptx<span style="color: #666">::</span>tensor_map_replace_global_addr_in_smem(smem_tensor_map_a,<span style="color: #BBB"> </span>gmem_a_ptr<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>current_k_cumsum<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>shape_m);
+ptx<span style="color: #666">::</span>tensor_map_replace_global_inner_dim_stride_in_smem(smem_tensor_map_a,<span style="color: #BBB"> </span>current_shape_k,<span style="color: #BBB"> </span>current_shape_k);
+ptx<span style="color: #666">::</span>tensor_map_release_gpu();
+ptx<span style="color: #666">::</span>tensor_map_acquire_gpu(gmem_tensor_map_a);
+</code></pre></div>
+
+<h3 id="75-m-grouped-contiguoussm100-swap-ab">7.5 M-Grouped Contiguous（SM100 Swap AB）</h3>
+<p>SM100 对 m-grouped GEMM 强制使用 Swap AB：<br />
+- <code>block_n = 128</code>（UMMA layout A/D 的 M 维度）<br />
+- <code>block_m = mk_alignment_for_contiguous_layout</code>（由运行时决定，最大 240）<br />
+- 支持 2-CTA multicast（cluster_n = 2）</p>
+<hr />
+<h2 id="8-mega-moe">8. Mega MoE 内核</h2>
+<h3 id="81">8.1 整体架构</h3>
+<p>Mega MoE 是 DeepGEMM 最复杂的内核，实现了 <strong>EP（Expert Parallelism）的 dispatch/combine 与 GEMM 计算的全重叠</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;Mega MoE Kernel (SM100)&quot;
+        direction TB
+
+        DISPATCH[&quot;Dispatch Phase&lt;br&gt;EP AlltoAll 通信&lt;br&gt;(FP8 tokens)&quot;]
+
+        subgraph &quot;GEMM Phase 1 (L1)&quot;
+            L1_MMA[&quot;FP8×FP4 GEMM&lt;br&gt;Hidden → Intermediate&quot;]
+            L1_SWIGLU[&quot;SwiGLU Activation&quot;]
+            L1_OUT[&quot;FP8 Output&quot;]
+        end
+
+        subgraph &quot;GEMM Phase 2 (L2)&quot;
+            L2_MMA[&quot;FP8×FP4 GEMM&lt;br&gt;Intermediate → Hidden&quot;]
+            L2_ADD[&quot;Residual Add&quot;]
+            L2_OUT[&quot;BF16 Output&quot;]
+        end
+
+        COMBINE[&quot;Combine Phase&lt;br&gt;EP AlltoAll 通信&lt;br&gt;(BF16 tokens)&quot;]
+    end
+
+    DISPATCH --&gt; L1_MMA --&gt; L1_SWIGLU --&gt; L1_OUT --&gt; L2_MMA --&gt; L2_ADD --&gt; L2_OUT --&gt; COMBINE
+</code></pre></div>
+
+<h3 id="82-symbuffer">8.2 对称内存（SymBuffer）</h3>
+<p>Mega MoE 使用 <strong>对称内存</strong> 实现跨 rank 的零拷贝通信：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>base;<span style="color: #BBB">                    </span><span style="color: #3D7B7B; font-style: italic">// 本地基地址</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>offsets[kNumMaxRanks];<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 各 rank 相对偏移</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rank_idx;<span style="color: #BBB">               </span><span style="color: #3D7B7B; font-style: italic">// 当前 rank</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 将本地指针映射到目标 rank 的地址空间</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ptr_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<h3 id="83-mega-moe-scheduler">8.3 Mega MoE Scheduler</h3>
+<p>Mega MoE Scheduler 实现了 <strong>两级分块（L1/L2）+ 专家波次（Expert Wave）</strong> 的调度：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    START[&quot;for_each_block()&quot;] --&gt; FETCH[&quot;fetch_expert_recv_count()&lt;br&gt;等待所有 rank 的 token 计数&quot;]
+    FETCH --&gt; WAVE[&quot;Expert Wave 遍历&lt;br&gt;kNumExpertsPerWave 个专家/波&quot;]
+
+    WAVE --&gt; L1[&quot;L1 Phase&lt;br&gt;L1_SHAPE_N = 2 × Intermediate&lt;br&gt;L1_SHAPE_K = Hidden&quot;]
+    L1 --&gt; L1_ASSIGN[&quot;fetch_next_l1_block()&lt;br&gt;分配 L1 GEMM 块&quot;]
+
+    L1_ASSIGN --&gt; L2[&quot;L2 Phase&lt;br&gt;L2_SHAPE_N = Hidden&lt;br&gt;L2_SHAPE_K = Intermediate&quot;]
+    L2 --&gt; L2_ASSIGN[&quot;fetch_next_l2_block()&lt;br&gt;分配 L2 GEMM 块&quot;]
+
+    L2_ASSIGN --&gt; NEXT_EXPERT[&quot;advance_expert_idx()&quot;]
+    NEXT_EXPERT --&gt; WAVE
+</code></pre></div>
+
+<h3 id="84">8.4 通信与计算重叠</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Dispatch warps: 负责 EP 通信</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 从远程 rank 拉取 token</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 写入本地 smem/gmem</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 更新 expert recv count</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// Non-epilogue warps: 负责 MMA 发射</span>
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 等待 token 到达（l1_arrival_count）</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 发射 UMMA 指令</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// Epilogue warps: 负责结果写回 + Combine</span>
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMEM → SMEM → GMEM</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 触发 Combine 通信</span>
+}
+</code></pre></div>
+
+<h3 id="85-grid-sync-nvlink-barrier">8.5 Grid Sync 与 NVLink Barrier</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Grid Sync: 全局 CTA 同步（基于原子操作）</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kGridSyncIndex,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">sync_scope_t</span><span style="color: #666">&gt;</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>grid_sync(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Workspace<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>workspace,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>sync_scope)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// SM 0 发起，其他 SM 递增计数器</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 使用 release/acquire 语义保证内存可见性</span>
+<span style="color: #BBB">    </span>atomic_add_rel(count_ptr,<span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(kFinishSumTag<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 等待 tag 翻转</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((ld_acq(count_ptr)<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span>old_value)<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>kFinishSumTag)<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// NVLink Barrier: 跨 rank 同步</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvlink_barrier(workspace,<span style="color: #BBB"> </span>sym_buffer,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>grid_sync();<span style="color: #BBB">                          </span><span style="color: #3D7B7B; font-style: italic">// 本地同步</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>red_add_rel_sys(signal_ptr,<span style="color: #BBB"> </span><span style="border: 1px solid #F00">±</span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 远程原子信号</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ld_acq_sys(signal_ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>target);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 等待</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>grid_sync();<span style="color: #BBB">                          </span><span style="color: #3D7B7B; font-style: italic">// 本地同步</span>
+}
+</code></pre></div>
+
+<hr />
+<h2 id="9-mqa-attention">9. MQA Attention 实现</h2>
+<h3 id="91-mqa-logits">9.1 非分页 MQA Logits</h3>
+<p>计算 <code>Q @ KV^T</code> 的 attention scores：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    Q[&quot;Q: [BLOCK_Q, kNumHeads, kHeadDim]&quot;] --&gt; WGMMA[&quot;WGMMA&lt;br&gt;FP8×FP8→FP32&quot;]
+    KV[&quot;KV: [BLOCK_KV, kHeadDim]&quot;] --&gt; WGMMA
+    WGMMA --&gt; ACC[&quot;accum: [BLOCK_Q, BLOCK_KV]&quot;]
+    ACC --&gt; REDUCE[&quot;Reduce over heads&lt;br&gt;+ weight + scale&quot;]
+    REDUCE --&gt; LOGITS[&quot;Logits: [BLOCK_Q, BLOCK_KV]&quot;]
+</code></pre></div>
+
+<p><strong>关键实现</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 矩阵乘法: [BLOCK_Q * kNumHeads, kHeadDim] @ [BLOCK_KV, kHeadDim]^T</span>
+WGMMA<span style="color: #666">::</span>wgmma(desc_kv,<span style="color: #BBB"> </span>desc_q,<span style="color: #BBB"> </span>accum,<span style="color: #BBB"> </span>k);
+
+<span style="color: #3D7B7B; font-style: italic">// Head 维度归约 + 权重 + scaling</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>BLOCK_Q;<span style="color: #BBB"> </span>i<span style="color: #666">++</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">float</span><span style="color: #BBB"> </span>sum[<span style="color: #666">4</span>]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{transform(<span style="color: #666">0</span>),<span style="color: #BBB"> </span>transform(<span style="color: #666">1</span>),<span style="color: #BBB"> </span>transform(<span style="color: #666">2</span>),<span style="color: #BBB"> </span>transform(<span style="color: #666">3</span>)};
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumHeads<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">8</span>;<span style="color: #BBB"> </span>j<span style="color: #666">++</span>)
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(k<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>k<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">4</span>;<span style="color: #BBB"> </span>k<span style="color: #666">++</span>)<span style="color: #BBB"> </span>sum[k]<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>transform(j<span style="color: #666">*4+</span>k);
+<span style="color: #BBB">    </span>v_0<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(sum[<span style="color: #666">0</span>]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sum[<span style="color: #666">1</span>])<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_kv_0;
+<span style="color: #BBB">    </span>v_1<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(sum[<span style="color: #666">2</span>]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sum[<span style="color: #666">3</span>])<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>scale_kv_1;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// inter-thread reduction + store</span>
+}
+</code></pre></div>
+
+<h3 id="92-mqa-logitspagedattention">9.2 分页 MQA Logits（PagedAttention 风格）</h3>
+<p>支持 <strong>PagedAttention</strong> 的 KV cache 布局：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Block table 映射逻辑 block → 物理 block</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>physical_block_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_table[logical_block_idx];
+tma<span style="color: #666">::</span>copy<span style="color: #666">&lt;</span>kHeadDim,<span style="color: #BBB"> </span>BLOCK_KV,<span style="color: #BBB"> </span>kHeadDim<span style="color: #666">&gt;</span>(<span style="color: #666">&amp;</span>tensor_map_kv,<span style="color: #BBB"> </span>...,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>physical_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>BLOCK_KV);
+</code></pre></div>
+
+<h3 id="93-split-kv">9.3 Split-KV 与调度</h3>
+<p>对于长 KV 序列，使用 <strong>Split-KV</strong> 并行化：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Metadata kernel: 计算每个 SM 的任务分配</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kAlignedBatchSize,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>SPLIT_KV,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #666">&gt;</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>smxx_paged_mqa_logits_metadata(batch_size,<span style="color: #BBB"> </span>next_n,<span style="color: #BBB"> </span>context_lens,<span style="color: #BBB"> </span>schedule_metadata)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 计算每个 Q 的 KV segment 数</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Prefix sum 得到全局 segment 偏移</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 按 SM 均分 segments</span>
+<span style="color: #BBB">    </span>schedule_metadata[sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>q_atom_idx;
+<span style="color: #BBB">    </span>schedule_metadata[sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kv_split_idx;
+}
+</code></pre></div>
+
+<h3 id="94-clean-logits-kernel">9.4 Clean Logits Kernel</h3>
+<p>独立的 <code>smxx_clean_logits</code> 内核负责将无效位置填充为 <code>-inf</code>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 1. 初始化 shared memory 为 -inf</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>threadIdx.x;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>BLOCK_KV;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)
+<span style="color: #BBB">    </span>smem_buffer[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>neg_inf;
+
+<span style="color: #3D7B7B; font-style: italic">// 2. 对无效区域 bulk copy -inf</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(right<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>ks<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>ke<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>left)
+<span style="color: #BBB">    </span>SM90_BULK_COPY_S2G<span style="color: #666">::</span>copy(smem_buffer,<span style="color: #BBB"> </span>logits<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>stride_logits<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>left,<span style="color: #BBB"> </span>...);
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 处理对齐边界的逐元素写入</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>aligned_ks;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>ks;<span style="color: #BBB"> </span>j<span style="color: #666">++</span>)<span style="color: #BBB"> </span>logits[i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>stride_logits<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>j]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>neg_inf;
+</code></pre></div>
+
+<hr />
+<h2 id="10">10. 启发式配置系统</h2>
+<h3 id="101">10.1 配置选择流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    START[&quot;get_best_config()&quot;] --&gt; ENUM[&quot;枚举 Layout 候选&lt;br&gt;(block_m, block_n, cluster)&quot;]
+
+    ENUM --&gt; FILTER[&quot;过滤不合法配置&lt;br&gt;- swizzle 对齐&lt;br&gt;- TMEM 容量&lt;br&gt;- multicast 整除&quot;]
+
+    FILTER --&gt; MODEL[&quot;建模性能&lt;br&gt;- L1/L2 带宽&lt;br&gt;- wave 效率&lt;br&gt;- 计算周期&quot;]
+
+    MODEL --&gt; COMPARE[&quot;比较排序&lt;br&gt;选择最优 Layout&quot;]
+
+    COMPARE --&gt; STORAGE[&quot;推导 StorageConfig&lt;br&gt;(swizzle modes)&quot;]
+
+    STORAGE --&gt; PIPELINE[&quot;推导 PipelineConfig&lt;br&gt;(num_stages from smem)&quot;]
+
+    PIPELINE --&gt; LAUNCH[&quot;推导 LaunchConfig&lt;br&gt;(threads, cluster)&quot;]
+
+    LAUNCH --&gt; OUTPUT[&quot;GemmConfig&quot;]
+</code></pre></div>
+
+<h3 id="102-sm90">10.2 SM90 启发式规则</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Block M 候选</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(Normal<span style="color: #666">/</span>Batched<span style="color: #666">/</span>KGrouped)<span style="color: #BBB"> </span>block_m<span style="color: #BBB"> </span><span style="border: 1px solid #F00">∈</span><span style="color: #BBB"> </span>{<span style="color: #666">64</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span>(<span style="color: #666">256</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>BF16)};
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(MGrouped)<span style="color: #BBB"> </span>block_m<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>mk_alignment_for_contiguous_layout;
+
+<span style="color: #3D7B7B; font-style: italic">// Block N 候选</span>
+step<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lcm(<span style="color: #666">16</span>,<span style="color: #BBB"> </span>block_n_multiple_of);
+start<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(<span style="color: #666">1</span>D1D<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>FP32)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">24</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>step;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 避免 bank conflict</span>
+end<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(<span style="color: #666">1</span>D2D)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">192</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>(<span style="color: #666">1</span>D1D)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">160</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">256</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// 关键过滤条件</span>
+<span style="color: #666">-</span><span style="color: #BBB"> </span>swizzle_mode<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">64</span><span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB">  </span>(<span style="color: #666">32</span>B<span style="color: #BBB"> </span>swizzle<span style="color: #BBB"> </span>性能差)
+<span style="color: #666">-</span><span style="color: #BBB"> </span>num_stages<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">3</span><span style="color: #BBB"> </span>(小矩阵<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">4</span>)
+<span style="color: #666">-</span><span style="color: #BBB"> </span>block_m<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">128</span><span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>block_n<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">128</span><span style="color: #BBB"> </span><span style="border: 1px solid #F00">→</span><span style="color: #BBB"> </span>拒绝<span style="border: 1px solid #F00">（</span>寄存器不足<span style="border: 1px solid #F00">）</span>
+</code></pre></div>
+
+<h3 id="103-sm100">10.3 SM100 启发式规则</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// M-Grouped: 强制 Swap AB</span>
+swap_ab<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;
+block_n<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// UMMA layout A/D 的 M 维度</span>
+block_m<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>mk_alignment_for_contiguous_layout;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 最大 240</span>
+
+<span style="color: #3D7B7B; font-style: italic">// Normal: 双向 Swap AB 探索</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(swap_ab<span style="color: #BBB"> </span>in<span style="color: #BBB"> </span>{<span style="color: #666">0</span>,<span style="color: #BBB"> </span><span style="color: #666">1</span>})<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(swap_ab)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #767600">block_m_candidates</span>:<span style="color: #BBB"> </span>step<span style="color: #BBB"> </span><span style="color: #666">16</span>,<span style="color: #BBB"> </span>end<span style="color: #BBB"> </span><span style="color: #666">256</span>
+<span style="color: #BBB">        </span>block_n<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>block_m<span style="color: #BBB"> </span><span style="border: 1px solid #F00">∈</span><span style="color: #BBB"> </span>{<span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #666">64</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>}
+<span style="color: #BBB">        </span><span style="color: #767600">block_n</span>:<span style="color: #BBB"> </span>step<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span>end<span style="color: #BBB"> </span>(k<span style="border: 1px solid #F00">≤</span><span style="color: #666">256</span>)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">128</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">256</span>
+<span style="color: #BBB">    </span>}
+}
+
+<span style="color: #3D7B7B; font-style: italic">// TMEM 容量检查</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>umma_n<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>tmem_sf_cols<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">512</span>)<span style="color: #BBB"> </span>reject;
+
+<span style="color: #3D7B7B; font-style: italic">// Swizzle 要求</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(FP4)<span style="color: #BBB"> </span>swizzle_requirement<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>swizzle_requirement<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">64</span>;
+</code></pre></div>
+
+<h3 id="104">10.4 性能建模</h3>
+<p>SM90 使用 <strong>L1/L2 带宽周期模型</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 数据移动量</span>
+num_bytes_l2_ab<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expected_k<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>(block_m<span style="color: #666">/</span>cluster_n<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>block_n<span style="color: #666">/</span>cluster_m)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>elem_size;
+num_bytes_l1_tc<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expected_k<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>(max(<span style="color: #666">64</span>,<span style="color: #BBB"> </span>block_m)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>block_n)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>elem_size
+<span style="color: #BBB">                </span><span style="color: #666">+</span><span style="color: #BBB"> </span>block_m<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>block_n<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>elem_size_cd;
+
+<span style="color: #3D7B7B; font-style: italic">// 周期估算</span>
+num_l2_cycles<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(num_bytes_l2_ab<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_bytes_l1_l2_cd)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>l2_bw_per_cycle;
+num_l1_cycles<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(num_bytes_l1_ab<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_bytes_l1_tc<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_bytes_l1_l2_cd)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_blocks<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>l1_bw_per_cycle;
+num_cycles<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>max(num_l1_cycles,<span style="color: #BBB"> </span>num_l2_cycles)<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>wave_efficiency;
+</code></pre></div>
+
+<p>SM100 使用 <strong>多目标排序</strong>：<br />
+1. 单 wave 优先<br />
+2. Multicast 优先<br />
+3. 更少 wave 数<br />
+4. 更高最后 wave 利用率<br />
+5. 更小 block 总面积</p>
+<hr />
+<h2 id="11_1">11. 存储层次与数据移动优化</h2>
+<h3 id="111">11.1 寄存器管理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;SM90 寄存器分配&quot;
+        TMA_REG[&quot;TMA Warps&lt;br&gt;24-40 regs&lt;br&gt;(dealloc)&quot;]
+        MMA_REG[&quot;Math Warps&lt;br&gt;232-240 regs&lt;br&gt;(alloc)&quot;]
+    end
+
+    subgraph &quot;SM100 寄存器分配&quot;
+        TMA_REG2[&quot;TMA Warp&lt;br&gt;32 regs&quot;]
+        MMA_REG2[&quot;MMA Warps&lt;br&gt;128 regs&quot;]
+        EPI_REG[&quot;Epilogue Warps&lt;br&gt;128 regs&quot;]
+    end
+</code></pre></div>
+
+<p><strong>寄存器重配置</strong>通过 PTX 指令实现：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMA warps 释放寄存器给 Math warps</span>
+cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;40&gt;</span>();<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 仅保留 40 regs</span>
+cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_alloc<span style="color: #666">&lt;232&gt;</span>();<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 申请 232 regs</span>
+</code></pre></div>
+
+<h3 id="112-shared-memory">11.2 Shared Memory 优化</h3>
+<p><strong>Bank Conflict 避免</strong>：<br />
+- 1D1D FP32 输出：block_n 从 24 开始（而非 16），避免 4-bank 冲突<br />
+- Swizzle 128B：确保 128 字节对齐，最大化 TMA 效率<br />
+- SFB 对齐：<code>aligned_smem_sfb_size = align(smem_sfb_size, 128)</code></p>
+<p><strong>TMEM 列对齐</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMEM 列数对齐到 32/64/128/256/512</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumCols<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_num_aligned_tmem_cols()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumCols<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">32</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumCols<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">64</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">64</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumCols<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kNumCols<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">256</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">256</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">512</span>;
+}
+</code></pre></div>
+
+<h3 id="113">11.3 数据移动流水线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;Stage 1: GMEM → SMEM&quot;
+        TMA_A[&quot;TMA Load A&quot;] --&gt; SMEM_A[&quot;smem_a[stage]&quot;]
+        TMA_B[&quot;TMA Load B&quot;] --&gt; SMEM_B[&quot;smem_b[stage]&quot;]
+        TMA_SF[&quot;TMA Load SF&quot;] --&gt; SMEM_SF[&quot;smem_sfa/sfb[stage]&quot;]
+    end
+
+    subgraph &quot;Stage 2: SMEM → MMA&quot;
+        SMEM_A --&gt;|&quot;SmemDescriptor&quot;| MMA[&quot;WGMMA/UMMA&quot;]
+        SMEM_B --&gt;|&quot;SmemDescriptor&quot;| MMA
+        SMEM_SF --&gt;|&quot;UTCCP (SM100)&quot;| TMEM_SF[&quot;TMEM SF&quot;]
+    end
+
+    subgraph &quot;Stage 3: Accumulate&quot;
+        MMA --&gt;|&quot;SM90: 寄存器&quot;| ACC[&quot;accum&quot;]
+        MMA --&gt;|&quot;SM100: TMEM&quot;| TMEM_ACC[&quot;TMEM accum&quot;]
+    end
+
+    subgraph &quot;Stage 4: Write-back&quot;
+        ACC --&gt;|&quot;SM90&quot;| STSM[&quot;STSM → SMEM&quot;]
+        TMEM_ACC --&gt;|&quot;SM100&quot;| TMEM_LOAD[&quot;TMEM Load → regs&quot;]
+        TMEM_LOAD --&gt; STSM
+        STSM --&gt; TMA_STORE[&quot;TMA Store → GMEM&quot;]
+    end
+</code></pre></div>
+
+<h3 id="114">11.4 双缓冲与多缓冲</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Pipeline stage 管理</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>get_pipeline<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">=</span>](iter_idx)<span style="color: #BBB"> </span><span style="color: #666">-&gt;</span><span style="color: #BBB"> </span>tuple<span style="color: #666">&lt;</span>stage,<span style="color: #BBB"> </span>phase<span style="color: #666">&gt;</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{iter_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumStages,<span style="color: #BBB"> </span>(iter_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumStages)<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>};
+};
+
+<span style="color: #3D7B7B; font-style: italic">// full_barrier: TMA 写入完成 → MMA 可消费</span>
+<span style="color: #3D7B7B; font-style: italic">// empty_barrier: MMA 消费完成 → TMA 可覆盖</span>
+full_barriers[stage]<span style="color: #666">-&gt;</span>wait(phase);<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// MMA 等待 TMA</span>
+empty_barriers[stage]<span style="color: #666">-&gt;</span>wait(phase<span style="color: #666">^1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// TMA 等待 MMA</span>
+</code></pre></div>
+
+<h3 id="115-stsm-vectorized-store">11.5 STSM 与 Vectorized Store</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// SM90: 256-bit STSM (4 × float32)</span>
+SM90_U32x4_STSM_T<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;::</span>copy(r0,<span style="color: #BBB"> </span>r1,<span style="color: #BBB"> </span>r2,<span style="color: #BBB"> </span>r3,<span style="color: #BBB"> </span>smem_dst);
+
+<span style="color: #3D7B7B; font-style: italic">// SM100: 128-bit STSM (8 × float32 → BF16)</span>
+SM100_U8x8_STSM_T<span style="color: #666">&lt;</span>uint2<span style="color: #666">&gt;::</span>copy(pack(v0,v1),<span style="color: #BBB"> </span>pack(v2,v3),<span style="color: #BBB"> </span>smem_dst);
+
+<span style="color: #3D7B7B; font-style: italic">// 向量化 shared memory 写入</span>
+st_shared(smem_ptr,<span style="color: #BBB"> </span>values[<span style="color: #666">0</span>],<span style="color: #BBB"> </span>values[<span style="color: #666">1</span>],<span style="color: #BBB"> </span>values[<span style="color: #666">2</span>],<span style="color: #BBB"> </span>values[<span style="color: #666">3</span>]);
+</code></pre></div>
+
+<hr />
+<h2 id="12_1">12. 总结</h2>
+<h3 id="121">12.1 设计哲学</h3>
+<ol>
+<li><strong>极致的 warp 专业化</strong>：TMA / MMA / Epilogue 严格分离，寄存器动态分配</li>
+<li><strong>全流水线覆盖</strong>：TMA 延迟被 MMA 计算完全隐藏（persistent kernel）</li>
+<li><strong>JIT + 启发式</strong>：编译期生成最优内核，运行时选择最优配置</li>
+<li><strong>硬件原生抽象</strong>：直接操作 WGMMA/UMMA PTX 指令，避免 CuTe 抽象开销</li>
+</ol>
+<h3 id="122">12.2 关键创新点</h3>
+<table>
+<thead>
+<tr>
+<th>创新</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1D1D FP8 Scaling</strong></td>
+<td>MMA 后应用 float32 scaling，避免精度损失</td>
+</tr>
+<tr>
+<td><strong>UE8M0 Block Scaling</strong></td>
+<td>SM100 硬件级 block-scaled MMA</td>
+</tr>
+<tr>
+<td><strong>UTCCP SF Transpose</strong></td>
+<td>使用 DMA 引擎加速 SF 布局转换</td>
+</tr>
+<tr>
+<td><strong>TMEM 累加器流水线</strong></td>
+<td>计算与写回完全解耦</td>
+</tr>
+<tr>
+<td><strong>Swap AB for M-Grouped</strong></td>
+<td>避免 A 矩阵 padding，提升内存效率</td>
+</tr>
+<tr>
+<td><strong>Mega MoE 通信重叠</strong></td>
+<td>EP dispatch/combine 与 GEMM 全重叠</td>
+</tr>
+<tr>
+<td><strong>Split-KV PagedAttention</strong></td>
+<td>长序列 KV cache 的负载均衡</td>
+</tr>
+</tbody>
+</table>
+<h3 id="123">12.3 性能关键路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    A[&quot;Block Size 选择&quot;] --&gt; B[&quot;Swizzle 模式&quot;]
+    B --&gt; C[&quot;Stage 数量&quot;]
+    C --&gt; D[&quot;TMA/MMA 重叠&quot;]
+    D --&gt; E[&quot;寄存器压力&quot;]
+    E --&gt; F[&quot;Occupancy&quot;]
+    F --&gt; G[&quot;最终性能&quot;]
+</code></pre></div>
+
+<h3 id="124-">12.4 文件-功能映射速查</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>核心功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>common/types.cuh</code></td>
+<td>MmaKind, GemmType, KernelType 枚举</td>
+</tr>
+<tr>
+<td><code>common/scheduler.cuh</code></td>
+<td>块调度（swizzle, multicast, grouped）</td>
+</tr>
+<tr>
+<td><code>common/tma_copy.cuh</code></td>
+<td>TMA 2D/3D copy 封装</td>
+</tr>
+<tr>
+<td><code>common/sm90_utils.cuh</code></td>
+<td>WGMMA descriptor, STSM, fence</td>
+</tr>
+<tr>
+<td><code>common/sm100_utils.cuh</code></td>
+<td>UMMA descriptor, UTCCP, TMEM</td>
+</tr>
+<tr>
+<td><code>mma/sm90.cuh</code></td>
+<td>FP8/BF16/TF32 MMA 指令选择</td>
+</tr>
+<tr>
+<td><code>mma/sm100.cuh</code></td>
+<td>UMMA SmemDescriptor 构建</td>
+</tr>
+<tr>
+<td><code>ptx/tcgen05.cuh</code></td>
+<td>tcgen05.mma 内联汇编</td>
+</tr>
+<tr>
+<td><code>ptx/tma.cuh</code></td>
+<td>TMA PTX 指令（mbarrier, store, gather4）</td>
+</tr>
+<tr>
+<td><code>impls/sm90_fp8_gemm_1d1d.cuh</code></td>
+<td>SM90 FP8 GEMM 完整实现</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_gemm_1d1d.cuh</code></td>
+<td>SM100 FP8 GEMM 完整实现</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>Mega MoE 内核</td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>Mega MoE 两级调度</td>
+</tr>
+<tr>
+<td><code>epilogue/sm100_store_cd.cuh</code></td>
+<td>TMEM → SMEM → GMEM 写回</td>
+</tr>
+<tr>
+<td><code>layout/mega_moe.cuh</code></td>
+<td>Mega MoE workspace 布局</td>
+</tr>
+<tr>
+<td><code>layout/sym_buffer.cuh</code></td>
+<td>对称内存（跨 rank 映射）</td>
+</tr>
+<tr>
+<td><code>comm/barrier.cuh</code></td>
+<td>Grid sync + NVLink barrier</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/*.hpp</code></td>
+<td>JIT 配置选择</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<blockquote>
+<p><strong>文档版本</strong>：基于 DeepGEMM 代码库完整分析生成<br />
+<strong>分析日期</strong>：2026-07-30<br />
+<strong>目标读者</strong>：AI 系统研究人员、GPU 内核开发者、芯片架构师</p>
+</blockquote>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepGEMM 构建系统与基础设施架构分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepgemm">DeepGEMM 构建系统与基础设施架构分析</h1>
+<blockquote>
+<p>本文档深入分析 DeepGEMM 项目的构建管线（Build Pipeline）、第三方集成、测试框架与 CI/CD 基础设施，面向 AI 系统与芯片研究人员，旨在揭示其工程架构设计决策与演进脉络。</p>
+</blockquote>
+<hr />
+<h2 id="_1">目录</h2>
+<ul>
+<li><a href="#1-项目概览与设计哲学">1. 项目概览与设计哲学</a></li>
+<li><a href="#2-构建管线总览">2. 构建管线总览</a></li>
+<li><a href="#3-setuppy-深度剖析">3. setup.py 深度剖析</a></li>
+<li><a href="#4-构建脚本对比installsh-vs-developsh-vs-buildsh">4. 构建脚本对比：installsh vs developsh vs buildsh</a></li>
+<li><a href="#5-cmakeliststxt-的角色">5. CMakeLists.txt 的角色</a></li>
+<li><a href="#6-jit-vs-aot-编译策略">6. JIT vs AOT 编译策略</a></li>
+<li><a href="#7-第三方库集成">7. 第三方库集成</a></li>
+<li><a href="#8-环境变量体系">8. 环境变量体系</a></li>
+<li><a href="#9-代码生成pyi-stub-生成">9. 代码生成：.pyi Stub 生成</a></li>
+<li><a href="#10-测试架构">10. 测试架构</a></li>
+<li><a href="#11-cicd-基础设施">11. CI/CD 基础设施</a></li>
+<li><a href="#12-项目演进时间线">12. 项目演进时间线</a></li>
+<li><a href="#13-关键工程洞察">13. 关键工程洞察</a></li>
+</ul>
+<hr />
+<h2 id="1">1. 项目概览与设计哲学</h2>
+<p>DeepGEMM 是一个<strong>统一的高性能 Tensor Core 内核库</strong>，将现代 LLM 的关键计算原语（FP8/FP4/BF16 GEMM、融合 MoE、MQA scoring、HyperConnection）整合到单一 CUDA 代码库中。其核心设计哲学是：</p>
+<blockquote>
+<p><strong>"All kernels are compiled at runtime via a lightweight Just-In-Time (JIT) module, requiring no CUDA compilation during installation."</strong></p>
+</blockquote>
+<p>这意味着：<br />
+- <strong>安装阶段不编译 CUDA</strong>（仅编译轻量 C++ JIT 宿主模块）<br />
+- <strong>运行时按需 JIT 编译</strong>具体 kernel 到 SASS<br />
+- 用户下载的 wheel 不含任何 <code>.cubin</code>，极大简化分发</p>
+<hr />
+<h2 id="2">2. 构建管线总览</h2>
+<h3 id="21">2.1 端到端构建流程图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[git clone --recursive] --&gt; B[./install.sh]
+    B --&gt; C[python setup.py bdist_wheel]
+    C --&gt; D{CachedWheelsCommand}
+    D --&gt;|DG_FORCE_BUILD=1 或 local version| E[本地构建]
+    D --&gt;|默认发布模式| F[尝试下载预编译 wheel]
+    F --&gt;|下载成功| G[直接重命名放置到 dist/]
+    F --&gt;|下载失败| E
+    E --&gt; H[CustomBuildPy.run]
+    H --&gt; H1[prepare_includes: 复制 CuTe/cutlass 头文件到 build 目录]
+    H1 --&gt; H2[generate_default_envs: 生成 envs.py]
+    H2 --&gt; H3[generate_pyi_file: 从 C++ 生成 _C.pyi 类型桩]
+    H3 --&gt; H4[标准 build_py + CUDAExtension 编译]
+    H4 --&gt; I[生成 deep_gemm-&lt;ver&gt;+cu&lt;cu&gt;-torch&lt;torch&gt;-cxx11abi&lt;abi&gt;-&lt;py&gt;-&lt;platform&gt;.whl]
+    I --&gt; J[pip install dist/*.whl --force-reinstall]
+</code></pre></div>
+
+<h3 id="22">2.2 构建产物结构</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_gemm-&lt;version&gt;+cu&lt;cuda&gt;-torch&lt;torch&gt;-cxx11abi&lt;abi&gt;-cp&lt;py&gt;-linux_x86_64.whl
+└── deep_gemm/
+    ├── __init__.py          # 入口，调用 _C.init()
+    ├── _C.so                # 轻量 JIT 宿主（不含 kernel 代码）
+    ├── _C.pyi               # 自动生成的类型桩
+    ├── envs.py              # 构建时捕获的环境变量默认值
+    ├── include/
+    │   ├── deep_gemm/**/*   # 真实 kernel 头文件（JIT 编译时 include）
+    │   ├── cute/**/*         # CUTLASS CuTe 子集
+    │   └── cutlass/**/*     # CUTLASS 子集
+    ├── utils/               # Python 工具函数
+    ├── testing/             # 测试基础设施
+    ├── legacy/              # Triton 遗留内核（A100）
+    └── mega/                # Mega MoE 对称内存管理
+</code></pre></div>
+
+<hr />
+<h2 id="3-setuppy">3. setup.py 深度剖析</h2>
+<p><code>setup.py</code> 是整个构建系统的核心，继承了 setuptools 的多个命令类进行定制。</p>
+<h3 id="31">3.1 全局配置与编译器标志</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>cxx_flags <span style="color: #666">=</span> [<span style="color: #BA2121">&#39;-std=c++17&#39;</span>, <span style="color: #BA2121">&#39;-O3&#39;</span>, <span style="color: #BA2121">&#39;-fPIC&#39;</span>, <span style="color: #BA2121">&#39;-Wno-psabi&#39;</span>, <span style="color: #BA2121">&#39;-Wno-deprecated-declarations&#39;</span>,
+             <span style="color: #BA2121">f&#39;-D_GLIBCXX_USE_CXX11_ABI=</span><span style="color: #A45A77; font-weight: bold">{</span><span style="color: #008000">int</span>(torch<span style="color: #666">.</span>compiled_with_cxx11_abi())<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>]
+</code></pre></div>
+
+<p><strong>关键设计点</strong>：<br />
+- C++17 用于构建宿主模块（JIT 编译器等），但 kernel 本身使用 C++20（通过 <code>DG_JIT_CPP_STANDARD</code> 控制）<br />
+- <code>_GLIBCXX_USE_CXX11_ABI</code> 与 PyTorch 保持一致，避免 ABI 不匹配导致的 <code>undefined symbol</code> 错误<br />
+- <code>DG_JIT_USE_RUNTIME_API</code> 可选启用 CUDA Runtime API 加载 kernel（需 CUDA &gt;= 12.8）</p>
+<h3 id="32">3.2 源文件与依赖配置</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sources <span style="color: #666">=</span> [<span style="color: #BA2121">&#39;csrc/python_api.cpp&#39;</span>]  <span style="color: #3D7B7B; font-style: italic"># 单一入口文件</span>
+build_include_dirs <span style="color: #666">=</span> [
+    <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>CUDA_HOME<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">/include&#39;</span>,
+    <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>CUDA_HOME<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">/include/cccl&#39;</span>,       <span style="color: #3D7B7B; font-style: italic"># CUDA Core Compute Libraries</span>
+    <span style="color: #BA2121">&#39;deep_gemm/include&#39;</span>,               <span style="color: #3D7B7B; font-style: italic"># 项目自身头文件</span>
+    <span style="color: #BA2121">&#39;third-party/cutlass/include&#39;</span>,     <span style="color: #3D7B7B; font-style: italic"># CUTLASS</span>
+    <span style="color: #BA2121">&#39;third-party/fmt/include&#39;</span>,         <span style="color: #3D7B7B; font-style: italic"># fmt 格式化库</span>
+]
+build_libraries <span style="color: #666">=</span> [<span style="color: #BA2121">&#39;cudart&#39;</span>, <span style="color: #BA2121">&#39;nvrtc&#39;</span>]  <span style="color: #3D7B7B; font-style: italic"># CUDA Runtime + NVRTC</span>
+</code></pre></div>
+
+<p><strong>注意</strong>：<code>CUDA_HOME</code> 来自 <code>torch.utils.cpp_extension.CUDA_HOME</code>，即与 PyTorch 编译时一致的 CUDA 版本。</p>
+<h3 id="33">3.3 版本管理系统</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_package_version</span>():
+    <span style="color: #3D7B7B; font-style: italic"># 从 deep_gemm/__init__.py 读取公开版本号</span>
+    public_version <span style="color: #666">=</span> ast<span style="color: #666">.</span>literal_eval(version_match<span style="color: #666">.</span>group(<span style="color: #666">1</span>))  <span style="color: #3D7B7B; font-style: italic"># 如 &#39;2.4.2&#39;</span>
+
+    revision <span style="color: #666">=</span> <span style="color: #BA2121">&#39;&#39;</span>
+    <span style="color: #008000; font-weight: bold">if</span> DG_USE_LOCAL_VERSION:
+        <span style="color: #3D7B7B; font-style: italic"># 检查 git 工作区是否干净</span>
+        <span style="color: #3D7B7B; font-style: italic"># 干净: +&lt;short_sha&gt;  不干净: assert 失败</span>
+        revision <span style="color: #666">=</span> <span style="color: #BA2121">&#39;+&#39;</span> <span style="color: #666">+</span> subprocess<span style="color: #666">.</span>check_output([<span style="color: #BA2121">&#39;git&#39;</span>, <span style="color: #BA2121">&#39;rev-parse&#39;</span>, <span style="color: #BA2121">&#39;--short&#39;</span>, <span style="color: #BA2121">&#39;HEAD&#39;</span>])
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>public_version<span style="color: #A45A77; font-weight: bold">}{</span>revision<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+</code></pre></div>
+
+<p><strong>版本策略</strong>：<br />
+- <strong>发布模式</strong>（<code>DG_USE_LOCAL_VERSION=0</code>）：纯版本号 <code>2.4.2</code>，用于 PyPI 发布<br />
+- <strong>本地模式</strong>（<code>DG_USE_LOCAL_VERSION=1</code>，默认）：<code>2.4.2+abc1234</code>，要求 git 干净</p>
+<h3 id="34-custombuildpy">3.4 CustomBuildPy — 自定义构建流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">CustomBuildPy</span>(build_py):
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">run</span>(<span style="color: #008000">self</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>prepare_includes()      <span style="color: #3D7B7B; font-style: italic"># 1. 准备头文件</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>generate_default_envs() <span style="color: #3D7B7B; font-style: italic"># 2. 生成 envs.py</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>generate_pyi_file()     <span style="color: #3D7B7B; font-style: italic"># 3. 生成 .pyi 类型桩</span>
+        build_py<span style="color: #666">.</span>run(<span style="color: #008000">self</span>)           <span style="color: #3D7B7B; font-style: italic"># 4. 标准构建</span>
+</code></pre></div>
+
+<h4 id="prepare_includes">prepare_includes()</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">prepare_includes</span>(<span style="color: #008000">self</span>):
+    build_include_dir <span style="color: #666">=</span> os<span style="color: #666">.</span>path<span style="color: #666">.</span>join(<span style="color: #008000">self</span><span style="color: #666">.</span>build_lib, <span style="color: #BA2121">&#39;deep_gemm/include&#39;</span>)
+    <span style="color: #008000; font-weight: bold">for</span> d <span style="color: #A2F; font-weight: bold">in</span> third_party_include_dirs:  <span style="color: #3D7B7B; font-style: italic"># [&#39;third-party/cutlass/include/cute&#39;, &#39;.../cutlass&#39;]</span>
+        shutil<span style="color: #666">.</span>copytree(src_dir, dst_dir)  <span style="color: #3D7B7B; font-style: italic"># 复制到 build 目录</span>
+</code></pre></div>
+
+<p><strong>设计决策</strong>：不修改源目录，所有第三方头文件复制到 <code>build_lib/deep_gemm/include/</code> 下，保持源目录干净。</p>
+<h4 id="generate_default_envs">generate_default_envs()</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_default_envs</span>(<span style="color: #008000">self</span>):
+    code <span style="color: #666">=</span> <span style="color: #BA2121">&#39;# Pre-installed environment variables</span><span style="color: #AA5D1F; font-weight: bold">\n</span><span style="color: #BA2121">&#39;</span>
+    code <span style="color: #666">+=</span> <span style="color: #BA2121">&#39;persistent_envs = dict()</span><span style="color: #AA5D1F; font-weight: bold">\n</span><span style="color: #BA2121">&#39;</span>
+    <span style="color: #008000; font-weight: bold">for</span> name <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #BA2121">&#39;DG_JIT_CACHE_DIR&#39;</span>, <span style="color: #BA2121">&#39;DG_JIT_PRINT_COMPILER_COMMAND&#39;</span>, <span style="color: #BA2121">&#39;DG_JIT_CPP_STANDARD&#39;</span>):
+        code <span style="color: #666">+=</span> <span style="color: #BA2121">f&quot;persistent_envs[&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>name<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;] = &#39;</span><span style="color: #A45A77; font-weight: bold">{</span>os<span style="color: #666">.</span>environ[name]<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span><span style="color: #AA5D1F; font-weight: bold">\n</span><span style="color: #BA2121">&quot;</span> <span style="color: #008000; font-weight: bold">if</span> name <span style="color: #A2F; font-weight: bold">in</span> os<span style="color: #666">.</span>environ <span style="color: #008000; font-weight: bold">else</span> <span style="color: #BA2121">&#39;&#39;</span>
+</code></pre></div>
+
+<p><strong>作用</strong>：将构建时的关键环境变量"冻结"到 <code>envs.py</code>，运行时 <code>__init__.py</code> 会自动恢复这些默认值。</p>
+<h4 id="generate_pyi_file">generate_pyi_file()</h4>
+<p>调用 <code>scripts/generate_pyi.py</code> 从 C++ 源码提取函数签名，生成 <code>_C.pyi</code> 类型桩，详见第 9 节。</p>
+<h3 id="35-cachedwheelscommand-wheel">3.5 CachedWheelsCommand — 智能 Wheel 下载</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">CachedWheelsCommand</span>(_bdist_wheel):
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">run</span>(<span style="color: #008000">self</span>):
+        <span style="color: #008000; font-weight: bold">if</span> DG_FORCE_BUILD <span style="color: #A2F; font-weight: bold">or</span> DG_USE_LOCAL_VERSION:
+            <span style="color: #008000; font-weight: bold">return</span> <span style="color: #008000">super</span>()<span style="color: #666">.</span>run()  <span style="color: #3D7B7B; font-style: italic"># 强制本地构建</span>
+
+        wheel_url, wheel_filename <span style="color: #666">=</span> get_wheel_url()
+        <span style="color: #008000; font-weight: bold">try</span>:
+            <span style="color: #3D7B7B; font-style: italic"># 尝试从 GitHub Release 下载（1 秒超时）</span>
+            urllib<span style="color: #666">.</span>request<span style="color: #666">.</span>urlopen(wheel_url, timeout<span style="color: #666">=1</span>)
+            <span style="color: #3D7B7B; font-style: italic"># 下载成功：直接重命名为 wheel 格式</span>
+        <span style="color: #008000; font-weight: bold">except</span> (HTTPError, URLError):
+            <span style="color: #3D7B7B; font-style: italic"># 下载失败：回退到本地源码构建</span>
+            <span style="color: #008000">super</span>()<span style="color: #666">.</span>run()
+</code></pre></div>
+
+<h4 id="wheel-url">Wheel URL 构造</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_wheel_url</span>():
+    wheel_filename <span style="color: #666">=</span> (
+        <span style="color: #BA2121">f&#39;deep_gemm-</span><span style="color: #A45A77; font-weight: bold">{</span>deep_gemm_version<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">+cu</span><span style="color: #A45A77; font-weight: bold">{</span>cuda_version<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+        <span style="color: #BA2121">f&#39;-torch</span><span style="color: #A45A77; font-weight: bold">{</span>torch_version<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">-cxx11abi</span><span style="color: #A45A77; font-weight: bold">{</span>cxx11_abi<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+        <span style="color: #BA2121">f&#39;-</span><span style="color: #A45A77; font-weight: bold">{</span>python_version<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">-</span><span style="color: #A45A77; font-weight: bold">{</span>platform_name<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">.whl&#39;</span>
+    )
+    <span style="color: #3D7B7B; font-style: italic"># 示例: deep_gemm-2.4.2+cu129-torch2.8-cxx11abi0-cp312-linux_x86_64.whl</span>
+    wheel_url <span style="color: #666">=</span> <span style="color: #BA2121">f&#39;https://github.com/DeepSeek-AI/DeepGEMM/releases/download/v</span><span style="color: #A45A77; font-weight: bold">{</span>version<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">/</span><span style="color: #A45A77; font-weight: bold">{</span>wheel_filename<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+</code></pre></div>
+
+<p><strong>关键决策</strong>：<br />
+- 使用 <strong>PyTorch 编译时的 CUDA 版本</strong>（<code>torch.version.cuda</code>），而非系统当前安装的 CUDA<br />
+- 区分 <code>cxx11_abi</code> 是因为 PyTorch 官方 wheel 未启用 C++11 ABI，但 NVIDIA 容器镜像（nvcr）中的 PyTorch 启用了</p>
+<h3 id="36-get_ext_modules-cuda">3.6 get_ext_modules — 条件性 CUDA 扩展</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_ext_modules</span>():
+    <span style="color: #008000; font-weight: bold">if</span> DG_SKIP_CUDA_BUILD:
+        <span style="color: #008000; font-weight: bold">return</span> []  <span style="color: #3D7B7B; font-style: italic"># 跳过 CUDA 构建（用于 PyPI 纯 Python 发布）</span>
+    <span style="color: #008000; font-weight: bold">return</span> [CUDAExtension(name<span style="color: #666">=</span><span style="color: #BA2121">&#39;deep_gemm._C&#39;</span>, <span style="color: #666">...</span>)]
+</code></pre></div>
+
+<hr />
+<h2 id="4-installsh-vs-developsh-vs-buildsh">4. 构建脚本对比：install.sh vs develop.sh vs build.sh</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph install.sh
+        I1[rm -rf build dist] --&gt; I2[python setup.py bdist_wheel]
+        I2 --&gt; I3[pip install dist/*.whl --force-reinstall]
+    end
+
+    subgraph develop.sh
+        D1[ln -sf cutlass 头文件到 deep_gemm/include] --&gt; D2[rm -rf build dist]
+        D2 --&gt; D3[python setup.py build]
+        D3 --&gt; D4[find .so 创建符号链接到 deep_gemm/]
+    end
+
+    subgraph build.sh
+        B1[rm -rf build dist] --&gt; B2[python setup.py bdist_wheel]
+    end
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>主要用途</th>
+<th>产物</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>install.sh</code></td>
+<td>生产部署</td>
+<td><code>.whl</code> 安装到 site-packages</td>
+<td>完整安装流程</td>
+</tr>
+<tr>
+<td><code>develop.sh</code></td>
+<td>开发调试</td>
+<td><code>build/</code> 目录 + 符号链接</td>
+<td>不创建 wheel，直接链接 <code>.so</code></td>
+</tr>
+<tr>
+<td><code>build.sh</code></td>
+<td>CI/CD 构建</td>
+<td><code>.whl</code> 文件</td>
+<td>仅构建不安装</td>
+</tr>
+</tbody>
+</table>
+<h3 id="developsh">develop.sh 的特殊处理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 创建符号链接，让 Python 能找到头文件</span>
+ln<span style="color: #BBB"> </span>-sf<span style="color: #BBB"> </span><span style="color: #19177C">$script_dir</span>/third-party/cutlass/include/cutlass<span style="color: #BBB"> </span>deep_gemm/include
+ln<span style="color: #BBB"> </span>-sf<span style="color: #BBB"> </span><span style="color: #19177C">$script_dir</span>/third-party/cutlass/include/cute<span style="color: #BBB"> </span>deep_gemm/include
+
+<span style="color: #3D7B7B; font-style: italic"># 构建后创建 .so 符号链接</span>
+<span style="color: #19177C">so_file</span><span style="color: #666">=</span><span style="color: #008000; font-weight: bold">$(</span>find<span style="color: #BBB"> </span>build<span style="color: #BBB"> </span>-name<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;*.so&quot;</span><span style="color: #BBB"> </span>-type<span style="color: #BBB"> </span>f<span style="color: #BBB"> </span>|<span style="color: #BBB"> </span>head<span style="color: #BBB"> </span>-n<span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #008000; font-weight: bold">)</span>
+ln<span style="color: #BBB"> </span>-sf<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;../</span><span style="color: #19177C">$so_file</span><span style="color: #BA2121">&quot;</span><span style="color: #BBB"> </span>deep_gemm/
+</code></pre></div>
+
+<p><strong>注意</strong>：这些符号链接被 <code>.gitignore</code> 忽略（<code>deep_gemm/include/cute</code>、<code>deep_gemm/include/cutlass</code>、<code>deep_gemm/*.so</code>），不会进入 git 历史。</p>
+<hr />
+<h2 id="5-cmakeliststxt">5. CMakeLists.txt 的角色</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># NOTES: current just for CMake-based IDE (e.g. CLion) indexing, the real compilation is done via JIT</span>
+<span style="color: #008000">cmake_minimum_required</span>(<span style="color: #BA2121">VERSION</span><span style="color: #BBB"> </span><span style="color: #BA2121">3.10</span>)
+<span style="color: #008000">project</span>(<span style="color: #BA2121">deep_gemm</span><span style="color: #BBB"> </span><span style="color: #BA2121">LANGUAGES</span><span style="color: #BBB"> </span><span style="color: #BA2121">CXX</span><span style="color: #BBB"> </span><span style="color: #BA2121">CUDA</span>)
+</code></pre></div>
+
+<h3 id="51-ide">5.1 仅用于 IDE 索引</h3>
+<p><code>CMakeLists.txt</code> <strong>不参与实际编译</strong>，仅为 CLion 等 CMake-based IDE 提供代码索引：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># C++20/CUDA20 标准（与 kernel JIT 编译一致）</span>
+<span style="color: #008000">set</span>(<span style="color: #BA2121">CMAKE_CXX_STANDARD</span><span style="color: #BBB"> </span><span style="color: #BA2121">20</span>)
+<span style="color: #008000">set</span>(<span style="color: #BA2121">CMAKE_CUDA_STANDARD</span><span style="color: #BBB"> </span><span style="color: #BA2121">20</span>)
+
+<span style="color: #3D7B7B; font-style: italic"># 主 Python API 入口（IDE 索引用）</span>
+<span style="color: #008000">pybind11_add_module</span>(<span style="color: #BA2121">_C</span><span style="color: #BBB"> </span><span style="color: #BA2121">csrc/python_api.cpp</span>)
+
+<span style="color: #3D7B7B; font-style: italic"># 关键：所有 kernel 头文件都 include 进来供索引</span>
+<span style="color: #008000">cuda_add_library</span>(<span style="color: #BA2121">deep_gemm_indexing_cuda</span><span style="color: #BBB"> </span><span style="color: #BA2121">STATIC</span><span style="color: #BBB"> </span><span style="color: #BA2121">csrc/indexing/main.cu</span>)
+</code></pre></div>
+
+<h3 id="52-csrcindexingmaincu">5.2 csrc/indexing/main.cu — 索引专用文件</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// GEMM kernels</span>
+<span style="color: #9C6500">#include</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">&lt;deep_gemm/impls/sm90_bf16_gemm.cuh&gt;</span>
+<span style="color: #9C6500">#include</span><span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">&lt;deep_gemm/impls/sm90_fp8_gemm_1d1d.cuh&gt;</span>
+<span style="color: #3D7B7B; font-style: italic">// ... 所有 kernel 头文件</span>
+
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span><span style="color: #00F">main</span>()<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>}<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 空 main，仅用于编译索引</span>
+</code></pre></div>
+
+<p><strong>设计意图</strong>：让 IDE 能解析所有 kernel 定义的符号，提供代码补全和跳转，但<strong>不生成任何可执行代码</strong>。</p>
+<h3 id="53-jit">5.3 与真实 JIT 构建的差异</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>CMakeLists.txt</th>
+<th>真实 JIT 构建</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>目的</td>
+<td>IDE 索引</td>
+<td>运行时 kernel 编译</td>
+</tr>
+<tr>
+<td>编译目标</td>
+<td>无（仅索引）</td>
+<td><code>.cubin</code> 文件</td>
+</tr>
+<tr>
+<td>编译器</td>
+<td>CMake 调用 nvcc</td>
+<td><code>Compiler</code> 类直接调用 nvcc</td>
+</tr>
+<tr>
+<td>输出</td>
+<td>无</td>
+<td><code>~/.deep_gemm/&lt;hash&gt;/kernel.cubin</code></td>
+</tr>
+<tr>
+<td>CUDA 架构</td>
+<td><code>CUDA_ARCH_LIST</code> 变量</td>
+<td>运行时自动检测</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-jit-vs-aot">6. JIT vs AOT 编译策略</h2>
+<h3 id="61-jit">6.1 设计决策：全 JIT 编译</h3>
+<p>DeepGEMM 的核心创新是<strong>完全不使用 AOT（Ahead-Of-Time）编译 CUDA kernel</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>传统 CUTLASS 流程：
+  setup.py → nvcc 编译所有 SM arch → 链接巨大 .so → 分发 GB 级 wheel
+
+DeepGEMM 流程：
+  setup.py → 仅编译轻量 _C.so（&lt; 1MB） → 分发 wheel
+  运行时 → 首次调用 kernel → JIT 编译为 .cubin → 缓存到 ~/.deep_gemm/
+</code></pre></div>
+
+<h3 id="62-jit">6.2 JIT 编译流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[Python 调用 deep_gemm.fp8_gemm_nt] --&gt; B[_C.so 中的 pybind11 绑定]
+    B --&gt; C[JIT Compiler: 解析 #include &lt;deep_gemm/...&gt;]
+    C --&gt; D[递归展开所有头文件依赖]
+    D --&gt; E[计算依赖哈希值]
+    E --&gt; F{缓存命中?}
+    F --&gt;|命中| G[加载 ~/.deep_gemm/&lt;hash&gt;/kernel.cubin]
+    F --&gt;|未命中| H[nvcc 编译为 .cubin]
+    H --&gt; I[缓存到磁盘]
+    I --&gt; G
+    G --&gt; J[cuModuleLoadData 加载 cubin]
+    J --&gt; K[cuLaunchKernel 执行]
+</code></pre></div>
+
+<h3 id="63">6.3 关键组件</h3>
+<ul>
+<li><strong>IncludeParser</strong>：递归解析 <code>#include &lt;deep_gemm/*&gt;</code> 指令，构建完整编译单元</li>
+<li><strong>KernelRuntimeCache</strong>：内存中的 cubin 运行时缓存</li>
+<li><strong>磁盘缓存</strong>：<code>~/.deep_gemm/&lt;hash&gt;/</code> 目录，跨进程共享编译结果</li>
+<li><strong>NVRTC 支持</strong>：可选使用 <code>DG_JIT_USE_NVRTC=1</code> 启用，编译速度提升 10x 但可能有性能损失</li>
+</ul>
+<h3 id="64-jit">6.4 为什么选择 JIT</h3>
+<ol>
+<li><strong>分发体积小</strong>：wheel 仅 ~1MB，而非数百 MB 的 cubin 集合</li>
+<li><strong>架构适配</strong>：运行时检测 GPU 架构，只编译需要的 kernel</li>
+<li><strong>迭代速度</strong>：修改 kernel 代码无需重新安装，删除缓存即可</li>
+<li><strong>实验灵活</strong>：支持 <code>set_ignore_compile_dims</code>、<code>set_block_size_multiple_of</code> 等运行时调优</li>
+</ol>
+<hr />
+<h2 id="7">7. 第三方库集成</h2>
+<h3 id="71">7.1 子模块管理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>[submodule &quot;third-party/cutlass&quot;]
+    path = third-party/cutlass
+    url = https://github.com/NVIDIA/cutlass.git
+[submodule &quot;third-party/fmt&quot;]
+    path = third-party/fmt
+    url = https://github.com/fmtlib/fmt.git
+</code></pre></div>
+
+<p><strong>注意</strong>：<code>tilelang_ops</code> 不是 git 子模块，而是直接包含在仓库中的代码。</p>
+<h3 id="72-cutlass">7.2 CUTLASS — 核心依赖</h3>
+<p>DeepGEMM 使用 CUTLASS 4.0+ 的两个子集：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>用途</th>
+<th>安装方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CuTe</strong> (<code>cute/</code>)</td>
+<td>Tensor 布局、拷贝原语、TMA 抽象</td>
+<td>复制到 <code>deep_gemm/include/cute/</code></td>
+</tr>
+<tr>
+<td><strong>CUTLASS</strong> (<code>cutlass/</code>)</td>
+<td>MMA 描述、架构特性</td>
+<td>复制到 <code>deep_gemm/include/cutlass/</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键区别</strong>：DeepGEMM <strong>不使用</strong> CUTLASS 的：<br />
+- 高层 GEMM 调度器（<code>device/gemm/</code>）<br />
+- 复杂的 epilogue 框架<br />
+- C++ 模板元编程代数</p>
+<blockquote>
+<p>"DeepGEMM leverages some concepts from CUTLASS and CuTe, but avoids heavy reliance on their templates or algebras."</p>
+</blockquote>
+<h3 id="73-fmt">7.3 fmt — 格式化库</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 使用 fmt 进行编译时字符串格式化</span>
+flags<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;-std=c++{} --diag-suppress=39,161,...&quot;</span>,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                    </span>get_env<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(<span style="color: #BA2121">&quot;DG_JIT_CPP_STANDARD&quot;</span>,<span style="color: #BBB"> </span><span style="color: #666">20</span>));
+</code></pre></div>
+
+<p>用途：<br />
+- JIT 编译命令字符串格式化<br />
+- 日志输出<br />
+- 错误信息构建</p>
+<h3 id="74-tilelang_ops-mega-moe">7.4 tilelang_ops — Mega MoE 基线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># tests/test_mega_moe.py</span>
+spec <span style="color: #666">=</span> importlib<span style="color: #666">.</span>util<span style="color: #666">.</span>spec_from_file_location(
+    <span style="color: #BA2121">&#39;tilelang_ops&#39;</span>,
+    os<span style="color: #666">.</span>path<span style="color: #666">.</span>join(<span style="color: #BA2121">&#39;..&#39;</span>, <span style="color: #BA2121">&#39;third-party&#39;</span>, <span style="color: #BA2121">&#39;tilelang_ops&#39;</span>, <span style="color: #BA2121">&#39;__init__.py&#39;</span>))
+tilelang_ops <span style="color: #666">=</span> importlib<span style="color: #666">.</span>util<span style="color: #666">.</span>module_from_spec(spec)
+</code></pre></div>
+
+<p><strong>仅用于测试</strong>：<br />
+- 提供 <code>swiglu_apply_weight_to_fp8</code> 函数<br />
+- 作为 Mega MoE 正确性验证的<strong>非融合基线</strong><br />
+- 不是主构建依赖，加载失败仅跳过基线 benchmark</p>
+<h3 id="75">7.5 子模块状态</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>git submodule status:
+  -f3fde58... third-party/cutlass  (- 表示未初始化)
+  -553ec11...... third-party/fmt    (- 表示未初始化)
+</code></pre></div>
+
+<p>用户必须执行 <code>git submodule update --init</code> 才能获取这些依赖。</p>
+<hr />
+<h2 id="8">8. 环境变量体系</h2>
+<h3 id="81-dg_">8.1 完整 DG_* 变量清单</h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认值</th>
+<th>用途</th>
+<th>影响范围</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DG_JIT_DEBUG</code></td>
+<td><code>0</code></td>
+<td>打印 JIT 调试信息</td>
+<td>编译阶段</td>
+</tr>
+<tr>
+<td><code>DG_PRINT_CONFIGS</code></td>
+<td><code>0</code></td>
+<td>打印每个 shape 选择的配置</td>
+<td>运行时</td>
+</tr>
+<tr>
+<td><code>DG_JIT_CACHE_DIR</code></td>
+<td><code>$HOME/.deep_gemm</code></td>
+<td>编译缓存目录</td>
+<td>磁盘缓存</td>
+</tr>
+<tr>
+<td><code>DG_JIT_USE_NVRTC</code></td>
+<td><code>0</code></td>
+<td>使用 NVRTC 替代 NVCC</td>
+<td>编译器选择</td>
+</tr>
+<tr>
+<td><code>DG_JIT_NVCC_COMPILER</code></td>
+<td><code>CUDA_HOME/nvcc</code></td>
+<td>NVCC 路径</td>
+<td>编译器选择</td>
+</tr>
+<tr>
+<td><code>DG_JIT_CPP_STANDARD</code></td>
+<td><code>20</code></td>
+<td>C++ 标准版本</td>
+<td>编译器选择</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_COMPILER_COMMAND</code></td>
+<td><code>0</code></td>
+<td>打印编译命令</td>
+<td>编译器输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_VERBOSE</code></td>
+<td><code>0</code></td>
+<td>详细 PTXAS 输出</td>
+<td>编译器输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PTXAS_CHECK</code></td>
+<td><code>0</code></td>
+<td>检查 local memory 使用</td>
+<td>编译器输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_PRINT_LOAD_TIME</code></td>
+<td><code>0</code></td>
+<td>打印 kernel 加载时间</td>
+<td>编译器输出</td>
+</tr>
+<tr>
+<td><code>DG_JIT_WITH_LINEINFO</code></td>
+<td><code>0</code></td>
+<td>嵌入源码行信息</td>
+<td>调试分析</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_ASM</code></td>
+<td><code>0</code></td>
+<td>转储 PTX 和 SASS</td>
+<td>调试分析</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_PTX</code></td>
+<td><code>0</code></td>
+<td>转储 PTX</td>
+<td>调试分析</td>
+</tr>
+<tr>
+<td><code>DG_JIT_DUMP_SASS</code></td>
+<td><code>0</code></td>
+<td>转储 SASS</td>
+<td>调试分析</td>
+</tr>
+<tr>
+<td><code>DG_COMM_KERNEL_DEBUG</code></td>
+<td><code>0</code></td>
+<td>Mega MoE 调试模式（zero buffer）</td>
+<td>内核调试</td>
+</tr>
+<tr>
+<td><code>DG_USE_NVIDIA_TOOLS</code></td>
+<td><code>0</code></td>
+<td>跳过内部 profiling（配合 Nsight）</td>
+<td>性能分析</td>
+</tr>
+<tr>
+<td><code>DG_SKIP_CUDA_BUILD</code></td>
+<td><code>0</code></td>
+<td>跳过 CUDA 扩展构建</td>
+<td>构建选项</td>
+</tr>
+<tr>
+<td><code>DG_FORCE_BUILD</code></td>
+<td><code>0</code></td>
+<td>强制本地构建</td>
+<td>构建选项</td>
+</tr>
+<tr>
+<td><code>DG_USE_LOCAL_VERSION</code></td>
+<td><code>1</code></td>
+<td>使用本地版本号</td>
+<td>构建选项</td>
+</tr>
+<tr>
+<td><code>DG_JIT_USE_RUNTIME_API</code></td>
+<td><code>0</code></td>
+<td>使用 CUDA Runtime API 加载</td>
+<td>构建选项</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 运行时持久化机制</h3>
+<p>构建时捕获的环境变量会被"冻结"到 <code>envs.py</code>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/envs.py (自动生成)</span>
+persistent_envs <span style="color: #666">=</span> <span style="color: #008000">dict</span>()
+persistent_envs[<span style="color: #BA2121">&#39;DG_JIT_CACHE_DIR&#39;</span>] <span style="color: #666">=</span> <span style="color: #BA2121">&#39;/home/user/.deep_gemm&#39;</span>
+<span style="color: #3D7B7B; font-style: italic"># ... 仅包含构建时存在的变量</span>
+</code></pre></div>
+
+<p>运行时恢复：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/__init__.py</span>
+<span style="color: #008000; font-weight: bold">from</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">.envs</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">import</span> persistent_envs
+<span style="color: #008000; font-weight: bold">for</span> key, value <span style="color: #A2F; font-weight: bold">in</span> persistent_envs<span style="color: #666">.</span>items():
+    <span style="color: #008000; font-weight: bold">if</span> key <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #A2F; font-weight: bold">in</span> os<span style="color: #666">.</span>environ:  <span style="color: #3D7B7B; font-style: italic"># 不覆盖用户显式设置</span>
+        os<span style="color: #666">.</span>environ[key] <span style="color: #666">=</span> value
+</code></pre></div>
+
+<hr />
+<h2 id="9-pyi-stub">9. 代码生成：.pyi Stub 生成</h2>
+<h3 id="91">9.1 生成流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[scripts/generate_pyi.py] --&gt; B[build_cpp_function_index]
+    B --&gt; B1[扫描 csrc/ 下所有 .cpp/.h 文件]
+    B1 --&gt; B2[正则匹配函数签名]
+    B2 --&gt; B3[过滤非函数关键字 if/for/return]
+    B3 --&gt; B4[构建 func_name → signature 索引]
+
+    A --&gt; C[extract_m_def_statements]
+    C --&gt; C1[扫描 m.def(...)]
+    C --&gt; C2[BracketTracker 解析嵌套括号]
+    C --&gt; C3[提取 python_name, cpp_name, py::arg]
+
+    A --&gt; D[parse_mdef_and_attach_cpp_signatures]
+    D --&gt; D1[匹配 m.def 与 C++ 函数]
+    D --&gt; D2[提取返回值类型、参数列表]
+
+    A --&gt; E[cpp_type_to_python_type]
+    E --&gt; E1[std::vector&lt;T&gt; → list[T]]
+    E --&gt; E2[std::optional&lt;T&gt; → Optional[T]]
+    E --&gt; E3[torch::Tensor → torch.Tensor]
+    E --&gt; E4[bool/int/float/str 映射]
+
+    A --&gt; F[generate_pyi_file_content]
+    F --&gt; G[stubs/_C.pyi]
+</code></pre></div>
+
+<h3 id="92-brackettracker">9.2 BracketTracker — 嵌套括号追踪</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">BracketTracker</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__init__</span>(<span style="color: #008000">self</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>paren <span style="color: #666">=</span> <span style="color: #666">0</span>      <span style="color: #3D7B7B; font-style: italic"># ()</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>bracket <span style="color: #666">=</span> <span style="color: #666">0</span>    <span style="color: #3D7B7B; font-style: italic"># []</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>brace <span style="color: #666">=</span> <span style="color: #666">0</span>      <span style="color: #3D7B7B; font-style: italic"># {}</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>angle <span style="color: #666">=</span> <span style="color: #666">0</span>      <span style="color: #3D7B7B; font-style: italic"># &lt;&gt; (仅顶层)</span>
+</code></pre></div>
+
+<p><strong>关键</strong>：正确处理模板参数中的逗号，如 <code>std::tuple&lt;int, int&gt;({128, 128})</code>。</p>
+<h3 id="93">9.3 类型映射表</h3>
+<table>
+<thead>
+<tr>
+<th>C++ 类型</th>
+<th>Python 类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>void</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>std::vector&lt;T&gt;</code></td>
+<td><code>list[T]</code></td>
+</tr>
+<tr>
+<td><code>std::optional&lt;T&gt;</code></td>
+<td><code>Optional[T]</code></td>
+</tr>
+<tr>
+<td><code>std::pair&lt;T1, T2&gt;</code></td>
+<td><code>tuple[T1, T2]</code></td>
+</tr>
+<tr>
+<td><code>std::tuple&lt;...&gt;</code></td>
+<td><code>tuple[...]</code></td>
+</tr>
+<tr>
+<td><code>std::string</code> / <code>char*</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>int</code> / <code>size_t</code> / <code>int64_t</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>float</code> / <code>double</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>torch::Tensor</code></td>
+<td><code>torch.Tensor</code></td>
+</tr>
+<tr>
+<td>其他</td>
+<td><code>Any</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="94">9.4 默认值转换</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">cpp_default_to_python_default</span>(cpp_default: <span style="color: #008000">str</span>):
+    <span style="color: #008000; font-weight: bold">if</span> s <span style="color: #666">==</span> <span style="color: #BA2121">&#39;false&#39;</span>: <span style="color: #008000; font-weight: bold">return</span> <span style="color: #BA2121">&#39;False&#39;</span>
+    <span style="color: #008000; font-weight: bold">if</span> s <span style="color: #666">==</span> <span style="color: #BA2121">&#39;true&#39;</span>: <span style="color: #008000; font-weight: bold">return</span> <span style="color: #BA2121">&#39;True&#39;</span>
+    <span style="color: #008000; font-weight: bold">if</span> s <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #BA2121">&#39;nullptr&#39;</span>, <span style="color: #BA2121">&#39;NULL&#39;</span>): <span style="color: #008000; font-weight: bold">return</span> <span style="color: #BA2121">&#39;None&#39;</span>
+    <span style="color: #3D7B7B; font-style: italic"># std::tuple&lt;int, int&gt;({128, 128}) → (128, 128)</span>
+    <span style="color: #3D7B7B; font-style: italic"># std::vector&lt;int&gt;({1,2,3}) → [1, 2, 3]</span>
+</code></pre></div>
+
+<hr />
+<h2 id="10">10. 测试架构</h2>
+<h3 id="101">10.1 测试文件组织</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>覆盖范围</th>
+<th>kernel 类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_fp8_fp4.py</code></td>
+<td>核心 GEMM 测试</td>
+<td>FP8/FP4 普通、M-grouped、K-grouped</td>
+</tr>
+<tr>
+<td><code>test_bf16.py</code></td>
+<td>BF16 GEMM</td>
+<td>BF16 普通、M-grouped、K-grouped、cuBLASLt</td>
+</tr>
+<tr>
+<td><code>test_attention.py</code></td>
+<td>MQA Logits</td>
+<td>FP8/FP4 MQA、Paged MQA、skip head mid</td>
+</tr>
+<tr>
+<td><code>test_einsum.py</code></td>
+<td>Einsum 内核</td>
+<td>BF16/FP8 einsum 变体</td>
+</tr>
+<tr>
+<td><code>test_hyperconnection.py</code></td>
+<td>HyperConnection</td>
+<td>TF32 HC prenorm GEMM</td>
+</tr>
+<tr>
+<td><code>test_layout.py</code></td>
+<td>SF 布局内核</td>
+<td>TMA-aligned transpose、UE8M0 packing</td>
+</tr>
+<tr>
+<td><code>test_mega_moe.py</code></td>
+<td>Mega MoE</td>
+<td>融合 EP dispatch + GEMM + SwiGLU</td>
+</tr>
+<tr>
+<td><code>test_legacy.py</code></td>
+<td>Triton 遗留内核</td>
+<td>A100 Triton M-grouped、K-grouped</td>
+</tr>
+<tr>
+<td><code>test_lazy_init.py</code></td>
+<td>延迟初始化</td>
+<td>多进程 CUDA 初始化</td>
+</tr>
+<tr>
+<td><code>test_sanitizer.py</code></td>
+<td>内存安全检查</td>
+<td>compute-sanitizer 封装</td>
+</tr>
+<tr>
+<td><code>generators.py</code></td>
+<td>测试数据生成</td>
+<td>所有枚举器与生成器</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102">10.2 测试模式</h3>
+<h4 id="_2">数据生成器模式</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># generators.py 提供枚举器 + 生成器分离的设计</span>
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">enumerate_normal</span>(dtype):
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;枚举所有测试参数组合&quot;&quot;&quot;</span>
+    <span style="color: #008000; font-weight: bold">for</span> kernel_type <span style="color: #A2F; font-weight: bold">in</span> get_kernel_types(dtype):
+        <span style="color: #008000; font-weight: bold">for</span> quant_config <span style="color: #A2F; font-weight: bold">in</span> QuantConfig<span style="color: #666">.</span>get_list_from_dtype(dtype):
+            <span style="color: #008000; font-weight: bold">for</span> m <span style="color: #A2F; font-weight: bold">in</span> m_fwd_list:
+                <span style="color: #008000; font-weight: bold">for</span> n, k <span style="color: #A2F; font-weight: bold">in</span> nk_list:
+                    <span style="color: #008000; font-weight: bold">yield</span> kernel_type, quant_config, m, n, k, <span style="color: #666">...</span>
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_normal</span>(m, n, k, <span style="color: #666">...</span>):
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;生成具体的测试张量&quot;&quot;&quot;</span>
+    a <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((m, k), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16)
+    b <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((n, k), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16)
+    <span style="color: #3D7B7B; font-style: italic"># FP8/FP4 量化</span>
+    a <span style="color: #666">=</span> cast_fp8_fp4_with_major(a, <span style="color: #666">...</span>)
+    <span style="color: #008000; font-weight: bold">return</span> a, b, c, d, ref_d
+</code></pre></div>
+
+<h4 id="_3">数值验证模式</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/testing/numeric.py</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">calc_diff</span>(x: torch<span style="color: #666">.</span>Tensor, y: torch<span style="color: #666">.</span>Tensor):
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;余弦相似度: 1 - 2*x·y/(|x|²+|y|²)&quot;&quot;&quot;</span>
+    x, y <span style="color: #666">=</span> x<span style="color: #666">.</span>double(), y<span style="color: #666">.</span>double()
+    denominator <span style="color: #666">=</span> (x <span style="color: #666">*</span> x <span style="color: #666">+</span> y <span style="color: #666">*</span> y)<span style="color: #666">.</span>sum()
+    sim <span style="color: #666">=</span> <span style="color: #666">2</span> <span style="color: #666">*</span> (x <span style="color: #666">*</span> y)<span style="color: #666">.</span>sum() <span style="color: #666">/</span> denominator
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #666">1</span> <span style="color: #666">-</span> sim
+
+<span style="color: #3D7B7B; font-style: italic"># 容差标准</span>
+quant_config<span style="color: #666">.</span>max_diff()  <span style="color: #3D7B7B; font-style: italic"># FP4: 0.02, FP4×FP8: 0.01, FP8: 0.001</span>
+</code></pre></div>
+
+<h4 id="benchmark">性能 Benchmark 模式</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/testing/bench.py</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">bench_kineto</span>(fn, kernel_names, num_tests<span style="color: #666">=30</span>, <span style="color: #666">...</span>):
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;使用 torch.profiler + Kineto 进行 GPU 内核计时&quot;&quot;&quot;</span>
+    <span style="color: #3D7B7B; font-style: italic"># 1. L2 cache flush (8 GB memset)</span>
+    <span style="color: #3D7B7B; font-style: italic"># 2. warmup + active profiling</span>
+    <span style="color: #3D7B7B; font-style: italic"># 3. 解析 profiler 表格提取内核时间</span>
+</code></pre></div>
+
+<p><strong>特点</strong>：<br />
+- 默认 30 次测试取平均<br />
+- 8 GB L2 cache flush 确保冷缓存基准<br />
+- 支持多内核同时计时（返回 tuple）<br />
+- 自动跳过当 <code>DG_USE_NVIDIA_TOOLS=1</code>（配合外部 profiling 工具）</p>
+<h3 id="103">10.3 架构条件测试</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># tests/test_layout.py</span>
+<span style="color: #A2F">@test_filter</span>(<span style="color: #008000; font-weight: bold">lambda</span>: get_arch_major() <span style="color: #666">&gt;=</span> <span style="color: #666">10</span>)
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">test_fp8_bhd_hdr_bhr</span>():
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;仅在 SM100+ 上运行&quot;&quot;&quot;</span>
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># generators.py</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_kernel_types</span>(dtype):
+    <span style="color: #008000; font-weight: bold">if</span> dtype <span style="color: #666">==</span> torch<span style="color: #666">.</span>bfloat16:
+        <span style="color: #008000; font-weight: bold">return</span> (KernelType<span style="color: #666">.</span>KernelNoSF, )
+    <span style="color: #008000; font-weight: bold">return</span> (KernelType<span style="color: #666">.</span>Kernel1D2D, ) <span style="color: #008000; font-weight: bold">if</span> get_arch_major() <span style="color: #666">==</span> <span style="color: #666">9</span> <span style="color: #008000; font-weight: bold">else</span> (KernelType<span style="color: #666">.</span>Kernel1D1D, )
+</code></pre></div>
+
+<h3 id="104">10.4 测试辅助基础设施</h3>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_filter</code></td>
+<td>条件性跳过测试（基于架构）</td>
+</tr>
+<tr>
+<td><code>ignore_env</code></td>
+<td>临时忽略环境变量</td>
+</tr>
+<tr>
+<td><code>bench</code></td>
+<td>CPU 端计时（L2 flush + 多次平均）</td>
+</tr>
+<tr>
+<td><code>bench_kineto</code></td>
+<td>GPU 端 Kineto profiling</td>
+</tr>
+<tr>
+<td><code>calc_diff</code></td>
+<td>数值差异计算</td>
+</tr>
+<tr>
+<td><code>count_bytes</code></td>
+<td>张量字节数统计</td>
+</tr>
+<tr>
+<td><code>get_arch_major</code></td>
+<td>获取 GPU 架构版本</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="11-cicd">11. CI/CD 基础设施</h2>
+<h3 id="111-github-actions">11.1 GitHub Actions 工作流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[触发: tag v* 创建] --&gt; B[setup_release]
+    B --&gt; B1[提取版本号]
+    B --&gt; B2[创建 GitHub Release]
+
+    B --&gt; C[build_wheels 矩阵构建]
+    C --&gt; C1[_build.yml: ubuntu-22.04]
+    C1 --&gt; C2[Python 3.8-3.13]
+    C2 --&gt; C3[PyTorch 2.4.0-2.8.0]
+    C3 --&gt; C4[CUDA 12.9.1]
+    C4 --&gt; C5[cxx11_abi: FALSE/TRUE]
+
+    C5 --&gt; D[构建 wheel]
+    D --&gt; E[上传到 GitHub Release]
+
+    E --&gt; F[publish_package]
+    F --&gt; F1[安装 CPU-only PyTorch]
+    F --&gt; F2[DG_SKIP_CUDA_BUILD=1 构建 sdist]
+    F --&gt; F3[twine upload 到 PyPI]
+</code></pre></div>
+
+<h3 id="112">11.2 构建矩阵</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">matrix</span>:
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">os</span>:<span style="color: #BBB"> </span>[<span style="color: #19177C">ubuntu-22.04</span>]
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">python-version</span>:<span style="color: #BBB"> </span>[<span style="color: #BA2121">&quot;3.8&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.9&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.10&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.11&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.12&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.13&quot;</span>]
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">torch-version</span>:<span style="color: #BBB"> </span>[<span style="color: #BA2121">&quot;2.4.0&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;2.5.1&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;2.6.0&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;2.7.1&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;2.8.0&quot;</span>]
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">cuda-version</span>:<span style="color: #BBB"> </span>[<span style="color: #BA2121">&quot;12.9.1&quot;</span>]
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">cxx11_abi</span>:<span style="color: #BBB"> </span>[<span style="color: #BA2121">&quot;FALSE&quot;</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;TRUE&quot;</span>]
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">exclude</span>:
+<span style="color: #BBB">    </span>-<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">torch-version</span>:<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;2.4.0&quot;</span>
+<span style="color: #BBB">      </span><span style="color: #008000; font-weight: bold">python-version</span>:<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;3.13&quot;</span><span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic"># PyTorch &lt; 2.5 不支持 Python 3.13</span>
+</code></pre></div>
+
+<p><strong>理论组合数</strong>：5 Python × 5 PyTorch × 2 ABI - 1 exclude = <strong>49 种配置</strong></p>
+<h3 id="113-ci">11.3 关键 CI 配置</h3>
+<h4 id="_4">磁盘空间管理</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>-<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">name</span>:<span style="color: #BBB"> </span>Free up disk space
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">run</span>:<span style="color: #BBB"> </span>|
+<span style="color: #BBB">    </span><span style="color: #800">sudo rm -rf /usr/share/dotnet</span>
+<span style="color: #BBB">    </span><span style="color: #800">sudo rm -rf /opt/ghc</span>
+<span style="color: #BBB">    </span><span style="color: #800">sudo rm -rf /opt/hostedtoolcache/CodeQL</span>
+
+-<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">name</span>:<span style="color: #BBB"> </span>Set up swap space
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">uses</span>:<span style="color: #BBB"> </span>pierotofy/set-swap-space@v1.0
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">with</span>:
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">swap-size-gb</span>:<span style="color: #BBB"> </span>10
+</code></pre></div>
+
+<h4 id="_5">构建缓存</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>-<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">name</span>:<span style="color: #BBB"> </span>Restore build cache
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">uses</span>:<span style="color: #BBB"> </span>actions/cache/restore@v4
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">with</span>:
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">path</span>:<span style="color: #BBB"> </span>build.tar
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">key</span>:<span style="color: #BBB"> </span>build-${{ inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
+</code></pre></div>
+
+<p><strong>缓存策略</strong>：<br />
+- 将整个构建目录打包为 <code>build.tar</code><br />
+- 超时（exit code 124）时保存缓存，下次继续<br />
+- 5 小时超时（GitHub 允许最大 6 小时）</p>
+<h4 id="_6">并行控制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>export MAX_JOBS=$([ &quot;$MATRIX_CUDA_VERSION&quot; == &quot;129&quot; ] &amp;&amp; echo 1 || echo 2)
+export NVCC_THREADS=2
+</code></pre></div>
+
+<p><strong>原因</strong>：CUDA 12.9 的 nvcc 在 2 个并行 job 时会 OOM。</p>
+<h4 id="cuda">CUDA 架构列表</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">TORCH_CUDA_ARCH_LIST</span><span style="color: #666">=</span><span style="color: #BA2121">&quot;7.0 7.2 7.5 8.0 8.6 8.7 9.0+PTX&quot;</span>
+</code></pre></div>
+
+<p><strong>注意</strong>：虽然 DeepGEMM 仅支持 SM90/SM100，但 CI 构建的 <code>_C.so</code> 包含更广泛的架构兼容性（可能用于未来扩展）。</p>
+<h3 id="114">11.4 手动触发工作流</h3>
+<p><code>build.yml</code> 支持 <code>workflow_dispatch</code> 手动触发，可自定义：<br />
+- <code>runs-on</code>：运行器类型<br />
+- <code>python-version</code>：Python 版本<br />
+- <code>cuda-version</code>：CUDA 版本<br />
+- <code>torch-version</code>：PyTorch 版本<br />
+- <code>cxx11_abi</code>：C++11 ABI 设置<br />
+- <code>upload-to-release</code>：是否上传到 Release<br />
+- <code>use-local-version</code>：是否使用本地版本号</p>
+<h3 id="115-pypi">11.5 PyPI 发布</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>-<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">name</span>:<span style="color: #BBB"> </span>Build core package
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">env</span>:
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">DG_USE_LOCAL_VERSION</span>:<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;0&quot;</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">DG_SKIP_CUDA_BUILD</span>:<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;1&quot;</span>
+<span style="color: #BBB">  </span><span style="color: #008000; font-weight: bold">run</span>:<span style="color: #BBB"> </span>python setup.py sdist --dist-dir=dist
+</code></pre></div>
+
+<p><strong>关键</strong>：PyPI 发布使用 <code>DG_SKIP_CUDA_BUILD=1</code>，即<strong>不包含任何 CUDA 代码</strong>，仅发布 Python 包 + 头文件，用户安装后运行时 JIT 编译。</p>
+<hr />
+<h2 id="12">12. 项目演进时间线</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>timeline
+    title DeepGEMM 架构演进
+
+    section 2025 Q1
+        2025.04.18 : 1550 TFLOPS on H800&lt;br/&gt;初始版本发布
+        2025.05.07 : NVRTC 支持&lt;br/&gt;DG_JIT_USE_NVRTC=1&lt;br/&gt;编译速度 10x 提升
+        2025.05.14 : Weight gradient 内核&lt;br/&gt;支持 dense/MoE 反向传播
+
+    section 2025 Q3
+        2025.07.20 : 重大重构&lt;br/&gt;支持 SM90/SM100&lt;br/&gt;NVRTC/SASS 优化禁用&lt;br/&gt;低 CPU 开销 JIT
+        2025.09.28 : MQA Scoring 内核&lt;br/&gt;V3.2 Lightning Indexer 支持&lt;br/&gt;加权 ReLU MQA logits
+
+    section 2026 Q1-Q2
+        2026.04.16 : Mega MoE 发布&lt;br/&gt;FP8xFP4 GEMM 支持&lt;br/&gt;FP4 Indexer&lt;br/&gt;PDL 支持&lt;br/&gt;更快 JIT 编译
+</code></pre></div>
+
+<h3 id="121">12.1 关键架构变更</h3>
+<h4 id="20250720-112">2025.07.20 — 全面重构 (#112)</h4>
+<blockquote>
+<p>"DeepGEMM now supports both SM90/SM100, and has a full refactor with a low-CPU-overhead JIT CPP module."</p>
+</blockquote>
+<p>变更内容：<br />
+- <strong>架构支持扩展</strong>：从仅 SM90 扩展到 SM90 + SM100<br />
+- <strong>JIT 重构</strong>：NVRTC 和 SASS 后处理优化全部禁用<br />
+- <strong>设计决策</strong>：NVCC 12.9 自动进行 FFMA 交错，无需手动 SASS 优化<br />
+- <strong>未来规划</strong>：NVRTC 后续重新支持</p>
+<h4 id="20250507-nvrtc-94">2025.05.07 — NVRTC 支持 (#94)</h4>
+<blockquote>
+<p>"DeepGEMM now supports NVRTC with up to 10x compilation speedup!"</p>
+</blockquote>
+<ul>
+<li>通过 <code>DG_JIT_USE_NVRTC=1</code> 启用</li>
+<li>编译速度提升 10 倍</li>
+<li>某些情况下可能有性能损失</li>
+</ul>
+<h4 id="20260416-mega-moe-fp4-304">2026.04.16 — Mega MoE 与 FP4 (#304)</h4>
+<ul>
+<li><strong>Mega MoE</strong>：融合 EP dispatch + GEMM + SwiGLU + EP combine</li>
+<li><strong>FP8xFP4 GEMM</strong>：支持 FP4 权重</li>
+<li><strong>FP4 Indexer</strong>：FP4 MQA logits 支持</li>
+<li><strong>PDL</strong>：Programmatic Dependent Launch</li>
+<li><strong>更快 JIT</strong>：编译流程优化</li>
+</ul>
+<h3 id="122">12.2 版本号演进</h3>
+<p>从 git 历史可见：<br />
+- 早期版本未在 <code>__init__.py</code> 中标记<br />
+- <code>__version__ = '2.4.2'</code>（当前版本）<br />
+- 命名曾短暂改为 <code>ds-deep-gemm</code> 后 revert</p>
+<hr />
+<h2 id="13">13. 关键工程洞察</h2>
+<h3 id="131">13.1 设计权衡</h3>
+<table>
+<thead>
+<tr>
+<th>决策</th>
+<th>优势</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全 JIT 编译</td>
+<td>分发体积小、架构适配灵活</td>
+<td>首次调用有编译延迟</td>
+</tr>
+<tr>
+<td>运行时 cubin 缓存</td>
+<td>跨进程共享、避免重复编译</td>
+<td>磁盘空间占用</td>
+</tr>
+<tr>
+<td>轻量 _C.so</td>
+<td>安装快速、兼容性好</td>
+<td>功能受限（仅 JIT 宿主）</td>
+</tr>
+<tr>
+<td>单一 CUDA 宿主入口</td>
+<td>简化构建、统一接口</td>
+<td>所有 API 集中在一个模块</td>
+</tr>
+<tr>
+<td>环境变量驱动</td>
+<td>灵活配置、无需重新编译</td>
+<td>文档负担、发现性差</td>
+</tr>
+</tbody>
+</table>
+<h3 id="132-cutlass">13.2 与 CUTLASS 的对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>CUTLASS</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编译模式</td>
+<td>AOT（安装时编译）</td>
+<td>JIT（运行时编译）</td>
+</tr>
+<tr>
+<td>分发大小</td>
+<td>数百 MB</td>
+<td>~1 MB</td>
+</tr>
+<tr>
+<td>架构覆盖</td>
+<td>编译时确定</td>
+<td>运行时检测</td>
+</tr>
+<tr>
+<td>模板复杂度</td>
+<td>高（大量 C++ TMP）</td>
+<td>低（简化抽象）</td>
+</tr>
+<tr>
+<td>调度器</td>
+<td>复杂多层</td>
+<td>轻量启发式</td>
+</tr>
+<tr>
+<td>第三方依赖</td>
+<td>仅 CuTe</td>
+<td>CuTe + fmt</td>
+</tr>
+</tbody>
+</table>
+<h3 id="133">13.3 性能优化启示</h3>
+<ol>
+<li><strong>JIT 缓存策略</strong>：通过内容哈希确保缓存一致性，避免手动清理</li>
+<li><strong>L2 Cache Flush</strong>：benchmark 时 8 GB memset 确保冷缓存基准</li>
+<li><strong>架构条件测试</strong>：<code>test_filter</code> + <code>get_arch_major()</code> 实现精准覆盖</li>
+<li><strong>对称内存</strong>：Mega MoE 使用 <code>torch.distributed._symmetric_memory</code> 实现零拷贝通信</li>
+</ol>
+<h3 id="134">13.4 潜在改进方向</h3>
+<ol>
+<li><strong>预编译缓存预热</strong>：提供脚本预编译常用 shape 的 kernel</li>
+<li><strong>编译进度指示</strong>：长时间 JIT 编译时显示进度</li>
+<li><strong>缓存大小管理</strong>：<code>KernelRuntimeCache</code> 当前无容量限制</li>
+<li><strong>离线编译模式</strong>：支持无 GPU 环境下预生成 cubin</li>
+</ol>
+<hr />
+<h2 id="a">附录 A：构建产物清单</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepGEMM/
+├── build/                    # 构建临时目录（gitignore）
+│   └── lib.linux-x86_64-3.12/
+│       └── deep_gemm/
+│           ├── include/      # 复制的 CuTe/cutlass 头文件
+│           └── _C.cpython-312-x86_64-linux-gnu.so
+├── dist/                     # 最终分发目录
+│   └── deep_gemm-2.4.2+cu129-torch2.8-cxx11abi0-cp312-linux_x86_64.whl
+├── stubs/                    # 生成的 .pyi 文件（gitignore）
+│   └── _C.pyi
+├── deep_gemm/
+│   ├── include/              # 符号链接（开发模式）
+│   │   ├── cute -&gt; third-party/...
+│   │   └── cutlass -&gt; third-party/...
+│   └── *.so                  # 符号链接（开发模式）
+└── *.egg-info/               # 构建元数据
+</code></pre></div>
+
+<h2 id="b">附录 B：环境变量速查</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 开发调试</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_DEBUG</span><span style="color: #666">=1</span><span style="color: #BBB">                    </span><span style="color: #3D7B7B; font-style: italic"># 打印 JIT 调试信息</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_PRINT_COMPILER_COMMAND</span><span style="color: #666">=1</span><span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic"># 显示编译命令</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_DUMP_SASS</span><span style="color: #666">=1</span><span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic"># 转储 SASS 代码</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 性能分析</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_USE_NVIDIA_TOOLS</span><span style="color: #666">=1</span><span style="color: #BBB">             </span><span style="color: #3D7B7B; font-style: italic"># 跳过内部 profiling</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_WITH_LINEINFO</span><span style="color: #666">=1</span><span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic"># 嵌入行信息</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 构建控制</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_FORCE_BUILD</span><span style="color: #666">=1</span><span style="color: #BBB">                  </span><span style="color: #3D7B7B; font-style: italic"># 强制本地构建</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_SKIP_CUDA_BUILD</span><span style="color: #666">=1</span><span style="color: #BBB">              </span><span style="color: #3D7B7B; font-style: italic"># 跳过 CUDA 构建</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_USE_NVRTC</span><span style="color: #666">=1</span><span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic"># 使用 NVRTC（更快编译）</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 缓存配置</span>
+<span style="color: #008000">export</span><span style="color: #BBB"> </span><span style="color: #19177C">DG_JIT_CACHE_DIR</span><span style="color: #666">=</span>/tmp/dg_cache<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic"># 自定义缓存目录</span>
+</code></pre></div>
+
+<h2 id="c">附录 C：测试执行命令</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 运行单个测试</span>
+python<span style="color: #BBB"> </span>tests/test_fp8_fp4.py
+
+<span style="color: #3D7B7B; font-style: italic"># 运行 sanitizer（内存检查）</span>
+python<span style="color: #BBB"> </span>tests/test_sanitizer.py<span style="color: #BBB"> </span>--funcs<span style="color: #BBB"> </span>test_fp8_fp4.test_gemm<span style="color: #BBB"> </span>--tools<span style="color: #BBB"> </span>memcheck
+
+<span style="color: #3D7B7B; font-style: italic"># 运行 Mega MoE（多进程）</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/test_mega_moe.py<span style="color: #BBB"> </span>--num-processes<span style="color: #BBB"> </span><span style="color: #666">8</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 条件过滤测试</span>
+python<span style="color: #BBB"> </span>tests/test_bf16.py<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic"># 自动跳过 SM90 不支持的测试</span>
+</code></pre></div>
+
+<hr />
+<p><em>文档生成时间：2026-07-30</em><br />
+<em>基于 DeepGEMM v2.4.2 (commit 7f2a703) 分析</em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

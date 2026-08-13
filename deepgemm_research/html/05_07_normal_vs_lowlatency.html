@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Normal vs Low-Latency: DeepEP 双通信哲学在 Mega MoE 中的映射分析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">Normal vs Low-Latency: DeepEP </a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#normal-vs-low-latency-deepep-双通信哲学在-mega-moe-中的映射分" class="toc-h1">Normal vs Low-Latency: DeepEP 双通信哲学在 Mega MoE 中的映射分析</a></li><li><a href="#1-核心结论" class="toc-h2">1. 核心结论</a></li><li><a href="#2-mega-moe-是否有-normal-和-low-latency-变体" class="toc-h2">2. Mega MoE 是否有 Normal 和 Low-Latency 变体？</a></li><li><a href="#结论没有" class="toc-h3">结论：没有</a></li><li><a href="#3-mega-moe-优化目标吞吐还是延迟" class="toc-h2">3. Mega MoE 优化目标：吞吐还是延迟？</a></li><li><a href="#结论仅优化吞吐throughput-oriented" class="toc-h3">结论：仅优化吞吐（Throughput-Oriented）</a></li><li><a href="#4-mega-moe-是否使用-chunking" class="toc-h2">4. Mega MoE 是否使用 Chunking？</a></li><li><a href="#结论有但含义与-deepep-不同" class="toc-h3">结论：有，但含义与 DeepEP 不同</a></li><li><a href="#5-是否存在decode-模式减少流水线阶段" class="toc-h2">5. 是否存在"Decode 模式"（减少流水线阶段）？</a></li><li><a href="#结论不存在" class="toc-h3">结论：不存在</a></li><li><a href="#6-单内核-vs-双内核设计的关系" class="toc-h2">6. 单内核 vs 双内核设计的关系</a></li><li><a href="#61-设计哲学对比" class="toc-h3">6.1 设计哲学对比</a></li><li><a href="#62-mega-moe-的融合本质" class="toc-h3">6.2 Mega MoE 的"融合"本质</a></li><li><a href="#63-为什么-mega-moe-不需要双模式" class="toc-h3">6.3 为什么 Mega MoE 不需要双模式？</a></li><li><a href="#7-low-latency-旁路-forwarding在-mega-moe-中的等价物" class="toc-h2">7. "Low-Latency 旁路 Forwarding"在 Mega MoE 中的等价物</a></li><li><a href="#71-deepep-的-forwarding-概念" class="toc-h3">7.1 DeepEP 的 Forwarding 概念</a></li><li><a href="#72-mega-moe-是否有等价概念" class="toc-h3">7.2 Mega MoE 是否有等价概念？</a></li><li><a href="#8-mega-moe-仅用于-training-还是也用于-inference" class="toc-h2">8. Mega MoE 仅用于 Training 还是也用于 Inference？</a></li><li><a href="#结论主要面向-traininginference-能力有限" class="toc-h3">结论：主要面向 Training，Inference 能力有限</a></li><li><a href="#9-综合对比表" class="toc-h2">9. 综合对比表</a></li><li><a href="#10-深层洞察" class="toc-h2">10. 深层洞察</a></li><li><a href="#101-为什么-mega-moe-没有采纳双模式设计" class="toc-h3">10.1 为什么 Mega MoE 没有采纳双模式设计？</a></li><li><a href="#102-mega-moe-的隐含-decode-能力" class="toc-h3">10.2 Mega MoE 的"隐含 Decode 能力"</a></li><li><a href="#103-未来演进方向" class="toc-h3">10.3 未来演进方向</a></li><li><a href="#11-源码索引" class="toc-h2">11. 源码索引</a></li><li><a href="#12-总结" class="toc-h2">12. 总结</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="normal-vs-low-latency-deepep-mega-moe">Normal vs Low-Latency: DeepEP 双通信哲学在 Mega MoE 中的映射分析</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+分析目标: 判断 DeepGEMM Mega MoE 是否存在类似 DeepEP 的 Normal/Low-Latency 双模式区分</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 核心结论</h2>
+<p><strong>Mega MoE 不存在 Normal/Low-Latency 双模式区分。</strong> 它是单一内核（Single Kernel）设计，仅针对 Training/Prefill 场景优化，没有为 Decode 场景设计独立的低延迟变体。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内核数量</td>
+<td>2 个（Normal + Low-Latency）</td>
+<td>1 个（统一内核）</td>
+</tr>
+<tr>
+<td>模式区分</td>
+<td>有（Training vs Decode）</td>
+<td>无</td>
+</tr>
+<tr>
+<td>优化目标</td>
+<td>兼顾吞吐与延迟</td>
+<td>仅吞吐（Throughput）</td>
+</tr>
+<tr>
+<td>通信域</td>
+<td>NVLink + RDMA</td>
+<td>仅 NVLink（Symmetric Memory）</td>
+</tr>
+<tr>
+<td>Chunk 机制</td>
+<td>有（Token 聚合为 Chunk）</td>
+<td>部分（Combine 阶段的 Hidden 维度分块）</td>
+</tr>
+<tr>
+<td>流水线深度</td>
+<td>Normal 深 / Low-Latency 浅</td>
+<td>固定深度（由 smem 容量决定）</td>
+</tr>
+<tr>
+<td>Forwarding 旁路</td>
+<td>Low-Latency 有</td>
+<td>无（无 forwarding 概念）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-mega-moe-normal-low-latency">2. Mega MoE 是否有 Normal 和 Low-Latency 变体？</h2>
+<h3 id="_1">结论：没有</h3>
+<p><strong>代码证据：</strong></p>
+<p><strong>（1）API 层面仅有单一入口</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/apis/mega.hpp:124-206</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">fp8_fp4_mega_moe</span>(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>y,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor,<span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>l1_weights_,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor,<span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>l2_weights_,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sym_buffer,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sym_buffer_ptrs,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>recipe,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>activation,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>optional<span style="color: #666">&lt;</span><span style="color: #B00040">float</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>activation_clamp_opt,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>fast_math)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(arch_major<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">10</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>sm100_fp8_fp4_mega_moe(y,<span style="color: #BBB"> </span>...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 单一实现，无模式分支</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p>整个 C++ API 中<strong>没有任何 <code>mode</code>、<code>kernel_type</code>、<code>is_low_latency</code> 参数</strong>，也没有条件分支来选择不同的内核实现。</p>
+<p><strong>（2）Python 层面同样单一</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/mega/__init__.py:110-128</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">fp8_fp4_mega_moe</span>(y, l1_weights, l2_weights, sym_buffer,
+                     recipe<span style="color: #666">=</span>(<span style="color: #666">1</span>, <span style="color: #666">1</span>, <span style="color: #666">32</span>), activation<span style="color: #666">=</span><span style="color: #BA2121">&#39;swiglu&#39;</span>,
+                     activation_clamp<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">None</span>, fast_math<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>):
+    _C<span style="color: #666">.</span>fp8_fp4_mega_moe(y, <span style="color: #666">...</span>)
+</code></pre></div>
+
+<p>Python API 也没有暴露任何模式选择参数。</p>
+<p><strong>（3）Heuristics 层面无模式区分</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit_kernels/heuristics/mega_moe.hpp:148-209</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>MegaMoEConfig<span style="color: #BBB"> </span><span style="color: #00F">get_mega_moe_config</span>(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_ranks,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts_per_rank,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_tokens,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>hidden,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>intermediate_hidden)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 直接计算配置，无 if/else 模式分支</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>block_m<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_block_m_for_mega_moe(...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 固定 192</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>block_n<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>block_k<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<hr />
+<h2 id="3-mega-moe">3. Mega MoE 优化目标：吞吐还是延迟？</h2>
+<h3 id="throughput-oriented">结论：仅优化吞吐（Throughput-Oriented）</h3>
+<p><strong>代码证据：</strong></p>
+<p><strong>（1）测试场景默认使用大 Batch</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># tests/test_mega_moe.py:237</span>
+parser<span style="color: #666">.</span>add_argument(<span style="color: #BA2121">&#39;--num-max-tokens-per-rank&#39;</span>, <span style="color: #008000">type</span><span style="color: #666">=</span><span style="color: #008000">int</span>, default<span style="color: #666">=8192</span>,
+                    help<span style="color: #666">=</span><span style="color: #BA2121">&#39;Number of maximum tokens per rank&#39;</span>)
+</code></pre></div>
+
+<p>默认 <code>num_max_tokens_per_rank = 8192</code>，这是典型的 Training/Prefill 场景配置。Decode 场景通常为 1~数十个 Token。</p>
+<p><strong>（2）内核设计特征表明吞吐导向</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:49</span>
+CUTLASS_GLOBAL<span style="color: #BBB"> </span>__launch_bounds__(kNumThreads,<span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #B00040">void</span>
+sm100_fp8_fp4_mega_moe_impl(...)
+</code></pre></div>
+
+<ul>
+<li><code>__launch_bounds__(kNumThreads, 1)</code>：每个 SM 仅 1 个 CTA，最大化资源利用</li>
+<li>深度流水线 <code>kNumStages</code>（由 smem 容量决定，通常 &gt; 2）</li>
+<li>多 Wave 调度：<code>num_experts_per_wave</code> 动态选择以填满所有 SM</li>
+</ul>
+<p><strong>（3）Warp Specialization 的吞吐导向设计</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:356-360</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Dispatch warps: NVLink pull</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp for tokens (L1/L2)</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM TMA load warp for weights (L1/L2)</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// GEMM MMA issue warp</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Epilogue warps: SwiGLU + NVLink write-back + Combine</span>
+}
+</code></pre></div>
+
+<p>Dispatch、GEMM、Epilogue 三个阶段<strong>同时执行</strong>（Persistent Kernel），通过 Barrier 同步。这是典型的吞吐优化策略——牺牲单 Token 延迟换取整体吞吐。</p>
+<hr />
+<h2 id="4-mega-moe-chunking">4. Mega MoE 是否使用 Chunking？</h2>
+<h3 id="deepep">结论：有，但含义与 DeepEP 不同</h3>
+<p><strong>DeepEP 的 Chunk：</strong> Token 流聚合为 Chunk 进行网络传输，是<strong>通信粒度</strong>的概念。</p>
+<p><strong>Mega MoE 的 Chunk：</strong> Combine 阶段将 Hidden 维度分块，是<strong>寄存器/共享内存容量约束</strong>的概念。</p>
+<p><strong>代码证据：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1232-1246</span>
+<span style="color: #3D7B7B; font-style: italic">// 3 slots of chunk is needed: 2 load stages and 1 store</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunkSlots<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// NOTES: either 1 or 2 chunks for simplicity</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunks<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">    </span>kNumChunkSlots<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>SMEM_BEFORE_BARRIER_SIZE
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>kHidden<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxRegistersForBuffer<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunkBytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumChunks;
+</code></pre></div>
+
+<p>Mega MoE 的 Chunking 解决的是：<br />
+- Combine 阶段需要同时维护 2 个 Load Stage + 1 个 Store Buffer<br />
+- 当 Hidden 维度较大（如 7168）时，smem/寄存器不足以一次性容纳<br />
+- 因此将 Hidden 分为 1~2 个 Chunk 处理</p>
+<p><strong>与 DeepEP 的本质区别：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP Chunk</th>
+<th>Mega MoE Chunk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>作用对象</td>
+<td>Token（Token 流聚合）</td>
+<td>Hidden 维度（特征分块）</td>
+</tr>
+<tr>
+<td>目的</td>
+<td>提高网络带宽利用率</td>
+<td>满足 smem/寄存器容量约束</td>
+</tr>
+<tr>
+<td>粒度</td>
+<td>可调（Chunk Size）</td>
+<td>固定 1 或 2</td>
+</tr>
+<tr>
+<td>通信相关</td>
+<td>是</td>
+<td>否</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-decode">5. 是否存在"Decode 模式"（减少流水线阶段）？</h2>
+<h3 id="_2">结论：不存在</h3>
+<p><strong>代码证据：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit_kernels/heuristics/mega_moe.hpp:95-146</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>pair<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_pipeline_config_for_mega_moe(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>smem_capacity,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>hidden,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>block_m,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>block_n,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>block_k,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>store_block_m,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sf_block_m,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sf_block_n,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_dispatch_warps,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_epilogue_warps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Select maximum num_stages</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_stages<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(smem_capacity<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>smem_fixed)<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>smem_per_stage;
+<span style="color: #BBB">    </span>DG_HOST_ASSERT(num_stages<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<p>流水线深度 <code>num_stages</code> 的唯一决定因素是 <strong>smem 容量</strong>，而非工作负载类型。对于给定的 GPU（SM100）和配置，<code>num_stages</code> 是固定的。</p>
+<p><strong>对比 DeepEP：</strong><br />
+- DeepEP Normal：深流水线（多 Stage 重叠通信与计算）<br />
+- DeepEP Low-Latency：浅流水线（减少 Stage 以降低延迟）<br />
+- Mega MoE：固定深度，无模式切换</p>
+<hr />
+<h2 id="6-vs">6. 单内核 vs 双内核设计的关系</h2>
+<h3 id="61">6.1 设计哲学对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP:
+  Normal Kernel:     [Dispatch] → [Chunk] → [NVLink/RDMA] → [Combine]
+  Low-Latency Kernel:[Dispatch] → [Direct RDMA]            → [Combine]
+
+Mega MoE:
+  Single Kernel:     [Dispatch NVLink Pull] → [L1 GEMM + SwiGLU] → [L2 GEMM] → [Combine NVLink Write-back]
+                     └────────────────── Persistent ──────────────────┘
+</code></pre></div>
+
+<h3 id="62-mega-moe">6.2 Mega MoE 的"融合"本质</h3>
+<p>Mega MoE 的核心创新是将 <strong>Communication + Compute</strong> 融合到单一 Persistent Kernel：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:312-319</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scheduler<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>MegaMoEScheduler<span style="color: #666">&lt;</span>
+<span style="color: #BBB">    </span>BLOCK_M,<span style="color: #BBB"> </span>BLOCK_N,<span style="color: #BBB"> </span>BLOCK_K,
+<span style="color: #BBB">    </span>L1_SHAPE_N,<span style="color: #BBB"> </span>L1_SHAPE_K,
+<span style="color: #BBB">    </span>L2_SHAPE_N,<span style="color: #BBB"> </span>L2_SHAPE_K,
+<span style="color: #BBB">    </span>kNumExpertsPerRank,
+<span style="color: #BBB">    </span>kNumExpertsPerWave,
+<span style="color: #BBB">    </span>kNumSMs,<span style="color: #BBB"> </span>kNumRanks<span style="color: #666">&gt;</span>(workspace);
+</code></pre></div>
+
+<p><strong>关键差异：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通信与计算关系</td>
+<td>分离（先通信后计算）</td>
+<td>融合（交替执行）</td>
+</tr>
+<tr>
+<td>Kernel 数量</td>
+<td>2（Normal + Low-Latency）</td>
+<td>1</td>
+</tr>
+<tr>
+<td>调度粒度</td>
+<td>Token / Chunk</td>
+<td>Expert Block</td>
+</tr>
+<tr>
+<td>同步方式</td>
+<td>Grid Sync + Barrier</td>
+<td>Intra-SM Barrier + Arrival Count</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63-mega-moe">6.3 为什么 Mega MoE 不需要双模式？</h3>
+<p><strong>根本原因：Mega MoE 的融合设计消除了双模式的需求动机。</strong></p>
+<p>DeepEP 需要双模式的原因：<br />
+- Normal：通信和计算分离，Chunk 聚合 Token 提高带宽利用率<br />
+- Low-Latency：Decode 场景 Token 少，Chunk 聚合反而增加延迟，需要旁路</p>
+<p>Mega MoE 不需要双模式的原因：<br />
+- 通信（NVLink Pull）和计算（GEMM）在 SM 级别<strong>交替执行</strong><br />
+- 每个 Token 到达后立即参与 GEMM，无需等待 Chunk 聚合<br />
+- 流水线由 Arrival Count 驱动，单 Token 到达即可触发计算</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:671-675</span>
+<span style="color: #3D7B7B; font-style: italic">// Wait the entire token arrival for linear 1</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_arrival_count_ptr(pool_block_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expected<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scheduler.<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span>get_valid_m<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>expected);
+}
+</code></pre></div>
+
+<hr />
+<h2 id="7-low-latency-forwarding-mega-moe">7. "Low-Latency 旁路 Forwarding"在 Mega MoE 中的等价物</h2>
+<h3 id="71-deepep-forwarding">7.1 DeepEP 的 Forwarding 概念</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP Normal:
+  Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU
+                                              ↑
+                                     GPU 作为通信中继
+
+DeepEP Low-Latency:
+  Source GPU → Direct RDMA → Target GPU
+  （旁路 Forwarding 中继）
+</code></pre></div>
+
+<h3 id="72-mega-moe">7.2 Mega MoE 是否有等价概念？</h3>
+<p><strong>结论：Mega MoE 不存在 Forwarding 概念。</strong></p>
+<p><strong>原因：</strong></p>
+<p>Mega MoE 仅使用 <strong>NVLink Symmetric Memory</strong>，通信模型是 <strong>Pull-based</strong> 而非 <strong>Push-based</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:545-550</span>
+<span style="color: #3D7B7B; font-style: italic">// TMA load token from remote rank into shared memory</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">        </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">        </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                       </span>current_rank_in_expert_idx),
+<span style="color: #BBB">        </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+}
+</code></pre></div>
+
+<p><strong>关键区别：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通信模式</td>
+<td>Push（源端发起）</td>
+<td>Pull（目标端发起）</td>
+</tr>
+<tr>
+<td>通信硬件</td>
+<td>RDMA (IB) + NVLink</td>
+<td>NVLink Symmetric Memory</td>
+</tr>
+<tr>
+<td>中继机制</td>
+<td>GPU 作为 Forwarding 中继</td>
+<td>无（直接读取远端内存）</td>
+</tr>
+<tr>
+<td>拓扑感知</td>
+<td>需要（NIC-GPU 亲和性）</td>
+<td>不需要（NVLink 全连接）</td>
+</tr>
+</tbody>
+</table>
+<p>Mega MoE 的 Pull 模式下，目标 GPU 直接通过 NVLink 读取源 GPU 的 Symmetric Buffer，<strong>无需中间 GPU 作为中继</strong>，因此不存在 "bypass forwarding" 的优化空间。</p>
+<hr />
+<h2 id="8-mega-moe-training-inference">8. Mega MoE 仅用于 Training 还是也用于 Inference？</h2>
+<h3 id="traininginference">结论：主要面向 Training，Inference 能力有限</h3>
+<p><strong>（1）API 设计暗示 Training 导向</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/mega/__init__.py:66-67</span>
+<span style="color: #3D7B7B; font-style: italic"># Token count must be aligned to block m</span>
+num_ranks <span style="color: #666">=</span> group<span style="color: #666">.</span>size()
+block_m <span style="color: #666">=</span> _C<span style="color: #666">.</span>get_block_m_for_mega_moe(num_ranks, num_experts, num_max_tokens_per_rank, num_topk)
+num_max_tokens_per_rank <span style="color: #666">=</span> align(num_max_tokens_per_rank, block_m)
+</code></pre></div>
+
+<p><code>num_max_tokens_per_rank</code> 是<strong>预分配容量</strong>，不是实际 Token 数。这种"按最大容量预分配"的模式是 Training 的特征（Fixed-shape Tensor）。</p>
+<p><strong>（2）无 Decode 相关优化</strong></p>
+<ul>
+<li>无 KV Cache 感知</li>
+<li>无 Single/Batch 模式切换</li>
+<li>无低延迟路径（Low-Latency Path）</li>
+<li>无 Token 级流水线调度</li>
+</ul>
+<p><strong>（3）测试场景全为 Training</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># tests/test_mega_moe.py:40-44</span>
+num_max_tokens_per_rank <span style="color: #666">=</span> args<span style="color: #666">.</span>num_max_tokens_per_rank  <span style="color: #3D7B7B; font-style: italic"># 默认 8192</span>
+num_tokens <span style="color: #666">=</span> <span style="color: #008000">max</span>(<span style="color: #666">0</span>, args<span style="color: #666">.</span>num_max_tokens_per_rank <span style="color: #666">-</span> random<span style="color: #666">.</span>randint(<span style="color: #666">0</span>, args<span style="color: #666">.</span>num_max_removed_tokens)) \
+    <span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>num_tokens <span style="color: #666">==</span> <span style="color: #666">0</span> <span style="color: #008000; font-weight: bold">else</span> args<span style="color: #666">.</span>num_tokens
+</code></pre></div>
+
+<p>所有测试都在大 Token 数（数千级别）下进行。</p>
+<p><strong>（4）Combine 阶段的延迟分析</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1228</span>
+<span style="color: #3D7B7B; font-style: italic">// Combine: reduce top-k results and write back</span>
+<span style="color: #3D7B7B; font-style: italic">// NOTES: reuse shared memory from start up to the barriers</span>
+<span style="color: #3D7B7B; font-style: italic">// 1 token, 1 topk latency: ~3 us</span>
+</code></pre></div>
+
+<p>Combine 阶段的 Token 处理是串行的（<code>kNumChunks</code> 1~2），单 Token 延迟约 3μs。对于 Decode 场景（1 Token），这意味着 Combine 阶段的相对开销较大。</p>
+<hr />
+<h2 id="9">9. 综合对比表</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP Normal</th>
+<th>DeepEP Low-Latency</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>场景</strong></td>
+<td>Training / Prefill</td>
+<td>Decode</td>
+<td>Training / Prefill</td>
+</tr>
+<tr>
+<td><strong>目标</strong></td>
+<td>最大化吞吐</td>
+<td>最小化延迟</td>
+<td>最大化吞吐</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>关键（Token 聚合）</td>
+<td>减少</td>
+<td>Hidden 维度分块</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>深（多 Stage）</td>
+<td>浅（少 Stage）</td>
+<td>固定深度</td>
+</tr>
+<tr>
+<td><strong>通信路径</strong></td>
+<td>NVLink + RDMA 协同</td>
+<td>Direct RDMA</td>
+<td>NVLink Symmetric Memory</td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>有（GPU 中继）</td>
+<td>旁路</td>
+<td>无此概念</td>
+</tr>
+<tr>
+<td><strong>模式切换</strong></td>
+<td>有</td>
+<td>有</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>硬件范围</strong></td>
+<td>跨节点（Multi-Node）</td>
+<td>跨节点</td>
+<td>单节点（Intra-Node）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10">10. 深层洞察</h2>
+<h3 id="101-mega-moe">10.1 为什么 Mega MoE 没有采纳双模式设计？</h3>
+<p><strong>（1）通信硬件差异</strong></p>
+<p>DeepEP 运行在 <strong>NVLink + RDMA</strong> 环境，需要处理：<br />
+- 节点内 NVLink 全连接<br />
+- 节点间 RDMA（IB）<br />
+- NIC-GPU 拓扑不对称 → 需要 Forwarding</p>
+<p>Mega MoE 仅运行在 <strong>NVLink Symmetric Memory</strong> 环境：<br />
+- 单节点内全连接<br />
+- 无 NIC 拓扑问题<br />
+- Pull-based 通信无需中继</p>
+<p><strong>（2）融合设计消除了 Chunk 聚合的需求</strong></p>
+<p>DeepEP 的 Chunk 是为了解决<strong>通信带宽利用率</strong>问题——小 Token 聚合为大包以提高 RDMA 带宽利用率。</p>
+<p>Mega MoE 的通信（NVLink Pull）与计算（GEMM）在 SM 级别交替执行，单 Token 到达后即可参与 GEMM，无需等待聚合。</p>
+<p><strong>（3）定位不同</strong></p>
+<ul>
+<li>DeepEP：<strong>通用 MoE 通信库</strong>，需要适配多种场景（Training + Inference）</li>
+<li>Mega MoE：<strong>特定硬件（SM100）的高性能 MoE Kernel</strong>，聚焦 Training 吞吐</li>
+</ul>
+<h3 id="102-mega-moe-decode">10.2 Mega MoE 的"隐含 Decode 能力"</h3>
+<p>虽然 Mega MoE 没有显式的 Decode 模式，但其设计<strong>隐含地</strong>对 Decode 场景有一定支持：</p>
+<ol>
+<li><strong>Arrival Count 驱动</strong>：单 Token 到达后即可触发计算</li>
+<li><strong>无 Chunk 聚合等待</strong>：不像 DeepEP Normal 需要等待 Chunk 填满</li>
+<li><strong>Persistent Kernel</strong>：Kernel 启动开销分摊到整个 Batch</li>
+</ol>
+<p>但 Decode 场景下 Mega MoE 的效率仍然受限：<br />
+- GEMM 的 M 维度很小（1 Token），Tensor Core 利用率低<br />
+- Combine 阶段的串行处理成为瓶颈<br />
+- 预分配的 <code>num_max_tokens_per_rank</code> 造成内存浪费</p>
+<h3 id="103">10.3 未来演进方向</h3>
+<p>如果 Mega MoE 要支持 Decode 场景，可能需要：</p>
+<ol>
+<li><strong>引入 Low-Latency 变体</strong>：减少流水线深度，优化单 Token 路径</li>
+<li><strong>跨节点支持</strong>：扩展到 RDMA 环境</li>
+<li><strong>Dynamic Shape</strong>：支持可变 Token 数而无需预分配</li>
+<li><strong>KV Cache 融合</strong>：与 Attention 内核融合</li>
+</ol>
+<hr />
+<h2 id="11">11. 源码索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键行</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>124-206</td>
+<td>C++ 单一入口，无模式分支</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>110-128</td>
+<td>Python 单一 API</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>148-209</td>
+<td>Heuristics 无模式区分</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>58-62</td>
+<td>block_m 固定 192</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>95-146</td>
+<td>Pipeline 深度由 smem 决定</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>49</td>
+<td><code>__launch_bounds__(kNumThreads, 1)</code></td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>312-319</td>
+<td>Scheduler 初始化</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>356-360</td>
+<td>Warp 角色分配</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>545-550</td>
+<td>NVLink Pull 通信</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>671-675</td>
+<td>Arrival Count 驱动</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1232-1246</td>
+<td>Combine Chunk 机制</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>237</td>
+<td>默认 8192 tokens</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12">12. 总结</h2>
+<p><strong>Mega MoE 是 DeepEP 双通信哲学的"单极演化"：</strong></p>
+<ul>
+<li>DeepEP 提供 <strong>Normal（吞吐优先）</strong> 和 <strong>Low-Latency（延迟优先）</strong> 两种模式</li>
+<li>Mega MoE 仅保留 <strong>吞吐优先</strong> 的设计哲学</li>
+<li>通过 <strong>通信-计算融合（Fused Communication-Compute）</strong> 和 <strong>Arrival Count 驱动</strong> 消除了对双模式的需求</li>
+<li>但这种融合也限制了其应用范围：<strong>单节点、Training 导向、无 Decode 优化</strong></li>
+</ul>
+<p>Mega MoE 的设计选择反映了 DeepGEMM 团队的定位判断：在 NVLink Symmetric Memory 硬件上，融合设计比分层双模式更能有效利用硬件资源。但这种选择也意味着 <strong>Mega MoE 不是 DeepEP 的替代品，而是 DeepEP 在特定硬件约束下的特化演进</strong>。</p>
+<hr />
+<p><em>分析基于 DeepGEMM 源码和 blog 文本，代码路径：<code>/Users/backyes/work/triton/DeepGEMM/</code></em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

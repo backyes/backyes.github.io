@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Warp Specialization: DeepEP vs Mega MoE 深度对比分析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">Warp Specialization: DeepEP vs</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#warp-specialization-deepep-vs-mega-moe-深度对比分析" class="toc-h1">Warp Specialization: DeepEP vs Mega MoE 深度对比分析</a></li><li><a href="#1-核心结论-tldr" class="toc-h2">1. 核心结论 (TL;DR)</a></li><li><a href="#2-deepep-的-warp-specialization-回顾" class="toc-h2">2. DeepEP 的 Warp Specialization 回顾</a></li><li><a href="#3-mega-moe-的-warp-组织" class="toc-h2">3. Mega MoE 的 Warp 组织</a></li><li><a href="#31-线程块配置-来自-heuristicsmega_moehpp" class="toc-h3">3.1 线程块配置 (来自 heuristics/mega_moe.hpp)</a></li><li><a href="#32-warp-角色分配-来自-sm100_fp8_fp4_mega_moecuh" class="toc-h3">3.2 Warp 角色分配 (来自 sm100_fp8_fp4_mega_moe.cuh)</a></li><li><a href="#33-warp-角色总览" class="toc-h3">3.3 Warp 角色总览</a></li><li><a href="#4-mega-moe-的-warp-specialization-流水线" class="toc-h2">4. Mega MoE 的 Warp Specialization 流水线</a></li><li><a href="#41-完整流水线图" class="toc-h3">4.1 完整流水线图</a></li><li><a href="#42-生产者-消费者关系" class="toc-h3">4.2 生产者-消费者关系</a></li><li><a href="#5-与-deepep-的关键差异" class="toc-h2">5. 与 DeepEP 的关键差异</a></li><li><a href="#51-对称内存消除了-forwarding-需求" class="toc-h3">5.1 对称内存消除了 Forwarding 需求</a></li><li><a href="#52-dispatch-warps-的角色差异" class="toc-h3">5.2 Dispatch Warps 的角色差异</a></li><li><a href="#53-计算-warp-的引入" class="toc-h3">5.3 计算 Warp 的引入</a></li><li><a href="#54-epilogue-warp-的融合" class="toc-h3">5.4 Epilogue Warp 的融合</a></li><li><a href="#6-warp-specialization-的寄存器策略" class="toc-h2">6. Warp Specialization 的寄存器策略</a></li><li><a href="#7-通信与计算的并行化" class="toc-h2">7. 通信与计算的并行化</a></li><li><a href="#71-时间线对比" class="toc-h3">7.1 时间线对比</a></li><li><a href="#72-流水线阶段同步" class="toc-h3">7.2 流水线阶段同步</a></li><li><a href="#8-总结-warp-specialization-的演化" class="toc-h2">8. 总结: Warp Specialization 的演化</a></li><li><a href="#81-设计范式对比" class="toc-h3">8.1 设计范式对比</a></li><li><a href="#82-mega-moe-的-warp-specialization-本质" class="toc-h3">8.2 Mega MoE 的 Warp Specialization 本质</a></li><li><a href="#83-关键洞察" class="toc-h3">8.3 关键洞察</a></li><li><a href="#9-参考代码位置" class="toc-h2">9. 参考代码位置</a></li><li><a href="#10-附录-完整-warp-流水线-mermaid-图" class="toc-h2">10. 附录: 完整 Warp 流水线 Mermaid 图</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="warp-specialization-deepep-vs-mega-moe">Warp Specialization: DeepEP vs Mega MoE 深度对比分析</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 剖析博客中描述的 DeepEP Warp Specialization 概念如何映射到 DeepGEMM Mega MoE 的实现</p>
+</blockquote>
+<hr />
+<h2 id="1-tldr">1. 核心结论 (TL;DR)</h2>
+<p><strong>Mega MoE 使用了 Warp Specialization，但其形态与 DeepEP 有本质区别：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>定位</td>
+<td>纯通信 kernel</td>
+<td>通信+计算融合 kernel</td>
+</tr>
+<tr>
+<td>Warp 分工</td>
+<td>IB Send / Forward / Receive</td>
+<td>Dispatch / TMA Load / MMA Issue / Epilogue</td>
+</tr>
+<tr>
+<td>流水线</td>
+<td>Send → Forward → Receive</td>
+<td>Pull → Load → MMA → Epilogue</td>
+</tr>
+<tr>
+<td>通信模式</td>
+<td>显式转发 (需中间 GPU 中继)</td>
+<td>对称内存直读 (NVLink 直接访问)</td>
+</tr>
+<tr>
+<td>计算参与</td>
+<td>无</td>
+<td>Tensor Core (UMMA) + SwiGLU + Combine</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键洞察</strong>: Mega MoE 的 Warp Specialization 不是 DeepEP 的"通信阶段并行化"，而是<strong>将整个 MoE 层 (Token Routing → Dispatch → Linear1 → Activation → Linear2 → Combine) 映射到不同的 Warp Group 上</strong>。</p>
+<hr />
+<h2 id="2-deepep-warp-specialization">2. DeepEP 的 Warp Specialization 回顾</h2>
+<p>博客 Section 5 描述的 DeepEP 模型:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Warp Group A: IB Sending        (GPU → NIC)
+Warp Group B: IB-NVLink Forward (NIC → NVLink 中继)
+Warp Group C: NVLink Receive    (NVLink → GPU Memory)
+</code></pre></div>
+
+<p>形成 <strong>Send → Forward → Receive</strong> 三阶段流水线，通过 FIFO 解耦。</p>
+<p><strong>核心问题</strong>: DeepEP 为什么需要 Forwarding?<br />
+- GPU-NIC 拓扑不对称: GPU0 → NIC1 可能需要 GPU0 → NVLink → GPU4 → PCIe → NIC1<br />
+- 需要 GPU SM 作为通信中继</p>
+<hr />
+<h2 id="3-mega-moe-warp">3. Mega MoE 的 Warp 组织</h2>
+<h3 id="31-heuristicsmega_moehpp">3.1 线程块配置 (来自 <code>heuristics/mega_moe.hpp</code>)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 148-176 行</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_dispatch_threads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 4 warps</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_non_epilogue_threads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 4 warps (MMA issue + TMA load)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_epilogue_threads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 8 warps</span>
+<span style="color: #3D7B7B; font-style: italic">// 总计: 512 threads = 16 warps per CTA</span>
+</code></pre></div>
+
+<h3 id="32-warp-sm100_fp8_fp4_mega_moecuh">3.2 Warp 角色分配 (来自 <code>sm100_fp8_fp4_mega_moe.cuh</code>)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 356-877 行: 主 kernel 中的 warp 分派</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 0-3: Dispatch warps (48 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumDispatchRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... token routing, expert counting, NVLink pull ...</span>
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 4: TMA load for tokens + SFA (40 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 5: TMA load for weights + SFB (40 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 6: MMA issue warp (40 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">3</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 7: 预留 (40 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 8-15: Epilogue warps (208 regs)</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_alloc<span style="color: #666">&lt;</span>kNumEpilogueRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... SwiGLU, scaling, combine ...</span>
+}
+</code></pre></div>
+
+<h3 id="33-warp">3.3 Warp 角色总览</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────┐
+│                    Mega MoE CTA (512 threads)                    │
+├──────────┬──────────┬──────────┬─────────────────────────────────┤
+│ Warp 0-3 │ Warp 4-5 │ Warp 6-7 │ Warp 8-15                      │
+│ Dispatch │ TMA Load │ MMA Issue│ Epilogue (8 warps = 2 WGs)     │
+│ 4 warps  │ 2 warps  │ 2 warps  │ 8 warps                        │
+│ 48 regs  │ 40 regs  │ 40 regs  │ 208 regs                       │
+└──────────┴──────────┴──────────┴─────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="4-mega-moe-warp-specialization">4. Mega MoE 的 Warp Specialization 流水线</h2>
+<h3 id="41">4.1 完整流水线图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Mega MoE Warp Pipeline&quot;
+        A[Warp 0-3: Dispatch&lt;br/&gt;Token Routing + NVLink Pull&lt;br/&gt;48 regs] --&gt;|l1_arrival_count| B
+        B[Warp 4: TMA Load&lt;br/&gt;Tokens + SFA → smem&lt;br/&gt;40 regs] --&gt;|full_barriers| D
+        C[Warp 5: TMA Load&lt;br/&gt;Weights + SFB → smem&lt;br/&gt;40 regs] --&gt;|full_barriers| D
+        D[Warp 6: MMA Issue&lt;br/&gt;UMMA → Tensor Core&lt;br/&gt;40 regs] --&gt;|tmem_full_barriers| E
+        E[Warp 8-15: Epilogue&lt;br/&gt;SwiGLU + Scale + Combine&lt;br/&gt;208 regs] --&gt;|tmem_empty_barriers| D
+    end
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fff3e0
+    style D fill:#f3e5f5
+    style E fill:#e8f5e9
+</code></pre></div>
+
+<h3 id="42-">4.2 生产者-消费者关系</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant D as Dispatch Warps (0-3)
+    participant L1 as L1 Token Buffer
+    participant T4 as TMA Load Warp 4 (tokens)
+    participant T5 as TMA Load Warp 5 (weights)
+    participant S as Shared Memory (smem_a/b)
+    participant M as MMA Issue Warp 6
+    participant T as Tensor Memory (TMEM)
+    participant E as Epilogue Warps (8-15)
+    participant C as Combine Buffer
+
+    D-&gt;&gt;L1: Pull tokens via NVLink (TMA load)
+    D-&gt;&gt;L1: red_add_rel(l1_arrival_count)
+    L1-&gt;&gt;T4: Wait arrival → TMA copy to smem_a
+    T4-&gt;&gt;S: full_barriers arrive
+    T5-&gt;&gt;S: TMA copy weights to smem_b
+    T5-&gt;&gt;S: full_barriers arrive
+    S-&gt;&gt;M: Wait full_barriers → Issue UMMA
+    M-&gt;&gt;T: Accumulate in TMEM
+    M-&gt;&gt;E: tmem_full_barriers arrive
+    E-&gt;&gt;T: TMEM load → SwiGLU → Scale
+    E-&gt;&gt;M: tmem_empty_barriers arrive (release TMEM)
+    E-&gt;&gt;C: Write combine buffer (NVLink)
+</code></pre></div>
+
+<hr />
+<h2 id="5-deepep">5. 与 DeepEP 的关键差异</h2>
+<h3 id="51-forwarding">5.1 对称内存消除了 Forwarding 需求</h3>
+<p><strong>DeepEP 的问题域:</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>GPU0 要发送到 NIC1，但 NIC1 绑定在 GPU4 上
+→ 需要 GPU0 → NVLink → GPU4 (Forward) → PCIe → NIC1
+→ 需要 Warp Group B 做 Forwarding
+</code></pre></div>
+
+<p><strong>Mega MoE 的解决方案:</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sym_buffer.cuh - 对称内存映射</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+}
+</code></pre></div>
+
+<p>每个 rank 都有<strong>对称的虚拟地址映射</strong>，可以直接通过 NVLink 访问其他 rank 的内存，无需 GPU SM 做通信中继。</p>
+<h3 id="52-dispatch-warps">5.2 Dispatch Warps 的角色差异</h3>
+<table>
+<thead>
+<tr>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IB Sending: GPU → NIC 组织 RDMA 包</td>
+<td>Dispatch: Token Routing + 直接从远端 Pull 数据</td>
+</tr>
+<tr>
+<td>需要与 NIC 交互</td>
+<td>纯 NVLink 操作，无 NIC 参与</td>
+</tr>
+<tr>
+<td>发送 (Send)</td>
+<td>拉取 (Pull) - 接收端主动读取</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Mega MoE Dispatch Warp 的核心操作 (441-599 行)</span>
+<span style="color: #3D7B7B; font-style: italic">// 1. 读取远端 token 的 topk_idx</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">    </span>current_expert_idx,<span style="color: #BBB"> </span>current_rank_in_expert_idx,<span style="color: #BBB"> </span>token_idx_in_rank);
+
+<span style="color: #3D7B7B; font-style: italic">// 2. TMA load token from remote rank into shared memory</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">    </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                   </span>current_rank_in_expert_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 远端 rank 的对称地址</span>
+<span style="color: #BBB">    </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+
+<span style="color: #3D7B7B; font-style: italic">// 3. 写入本地 L1 buffer</span>
+ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">    </span>l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),<span style="color: #BBB"> </span>pull_buffer.get_num_bytes());
+</code></pre></div>
+
+<h3 id="53-warp">5.3 计算 Warp 的引入</h3>
+<p>DeepEP 没有计算，Mega MoE 引入了:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Warp 6: MMA Issue (763-872 行)</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 只有 leader CTA 执行</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(is_leader_cta)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 创建 UMMA 指令描述符</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>instr_desc<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>UMMA<span style="color: #666">::</span>make_instr_desc_block_scaled<span style="color: #666">&lt;</span>...<span style="color: #666">&gt;</span>();
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 持久化调度所有 block</span>
+<span style="color: #BBB">        </span>scheduler.for_each_block([<span style="color: #666">&amp;</span>](...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 等待 TMEM empty barrier</span>
+<span style="color: #BBB">            </span>tmem_empty_barriers[accum_stage_idx]<span style="color: #666">-&gt;</span>wait(accum_phase<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 等待 TMA load 完成</span>
+<span style="color: #BBB">            </span>full_barriers[stage_idx]<span style="color: #666">-&gt;</span>wait(phase);
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// UTCCP copy SFA/SFB to TMEM</span>
+<span style="color: #BBB">            </span>cute_utccp_t<span style="color: #666">::</span>copy(sf_desc,<span style="color: #BBB"> </span>kTmemStartColOfSFA<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">4</span>);
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// Issue UMMA</span>
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>SM100_MMA_MXF8F6F4_2x1SM_SS<span style="color: #666">::</span>fma(
+<span style="color: #BBB">                </span>b_desc,<span style="color: #BBB"> </span>a_desc,<span style="color: #BBB"> </span>accum_stage_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>UMMA_N,<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// Commit to empty barrier</span>
+<span style="color: #BBB">            </span>empty_barrier_arrive(k_block_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>num_k_blocks<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span>});
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="54-epilogue-warp">5.4 Epilogue Warp 的融合</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Warp 8-15: Epilogue (877-1357 行)</span>
+<span style="color: #3D7B7B; font-style: italic">// L1 Epilogue: SwiGLU + FP8 量化 + TMA Store</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMEM Load</span>
+<span style="color: #BBB">    </span>cute<span style="color: #666">::</span>SM100_TMEM_LOAD_16dp256b1x<span style="color: #666">::</span>copy(tmem_addr,<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. SwiGLU: silu(gate) * up</span>
+<span style="color: #BBB">    </span>gate<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__fmul2_rn(gate,<span style="color: #BBB"> </span>{math<span style="color: #666">::</span>fast_rcp(denom.x),<span style="color: #BBB"> </span>...});
+<span style="color: #BBB">    </span>swiglu_values[i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>k]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__fmul2_rn(__fmul2_rn(gate,<span style="color: #BBB"> </span>up),<span style="color: #BBB"> </span>weights);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Amax reduction + SF 计算</span>
+<span style="color: #BBB">    </span>math<span style="color: #666">::</span>get_e4m3_sf_and_sf_inv(amax_values[i],<span style="color: #BBB"> </span>sf,<span style="color: #BBB"> </span>sf_inv);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. Cast to FP8 + STSM store</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>SM100_U8x4_STSM_T<span style="color: #666">&lt;</span>__nv_fp8x4_e4m3<span style="color: #666">&gt;::</span>copy(fp8x4_values,<span style="color: #BBB"> </span>smem_ptr);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 5. TMA Store</span>
+<span style="color: #BBB">    </span>cute<span style="color: #666">::</span>SM90_TMA_STORE_2D<span style="color: #666">::</span>copy(<span style="color: #666">&amp;</span>tensor_map_l1_output,<span style="color: #BBB"> </span>...);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// L2 Epilogue: BF16 写回远端 Combine Buffer</span>
+<span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMEM Load</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Store to shared memory</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Write to remote combine buffer via NVLink</span>
+<span style="color: #BBB">    </span><span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 对称内存写回</span>
+}
+
+<span style="color: #3D7B7B; font-style: italic">// Combine: Top-K reduce (1226-1356 行)</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>epilogue_warp_idx;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 加载所有 top-k 贡献</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 累加: reduced += bf16_values[l]</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Cast + TMA Store 到输出</span>
+}
+</code></pre></div>
+
+<hr />
+<h2 id="6-warp-specialization">6. Warp Specialization 的寄存器策略</h2>
+<p>Mega MoE 显式使用寄存器重分配来支持 Warp Specialization:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 343-349 行: 寄存器预算</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumDispatchRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">48</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// Dispatch: 少</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumNonEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">40</span>;<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// MMA/TMA: 最少</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">208</span>;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// Epilogue: 最多</span>
+DG_STATIC_ASSERT(kNumDispatchRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchThreads<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                 </span>kNumNonEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumNonEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                 </span>kNumEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">64512</span>,
+<span style="color: #BBB">                 </span><span style="color: #BA2121">&quot;Too many registers&quot;</span>);
+</code></pre></div>
+
+<p><strong>设计哲学:</strong><br />
+- Dispatch warps 需要中等寄存器 (48) 用于 token routing 逻辑<br />
+- MMA/TMA warps 需要最少寄存器 (40) 用于持久化调度<br />
+- Epilogue warps 需要大量寄存器 (208) 用于 SwiGLU 计算、amax reduction、FP8 量化</p>
+<hr />
+<h2 id="7">7. 通信与计算的并行化</h2>
+<h3 id="71">7.1 时间线对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP:
+|---- IB Send ----|---- Forward ----|---- Receive ----|
+     Warp A            Warp B            Warp C
+
+Mega MoE:
+|-- Dispatch --|-- TMA Load --|-- MMA Compute --|-- Epilogue --|
+   Warp 0-3       Warp 4-5        Warp 6          Warp 8-15
+      ↓              ↓               ↓                ↓
+   NVLink        smem fill      Tensor Core      SwiGLU +
+   Pull          (tokens+wt)    (UMMA)           Combine
+</code></pre></div>
+
+<h3 id="72">7.2 流水线阶段同步</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 331-335 行: Intra-SM Barrier 索引</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kDispatchBarrierIdx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kDispatchWithEpilogueBarrierIdx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kEpilogueFullBarrierIdx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kEpilogueWGBarrierStartIdx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// 263-268 行: Barrier 分配</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dispatch_barriers<span style="color: #BBB">      </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumDispatchWarps 个</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>full_barriers<span style="color: #BBB">          </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumStages 个 (TMA → MMA)</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>empty_barriers<span style="color: #BBB">         </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumStages 个 (MMA → TMA)</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tmem_full_barriers<span style="color: #BBB">     </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumEpilogueStages 个 (MMA → Epilogue)</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tmem_empty_barriers<span style="color: #BBB">    </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumEpilogueStages 个 (Epilogue → MMA)</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>combine_barriers<span style="color: #BBB">       </span><span style="color: #666">=</span><span style="color: #BBB"> </span>...;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// kNumEpilogueWarps * 2 个</span>
+</code></pre></div>
+
+<hr />
+<h2 id="8-warp-specialization">8. 总结: Warp Specialization 的演化</h2>
+<h3 id="81">8.1 设计范式对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>问题</strong></td>
+<td>如何并行化通信阶段?</td>
+<td>如何融合通信+计算?</td>
+</tr>
+<tr>
+<td><strong>Warp 角色</strong></td>
+<td>通信阶段 (Send/Fwd/Recv)</td>
+<td>计算+通信阶段 (Dispatch/Load/MMA/Epi)</td>
+</tr>
+<tr>
+<td><strong>流水线深度</strong></td>
+<td>3 阶段</td>
+<td>4+ 阶段 (含 2 层 GEMM)</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td>FIFO</td>
+<td>mbarrier + TMEM barrier</td>
+</tr>
+<tr>
+<td><strong>寄存器策略</strong></td>
+<td>未公开</td>
+<td>显式重分配 (40/48/208)</td>
+</tr>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>非对称 (需显式 Send)</td>
+<td>对称内存 (直接远端访问)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82-mega-moe-warp-specialization">8.2 Mega MoE 的 Warp Specialization 本质</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Mega MoE = 整个 MoE 层的 Warp Specialization&quot;
+        A[Token Routing] --&gt; B[NVLink Pull]
+        B --&gt; C[TMA Load Tokens]
+        B --&gt; D[TMA Load Weights]
+        C --&gt; E[MMA Issue L1]
+        D --&gt; E
+        E --&gt; F[SwiGLU + Quantize]
+        F --&gt; G[MMA Issue L2]
+        G --&gt; H[Write Combine Buffer]
+        H --&gt; I[Top-K Reduce]
+    end
+
+    style A fill:#e1f5fe
+    style B fill:#e1f5fe
+    style C fill:#fff3e0
+    style D fill:#fff3e0
+    style E fill:#f3e5f5
+    style F fill:#e8f5e9
+    style G fill:#f3e5f5
+    style H fill:#e8f5e9
+    style I fill:#e8f5e9
+</code></pre></div>
+
+<h3 id="83">8.3 关键洞察</h3>
+<ol>
+<li>
+<p><strong>Mega MoE 不是 DeepEP 的简单扩展</strong> — 它是全新的 kernel 设计，Warp Specialization 服务于"通信+计算融合"而非"通信并行化"</p>
+</li>
+<li>
+<p><strong>对称内存改变了通信范式</strong> — 从"发送 (Send)"到"拉取 (Pull)"，消除了 Forwarding 需求</p>
+</li>
+<li>
+<p><strong>Warp 分工更细</strong> — 16 warps 各司其职: 4 dispatch + 2 TMA load + 2 MMA + 8 epilogue</p>
+</li>
+<li>
+<p><strong>寄存器重分配是关键优化</strong> — 不同 Warp Group 的寄存器需求差异大 (40 vs 208)，显式重分配释放更多寄存器给 Epilogue</p>
+</li>
+<li>
+<p><strong>TMEM 作为计算流水线核心</strong> — Tensor Memory 是 MMA Issue 和 Epilogue 之间的共享存储，通过 tmem_full/empty_barriers 解耦</p>
+</li>
+</ol>
+<hr />
+<h2 id="9">9. 参考代码位置</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>356-877</td>
+<td>Warp 角色分派主逻辑</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>343-349</td>
+<td>寄存器预算 static_assert</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>263-268</td>
+<td>Barrier 分配</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>441-599</td>
+<td>Dispatch Warp NVLink Pull</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>763-872</td>
+<td>MMA Issue Warp</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>877-1357</td>
+<td>Epilogue Warp</td>
+</tr>
+<tr>
+<td><code>heuristics/mega_moe.hpp</code></td>
+<td>148-176</td>
+<td>线程块配置</td>
+</tr>
+<tr>
+<td><code>sym_buffer.cuh</code></td>
+<td>34-36</td>
+<td>对称内存映射</td>
+</tr>
+<tr>
+<td><code>barrier.cuh</code></td>
+<td>28-72</td>
+<td>NVLink barrier 实现</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10-warp-mermaid">10. 附录: 完整 Warp 流水线 Mermaid 图</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>gantt
+    title Mega MoE Warp Pipeline (单 CTA 视角)
+    dateFormat X
+    axisFormat %L
+
+    section Dispatch (Warp 0-3)
+    Token Routing + Expert Count :active, d1, 0, 10
+    NVLink Pull (TMA Load)       :active, d2, after d1, 20
+    Workspace Clean              :d3, after d2, 5
+
+    section TMA Load (Warp 4-5)
+    Wait L1 Arrival              :crit, t0, 5, 5
+    TMA Copy Tokens+Weights      :active, t1, after d2, 15
+
+    section MMA Issue (Warp 6)
+    Wait full_barriers           :crit, m0, 15, 3
+    Issue UMMA (L1)              :active, m1, after t1, 20
+    Issue UMMA (L2)              :active, m2, after m1, 20
+
+    section Epilogue (Warp 8-15)
+    Wait tmem_full_barriers      :crit, e0, 20, 3
+    SwiGLU + Quantize (L1)       :active, e1, after m1, 15
+    Write Combine Buffer (L2)    :active, e2, after m2, 15
+    Top-K Reduce + TMA Store     :active, e3, after e2, 10
+</code></pre></div>
+
+<hr />
+<p><em>分析基于 DeepGEMM 源码: <code>/Users/backyes/work/triton/DeepGEMM/</code></em><br />
+<em>博客参考: <code>/tmp/deep_ep_blog_text.txt</code> Section 5</em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

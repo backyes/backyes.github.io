@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP V2 深度深潜：统一接口、SM 估算本质与 TopK 复制机制</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepep-v2-sm-topk">DeepEP V2 深度深潜：统一接口、SM 估算本质与 TopK 复制机制</h1>
+<blockquote>
+<p><strong>分析范围</strong>：ElasticBuffer 统一 Normal/Low-Latency 的量化因素、SM 自动估算的数学本质、dispatch 内 TopK 复制过程</p>
+<p><strong>核心源码</strong>：<br />
+- <code>deep_ep/buffers/elastic.py:728-834</code> — <code>get_theoretical_num_sms</code> 解析式 SM 计算<br />
+- <code>deep_ep/include/deep_ep/impls/dispatch.cuh</code> — Direct dispatch kernel<br />
+- <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code> — Hybrid dispatch kernel<br />
+- <code>deep_ep/include/deep_ep/impls/dispatch_copy_epilogue.cuh</code> — Copy epilogue<br />
+- <code>csrc/elastic/buffer.hpp:980-1003</code> — dispatch 主流程</p>
+</blockquote>
+<hr />
+<h2 id="_1">目录</h2>
+<ol>
+<li><a href="#1-elasticbuffer-为什么能统一-normal-和-low-latency">ElasticBuffer 为什么能统一 Normal 和 Low-Latency？</a></li>
+<li><a href="#2-sm-自动估算的本质是什么">SM 自动估算的本质是什么？</a></li>
+<li><a href="#3-dispatch-内的-topk-复制机制">dispatch 内的 TopK 复制机制</a></li>
+</ol>
+<hr />
+<h2 id="1-elasticbuffer-normal-low-latency">1. ElasticBuffer 为什么能统一 Normal 和 Low-Latency？</h2>
+<h3 id="11-v1-normal-vs-low-latency">1.1 V1 时代 Normal vs Low-Latency 的割裂</h3>
+<p>在 DeepEP V1 中，Normal 和 Low-Latency 是 <strong>两套独立的实现</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal</th>
+<th>Low-Latency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kernel</td>
+<td><code>internode.cu</code></td>
+<td><code>internode_ll.cu</code></td>
+</tr>
+<tr>
+<td>通信路径</td>
+<td>3-phase (Push → Forward → Reduce)</td>
+<td>直接 RDMA get</td>
+</tr>
+<tr>
+<td>SM 使用</td>
+<td>24+</td>
+<td>较少</td>
+</tr>
+<tr>
+<td>Buffer 模型</td>
+<td>5 层 buffer</td>
+<td>不同设计</td>
+</tr>
+<tr>
+<td>API</td>
+<td>独立调用</td>
+<td>独立调用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-v2">1.2 V2 的统一设计哲学</h3>
+<p>V2 的核心洞察：<strong>Normal 和 Low-Latency 的本质差异不是"通信协议"，而是"资源分配策略"</strong>。</p>
+<h4 id="buffer">统一的关键——Buffer 是一等公民</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:195-226</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ElasticBuffer</span>:
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;</span>
+<span style="color: #BA2121; font-style: italic">    The elastic communication buffer, which supports:</span>
+<span style="color: #BA2121; font-style: italic">        - high-throughput expert-parallel all-to-all (dispatch and combine)</span>
+<span style="color: #BA2121; font-style: italic">        - Engram (remote KV cache fetch)</span>
+<span style="color: #BA2121; font-style: italic">        - pipeline-parallel send/recv (PP)</span>
+<span style="color: #BA2121; font-style: italic">        - all-gather reduce-scatter (AGRS)</span>
+<span style="color: #BA2121; font-style: italic">    &quot;Elastic&quot; refers to the flexibility of underlying memory</span>
+<span style="color: #BA2121; font-style: italic">    &quot;&quot;&quot;</span>
+</code></pre></div>
+
+<p><strong>所有通信模式共享同一个 Buffer</strong>，区别仅在于：<br />
+- <strong>SM 数量</strong>（Normal 多，Low-Latency 少）<br />
+- <strong>QP 数量</strong>（Normal 多，Low-Latency 少）<br />
+- <strong>Warp 角色分配</strong>（Normal 用 notify + dispatch warps，Low-Latency 可能只用 dispatch warps）</p>
+<h3 id="13">1.3 量化的系统影响因素</h3>
+<h4 id="1token-replicated-token-volume">关键因子 1：Token 复制量（Replicated Token Volume）</h4>
+<p>每个 token 需要被复制到多少个远端 rank？这是 <strong>topk 和 expert 分布</strong> 的函数：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:770-772</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_expected_topk</span>(num_groups: <span style="color: #008000">int</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">float</span>:
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;计算单个 token 期望去多少个不同的 rank（去重后）&quot;&quot;&quot;</span>
+    <span style="color: #008000; font-weight: bold">return</span> num_groups <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> math<span style="color: #666">.</span>comb(num_experts <span style="color: #666">-</span> num_experts <span style="color: #666">//</span> num_groups, num_topk) <span style="color: #666">/</span> math<span style="color: #666">.</span>comb(num_experts, num_topk))
+</code></pre></div>
+
+<p><strong>推导</strong>：<br />
+- 总共有 <code>num_groups</code> 个 rank 组<br />
+- 每组有 <code>num_experts // num_groups</code> 个 expert<br />
+- 一个 token 选 <code>num_topk</code> 个 expert<br />
+- 期望去重的 rank 数 = <code>num_groups × P(至少一个 expert 在该组)</code></p>
+<p><strong>示例</strong>：EP=256, experts=256, topk=8<br />
+- 每个 rank 1 个 expert<br />
+- 期望去重 rank 数 ≈ 8（因为 topk=8 很少碰撞）</p>
+<p><strong>示例</strong>：EP=256, experts=2048, topk=8<br />
+- 每个 rank 8 个 expert<br />
+- 期望去重 rank 数 ≈ 8 × (1 - C(2040,8)/C(2048,8)) ≈ 8 × 0.031 ≈ 0.25<br />
+- 大部分 token 都在本地 rank</p>
+<h4 id="2hbm-sm">关键因子 2：HBM 读写带宽（SM 侧）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:781-806</span>
+<span style="color: #3D7B7B; font-style: italic"># Read tokens</span>
+sm_read <span style="color: #666">+=</span> <span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk  <span style="color: #3D7B7B; font-style: italic"># 每个 token 只需要读一次（无论去多少个 rank）</span>
+
+<span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleout_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span>:
+    <span style="color: #3D7B7B; font-style: italic"># Hybrid 模式</span>
+    sm_write <span style="color: #666">+=</span> <span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk  <span style="color: #3D7B7B; font-style: italic"># Scaleup warps 写 send buffer</span>
+    sm_write <span style="color: #666">+=</span> (<span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk) <span style="color: #666">*</span> (num_expected_scaleout_topk <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleout_ranks)  <span style="color: #3D7B7B; font-style: italic"># Local bypass</span>
+    sm_read <span style="color: #666">+=</span> num_expected_scaleout_topk <span style="color: #666">/</span> num_expected_topk  <span style="color: #3D7B7B; font-style: italic"># Forward warps 读</span>
+    sm_write <span style="color: #666">+=</span> <span style="color: #666">1</span>  <span style="color: #3D7B7B; font-style: italic"># Forward warps 写 scaleup</span>
+<span style="color: #008000; font-weight: bold">else</span>:
+    <span style="color: #3D7B7B; font-style: italic"># Direct 模式</span>
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_rdma_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span>:
+        sm_write <span style="color: #666">+=</span> <span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk  <span style="color: #3D7B7B; font-style: italic"># 写 send buffer</span>
+    sm_write <span style="color: #666">+=</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_nvlink_ranks <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks  <span style="color: #3D7B7B; font-style: italic"># 发起 NVLink</span>
+</code></pre></div>
+
+<p><strong>单位</strong>：每 token 的 HBM 读写量（以 token 数据量为单位 1.0）</p>
+<h4 id="3nvlinkrdma">关键因子 3：NVLink/RDMA 通信带宽（网络侧）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># Direct 模式</span>
+nvlink_traffic <span style="color: #666">+=</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_nvlink_ranks <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> <span style="color: #666">1</span> <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_nvlink_ranks)
+rdma_traffic <span style="color: #666">+=</span> (<span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks <span style="color: #666">-</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_nvlink_ranks) <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks
+
+<span style="color: #3D7B7B; font-style: italic"># Hybrid 模式</span>
+rdma_traffic <span style="color: #666">+=</span> (<span style="color: #666">1</span> <span style="color: #666">/</span> num_expected_topk) <span style="color: #666">*</span> (num_expected_scaleout_topk <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> <span style="color: #666">1</span> <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleout_ranks))
+nvlink_traffic <span style="color: #666">+=</span> <span style="color: #666">1</span> <span style="color: #666">-</span> (<span style="color: #666">1</span> <span style="color: #666">/</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleup_ranks)
+</code></pre></div>
+
+<p><strong>单位</strong>：每 token 的网络通信量（以 token 数据量为单位 1.0）</p>
+<h4 id="4">关键因子 4：瓶颈识别</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:809-812</span>
+<span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleout_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span> <span style="color: #A2F; font-weight: bold">and</span> (rdma_traffic <span style="color: #666">/</span> rdma_gbs) <span style="color: #666">&gt;</span> (nvlink_traffic <span style="color: #666">/</span> nvlink_gbs):
+    bounded_traffic, bounded_gbs <span style="color: #666">=</span> rdma_traffic, rdma_gbs
+<span style="color: #008000; font-weight: bold">else</span>:
+    bounded_traffic, bounded_gbs <span style="color: #666">=</span> nvlink_traffic, nvlink_gbs
+</code></pre></div>
+
+<p><strong>瓶颈 = max(流量/带宽)</strong>，找到时间上最受限的资源。</p>
+<h3 id="14-normal-vs-low-latency">1.4 Normal vs Low-Latency 的统一解释</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal 场景</th>
+<th>Low-Latency 场景</th>
+<th>统一机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SM 数</strong></td>
+<td>多（64-160）</td>
+<td>少（4-8）</td>
+<td><code>num_sms</code> 参数控制</td>
+</tr>
+<tr>
+<td><strong>QP 数</strong></td>
+<td>多（SM×16）</td>
+<td>少（SM+1）</td>
+<td><code>get_theoretical_num_qps</code> 自动</td>
+</tr>
+<tr>
+<td><strong>prefer_overlap</strong></td>
+<td>False（不重叠）</td>
+<td>True（重叠计算）</td>
+<td><code>prefer_overlap_with_compute</code></td>
+</tr>
+<tr>
+<td><strong>瓶颈</strong></td>
+<td>通常 RDMA</td>
+<td>通常 NVLink</td>
+<td>自动识别</td>
+</tr>
+<tr>
+<td><strong>Buffer</strong></td>
+<td>相同</td>
+<td>相同</td>
+<td>同一 <code>ElasticBuffer</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>在 V2 中，"Low-Latency" 不是独立模式，而是 Normal 在特定参数配置下的特例</strong>：<br />
+- SM 数少（4-8）<br />
+- QP 数少<br />
+- 优先与计算重叠</p>
+<hr />
+<h2 id="2-sm">2. SM 自动估算的本质是什么？</h2>
+<h3 id="21">2.1 核心公式推导</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:818-825</span>
+num_sms <span style="color: #666">=</span> <span style="color: #008000">max</span>(
+    bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_read <span style="color: #666">/</span> sm_read_gbs,
+    bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_write <span style="color: #666">/</span> sm_write_gbs,
+)
+num_sms <span style="color: #666">=</span> align(<span style="color: #008000">max</span>(<span style="color: #666">4</span>, math<span style="color: #666">.</span>ceil(num_sms <span style="color: #666">*</span> <span style="color: #666">1.25</span>)), <span style="color: #666">2</span>)
+</code></pre></div>
+
+<h4 id="_2">物理含义</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>num_sms = max(
+    (网络瓶颈带宽 / 每token网络流量) × (每token HBM读量 / 每SM HBM读带宽),
+    (网络瓶颈带宽 / 每token网络流量) × (每token HBM写量 / 每SM HBM写带宽)
+)
+</code></pre></div>
+
+<p><strong>第一项</strong>：为了满足网络读取需求，需要多少 SM 来提供 HBM 读数据<br />
+<strong>第二项</strong>：为了满足网络写入需求，需要多少 SM 来消费 HBM 写数据</p>
+<h4 id="_3">为什么是这个公式？</h4>
+<p><strong>Roofline 模型</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>时间 = max(网络时间, HBM时间)
+     = max(流量/带宽, 数据量/(SM数 × 每SM带宽))
+</code></pre></div>
+
+<p>令 网络时间 = HBM时间（最优状态）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>流量 / 网络带宽 = 数据量 / (SM数 × 每SM带宽)
+→ SM数 = (网络带宽 / 流量) × (数据量 / 每SM带宽)
+</code></pre></div>
+
+<h3 id="22-num_experts-num_topk">2.2 为什么用 num_experts 和 num_topk，而不是卡数？</h3>
+<h4 id="sm-bufferbuffer-expert">关键洞察：SM 处理的是 Buffer，Buffer 是 Expert 粒度的</h4>
+<p><strong>用户的推测是正确的</strong>：</p>
+<blockquote>
+<p>SM 要处理到所有专家/卡的连接，推测 deepep buffer 是一等公民，而 buffer 是 expert 专家粒度，所以要读写内存位置（buffer）数量是 expert 的函数，而不仅仅是卡数。</p>
+</blockquote>
+<p><strong>源码验证</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:770-772</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_expected_topk</span>(num_groups: <span style="color: #008000">int</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">float</span>:
+    <span style="color: #008000; font-weight: bold">assert</span> num_experts <span style="color: #666">%</span> num_groups <span style="color: #666">==</span> <span style="color: #666">0</span>
+    <span style="color: #008000; font-weight: bold">return</span> num_groups <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> math<span style="color: #666">.</span>comb(num_experts <span style="color: #666">-</span> num_experts <span style="color: #666">//</span> num_groups, num_topk) <span style="color: #666">/</span> math<span style="color: #666">.</span>comb(num_experts, num_topk))
+</code></pre></div>
+
+<p><strong><code>num_expected_topk</code> 是 <code>num_experts</code> 和 <code>num_topk</code> 的函数</strong>，而不是直接依赖卡数。</p>
+<h4 id="expert">为什么 Expert 数比卡数更本质？</h4>
+<p><strong>原因 1：Token 复制量取决于 Expert 分布，而非卡数</strong></p>
+<p>考虑两种配置：<br />
+- 配置 A：EP=64, experts=64, topk=8 → 每卡 1 expert<br />
+- 配置 B：EP=64, experts=512, topk=8 → 每卡 8 expert</p>
+<p>虽然卡数相同，但配置 A 每个 token 期望去 8 个不同 rank（去重后），配置 B 可能只有 1-2 个 rank。</p>
+<p><strong>原因 2：Buffer 寻址是 Expert 粒度的</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:318-320</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>uncasted_dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(uncasted_dst_expert_idx);
+stored_dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+</code></pre></div>
+
+<p><strong>TopK idx 直接给出 expert index</strong>，然后才转换为 rank index。SM 的负载取决于 <strong>需要访问多少个不同的 expert → 多少个不同的 buffer slot</strong>。</p>
+<p><strong>原因 3：卡数的影响已隐式包含</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:778</span>
+num_expected_topk <span style="color: #666">=</span> get_expected_topk(<span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks)  <span style="color: #3D7B7B; font-style: italic"># num_ranks = num_scaleout_ranks × num_scaleup_ranks</span>
+</code></pre></div>
+
+<p><code>num_ranks</code> 就是卡数（总 EP 数）。但 <strong>卡数通过与 expert 分布的交互来影响流量</strong>，而非独立变量。</p>
+<h3 id="23-topk-buffer">2.3 TopK 的作用：Buffer 间数据搬移量</h3>
+<p>用户的第二个推测：</p>
+<blockquote>
+<p>SM 处理逻辑里，要针对 token level 的处理，token level 有一个 topk 的复制数量，采用了 topk 粒度的发送控制逻辑，也可能 buffer 粒度没有 topk 概念，但是 buffer 间的数据搬移量跟 topk 相关。</p>
+</blockquote>
+<p><strong>源码验证</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:315-328</span>
+EP_STATIC_ASSERT(kNumTopk<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #BA2121">&quot;Insufficient lanes for loading top-k indices&quot;</span>);
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>stored_dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>uncasted_dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(uncasted_dst_expert_idx);
+<span style="color: #BBB">    </span>stored_dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #BBB">    </span>tma_buffer.get_topk_idx_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(topk_weights<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">        </span>tma_buffer.get_topk_weights_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_weights<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+}
+</code></pre></div>
+
+<p><strong>TopK 直接影响</strong>：<br />
+1. <strong>每个 token 需要发送多少次</strong>：topk 个 expert → 去重后 N 个 rank → N 次发送<br />
+2. <strong>Warp 内并行度</strong>：topk ≤ 32（一个 warp 的 lane 数），每个 lane 处理一个 expert 选择<br />
+3. <strong>Buffer slot 分配</strong>：每个 topk 选择对应一个独立的 buffer slot</p>
+<h3 id="24">2.4 为什么不直接考虑卡数？</h3>
+<p>用户的第三个问题：</p>
+<blockquote>
+<p>每卡处理负载应该与卡数有关，每卡上的专家数量跟卡数有关，为什么不考虑卡数这个概念，来估算 sms？</p>
+</blockquote>
+<p><strong>回答</strong>：卡数 <strong>确实被考虑了</strong>，但它是通过 <code>num_expected_topk</code> 间接体现的：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:778</span>
+num_expected_topk <span style="color: #666">=</span> get_expected_topk(<span style="color: #008000">self</span><span style="color: #666">.</span>num_ranks)
+</code></pre></div>
+
+<p><strong>数学关系</strong>：<br />
+- 固定 experts 和 topk 时，增加卡数 → 每卡 expert 数减少 → 去重后 rank 数增加 → 通信量增加 → 需要更多 SM<br />
+- 固定卡数和 topk 时，增加 experts → 每卡 expert 数增加 → 去重后 rank 数减少 → 通信量减少 → 需要更少 SM</p>
+<p><strong>卡数本身不是独立变量</strong>，因为：<br />
+- 如果 expert 数和卡数同比增加（保持每卡 expert 数不变），通信模式不变<br />
+- 真正决定通信量的是 <strong>token 需要跨越多少边界</strong>，这由 expert 分布决定</p>
+<h3 id="25-sm">2.5 SM 估算的完整流程图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>输入: num_experts, num_topk, num_ranks (卡数)
+         ↓
+    get_expected_topk(num_ranks)
+         ↓
+    num_expected_topk = num_ranks × (1 - C(E-E/R, k) / C(E, k))
+         ↓
+    ┌──────────────────────────────────────┐
+    │  sm_read = 1 / num_expected_topk     │  (每 token HBM 读)
+    │  sm_write = f(num_expected_topk, 卡数) │  (每 token HBM 写)
+    │  rdma_traffic = g(卡数, num_expected_topk) │
+    │  nvlink_traffic = h(卡数, num_expected_topk) │
+    └──────────────────────────────────────┘
+         ↓
+    bottleneck = max(rdma_traffic/rdma_gbs, nvlink_traffic/nvlink_gbs)
+         ↓
+    num_sms = bottleneck × max(sm_read/sm_read_gbs, sm_write/sm_write_gbs)
+         ↓
+    num_sms = align(max(4, ceil(num_sms × 1.25)), 2)
+</code></pre></div>
+
+<hr />
+<h2 id="3-dispatch-topk">3. dispatch 内的 TopK 复制机制</h2>
+<h3 id="31">3.1 用户的三个问题</h3>
+<ol>
+<li><code>dispatch_forward</code> 函数是否包含了 topk buffer 的生成？</li>
+<li>Token 的复制过程，是否发生在 <code>buffer.dispatch</code> 内？</li>
+<li>是否利用了 <code>topk_idx</code> 函数？</li>
+</ol>
+<h3 id="32-bufferdispatch">3.2 答案：是的，全部在 buffer.dispatch 内完成</h3>
+<p><code>buffer.dispatch()</code> 是一个 <strong>多阶段 kernel pipeline</strong>，包含：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>Kernel</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Notify</td>
+<td><code>dispatch_impl</code> (notify warps)</td>
+<td>统计 expert → rank 映射</td>
+</tr>
+<tr>
+<td>2. Dispatch</td>
+<td><code>dispatch_impl</code> (dispatch warps)</td>
+<td>根据 topk_idx 复制 token 到 send buffer</td>
+</tr>
+<tr>
+<td>3. Barrier</td>
+<td>Gin barrier</td>
+<td>等待所有数据到达</td>
+</tr>
+<tr>
+<td>4. Epilogue</td>
+<td><code>dispatch_copy_epilogue_impl</code></td>
+<td>从 buffer 搬到 recv tensor</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 阶段详解</h3>
+<h4 id="1notify-warps-dispatchcuh79-258">阶段 1：Notify Warps 统计（<code>dispatch.cuh:79-258</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:95-107</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>global_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sm_idx;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 每个 token 的 topk 选择</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(__ldg(topk_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">        </span>atomicAdd_block(expert_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// Expert 维度计数</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Rank 维度需要去重</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>deduplicate(dst_rank_idx,<span style="color: #BBB"> </span>lane_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">        </span>atomicAdd_block(rank_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_rank_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// Rank 维度去重计数</span>
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：<code>ptx::deduplicate</code> 确保同一个 rank 只计数一次，即使多个 expert 都在该 rank。</p>
+<h4 id="2dispatch-warps-tokendispatchcuh259-395">阶段 2：Dispatch Warps 复制 Token（<code>dispatch.cuh:259-395</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:278-394</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_start<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dispatch_warp_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sm_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_stride<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_start;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>token_stride)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMA load hidden data from global to shared memory</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_hidden_ptr(),<span style="color: #BBB"> </span>
+<span style="color: #BBB">                     </span>math<span style="color: #666">::</span>advance_ptr(x,<span style="color: #BBB"> </span>token_i64_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes),<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Load top-k indices and weights</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>uncasted_dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(uncasted_dst_expert_idx);
+<span style="color: #BBB">        </span>stored_dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #BBB">        </span>tma_buffer.get_topk_idx_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← TopK idx 写入 smem buffer</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(topk_weights<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">            </span>tma_buffer.get_topk_weights_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_weights<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(copied_topk_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">            </span>copied_topk_idx[token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>uncasted_dst_expert_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 复制 topk_idx</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Deduplicate ranks and assign slots</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>deduplicate(stored_dst_rank_idx,<span style="color: #BBB"> </span>lane_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>stored_dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)
+<span style="color: #BBB">        </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>atomicAdd(workspace_layout.get_scaleup_atomic_sender_counter()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>stored_dst_rank_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. Write dst_buffer_slot_idx (for later combine)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">            </span>rank_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTokensPerRank<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #BBB">        </span>dst_buffer_slot_idx[token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>value;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 生成 slot idx</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 5. TMA store to send buffer (NVLink)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">        </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),<span style="color: #BBB"> </span>stored_dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">:</span>
+<span style="color: #BBB">        </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 6. RDMA put to remote ranks</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">                        </span>send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),<span style="color: #BBB"> </span>stored_dst_rank_idx);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>TopK 复制的核心机制</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>for each token:
+    for each topk selection (lane_idx &lt; kNumTopk):
+        expert_idx = topk_idx[token_idx][lane_idx]
+        rank_idx = expert_idx / experts_per_rank
+        slot_idx = atomicAdd(counter[rank_idx], 1)  # 原子分配 slot
+
+        # 写入 smem TMA buffer
+        tma_buffer.topk_idx[lane_idx] = expert_idx
+        tma_buffer.topk_weights[lane_idx] = topk_weights[token_idx][lane_idx]
+
+        # 发送数据到远端
+        if rank_idx is NVLink-accessible:
+            TMA store to symmetric buffer
+        else:
+            RDMA put to remote buffer
+</code></pre></div>
+
+<h4 id="3copy-epiloguedispatch_copy_epiloguecuh">阶段 3：Copy Epilogue（<code>dispatch_copy_epilogue.cuh</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch_copy_epilogue.cuh:70-81</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_recv_tokens;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 确定当前 token 来自哪个 rank</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(i<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>current_rank_end)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>current_rank_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">        </span>current_rank_start<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>current_rank_end;
+<span style="color: #BBB">        </span>current_rank_end<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>psum_num_recv_tokens_per_scaleup_rank[current_rank_idx];
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>buffer_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scaleup_buffer.get_rank_buffer(current_rank_idx).get_token_buffer(i<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>current_rank_start);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA load from buffer to smem</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>buffer_token.get_base_ptr(),<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 确定目标位置</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kDoExpand)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Expand mode: 按 expert 顺序排列</span>
+<span style="color: #BBB">        </span>dst_tensor_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>atomicAdd(psum_num_recv_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_expert_idx,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Non-expand mode: 保持到达顺序</span>
+<span style="color: #BBB">        </span>dst_tensor_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i;
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA store to recv tensor</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(math<span style="color: #666">::</span>advance_ptr(recv_x,<span style="color: #BBB"> </span>dst_tensor_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes),
+<span style="color: #BBB">                      </span>tma_buffer.get_hidden_ptr(),<span style="color: #BBB"> </span>kNumHiddenBytes);
+}
+</code></pre></div>
+
+<h3 id="34-topk-buffer">3.4 TopK Buffer 的生成时机</h3>
+<p><strong>TopK buffer 在 dispatch kernel 内部生成</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:321-325</span>
+tma_buffer.get_topk_idx_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dst_expert_idx;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(topk_weights<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>tma_buffer.get_topk_weights_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>__ldg(topk_weights<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx);
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(copied_topk_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>copied_topk_idx[token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>uncasted_dst_expert_idx;
+</code></pre></div>
+
+<p><strong>TMA buffer 的内存布局（TokenLayout）</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>[hidden (TMA-aligned)] [sf (TMA-aligned)] [metadata (TMA-aligned)] [mbarrier]
+                                    ↓
+                             metadata = topk_idx (num_topk * 4) 
+                                      + topk_weights (num_topk * 4)
+                                      + src_token_global_idx (4) 
+                                      + linked_list_idx (num_topk * 4)
+</code></pre></div>
+
+<h3 id="35">3.5 完整数据流图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>input: x[num_tokens, hidden], topk_idx[num_tokens, topk], topk_weights[num_tokens, topk]
+                                    ↓
+                    ┌───────────────────────────────────────┐
+                    │         dispatch_impl kernel          │
+                    │                                       │
+                    │  Notify Warps:                        │
+                    │    for each token:                    │
+                    │      for each topk (lane):            │
+                    │        expert = topk_idx[token][lane] │
+                    │        rank = expert / E_per_rank     │
+                    │        atomicAdd(expert_count, 1)     │
+                    │        atomicAdd(rank_count, 1)  // dedup │
+                    │    → prefix sum → psum_num_recv_tokens │
+                    │                                       │
+                    │  Dispatch Warps:                      │
+                    │    for each token:                    │
+                    │      TMA load hidden → smem          │
+                    │      load topk_idx → smem            │  ← TopK buffer 生成
+                    │      load topk_weights → smem        │
+                    │      for each topk (lane):            │
+                    │        slot = atomicAdd(counter, 1)   │  ← slot 分配
+                    │        if NVLink: TMA store           │  ← Token 复制
+                    │        else: RDMA put                 │  ← Token 复制
+                    │    → trigger PDL (Programmatic Launch)│
+                    └───────────────────────────────────────┘
+                                    ↓
+                    ┌───────────────────────────────────────┐
+                    │    dispatch_copy_epilogue_impl kernel │
+                    │                                       │
+                    │    for each received token:           │
+                    │      TMA load from buffer → smem     │
+                    │      determine dst_tensor_idx:        │
+                    │        if expand: atomicAdd(psum)     │
+                    │        else: dst = arrival order      │
+                    │      TMA store to recv_x[dst]        │
+                    │      store recv_topk_idx[dst]        │
+                    │      store recv_topk_weights[dst]    │
+                    └───────────────────────────────────────┘
+                                    ↓
+output: recv_x[num_recv_tokens, hidden], recv_topk_idx, recv_topk_weights, handle
+</code></pre></div>
+
+<h3 id="36-hybrid-dispatch">3.6 Hybrid Dispatch 的特殊性</h3>
+<p>在 Hybrid 模式下，token 复制分为两步：</p>
+<ol>
+<li><strong>Scaleout Warps</strong>：将 token 从本地 GPU → RDMA → 远端 scaleout rank 的 scaleout_recv_buffer</li>
+<li><strong>Forward Warps</strong>：将 token 从 scaleout_recv_buffer → NVLink → 目标 scaleup rank 的 scaleup_buffer</li>
+</ol>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:447-455 — Scaleout warps</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>stored_dst_scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>scaleout_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// RDMA put to remote scaleout rank</span>
+<span style="color: #BBB">        </span>scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">        </span>stored_dst_scaleout_rank_idx,
+<span style="color: #BBB">        </span>ncclGinOptFlagsAggregateRequests);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:593-598 — Forward warps</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// NVLink TMA store</span>
+<span style="color: #BBB">        </span>scaleup_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>stored_dst_scaleup_rank_idx);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+}
+</code></pre></div>
+
+<hr />
+<h2 id="_4">总结</h2>
+<h3 id="q1-elasticbuffer-normallow-latency">Q1: ElasticBuffer 统一 Normal/Low-Latency 的量化因素</h3>
+<table>
+<thead>
+<tr>
+<th>因子</th>
+<th>公式</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>num_expected_topk</code></td>
+<td><code>num_ranks × (1 - C(E-E/R, k)/C(E, k))</code></td>
+<td>每 token 期望去重 rank 数</td>
+</tr>
+<tr>
+<td><code>sm_read</code></td>
+<td><code>1 / num_expected_topk</code></td>
+<td>每 token HBM 读量</td>
+</tr>
+<tr>
+<td><code>sm_write</code></td>
+<td><code>f(num_expected_topk, 卡数)</code></td>
+<td>每 token HBM 写量</td>
+</tr>
+<tr>
+<td><code>rdma_traffic</code></td>
+<td><code>g(卡数, num_expected_topk)</code></td>
+<td>每 token RDMA 流量</td>
+</tr>
+<tr>
+<td><code>nvlink_traffic</code></td>
+<td><code>h(卡数, num_expected_topk)</code></td>
+<td>每 token NVLink 流量</td>
+</tr>
+<tr>
+<td><strong>瓶颈</strong></td>
+<td><code>max(rdma_traffic/rdma_gbs, nvlink_traffic/nvlink_gbs)</code></td>
+<td>时间瓶颈</td>
+</tr>
+</tbody>
+</table>
+<h3 id="q2-sm">Q2: SM 估算本质</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>num_sms = bottleneck_ratio × max(sm_read_per_token/sm_read_bw, sm_write_per_token/sm_write_bw)
+</code></pre></div>
+
+<p><strong>为什么用 experts/topk 而非卡数</strong>：<br />
+- Buffer 寻址是 expert 粒度的<br />
+- Token 复制量取决于 expert 分布（topk 选择）<br />
+- 卡数通过 <code>num_expected_topk</code> 间接体现</p>
+<h3 id="q3-topk">Q3: TopK 复制机制</h3>
+<ul>
+<li><strong>是的</strong>，<code>dispatch_forward</code>（即 <code>dispatch_impl</code>）包含 TopK buffer 生成</li>
+<li><strong>是的</strong>，token 复制发生在 <code>buffer.dispatch</code> 内</li>
+<li><strong>是的</strong>，利用 <code>topk_idx</code> 进行：<br />
+  1. 目标 rank 计算：<code>rank = expert_idx / experts_per_rank</code><br />
+  2. Slot 分配：<code>atomicAdd(counter[rank], 1)</code><br />
+  3. 数据路由：NVLink TMA store 或 RDMA put</li>
+</ul>
+<hr />
+<blockquote>
+<p><strong>分析方法论</strong>：本报告基于源码实证，关键结论均有代码行号标注。核心洞察是：V2 通过将 Buffer 提升为一等公民、SM/QP 解析式计算、以及统一的 Kernel Pipeline，实现了 Normal 和 Low-Latency 的统一——差异仅在于参数配置，而非架构设计。</p>
+</blockquote>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

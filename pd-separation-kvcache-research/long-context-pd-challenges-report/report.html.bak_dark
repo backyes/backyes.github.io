@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>超长序列下的 P/D 分离架构挑战 — 学术与行业调研</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --line:#30363d; --purple:#bc8cff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--fg); line-height:1.7; padding:18px; max-width:980px; margin:0 auto; }
+  h1 { font-size:1.55rem; color:var(--accent); margin:8px 0; border-bottom:1px solid var(--line); padding-bottom:8px; }
+  h2 { font-size:1.2rem; color:var(--accent); margin:28px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  h3 { font-size:1.02rem; color:var(--warn); margin:18px 0 8px; }
+  h4 { font-size:0.95rem; color:var(--purple); margin:12px 0 6px; }
+  .meta { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:12px 0; font-size:.85em; }
+  .meta span { display:inline-block; margin-right:14px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 18px; margin:12px 0; }
+  .card.warn { border-left:4px solid var(--warn); }
+  .card.info { border-left:4px solid var(--accent); }
+  .card.ok { border-left:4px solid var(--ok); }
+  .card.insight { background:linear-gradient(90deg,rgba(88,166,255,0.08),transparent); border-left:4px solid var(--accent); }
+  blockquote { border-left:3px solid var(--accent); padding:6px 14px; margin:10px 0; background:#11161d; color:#c9d1d9; border-radius:0 8px 8px 0; font-size:.9em; }
+  blockquote cite { display:block; color:var(--muted); margin-top:6px; font-size:.78rem; }
+  q { color:var(--ok); font-style:italic; }
+  a { color:var(--accent); text-decoration:none; word-break:break-all; }
+  a:hover { text-decoration:underline; }
+  ul,ol { padding-left:22px; margin:6px 0; }
+  li { margin:4px 0; }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:.85em; }
+  th, td { padding:6px 8px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { background:#1c2128; color:var(--accent); }
+  code { background:#1c2128; padding:1px 6px; border-radius:4px; font-size:.88em; }
+  .tag { display:inline-block; background:#1c2128; border:1px solid var(--line); border-radius:12px; padding:2px 10px; font-size:.72em; margin:2px; }
+  pre { background:#0d1117; border:1px solid var(--line); border-radius:6px; padding:10px; overflow-x:auto; font-size:.78em; max-height:300px; }
+  .src { font-size:.76em; color:var(--muted); margin-top:4px; }
+  .src a { color:var(--muted); }
+  .section-nav { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin:12px 0; font-size:.9em; }
+  .section-nav ol { margin:4px 0; }
+  .section-nav a { color:#c9d1d9; }
+  .section-nav a:hover { color:var(--accent); }
+  footer { margin-top:24px; padding-top:12px; border-top:1px solid var(--line); font-size:.78em; color:var(--muted); }
+  .new { display:inline-block; background:rgba(240,136,62,0.2); color:var(--warn); padding:1px 6px; border-radius:4px; font-size:.7em; vertical-align:middle; }
+  @media (max-width:600px){ body{padding:10px;font-size:.95em} h1{font-size:1.3em} h2{font-size:1.1em} }
+</style>
+</head>
+<body>
+
+<h1>超长序列下的 P/D 分离架构挑战</h1>
+<div class="meta">
+<span>📅 2026-07-15</span>
+<span>🎯 学术 + 工业双视角</span>
+<span>📎 子报告：<a href="./index.html">📚 资料全索引</a> · <a href="./decode-memory-bottleneck/report.html">D 端内存瓶颈 Issue</a> · <a href="./vllm-decode-memory/index.html">vLLM D 端架构源码</a> · <a href="./longcontext-qual/report_longcontext_pd_challenge.html">超长序列定性研究</a> · <a href="./industry-quotes/references.md.html">工业界引述</a></span>
+</div>
+
+<div class="card info">
+<b>本报告核心问题</b>：当 LLM 推理的序列长度达到 <b>128K → 1M tokens</b>，<b>P/D 分离（Prefill-Decode Disaggregation）架构面临哪些研究上尚未完全解决的行业挑战？</b><br/>
+调研发现这不是单一问题，而是互相缠绕的<b>三重压力</b>：
+① D 端 KV Cache 膨胀导致的<b>容量瓶颈</b>（Decode-KV-bound，vLLM RFC 已正式命名）<br/>
+② P→D 超长 KV 传输带来的<b>时间压力</b>（TTFT 主导项从计算变成传输）<br/>
+③ 长序列 attention 自身带来的<b>计算图变化</b>（retraction、chunked prefill、低效的 attention kernel）
+</div>
+
+<div class="section-nav">
+<b>📋 目录</b>
+<ol>
+<li><a href=#framing>问题框架：为什么"长序列 × PD 分离"是研究热点</a></li>
+<li><a href=#bottleneck>第一重压力 — D 端 KV 容量瓶颈（Decode-KV-bound）</a></li>
+<li><a href=#transfer>第二重压力 — P→D KV 传输的时间成本</a></li>
+<li><a href=#attention>第三重压力 — 长序列 Attention 自身的反客为主</a></li>
+<li><a href=#industry>行业头部玩家如何公开讨论这一挑战</a></li>
+<li><a href=#academic>学术研究前沿：谁能缓解这三重压力</a></li>
+<li><a href=#gap>研判：已解 / 部分解 / 未解 的问题地图</a></li>
+<li><a href=#refs>引用资料</a></li>
+</ol>
+</div>
+
+<!-- =================================================== -->
+<h2 id="framing">1. 问题框架：为什么"长序列 × PD 分离"是当前研究焦点</h2>
+
+<h3>1.1 背景：PD 分离已是 LLM 推理事实标准</h3>
+<p>DistServe (OSDI'24) 确立 P/D 分离范式后，SGLang、vLLM、Mooncake、NVIDIA Dynamo 等开源 / 商业系统全面跟进，Meta / Alibaba PAI / AWS / Volcengine / Moonshot Kimi 均已落地部署。<b>PD 分离的常态输入长度</b>已从 2024 年的 2-4K tokens，上升到 2025 下半的 32-128K tokens，<b>1M 级别</b>已列入 2026-2027 年产品规划（Kimi K2.5、Claude、Gemini 系列在 2025 年先后宣布 1M 上下文）。</p>
+
+<h3>1.2 新矛盾：PD 分离 + 长序列 = 压力叠加而非简单相加</h3>
+<div class="card insight">
+<p>长序列在<b>共置（colocated）</b>推理中已带来挑战；但在 PD 分离下，这类挑战会<b>被放大</b>，因为：</p>
+<ul>
+<li>Prefill 端的巨大 KV 必须完整<b>搬到</b>D 端 —— 传输路径成为新的主导延迟项。</li>
+<li>D 端必须为每个长请求<b>预留大量 HBM</b>给 KV，但 D 端的高利用率靠的就是小 KV batch；长序列让这个前提失效。</li>
+<li>共置下可以通过"长请求 pair 短请求"让 P 和 D 错峰；PD 分离后两者资源池独立，长请求无法被"错峰缓冲"。</li>
+</ul>
+</div>
+
+<h3>1.3 三重压力的关系</h3>
+<table>
+<tr><th></th><th>压力 ① D 端 KV 容量</th><th>压力 ② P→D KV 传输</th><th>压力 ③ 长序列 Attention 计算</th></tr>
+<tr><td><b>在 PD 分离下被放大机制</b></td><td>D 端 HBM 必须同时存放所有活跃请求的 KV，长请求会让 batch size 急剧压缩</td><td>128K+ 的 KV 经网络搬运，传输时间可能超过 prefill compute 本身</td><td>Decode 每一步都要对完整 KV 做 attention，decode 时长随 sequence 线性增长</td></tr>
+<tr><td><b>关键定性阈值</b></td><td>≈ 128K（GQA 模型 D 端从并行退化为串行）</td><td>≈ 64K（传输开始主导 TTFT）</td><td>≈ 32K（标准 FMHA kernel 效率开始退化）</td></tr>
+<tr><td><b>是否有研究未覆盖区</b></td><td class="warn">有（异构 KV pool sizing 是 open 问题）</td><td class="ok">多数已有工作</td><td class="warn">计算 + 路由联合优化是 open 问题</td></tr>
+</table>
+
+<!-- =================================================== -->
+<h2 id="bottleneck">2. 第一重压力 — D 端 KV 容量瓶颈（Decode-KV-bound）</h2>
+
+<h3>2.1 学术圈与工业界的"官方命名"</h3>
+<div class="card warn">
+<p>vLLM 社区 RFC <a href="https://github.com/vllm-project/vllm/issues/43470">#43470 "Bottleneck-aware expansion for PD disaggregation"</a>（2026-05-22, author: zsn6493）首次将 PD 运行时的压力分为三类：</p>
+<ul>
+<li><b>Prefill-bound</b>：P 端 compute/memory 压力主导 → 加 P 容量</li>
+<li><b>Decode-bound</b>：D 端 token 吞吐 / 调度压力主导 → 加 D 容量</li>
+<li><b>Decode-KV-bound</b>：D 端 <b>KV holding capacity</b> 主导，即使 compute 未饱和 → 加 D 侧 KV capacity / tier</li>
+</ul>
+<p>关键原文：<em>"decode-side KV capacity becomes the dominant bottleneck even when compute is still available; remote KV transfer backlog creates hidden stalls between the two pools"</em></p>
+<p>协作方 robertgshaw2-redhat（llm-d 组织，与 NVIDIA Dynamo 同源）回应：该能力应放在<b>编排层</b>（llm-d flow-control / Dynamo 路由），vLLM 作为执行层只需"暴露压力信号"即可 —— 这一分工共识说明<b>KV 容量调度已从系统问题提升为编排层问题</b>。</p>
+<p class="src">源：<a href="https://github.com/vllm-project/vllm/issues/43470">github.com/vllm-project/vllm/issues/43470</a></p>
+</div>
+
+<h3>2.2 从 SGLang 社区真实 Issue 看 D 端内存不够的具体表现</h3>
+
+<h4>2.2.1 SGLang #24523 — SWA 分配器 bug 让 PD 部署的 input 被硬限 18K tokens（H200 140GB） <span class="new">NEW</span></h4>
+<div class="card warn">
+<p>DeepSeek-V4-Pro FP8 + H200 GPU（total_gpu_memory=138.17 GB），PD 分离 prefill 节点因 <code>is_hybrid_swa=true</code> 错误地把 token 容量钳制到 <code>swa_max_total_num_tokens = 18,432</code>，而实际硬件 KV pool 可支撑 <code>186,368 tokens</code>：</p>
+<pre>Memory profiling: available_gpu_memory=17.94 GB, total_gpu_memory=138.17 GB,
+  mem_fraction_static=0.90, rest_memory=4.13 GB
+DSv4 memory calculation: bytes_per_full_token=23749.84, available_bytes=4.13 GB,
+  full_token=186368
+DSv4 pool sizes: full=186368, swa=18432, c4=46592, ...
+Request ... exceeds the maximum number of tokens: 100804 > 18432</pre>
+<p><b>这说明</b>：即使在 140GB 级 GPU 上，PD 部署的<b>有效 KV 容量利用率低于 14%</b>（Pool 可用 186K 但被 SWA 限到 18K）。问题不只是硬件不够，而是软件栈里的 KV pool 规划逻辑与长序列 load 不对齐。</p>
+<p class="src">源：<a href="https://github.com/sgl-project/sglang/issues/24523">#24523</a>（2026-05-06, 14 comments, open）</p>
+</div>
+
+<h4>2.2.2 SGLang #30010 — 高并发 batch 下 Decode 死锁（GB300 + Kimi-K2.5-NVFP4 + Mooncake）<span class="new">NEW</span></h4>
+<div class="card warn">
+<p>GB300 节点（4 GPU/node, MNNVL fabric），Kimi-K2.5-NVFP4，mooncake transfer backend：</p>
+<table>
+<tr><th>场景</th><th>CUDA graphs</th><th>Per-rank running reqs</th><th>结果</th></tr>
+<tr><td>PD disagg serving (mooncake)</td><td>on</td><td>450–790</td><td style="color:var(--bad)">deadlock 6/6 复现（4–8 分钟）</td></tr>
+<tr><td>PD disagg serving</td><td>off</td><td>512 (slot cap)</td><td style="color:var(--ok)">stable 26 min</td></tr>
+<tr><td>Single-node agg, CUDA-graph on</td><td>on</td><td>730–790</td><td style="color:var(--ok)">stable 16 min</td></tr>
+</table>
+<p><b>解读</b>：在 PD 分离 + CUDA graph 启用 + 高 batch 三者耦合时，D 端在长序列 decode 队列高密度堆积 → KV pool 实时调度与 CUDA graph 捕获的计算图失配 → 死锁。说明 D 端在<b>高并发 + 长序列</b>的压力耦合下，稳定性的工程挑战仍 open。</p>
+<p class="src">源：<a href="https://github.com/sgl-project/sglang/issues/30010">#30010</a>（2026-06）</p>
+</div>
+
+<h3>2.3 SGLang GB300 Long-Context Blog：长序列 decode 被认为是 KV-dominated workload</h3>
+<div class="card info">
+<p>SGLang 在 GB300 NVL72 长上下文博客（2026-07-08）中明确写道：</p>
+<blockquote>"Long-context decode quickly becomes <b>KV-dominated and memory-bound</b>: each new token repeatedly reads the full KV history, so both KV capacity (how many sequences can stay resident) and HBM bandwidth become the primary bottlenecks."</blockquote>
+<p>团队列出的 key techniques 直接针对 D 端容量：</p>
+<ul>
+<li><b>Wide-EP Scaling</b>：Expert Parallelism + DP attention 把 KV 分布到更多 GPU（最多 32 个），"reducing memory pressure per GPU and allowing larger decode batch sizes without triggering <b>retraction</b>"（retraction = 因为容量不足把 KV 丢弃再重算）。</li>
+<li><b>GB300 的 288 GB HBM3e</b>（vs GB200 192 GB）直接给 D 端更多"长序列预算" — 但团队指出"mem_fraction_static=0.75 对比下 GB300 的大内存允许设更高"。即：<b>HBM 容量仍然是长序列 PD 的硬约束</b>，即使每台 GPU 有 288 GB，设置时仍要被 KV pool 吃掉 ~75%。</li>
+</ul>
+<p class="src">源：<a href="https://www.lmsys.org/blog/2026-07-08-gb300-longctx">Deploying DeepSeek on GB300 NVL72: Big Wins in Long-Context Inference</a>（LMSYS 2026-07-08，此前已抓取归档为 blog_gb300_longctx.md）</p>
+</div>
+
+<!-- =================================================== -->
+<h2 id="transfer">3. 第二重压力 — P→D KV 传输的时间成本</h2>
+
+<h3>3.1 为什么 P→D 传输在长序列下成了 TTFT 主导项</h3>
+<p>在 PD 分离下，D 端必须"收到完整 KV Cache"才能开始 decode，而<b>这个等待时间直接加在 TTFT 上</b>。共置推理没有这个成本（KV 就在本地显存里）。</p>
+
+<div class="card info">
+<p>NetKV（2606.03910）论文证明：</p>
+<blockquote>"Disaggregated LLM inference forces the KV cache to traverse the datacenter network before decoding begins, so transfer time enters directly into the Time to First Token (TTFT) budget."</blockquote>
+<p>更进一步的结论：<b>随着上下文长度增长，仅靠 cache-aware（KV 亲和性）和 load-aware（负载均衡）调度会"arbitrarily suboptimal"</b> —— 必须加入<b>网络拓扑感知（network-aware）</b>的代价函数。这说明在长序列 + PD 分离下，P→D 的数据路径本身从"完美网络假设"退化为"实际拓扑相关性"，这是共置推理不需要面对的挑战。</p>
+<p class="src">源：<a href="https://arxiv.org/abs/2606.03910">NetKV (2606.03910)</a></p>
+</div>
+
+<h3>3.2 学术研究前沿：长序列 P→D 传输缓解三件套</h3>
+<table>
+<tr><th>路径</th><th>代表工作</th><th>关键思路</th><th>长序列下适用性</th></tr>
+<tr><td>KV 渐进传输</td><td>Lynx (2607.01831)</td><td>把 KV 拆为 Anchor（高位，优先）+ Residual（低位，投机 decode），D 端收到 Anchor 就开始 decode</td><td>直接针对长序列 decode 不能等完整 KV 的痛点</td></tr>
+<tr><td>GPU 友好 KV 压缩</td><td>SplitZip (2605.01708)</td><td>利用 float exponent 冗余做无损压缩，GPU 上实时编解码</td><td>"especially for long-input and agentic workloads" — 作者在摘要里明确面向的场景</td></tr>
+<tr><td>语义蒸馏</td><td>SCD (2606.07684)</td><td>用 low-rank 重建 + 稀疏 patch 替代原始 KV</td><td>长序列下 semantic misalignment 随层累积，需有损 / 无损的精度取舍</td></tr>
+<tr><td>按 token 混合精度</td><td>SpectrumKV (2606.08635)</td><td>attention sink FP16 / 中重要 INT8 / 次重要 INT4（按模型 adaptive）</td><td>长序列下"重要 token"分布变化，需要 token 级别的保护</td></tr>
+</table>
+
+<h3>3.3 跨 DC P→D 的极端情况（1M+ tokens 直接跨城）</h3>
+<div class="card info">
+<p>Prefill-as-a-Service (PaaS, 2604.15039) 把 P 端和 D 端<b>物理拆分到不同 DC</b>，之间走 commodity Ethernet：</p>
+<blockquote>"... PD disaggregation has become the standard architecture for large-scale LLM serving, but in practice its deployment boundary is still determined by KVCache transfer. ... real workloads remain bursty, request lengths are highly skewed, prefix caches are evenly distributed, and inter-cluster bandwidth fluctuates."</blockquote>
+<p><b>对长序列研究者的启示</b>：长序列下的 P→D 路径已经从"机内 NVLink" → "机架 RDMA" → "DC 内 RoCE" 一路退化到 <b>"跨 DC Ethernet"</b>。这是极端但现实的场景，在研究长序列 PD 时必须把<b>网络距离</b>作为一等参数，而不是 off-band 假设。</p>
+<p class="src">源：<a href="https://arxiv.org/abs/2604.15039">Prefill-as-a-Service (2604.15039)</a></p>
+</div>
+
+<!-- =================================================== -->
+<h2 id="attention">4. 第三重压力 — 长序列 Attention 自身的反客为主</h2>
+
+<h3>4.1 为什么长序列下"retraction"成为 D 端的隐性成本</h3>
+<p>在序列长度远大于 GPU cache 容量时，D 端只能保留最新的 K 个 token（sliding window），一旦 decode 窗口滑出 KV pool，需要<b>丢弃旧 KV 并在重新需要时 recompute</b>——这就是 retraction。</p>
+<div class="card warn">
+<p>GB300 博客原文明确提及这一危险：Wide-EP 的目标之一是 "<b>without triggering retraction</b>"。说明即使 288 GB HBM 的 GPU，retraction 在 128K 工作负载下仍是一个现实风险。</p>
+<p>SGLang #31252 内也讨论了 <b>HiCache</b> 方案——Prefill 端用根号的 KV cache 表示（Lora-style），Decode 端只在需要时 reconstruct —— 这是对 retraction 问题的一个<b>重构方案</b>。</p>
+<p class="src">源：<a href="https://github.com/sgl-project/sglang/issues/31252">#31252（HiCache discussion）</a> · <a href="https://www.lmsys.org/blog/2026-07-08-gb300-longctx">GB300 博客</a></p>
+</div>
+
+<h3>4.2 SGLang 对长序列的"PP prefill + 动态 chunking"路径</h3>
+<p>在 128K prefill 下，TTFT 从 ~3.2s 被压缩到 ~8.6s（GB300 + 32K dynamic chunking）。核心逻辑是</p>
+<ul>
+<li>把 128K prefill 切成 32K 的 chunk，在<b>流水线（pipeline parallel）</b>内 overlap</li>
+<li>Dynamic chunking vs static chunking <b>8-17% 提升</b>，因为消除了固定调度下的 pipeline bubble</li>
+</ul>
+<p>这说明：即使 P 端计算和网络传输都已经优化，<b>prefill 本身的调度粒度</b>在 128K+ 下仍是一个开放优化空间。</p>
+
+<h3>4.3 芯片级方案：3DLS 对长序列的启示</h3>
+<div class="card info">
+<p>3DLS（2607.01617）指出，在长序列 PD 分离（每 layer KV 都要搬到 D 端）下，<b>KV 传输与 TP 的 all-to-all 集体通信在同一 2D 平面互连上混跑</b>，decode critical path 被拉长。</p>
+<p>3DLS 的解法：把 KV 传输走<b>垂直（3D TSV）通道</b>，让 decode-side TP 留在平面互连上。1.49× throughput 与 60.2% latency 下降，给出方向：<b>长序列 PD 的芯片互连拓扑需要为 KV 传输单独开道</b>。</p>
+<p class="src">源：<a href="https://arxiv.org/abs/2607.01617">3DLS (2607.01617)</a></p>
+</div>
+
+<h3>4.4 Conversation-level 调度：避免每 turn 都重新搬 KV</h3>
+<p>长序列<b>不仅</b>是"单请求长 prompt"，更是"多轮对话累积长 history"。</p>
+<ul>
+<li><b>ConServe</b>（2606.01839）：把调度单元从"turn"提升到"conversation"，Turn 1 走 PD，之后 pin 在同一个 D 节点，<b>不再反复搬</b>。p95 first-effective-token ↓51.08%，能效 +7.75%。</li>
+<li><b>PPD MultiTurn</b>（2606.13358）：区分 full prefill 与 append-prefill，后者直接在 D 端完成，KV 不再跨节点 —— Turn 2+ TTFT ↓68%。</li>
+</ul>
+<p>这两项工作共同指向一个洞察：<b>长序列 PD 的真实压力不在"长 prompt"本身，而在"长 history 反复被搬动"</b>。缓解策略的核心是<b>"稳定 D 端 residency"</b>——一旦 KV 落地 D 端，就尽量别动。</p>
+
+<!-- =================================================== -->
+<h2 id="industry">5. 行业头部玩家如何公开讨论这一挑战</h2>
+
+<h3>5.1 SGLang（LMSYS）</h3>
+<ul>
+<li>GB300 博客明确说长序列 decode 进入"KV-dominated and memory-bound"状态，关键不是 compute 而是<b>KV 容量与HBM 带宽</b>。</li>
+<li>EPD（2026-01）讨论弹性 Encoder-Prefill-Decode 分离 —— 128K+ 图像 token 也会压垮固定 D 端。</li>
+<li>Heterogeneous EPD（2026-06）把 CPU 也纳入 EPD 资源池 —— 长序列下纯 GPU 端吃紧，必须加入异构存储层。</li>
+</ul>
+
+<h3>5.2 Moonshot Kimi / Mooncake（FAST'25）</h3>
+<ul>
+<li>Mooncake 是业界<b>第一家</b>在论文中明确写"highly overloaded scenarios"作为 PD 分离主要挑战的工作。其核心设计选择——<b>prediction-based early rejection</b>——正是针对"D 端装不下所有到达的 KV"这一长序列瓶颈。</li>
+<li>三级 KV 存储（GPU HBM → CPU DRAM → SSD / 网络）把"D 端容量"从 HBM 单一一层扩展为<b>三层存储</b>，是唯一商业系统中长序列存储分层的明确实现。</li>
+</ul>
+
+<h3>5.3 vLLM</h3>
+<ul>
+<li>RFC #43470 正式把 <b>Decode-KV-bound</b> 列为 PD 三大瓶颈类之一 —— 社区<b>共识</b>已形成。</li>
+<li>vLLM 的 NIXL lease renewal（lease=30s+heartbeat）是长序列 PD 下的一种"租约式容量预留"方案：D 端必须持续 heartbeat 才能保持 KV，失败则 KV 兜底清理 —— 长序列下 heartbeat 压力显著上升。</li>
+</ul>
+
+<h3>5.4 NVIDIA Dynamo</h3>
+<ul>
+<li>沿用 KV-aware Smart Routing 把<b>KV 热度</b>纳入 D 端选择打分 —— 长序列 D 端的热门 KV 会持续占据 pool，如何避免"热 KV 偏见"是一个 open sub-problem。</li>
+<li>GTC 2026 上 Dynamo 把 PD 分离 + Large Expert Parallelism 并推（参考 SGLang GB300 博客的致谢列表）。</li>
+</ul>
+
+<h3>5.5 Meta / Alibaba / AWS</h3>
+<ul>
+<li><b>Meta</b>（PyTorch Blog 2025.09）：强调"D 端独立扩缩容"，但没明确写长序列 D 端容量瓶颈。</li>
+<li><b>Alibaba PAI-EAS</b>：提供静态 / 动态 / 共置三种 PD 模式，并开放 EP+PD 联合部署（DeepSeek MoE）。</li>
+<li><b>AWS</b>：Bedrock + Dynamo + HyperPod，提供 token-threshold 决定是否走 PD 分离 —— 长序列用户接受"走分离"或"走共置"的配置型取舍。</li>
+</ul>
+
+<!-- =================================================== -->
+<h2 id="academic">6. 学术研究前沿：谁能缓解这三重压力</h2>
+
+<h3>6.1 第一类：KV Cache 容量节省（让 D 端装更多）</h3>
+<table>
+<tr><th>工作</th><th>年份</th><th>核心思路</th><th>对 PD 长序列的适用度</th></tr>
+<tr><td>Mooncake (2407.00079)</td><td>FAST'25</td><td>三级 KV 存储（GPU-CPU-SSD）+ early rejection</td><td>★★★★★ 商业部署先例</td></tr>
+<tr><td>Prefill-as-a-Service (2604.15039)</td><td>2026</td><td>跨 DC P→D，commodity Ethernet 传 KV</td><td>★★★★ 长序列 × 跨 DC</td></tr>
+<tr><td>Lynx (2607.01831)</td><td>2026</td><td>Anchor + Residual 双重渐进传输</td><td>★★★★ 解决"D 端等完整 KV 才 decode"的假设</td></tr>
+<tr><td>SpectrumKV (2606.08635)</td><td>2026</td><td>per-token mixed precision 保护 attention sink</td><td>★★★★ 长序列下 attention sink 是关键</td></tr>
+<tr><td>3DLS (2607.01617)</td><td>2026</td><td>KV 传输走 3D 垂直互连</td><td>★★★ 芯片级，2027+ 才有硅</td></tr>
+<tr><td>HMA-Serve (2606.29986)</td><td>2026</td><td>GDDR-P + HBM-D 异构（phase-wise 量化）</td><td>★★★ 长序列下 prefill 端 KV 精度损失问题</td></tr>
+</table>
+
+<h3>6.2 第二类：P→D 传输让路</h3>
+<table>
+<tr><th>工作</th><th>年份</th><th>核心思路</th></tr>
+<tr><td>SplitZip (2605.01708)</td><td>2026</td><td>GPU 实时 lossless KV 压缩，613 GB/s</td></tr>
+<tr><td>SCD (2606.07684)</td><td>2026</td><td>语义蒸馏替代 raw KV（low-rank + sparse patch），TTFT ↑2.65×</td></tr>
+<tr><td>NetKV (2606.03910)</td><td>2026</td><td>network-aware D 端选择（含拓扑代价）</td></tr>
+<tr><td>MFS (2603.17456)</td><td>2026</td><td>Least-Laxity-First + RMLQ 避免多阶段流拥塞</td></tr>
+<tr><td>TraCT (2512.18194)</td><td>2025</td><td>CXL shared KV cache 替代 RDMA（rack-scale）</td></tr>
+</table>
+
+<h3>6.3 第三类：计算图 / 调度层让路</h3>
+<table>
+<tr><th>工作</th><th>年份</th><th>核心思路</th></tr>
+<tr><td>ConServe (2606.01839)</td><td>2026</td><td>对话级调度，Turn 1 走 PD，后续 pin D 端</td></tr>
+<tr><td>PPD MultiTurn (2606.13358)</td><td>2026</td><td>Turn 2+ append-prefill 直接在 D 端完成</td></tr>
+<tr><td>HexAGenT (2605.16637)</td><td>2026</td><td>Agentic workflow DAG 异构图调度</td></tr>
+<tr><td>Load-Aware Prefill Deflection (2607.02043)</td><td>2026</td><td>P 过载时分流到 D 端做 chunked prefill</td></tr>
+<tr><td>DynaServe (2504.09285)</td><td>2025</td><td>micro-request 任意 token-boundary 切分 PD</td></tr>
+<tr><td>EcoServe (2504.18154)</td><td>2025</td><td>部分 PD + 滚动激活</td></tr>
+<tr><td>Price of Anarchy (2606.17081)</td><td>2026</td><td>博弈论分析 + 自适应路由（NVIDIA Dynamo 实测）</td></tr>
+</table>
+
+<h3>6.4 第四类：跨 DC / 异构 GPU 部署</h3>
+<ul>
+<li><b>arXiv 2606.29708</b>（2026-06-30，"Design Space of Heterogeneous Prefill-Decode Disaggregation"）系统化提出<b>四设计轴</b>（accelerator / precision / interconnect / KV residency）+ <b>三边界决策</b>，是目前对"长序列 PD 异构部署"最结构化的一份工作。</li>
+<li><b>CrossPool</b>（2606.24506）：Cold MoE 模型下 FFN weight pool 与 KV-Cache Pool 分离，把 D 端容量分为"权重容量"和"KV 容量"两本账 —— 长序列下 KV 容量这本账更有压力。</li>
+</ul>
+
+<!-- =================================================== -->
+<h2 id="gap">7. 研判：已解 / 部分解 / 未解 问题地图</h2>
+
+<h3>7.1 已解（有明确工程或学术共识）</h3>
+<div class="card ok">
+<ul>
+<li><b>Decode-KV-bound 作为瓶颈类</b> 已被 vLLM RFC 正式命名，学术界广泛认可。</li>
+<li><b>P→D KV 渐进传输</b>（Lynx、SplitZip、SCD）在理论和技术路径上都相对成熟，128K+ 场景可组合使用。</li>
+<li><b>Cross-turn KV 复用</b>（ConServe、PPD MultiTurn）在对话级有成熟解法。</li>
+<li><b>硬件趋势</b>：从 H100 80GB → H200 141GB → GB200 192GB → GB300 288GB，HBM 容量在快速增长，给 D 端 128K+batch 提供物理空间。</li>
+</ul>
+</div>
+
+<h3>7.2 部分解（有方案但仍有显著开放子问题）</h3>
+<div class="card warn">
+<ul>
+<li><b>D 端 KV pool sizing 的理论与实证模型</b>：目前尚无统一的"长序列 PD 容量规划教科书"。GB300 博客实测数据 + SGLang Issue #24523 的 SWA bug 说明：<b>软件栈跟不上硬件</b>，容量利用率仍低于理论值。</li>
+<li><b>长序列下 KV 压缩 vs 精度取舍</b>：SpectrumKV 发现 Qwen2.5-7B 在 int4 下"catastrophically fails"，而 Mistral-7B 稳定 —— 长序列对更激进的 KV 压缩是双刃剑。</li>
+<li><b>CXL / 异构 KV pool 的工程化</b>：TraCT（CXL）和 HMA-Serve（异构）是原型，尚未在头部云大规模部署。</li>
+<li><b>D 端高并发 + 长序列 + CUDA-graph 三者的稳定性</b>：SGLang #30010 死锁问题仍 open，尚无修复。</li>
+</ul>
+</div>
+
+<h3>7.3 未解（仍是学术前沿）</h3>
+<div class="card warn">
+<ul>
+<li><b>1M+ tokens 下的 PD 分离"可行性边界"建模</b>：目前最大公开部署约 128K-256K；1M 级别的 PD 分离尚无系统层面的研究报告。</li>
+<li><b>多租户下长序列 PD 隔离</b>：长序列 D 端 KV 池容易被单一用户独占（"KV 饥饿"），公平调度仍在 RFC 阶段。</li>
+<li><b>KV 精度在长序列 PD 下逐 token 自适应</b>：SpectrumKV 的 per-token mixed precision 还在早期，没有"按序列位置动态调整"的工作。</li>
+<li><b>PD 分离在 1M+ 下是否仍是最优架构</b>：有学者（HMA-Serve、CrossPool）在质疑"PD 分离"是否是长序列的最优解，或者<b>某种"长序列共置"混合架构</b>更适合 1M。</li>
+<li><b>长序列 attention 与 PD 传输联合优化</b>：retraction、chunked prefill、PP 长 context prefill 与 PD KV 传输目前<b>割裂优化</b>，缺乏联合理论框架。</li>
+</ul>
+</div>
+
+<h3>7.4 补充前沿工作（2026-07-15 调研新增）</h3>
+<p>以下为 2026-07-15 后续调研新发现的高阶论文，进一步佐证上述判断：</p>
+<ul>
+<li><b>SAC (2606.19746)</b> — 首个为 <b>稀疏注意力 + CXL</b> 优化的 disaggregated KV 系统。RDMA 方案在稀疏注意力下"fetch 整块 KV 但只用 top-k"是严重浪费；SAC 利用 CXL load/store 语义按需取 KV 条目，在 DeepSeek-V3.2（稀疏注意力）+ SGLang 上 2.1× 吞吐、9.7× TTFT、1.8× TBT。<b>关键启示</b>：长序列 PD 的未来不在"压缩 KV 走 RDMA"，而在"让稀疏注意力直接跑在 CXL 内存上"。</li>
+<li><b>CXL-1M PNM (2511.00321)</b> — 1M-token + 405B 参数级 LLM 推理的 CXL-Processing-Near-Memory 系统。PNM-only offloading (PNM-KV) 和 GPU-PNM 混合 (PnG-KV) 实现最高 <b>21.9× 吞吐</b>与 60× 能耗下降。<b>关键启示</b>：1M 级长序列 PD 一旦脱离"GPU HBM 是唯一 KV 容器"这一假设，性能天花板会打开数量级级别。</li>
+<li><b>ZCube (Z.ai 智谱, 2026-05-20 公开博客)</b> — 明确树立 PD + 长上下文是 <b>网络层结构性挑战</b>："cross-node KV Cache transfers make inference traffic highly asymmetric"，100G→200G 升级实测 TTFT ↓22%、整体吞吐 ↑19%。这种<b>扁平化网络拓扑</b>创新是面向长序列 PD 的基础设施层新方向。</li>
+<li><b>vLLM MiniMax M3 博客 (2026-06-12)</b> — MiniMax M3 是"为百万 token context 设计"的模型，采用 MSA block-sparse attention + MXFP8 + chunked prefill + block-size 128。<b>关键启示</b>：模型侧稀疏注意力与系统侧 PD 分离已开始协同设计。</li>
+<li><b>vLLM Issue #11286</b>（实测）— DeepSeek decode 速度从 5364 tok/s（&lt;100 token）<b>断崖下降</b>到 273 tok/s（8K+ token），显示长序列 decode 性能退化剧烈，目前 vLLM 无 1M+ 专项优化。</li>
+<li><b>SGLang PR #8846</b> — SGLang 把 1M+ 视为 PP 问题设计，PP+PD 组合 2025-10 才"初步支持"，Decode-side PP 至今 <b>pending</b>。工业界领袖把 1M+ 调出 PD 框架处理，间接印证 PD 范式在 1M+ 下的局限性。</li>
+</ul>
+
+<h3>7.5 vLLM 源码级 D 端内存承诺与容量护栏（2026-07-15 新增）</h3>
+<p>对 vLLM main 分支（2026-07-15）源码级抓取，揭示 PD 分离下 D 端 KV 容量的<b>内生矛盾</b>：</p>
+<ul>
+<li><b>关键架构决策</b>：无论 pull/push 模式，<b>D 端的 block 都是预分配的</b>——Prefill 端把 KV 推到 D 端"事先预留好的 logical block ids (preallocated)"（引自 nixl_kv_push_connector.md）。<b>这意味着 D 端必须在收到 KV 之前就承诺内存</b>；当 PD 规模较大时，这种"预分配 + lease"机制会在 D 端形成大量的"内存承诺"。</li>
+<li><b>默认参数</b>（来自 vllm/config/cache.py）：<br/>
+<code>block_size=16</code> / <code>gpu_memory_utilization=0.92</code> / <code>cache_dtype="auto"</code> / <code>enable_prefix_caching=True</code></li>
+<li><b>唯一护栏</b>：vLLM v1 只有 RECOMPUTE preemption，<code>watermark_blocks ≈ 1%</code> 是 D 端 KV pool 几乎唯一的硬护栏。<code>kv_lease_duration=30s</code> + heartbeat 续约（~5s 周期、延 ~20s）把"承诺"变成可撤销，但续约本身增加长序列下 D 端高并发心跳压力。</li>
+<li><b>D 端容量公式</b>：<code>allocate_slots → determine_available_memory()</code> 做一次完整 model run 量 peak memory 后反推出 KV 空间；<code>KVCacheManager → BlockPool → KVCacheTensor</code> 三层结构。这是长序列 PD 调参的"原始旋钮"。</li>
+<li><b>kv_cache_dtype 极端案例</b>：最激进的 nvfp4/per-token-head 配置下，D 端 KV 容量放大倍数可达 <b>5.3×</b>（相比 fp16），但引入精度与容量的取舍。</li>
+</ul>
+<p class="src">源：<a href="https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py">vllm/config/cache.py</a> · <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_push_connector.md">nixl_kv_push_connector.md</a> · <a href="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/design/nixl_kv_cache_lease.md">nixl_kv_cache_lease.md</a> · <a href="./vllm-decode-memory/index.html">本目录 vllm-decode-memory/index.html</a>（713 行深度解析）</p>
+
+<h3>7.6 判断：研究密度与未来 12 个月预测</h3>
+<table>
+<tr><th>方向</th><th>当前论文密度 (2025-2026)</th><th>工业落地密度</th><th>未来 12 个月预测</th></tr>
+<tr><td>D 端 KV 容量扩容（HBM / CXL / 异构）</td><td>★★★</td><td>★★★★</td><td>GB300 / MI355X / Rubin 发布让 HBM 不再是短期绝对瓶颈</td></tr>
+<tr><td>KV 压缩（渐进 / 混合精度 / 语义）</td><td>★★★★★</td><td>★★★</td><td>从"论文井喷"到"少数方案收敛"（Lynx/SplitZip 路径有望胜出）</td></tr>
+<tr><td>长序列 PD 调度 / 稳定性</td><td>★★★★</td><td>★★★</td><td>伴随 128K+ 部署量上升，<b>OOM / 死锁类 issue 将成为研究热点</b></td></tr>
+<tr><td>1M+ PD 分离系统研究</td><td>★</td><td>★</td><td>预计 2027 年才会出现第一批系统论文（Moonshot Kimi 最可能首发）</td></tr>
+<tr><td>长序列 PD 与 kernel/FMHA 联合</td><td>★★</td><td>★★</td><td>FMHA 长序列 kernel 优化（参考 GB300 SFU 升级）是关键依赖</td></tr>
+</table>
+
+<!-- =================================================== -->
+<h2 id="refs">8. 引用资料</h2>
+
+<h3>工业博客</h3>
+<ul>
+<li><a href="https://www.lmsys.org/blog/2026-07-08-gb300-longctx">Deploying DeepSeek on GB300 NVL72: Big Wins in Long-Context Inference</a>（LMSYS 2026-07-08，长序列 PD + PP + Wide-EP 综合）</li>
+<li><a href="https://pytorch.org/blog">Disaggregated Inference at Scale with PyTorch & vLLM</a>（Meta / PyTorch Blog 2025-09-12）</li>
+<li><a href="https://engineering.fb.com/2025/10/08/ai-engineering/scaling-llm-inference-production-capacity/">Scaling LLM Inference</a>（Meta Engineering 2025-10）</li>
+<li><a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">Disaggregated Prefilling (experimental) — vLLM Official Docs</a></li>
+</ul>
+
+<h3>社区 Issue / RFC</h3>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm/issues/43470">vLLM RFC #43470 Bottleneck-aware expansion for PD disaggregation</a></li>
+<li><a href="https://github.com/vllm-project/vllm/issues/46107">vLLM RFC #46107 MoRIIO: Memory-optimized disaggregation (MI300X)</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/24523">SGLang #24523 PD 部署 SWA 分配 bug 压制 input 到 18K tokens</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/30010">SGLang #30010 GB300 + Kimi-K2.5 + Mooncake 高并发 Decode 死锁</a></li>
+<li><a href="https://github.com/sgl-project/sglang/issues/31252">SGLang #31252 HiCache — 根号 KV cache 重构</a></li>
+</ul>
+
+<h3>学术论文（按年代）</h3>
+<ul>
+<li>DistServe (OSDI'24) <a href="https://arxiv.org/abs/2401.09670">2401.09670</a></li>
+<li>Mooncake (FAST'25) <a href="https://arxiv.org/abs/2407.00079">2407.00079</a></li>
+<li>SAC (CXL + Sparse Attention) <a href="https://arxiv.org/abs/2606.19746">2606.19746</a></li>
+<li>CXL-1M PNM <a href="https://arxiv.org/abs/2511.00321">2511.00321</a></li>
+<li>TraCT <a href="https://arxiv.org/abs/2512.18194">2512.18194</a></li>
+<li>DynaServe <a href="https://arxiv.org/abs/2504.09285">2504.09285</a></li>
+<li>EcoServe <a href="https://arxiv.org/abs/2504.18154">2504.18154</a></li>
+<li>SplitZip <a href="https://arxiv.org/abs/2605.01708">2605.01708</a></li>
+<li>HexAGenT <a href="https://arxiv.org/abs/2605.16637">2605.16637</a></li>
+<li>ConServe <a href="https://arxiv.org/abs/2606.01839">2606.01839</a></li>
+<li>NetKV <a href="https://arxiv.org/abs/2606.03910">2606.03910</a></li>
+<li>SCD <a href="https://arxiv.org/abs/2606.07684">2606.07684</a></li>
+<li>SpectrumKV <a href="https://arxiv.org/abs/2606.08635">2606.08635</a></li>
+<li>Load-Aware Prefill Deflection <a href="https://arxiv.org/abs/2607.02043">2607.02043</a></li>
+<li>HMA-Serve <a href="https://arxiv.org/abs/2606.29986">2606.29986</a></li>
+<li>3DLS <a href="https://arxiv.org/abs/2607.01617">2607.01617</a></li>
+<li>Lynx <a href="https://arxiv.org/abs/2607.01831">2607.01831</a></li>
+<li>PPD MultiTurn <a href="https://arxiv.org/abs/2603.13358">2603.13358</a></li>
+<li>Multi-stage Flow Schedule <a href="https://arxiv.org/abs/2603.17456">2603.17456</a></li>
+<li>Price of Anarchy <a href="https://arxiv.org/abs/2606.17081">2606.17081</a></li>
+<li>CrossPool <a href="https://arxiv.org/abs/2606.24506">2606.24506</a></li>
+<li>Prefill-as-a-Service <a href="https://arxiv.org/abs/2604.15039">2604.15039</a></li>
+<li>Heterogeneous PD Design Space <a href="https://arxiv.org/abs/2606.29708">2606.29708</a></li>
+</ul>
+
+<footer>
+<p>📝 报告生成日期：2026-07-15 &nbsp;|&nbsp;覆盖 23 篇论文 + 7 个工业博客 + 8 个深度社区 Issue + vLLM main 分支源码级解析</p>
+<p>⚠️ 本报告资料来源为自动抓取与综合推理，以原文为准。1M 级别 PD 分离尚无系统论文，本报告 §7.3 的"未解"地图是结合已有工作外推的研判。</p>
+<p>🔗 <b>本目录内子报告</b>：<a href="./index.html">📚 资料全索引</a> · <a href="./decode-memory-bottleneck/report.html">D 端内存瓶颈 Issue</a> · <a href="./vllm-decode-memory/index.html">vLLM D 端架构源码</a> · <a href="./longcontext-qual/report_longcontext_pd_challenge.html">超长序列定性研究</a> · <a href="./industry-quotes/references.md.html">工业界引述</a><br/>
+<b>全局调研矩阵</b>：<a href="../report.html">KVCache 流通方式主报告</a> · <a href="../routing-report/report.html">PD 请求路由深度调研</a></p>
+</footer>
+
+</body>
+</html>

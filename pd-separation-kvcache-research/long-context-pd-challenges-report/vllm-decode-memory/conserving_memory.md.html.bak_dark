@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>conserving_memory.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">conserving_memory.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/conserving_memory.md</span> <span class="src-tag">6896 chars</span></div>
+
+<h1>Conserving Memory</h1>
+
+<p>Large models might cause your machine to run out of memory (OOM). Here are some options that help alleviate this problem.</p>
+
+<h2>Tensor Parallelism (TP)</h2>
+
+<p>Tensor parallelism (`tensor_parallel_size` option) can be used to split the model across multiple GPUs.</p>
+
+<p>The following code splits the model across 2 GPUs.</p>
+
+<pre>from vllm import LLM
+
+llm = LLM(model=&quot;ibm-granite/granite-3.1-8b-instruct&quot;, tensor_parallel_size=2)</pre>
+
+<p>!!! warning</p>
+<p>    To ensure that vLLM initializes CUDA correctly, you should avoid calling related functions (e.g. [torch.accelerator.set_device_index][])</p>
+<p>    before initializing vLLM. Otherwise, you may run into an error like `RuntimeError: Cannot re-initialize CUDA in forked subprocess`.</p>
+
+<p>    To control which devices are used, please instead set the `CUDA_VISIBLE_DEVICES` environment variable.</p>
+
+<p>!!! note</p>
+<p>    With tensor parallelism enabled, each process will read the whole model and split it into chunks, which makes the disk reading time even longer (proportional to the size of tensor parallelism).</p>
+
+<p>    You can convert the model checkpoint to a sharded checkpoint using [examples/features/sharded_state/load_sharded_state_offline.py](../../examples/features/sharded_state/load_sharded_state_offline.py). The conversion process might take some time, but later you can load the sharded checkpoint much faster. The model loading time should remain constant regardless of the size of tensor parallelism.</p>
+
+<h2>Quantization</h2>
+
+<p>Quantized models take less memory at the cost of lower precision.</p>
+
+<p>Statically quantized models can be downloaded from HF Hub (some popular ones are available at [Red Hat AI](https://huggingface.co/RedHatAI))</p>
+<p>and used directly without extra configuration.</p>
+
+<p>Dynamic quantization is also supported via the `quantization` option -- see [here](../features/quantization/README.md) for more details.</p>
+
+<h2>Context length and batch size</h2>
+
+<p>You can further reduce memory usage by limiting the context length of the model (`max_model_len` option)</p>
+<p>and the maximum batch size (`max_num_seqs` option).</p>
+
+<pre>from vllm import LLM
+
+llm = LLM(model=&quot;Qwen/Qwen2.5-VL-3B-Instruct&quot;, max_model_len=2048, max_num_seqs=2)</pre>
+
+<h2>Reduce CUDA Graphs</h2>
+
+<p>By default, we optimize model inference using CUDA graphs which take up extra memory in the GPU.</p>
+
+<p>You can adjust `compilation_config` to achieve a better balance between inference speed and memory usage:</p>
+
+<p>??? code</p>
+
+<p>    ```python</p>
+<p>    from vllm import LLM</p>
+<p>    from vllm.config import CompilationConfig, CompilationMode</p>
+
+<p>    llm = LLM(</p>
+<p>        model=&quot;meta-llama/Llama-3.1-8B-Instruct&quot;,</p>
+<p>        compilation_config=CompilationConfig(</p>
+<p>            mode=CompilationMode.VLLM_COMPILE,</p>
+<p>            # By default, it goes up to max_num_seqs</p>
+<p>            cudagraph_capture_sizes=[1, 2, 4, 8, 16],</p>
+<p>        ),</p>
+<p>    )</p>
+<p>    ```</p>
+
+<p>You can disable graph capturing completely via the `enforce_eager` flag:</p>
+
+<pre>from vllm import LLM
+
+llm = LLM(model=&quot;meta-llama/Llama-3.1-8B-Instruct&quot;, enforce_eager=True)</pre>
+
+<h2>Adjust cache size</h2>
+
+<p>If you run out of CPU RAM, try the following options:</p>
+
+<p>- (Multi-modal models only) you can set the size of multi-modal cache by setting `mm_processor_cache_gb` engine argument (default 4 GiB).</p>
+<p>- (CPU backend only) you can set the size of KV cache using `VLLM_CPU_KVCACHE_SPACE` environment variable (default 4 GiB).</p>
+
+<h2>Multi-modal input limits</h2>
+
+<p>You can allow a smaller number of multi-modal items per prompt to reduce the memory footprint of the model:</p>
+
+<pre>from vllm import LLM
+
+# Accept up to 3 images and 1 video per prompt
+llm = LLM(
+    model=&quot;Qwen/Qwen2.5-VL-3B-Instruct&quot;,
+    limit_mm_per_prompt={&quot;image&quot;: 3, &quot;video&quot;: 1},
+)</pre>
+
+<p>You can go a step further and disable unused modalities completely by setting its limit to zero.</p>
+<p>For example, if your application only accepts image input, there is no need to allocate any memory for videos.</p>
+
+<pre>from vllm import LLM
+
+# Accept any number of images but no videos
+llm = LLM(
+    model=&quot;Qwen/Qwen2.5-VL-3B-Instruct&quot;,
+    limit_mm_per_prompt={&quot;video&quot;: 0},
+)</pre>
+
+<p>You can even run a multi-modal model for text-only inference:</p>
+
+<pre>from vllm import LLM
+
+# Don&#x27;t accept images. Just text.
+llm = LLM(
+    model=&quot;google/gemma-3-27b-it&quot;,
+    limit_mm_per_prompt={&quot;image&quot;: 0},
+)</pre>
+
+<h3>Configurable options</h3>
+
+<p>`limit_mm_per_prompt` also accepts configurable options per modality. In the configurable form, you still specify `count`, and you may optionally provide size hints that control how vLLM profiles and reserves memory for your multi‑modal inputs. This helps you tune memory for the actual media you expect, instead of the model’s absolute maxima.</p>
+
+<p>Configurable options by modality:</p>
+
+<p>- `image`: `{&quot;count&quot;: int, &quot;width&quot;: int, &quot;height&quot;: int}`</p>
+<p>- `video`: `{&quot;count&quot;: int, &quot;num_frames&quot;: int, &quot;width&quot;: int, &quot;height&quot;: int}`</p>
+<p>- `audio`: `{&quot;count&quot;: int, &quot;length&quot;: int}`</p>
+
+<p>Details could be found in [`ImageDummyOptions`][vllm.config.multimodal.ImageDummyOptions], [`VideoDummyOptions`][vllm.config.multimodal.VideoDummyOptions], and [`AudioDummyOptions`][vllm.config.multimodal.AudioDummyOptions].</p>
+
+<p>Examples:</p>
+
+<pre>from vllm import LLM
+
+# Up to 5 images per prompt, profile with 512x512.
+# Up to 1 video per prompt, profile with 32 frames at 640x640.
+llm = LLM(
+    model=&quot;Qwen/Qwen2.5-VL-3B-Instruct&quot;,
+    limit_mm_per_prompt={
+        &quot;image&quot;: {&quot;count&quot;: 5, &quot;width&quot;: 512, &quot;height&quot;: 512},
+        &quot;video&quot;: {&quot;count&quot;: 1, &quot;num_frames&quot;: 32, &quot;width&quot;: 640, &quot;height&quot;: 640},
+    },
+)</pre>
+
+<p>For backward compatibility, passing an integer works as before and is interpreted as `{&quot;count&quot;: &lt;int&gt;}`. For example:</p>
+
+<p>- `limit_mm_per_prompt={&quot;image&quot;: 5}` is equivalent to `limit_mm_per_prompt={&quot;image&quot;: {&quot;count&quot;: 5}}`</p>
+<p>- You can mix formats: `limit_mm_per_prompt={&quot;image&quot;: 5, &quot;video&quot;: {&quot;count&quot;: 1, &quot;num_frames&quot;: 32, &quot;width&quot;: 640, &quot;height&quot;: 640}}`</p>
+
+<p>!!! note</p>
+<p>    - The size hints affect memory profiling only. They shape the dummy inputs used to compute reserved activation sizes. They do not change how inputs are actually processed at inference time.</p>
+<p>    - If a hint exceeds what the model can accept, vLLM clamps it to the model&#x27;s effective maximum and may log a warning.</p>
+
+<p>!!! warning</p>
+<p>    These size hints currently only affect activation memory profiling. Encoder cache size is determined by the actual inputs at runtime and is not limited by these hints.</p>
+
+<h2>Multi-modal processor arguments</h2>
+
+<p>For certain models, you can adjust the multi-modal processor arguments to</p>
+<p>reduce the size of the processed multi-modal inputs, which in turn saves memory.</p>
+
+<p>Here are some examples:</p>
+
+<pre>from vllm import LLM
+
+# Available for Qwen2-VL series models
+llm = LLM(
+    model=&quot;Qwen/Qwen2.5-VL-3B-Instruct&quot;,
+    mm_processor_kwargs={&quot;max_pixels&quot;: 768 * 768},  # Default is 1280 * 28 * 28
+)
+
+# Available for InternVL series models
+llm = LLM(
+    model=&quot;OpenGVLab/InternVL2-2B&quot;,
+    mm_processor_kwargs={&quot;max_dynamic_patch&quot;: 4},  # Default is 12
+)</pre>
+
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>

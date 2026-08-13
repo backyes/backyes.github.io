@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Normal vs Low-Latency: 双通信哲学在 DeepEP V1 / V2 / DeepGEMM 中的三系统比较分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="normal-vs-low-latency-deepep-v1-v2-deepgemm">Normal vs Low-Latency: 双通信哲学在 DeepEP V1 / V2 / DeepGEMM 中的三系统比较分析</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+分析目标: 从 Blog 理论出发，对比 DeepEP V1（双内核）、DeepEP V2（ElasticBuffer 统一）、DeepGEMM Mega MoE（单内核）三种实现对 Normal/Low-Latency 两种通信哲学的映射关系</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 核心结论</h2>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>Normal 模式</th>
+<th>Low-Latency 模式</th>
+<th>统一机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DeepEP V1</strong></td>
+<td><code>internode.cu</code> (kLowLatencyMode=false)</td>
+<td><code>internode_ll.cu</code> (独立内核)</td>
+<td>无统一，运行时二选一</td>
+</tr>
+<tr>
+<td><strong>DeepEP V2</strong></td>
+<td><code>hybrid_dispatch_impl</code> (scaleout &gt; 1)</td>
+<td><code>dispatch_impl</code> (scaleout = 1)</td>
+<td>ElasticBuffer + 模板参数 <code>kIsScaleupNVLink</code></td>
+</tr>
+<tr>
+<td><strong>DeepGEMM</strong></td>
+<td>单一内核</td>
+<td>无</td>
+<td>NVLink Symmetric Memory 消除模式分化</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键洞察：</strong><br />
+- DeepEP V1 是<strong>物理分离</strong>：两个完全独立的 kernel 文件，编译时确定<br />
+- DeepEP V2 是<strong>逻辑统一</strong>：同一套 JIT 代码，通过 <code>num_scaleout_ranks</code> 和 <code>kIsScaleupNVLink</code> 模板参数在编译期分化<br />
+- DeepGEMM 是<strong>硬件消除</strong>：NVLink 全连接 + Symmetric Memory 使得 forwarding 和 chunk 聚合失去意义，模式分化被硬件能力抹平</p>
+<hr />
+<h2 id="2-blog">2. Blog 理论：两种通信哲学</h2>
+<blockquote>
+<p>来源: <code>/tmp/deep_ep_blog_text.txt</code> 第 3 节</p>
+</blockquote>
+<h3 id="21">2.1 原文引用</h3>
+<p>Blog 对两种模式的经典描述：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal Kernel</th>
+<th>Low-Latency Kernel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>主场景</strong></td>
+<td>Training / Prefill</td>
+<td>Decode</td>
+</tr>
+<tr>
+<td><strong>优化目标</strong></td>
+<td>最大化吞吐 (Throughput)</td>
+<td>最小化延迟 (Latency)</td>
+</tr>
+<tr>
+<td><strong>核心矛盾</strong></td>
+<td>带宽 (Bandwidth)</td>
+<td>延迟 (Latency)</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>关键 (Critical)</td>
+<td>减少 (Reduced)</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>深 (Deep)</td>
+<td>浅 (Shallow)</td>
+</tr>
+<tr>
+<td><strong>通信路径</strong></td>
+<td>NVLink + RDMA 协同</td>
+<td>Direct RDMA</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-normal-kernel-communication-pipelining">2.2 Normal Kernel: 通信流水线 (Communication Pipelining)</h3>
+<p>Blog 原文描述：</p>
+<blockquote>
+<p>"In multi-GPU nodes, GPU-NIC topology is not fully symmetric. Communication paths may include: <strong>IB Sending → IB-to-NVLink Forwarding → NVLink Receiving</strong>, forming a three-stage communication pipeline."</p>
+</blockquote>
+<p>Normal 模式的核心特征：<br />
+- <strong>三阶段流水线</strong>: Source GPU → IB Sending → RDMA Network → <strong>IB-to-NVLink Forwarding</strong> → NVLink Receiving → Target GPU<br />
+- <strong>Chunk 聚合</strong>: Token 流 → Chunk → 网络传输（Token 是调度粒度，Chunk 是通信粒度）<br />
+- <strong>深度流水线</strong>: 多 Stage 重叠通信与计算</p>
+<h3 id="23-low-latency-kernel-bypass-forwarding">2.3 Low-Latency Kernel: 旁路转发 (Bypass Forwarding)</h3>
+<p>Blog 原文描述：</p>
+<blockquote>
+<p>"Decode: small batch, few Tokens, single-Token latency sensitive. Waiting for Chunk aggregation increases latency. Low-Latency Kernel reduces intermediate layers: <strong>Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer</strong>."</p>
+</blockquote>
+<p>Low-Latency 模式的核心特征：<br />
+- <strong>旁路 Forwarding</strong>: 跳过 NVLink 中继，GPU 直接通过 RDMA 发送<br />
+- <strong>浅流水线</strong>: 减少 Stage 以降低单 Token 延迟<br />
+- <strong>Chunk 减少</strong>: 不等待 Token 聚合，单 Token 直接发送</p>
+<hr />
+<h2 id="3-deepep-v1">3. DeepEP V1 实现：双内核物理分离</h2>
+<h3 id="31">3.1 架构总览</h3>
+<p>DeepEP V1 采用<strong>物理分离</strong>的双内核设计：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_ep/buffers/legacy.py
+  ├── Buffer (Normal 模式): 使用 internode.cu + intranode.cu
+  └── Buffer (Low-Latency 模式): 使用 internode_ll.cu
+</code></pre></div>
+
+<p><strong>模式选择 API：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_ep/buffers/legacy.py:37-93</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Buffer</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__init__</span>(<span style="color: #008000">self</span>,
+                 group,
+                 num_nvl_bytes: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">0</span>,
+                 num_rdma_bytes: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">0</span>,
+                 low_latency_mode: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>,  <span style="color: #3D7B7B; font-style: italic"># ← 模式选择参数</span>
+                 num_qps_per_rank: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">24</span>,
+                 allow_nvlink_for_low_latency_mode: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">True</span>,
+                 <span style="color: #666">...</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>low_latency_mode <span style="color: #666">=</span> low_latency_mode
+        <span style="color: #008000">self</span><span style="color: #666">.</span>runtime <span style="color: #666">=</span> _C<span style="color: #666">.</span>Buffer(<span style="color: #008000">self</span><span style="color: #666">.</span>rank, <span style="color: #008000">self</span><span style="color: #666">.</span>group_size,
+                                 num_nvl_bytes, num_rdma_bytes,
+                                 low_latency_mode, <span style="color: #666">...</span>)  <span style="color: #3D7B7B; font-style: italic"># ← 传入 C++ 运行时</span>
+</code></pre></div>
+
+<h3 id="32-normal-internodecu">3.2 Normal 模式: <code>internode.cu</code></h3>
+<p><strong>核心特征：三阶段流水线 + Chunk 聚合 + Forwarding</strong></p>
+<h4 id="1-warp">(1) Warp 角色分配</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu:487-516</span>
+<span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">WarpRole</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>kRDMASender,<span style="color: #BBB">              </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送</span>
+<span style="color: #BBB">    </span>kRDMASenderCoordinator,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送协调</span>
+<span style="color: #BBB">    </span>kRDMAAndNVLForwarder,<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// RDMA + NVLink 转发 ← 关键角色</span>
+<span style="color: #BBB">    </span>kForwarderCoordinator,<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 转发协调</span>
+<span style="color: #BBB">    </span>kNVLReceivers<span style="color: #BBB">             </span><span style="color: #3D7B7B; font-style: italic">// NVLink 接收</span>
+};
+
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>role_meta<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">=</span>]()<span style="color: #BBB"> </span><span style="color: #666">-&gt;</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>pair<span style="color: #666">&lt;</span>WarpRole,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(is_forwarder)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kRDMAAndNVLForwarder,<span style="color: #BBB"> </span>...};<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 转发 warp</span>
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kForwarderCoordinator,<span style="color: #BBB"> </span>...};
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchRDMASenderWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kRDMASender,<span style="color: #BBB"> </span><span style="color: #666">-1</span>};<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送 warp</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+};
+</code></pre></div>
+
+<p><strong>5 种 Warp 角色</strong>形成完整的三阶段流水线：<br />
+- <code>kRDMASender</code>: 从源 GPU 读取 Dispatch Buffer，发起 RDMA 发送<br />
+- <code>kRDMAAndNVLForwarder</code>: <strong>接收 RDMA 数据，通过 NVLink 转发到目标 GPU</strong><br />
+- <code>kNVLReceivers</code>: 从 NVLink 接收数据，写入 Receive Buffer</p>
+<h4 id="2-chunk">(2) Chunk 聚合机制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu:527-529</span>
+<span style="color: #3D7B7B; font-style: italic">// RDMA symmetric layout: Chunk 是通信粒度</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_channel_data<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>SymBuffer<span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>rdma_buffer_ptr,
+<span style="color: #BBB">    </span>num_max_rdma_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← Chunk 大小</span>
+<span style="color: #BBB">    </span>kNumRDMARanks,<span style="color: #BBB"> </span>channel_id,<span style="color: #BBB"> </span>num_channels);
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu:809-817</span>
+<span style="color: #3D7B7B; font-style: italic">// 按 Chunk 粒度发送，而非单 Token</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(num_tokens_processed,<span style="color: #BBB"> </span>num_max_rdma_chunked_send_tokens);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>synced_last_issued_tail<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens;
+EP_DEVICE_ASSERT(dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens);
+</code></pre></div>
+
+<h4 id="3-forwarding">(3) Forwarding 同步机制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu:583-585</span>
+__shared__<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>forward_channel_head[LEGACY_NUM_MAX_NVL_PEERS][kNumRDMARanks];
+__shared__<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>forward_channel_retired[LEGACY_NUM_MAX_NVL_PEERS];
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>sync_forwarder_smem<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[]()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">asm</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">volatile</span>(<span style="color: #BA2121">&quot;barrier.sync 1, %0;&quot;</span><span style="color: #BBB"> </span><span style="color: #666">::</span><span style="color: #BA2121">&quot;r&quot;</span>((LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>));
+};
+</code></pre></div>
+
+<p>Forwarding 是 Normal 模式的核心——解决 NIC-GPU 拓扑不对称问题：<br />
+- RDMA 数据到达后，<strong>不是目标 GPU 直接接收</strong><br />
+- 而是由<strong>中间 GPU 作为中继</strong>，通过 NVLink 转发到目标 GPU</p>
+<h4 id="4-klowlatencymode">(4) 模板参数 <code>kLowLatencyMode</code> 的编译期分支</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu:87-90</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kLowLatencyMode<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>translate_dst_rdma_rank(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>dst_rdma_rank,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>nvl_rank)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Low-Latency 模式: 每个 GPU 独立 RDMA rank</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Normal 模式: 同一 node 的 GPU 共享 RDMA rank</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>kLowLatencyMode<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(dst_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>nvl_rank)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>dst_rdma_rank;
+}
+
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kLowLatencyMode<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvshmem_sync_with_same_gpu_idx(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>nvshmem_team_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rdma_team)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Low-Latency: 仅同步 RDMA team</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Normal: 全局同步</span>
+<span style="color: #BBB">    </span>kLowLatencyMode<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span>(nvshmem_sync(rdma_team))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>nvshmem_sync_all();
+}
+</code></pre></div>
+
+<p><strong>关键差异：</strong><br />
+- Normal 模式：<code>nvshmem_sync_all()</code> — 全局 barrier，确保所有 GPU 同步<br />
+- Low-Latency 模式：<code>nvshmem_sync(rdma_team)</code> — 仅 RDMA team 同步，减少同步开销</p>
+<h4 id="5-config-buffer">(5) Config 结构：双 Buffer 设计</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/legacy/config.hpp:24-51</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Config</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_sms;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_nvl_chunked_send_tokens;<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink Chunk 发送</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens;<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink Chunk 接收</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_rdma_chunked_send_tokens;<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// RDMA Chunk 发送</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens;<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// RDMA Chunk 接收</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 约束: send &lt; recv / 2 (确保发送方总有空间)</span>
+<span style="color: #BBB">    </span>EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+};
+</code></pre></div>
+
+<h3 id="33-low-latency-internode_llcu">3.3 Low-Latency 模式: <code>internode_ll.cu</code></h3>
+<p><strong>核心特征：单 Token 直接发送 + 无 Forwarding + 浅流水线</strong></p>
+<h4 id="1-warp_1">(1) 无 Warp 角色分离</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu:128-155</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kUseFP8,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kUseUE8M0,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kHidden<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span>__launch_bounds__(<span style="color: #666">1024</span>,<span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>dispatch(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>responsible_expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_id<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_warp_groups<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_group_id;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 发送阶段: 所有 warp 参与 FP8 cast + IBGDA send</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_warps<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_id;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_sms)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// FP8 cast + 直接发送</span>
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">// 直接通过 RDMA 发送，无 Forwarding</span>
+<span style="color: #BBB">                </span>nvshmemi_ibgda_put_nbi_warp(dst_ptr,<span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span>num_bytes_per_msg,<span style="color: #BBB"> </span>dst_rank,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>与 Normal 的关键区别：</strong><br />
+- 无 <code>kRDMAAndNVLForwarder</code> 角色<br />
+- 无 <code>forward_channel_head</code> / <code>forward_channel_retired</code> 同步<br />
+- 每个 Token 独立发送，无 Chunk 聚合等待</p>
+<h4 id="2-token">(2) 单 Token 消息格式</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu:179-182</span>
+<span style="color: #3D7B7B; font-style: italic">// Message package: index at source (int), 3 reserved int fields, hidden data, FP8 scales</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">size_t</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(int4)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(kUseFP8<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(kHidden<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_scales<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">float</span>))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>(kHidden<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(nv_bfloat16)));
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">size_t</span><span style="color: #BBB"> </span>num_int4_per_msg<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(int4);
+</code></pre></div>
+
+<p>每个 Token 构成一个独立消息，包含：<br />
+- 源 Token 索引 (int4)<br />
+- Hidden 数据<br />
+- FP8 scales</p>
+<h4 id="3-expert">(3) 接收端：按 Expert 组织</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu:362-370</span>
+<span style="color: #3D7B7B; font-style: italic">// 接收端按 Expert 组织，而非按 Rank</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_recv_x_uint8<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">*&gt;</span>(rdma_recv_x)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">    </span>local_expert_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_dispatch_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">    </span>src_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_dispatch_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_msg;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>recv_x_int4<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>int4<span style="color: #666">*&gt;</span>(packed_recv_x)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">    </span>local_expert_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_dispatch_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>hidden_int4;
+</code></pre></div>
+
+<h4 id="4-mask">(4) 超时与 Mask 机制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu:383-408</span>
+<span style="color: #3D7B7B; font-style: italic">// 等待 Token 到达，带超时检测</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sub_warp_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>lane_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>start_time<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>clock64();
+<span style="color: #BBB">    </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>wait_recv_cost<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>is_rank_masked(mask_buffer_ptr,<span style="color: #BBB"> </span>src_rank))<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((num_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_acquire_sys_global(rdma_recv_count<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...))<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>
+<span style="color: #BBB">               </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>(wait_recv_cost<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>clock64()<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>start_time)<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>LEGACY_NUM_TIMEOUT_CYCLES)
+<span style="color: #BBB">            </span>;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 超时则 mask 该 rank</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(wait_recv_cost<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>LEGACY_NUM_TIMEOUT_CYCLES)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>atomicExch(mask_buffer_ptr<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>src_rank,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="34-v1">3.4 V1 双内核对比总结</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Normal (<code>internode.cu</code>)</th>
+<th>Low-Latency (<code>internode_ll.cu</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp 角色</strong></td>
+<td>5 种 (Sender/Forwarder/Receiver/Coordinator)</td>
+<td>2 种 (发送 warp + 计数 warp)</td>
+</tr>
+<tr>
+<td><strong>通信粒度</strong></td>
+<td>Chunk (多 Token 聚合)</td>
+<td>单 Token</td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>有 (GPU 作为 NVLink 中继)</td>
+<td>无 (Direct RDMA)</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td><code>nvshmem_sync_all()</code> + barrier_block</td>
+<td><code>nvshmem_sync(rdma_team)</code> + atomic</td>
+</tr>
+<tr>
+<td><strong>Buffer 结构</strong></td>
+<td>双 Buffer (NVL + RDMA)</td>
+<td>单 RDMA Buffer (对称 odd/even)</td>
+</tr>
+<tr>
+<td><strong>消息格式</strong></td>
+<td>Token + SourceMeta + Scales</td>
+<td>Token + Scales (更紧凑)</td>
+</tr>
+<tr>
+<td><strong>错误处理</strong></td>
+<td>无</td>
+<td>Mask buffer + 超时检测</td>
+</tr>
+<tr>
+<td><strong>SM 使用</strong></td>
+<td>20 (默认)</td>
+<td>动态 (num_sms)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-deepep-v2-elasticbuffer">4. DeepEP V2 实现：ElasticBuffer 逻辑统一</h2>
+<h3 id="41">4.1 架构总览</h3>
+<p>DeepEP V2 通过 <strong>JIT 编译 + 模板参数</strong> 实现逻辑统一：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_ep/buffers/elastic.py
+  └── ElasticBuffer
+        ├── dispatch_impl&lt;kIsScaleupNVLink=false&gt;  → hybrid_dispatch.cuh (Normal: RDMA + NVLink)
+        ├── dispatch_impl&lt;kIsScaleupNVLink=true&gt;   → dispatch.cuh (Low-Latency: 纯 NVLink)
+        └── (num_scaleout_ranks == 1 时自动选择 direct)
+</code></pre></div>
+
+<h3 id="42-kisscaleupnvlink">4.2 统一机制：模板参数 <code>kIsScaleupNVLink</code></h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/elastic/dispatch.hpp:53-78</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span><span style="color: #00F">generate_impl</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Args<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>args)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span>header_name,<span style="color: #BBB"> </span>func_name;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(args.num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 单节点模式 (类似 Low-Latency 场景)</span>
+<span style="color: #BBB">        </span>header_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;dispatch&quot;</span>;
+<span style="color: #BBB">        </span>func_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;dispatch_impl&lt;{}, {}, ...&gt;&quot;</span>,
+<span style="color: #BBB">            </span>args.is_scaleup_nvlink,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← true = NVLink only</span>
+<span style="color: #BBB">            </span>...);
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 跨节点模式 (类似 Normal 场景)</span>
+<span style="color: #BBB">        </span>header_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;hybrid_dispatch&quot;</span>;
+<span style="color: #BBB">        </span>func_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;hybrid_dispatch_impl&lt;{}, {}, ...&gt;&quot;</span>,
+<span style="color: #BBB">            </span>args.num_scaleout_warps,<span style="color: #BBB"> </span>args.num_forward_warps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 有 forwarding warps</span>
+<span style="color: #BBB">            </span>...);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">R&quot;(</span>
+<span style="color: #BA2121">#include &lt;deep_ep/impls/{}.cuh&gt;</span>
+<span style="color: #BA2121">...</span>
+<span style="color: #BA2121">)&quot;</span>,<span style="color: #BBB"> </span>header_name,<span style="color: #BBB"> </span>func_name);
+}
+</code></pre></div>
+
+<p><strong>关键模板参数：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/dispatch.cuh:17-30</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsScaleupNVLink,<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// ← 核心模式开关</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoCPUSync,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kReuseSlotIndices,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumDispatchWarps,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumHiddenBytes,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSFPacks,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxTokensPerRank,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumExperts,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumTopk,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kExpertAlignment,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,
+<span style="color: #BBB">          </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>dispatch_impl(...)
+</code></pre></div>
+
+<h3 id="43-normal-hybrid_dispatch_impl-scaleout-1">4.3 Normal 等价：<code>hybrid_dispatch_impl</code> (scaleout &gt; 1)</h3>
+<p>当 <code>num_scaleout_ranks &gt; 1</code> 时，V2 使用 <code>hybrid_dispatch_impl</code>，对应 Blog 的 Normal 模式：</p>
+<h4 id="1-warp_2">(1) 三阶段 Warp 角色</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:14-32</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span>...,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumForwardWarps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← Forward warps</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleupRanks,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>hybrid_dispatch_impl(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Warp 角色:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. Notify warps: 元数据交换</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Scaleout warps: RDMA 发送</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Forward warps: NVLink 转发 ← 对应 Normal 的 Forwarding</span>
+}
+</code></pre></div>
+
+<h4 id="2-forwarding">(2) Forwarding 机制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:88-97</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleup_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span>kNumScaleupRanks,<span style="color: #BBB"> </span>kNumScaleoutRanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>buffer);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>scaleup_buffer.get_buffer_end_ptr());
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>scaleout_recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>token_layout,<span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span>kNumChannels<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxTokensPerChannel,<span style="color: #BBB"> </span>...);
+</code></pre></div>
+
+<p><strong>与 V1 Normal 的对应关系：</strong><br />
+- <code>scaleout_send_buffer</code> → V1 的 RDMA send buffer<br />
+- <code>scaleup_buffer</code> → V1 的 NVLink receive buffer<br />
+- <code>Forward warps</code> → V1 的 <code>kRDMAAndNVLForwarder</code></p>
+<h4 id="3-chunk">(3) Chunk 机制</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:24-27</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumChannels<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxTokensPerChannel<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>constexpr_ceil_div(kNumMaxTokensPerRank,<span style="color: #BBB"> </span>kNumChannels),
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// ← Chunk 更新间隔</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSlotsPerForwardChunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← Chunk 大小</span>
+</code></pre></div>
+
+<h3 id="44-low-latency-dispatch_impl-scaleout-1">4.4 Low-Latency 等价：<code>dispatch_impl</code> (scaleout = 1)</h3>
+<p>当 <code>num_scaleout_ranks == 1</code> 时，V2 使用 <code>dispatch_impl</code>，对应 Blog 的 Low-Latency 模式：</p>
+<h4 id="1-forwarding">(1) 无 Forwarding</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/dispatch.cuh:362-393</span>
+<span style="color: #3D7B7B; font-style: italic">// Issue TMA NVLink stores (直接写入，无转发)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">    </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),<span style="color: #BBB"> </span>stored_dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">:</span>
+<span style="color: #BBB">    </span><span style="color: #008000">nullptr</span>;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+
+<span style="color: #3D7B7B; font-style: italic">// Issue RDMA put (仅对非 NVLink 可达的 rank)</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kIsScaleupNVLink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">                        </span>send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),<span style="color: #BBB"> </span>stored_dst_rank_idx);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键差异：</strong><br />
+- <code>kIsScaleupNVLink = true</code>: 纯 NVLink，无 RDMA<br />
+- <code>kIsScaleupNVLink = false</code>: NVLink + RDMA，但<strong>无 Forwarding warps</strong></p>
+<h4 id="2-token_1">(2) 单 Token 粒度</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/dispatch.cuh:278-292</span>
+<span style="color: #3D7B7B; font-style: italic">// 每个 Token 独立处理，无 Chunk 聚合</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_start<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dispatch_warp_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sm_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_stride<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_start;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>token_stride)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Issue data TMA (单 Token)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_hidden_ptr(),
+<span style="color: #BBB">                         </span>math<span style="color: #666">::</span>advance_ptr(x,<span style="color: #BBB"> </span>token_i64_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes),
+<span style="color: #BBB">                         </span>mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<h3 id="45-sm">4.5 SM 数量自动决策</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_ep/buffers/elastic.py:728-834</span>
+<span style="color: #A2F">@weak_lru</span>(maxsize<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">None</span>)
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_theoretical_num_sms</span>(<span style="color: #008000">self</span>, num_experts, num_topk,
+                            num_scaleout_topk: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">0</span>,
+                            rdma_gbs: <span style="color: #008000">float</span> <span style="color: #666">=</span> <span style="color: #666">0</span>, nvlink_gbs: <span style="color: #008000">float</span> <span style="color: #666">=</span> <span style="color: #666">0</span>,
+                            sm_read_gbs: <span style="color: #008000">float</span> <span style="color: #666">=</span> <span style="color: #666">200</span>, sm_write_gbs: <span style="color: #008000">float</span> <span style="color: #666">=</span> <span style="color: #666">50</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">int</span>:
+    <span style="color: #3D7B7B; font-style: italic"># 根据带宽模型自动决策 SM 数量</span>
+    <span style="color: #3D7B7B; font-style: italic"># 考虑 rdma_traffic, nvlink_traffic, sm_read, sm_write</span>
+    <span style="color: #3D7B7B; font-style: italic"># 选择瓶颈带宽，计算所需 SM 数</span>
+    num_sms <span style="color: #666">=</span> <span style="color: #008000">max</span>(
+        bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_read <span style="color: #666">/</span> sm_read_gbs,
+        bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_write <span style="color: #666">/</span> sm_write_gbs,
+    )
+    num_sms <span style="color: #666">=</span> align(<span style="color: #008000">max</span>(<span style="color: #666">4</span>, math<span style="color: #666">.</span>ceil(num_sms <span style="color: #666">*</span> <span style="color: #666">1.25</span>)), <span style="color: #666">2</span>)
+    num_sms <span style="color: #666">=</span> <span style="color: #008000">min</span>(num_sms, num_device_sms)
+    <span style="color: #008000; font-weight: bold">return</span> num_sms
+</code></pre></div>
+
+<p><strong>V2 的统一哲学：</strong><br />
+- 不再有显式的 <code>low_latency_mode</code> 参数<br />
+- 而是通过 <code>num_scaleout_ranks</code> 自动推断通信模式<br />
+- SM 数量由带宽模型动态计算，而非固定</p>
+<h3 id="46-v1-vs-v2">4.6 V1 vs V2 对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>V1 Normal</th>
+<th>V1 Low-Latency</th>
+<th>V2 (scaleout &gt; 1)</th>
+<th>V2 (scaleout = 1)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>代码组织</strong></td>
+<td><code>internode.cu</code></td>
+<td><code>internode_ll.cu</code></td>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td><code>dispatch.cuh</code></td>
+</tr>
+<tr>
+<td><strong>后端</strong></td>
+<td>NVSHMEM</td>
+<td>NVSHMEM</td>
+<td>NCCL Gin</td>
+<td>NCCL Gin</td>
+</tr>
+<tr>
+<td><strong>模式选择</strong></td>
+<td><code>low_latency_mode=true</code></td>
+<td><code>low_latency_mode=false</code></td>
+<td><code>num_scaleout_ranks &gt; 1</code></td>
+<td><code>num_scaleout_ranks == 1</code></td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>有</td>
+<td>无</td>
+<td>有 (Forward warps)</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>有</td>
+<td>无</td>
+<td>有 (kScaleoutUpdateInterval)</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>SM 使用</strong></td>
+<td>固定 20</td>
+<td>动态</td>
+<td>动态 (带宽模型)</td>
+<td>动态 (带宽模型)</td>
+</tr>
+<tr>
+<td><strong>Buffer</strong></td>
+<td>分离 NVL + RDMA</td>
+<td>单一 RDMA</td>
+<td>统一 ElasticBuffer</td>
+<td>统一 ElasticBuffer</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-deepgemm">5. DeepGEMM 实现：硬件消除模式分化</h2>
+<h3 id="51">5.1 架构总览</h3>
+<p>DeepGEMM Mega MoE 采用<strong>单一内核</strong>设计，无模式区分：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_gemm/mega/__init__.py
+  └── fp8_fp4_mega_moe / bf16_mega_moe
+        └── csrc/apis/mega.hpp
+              └── sm100_fp8_fp4_mega_moe (单一实现)
+</code></pre></div>
+
+<h3 id="52">5.2 无模式区分的代码证据</h3>
+<h4 id="1-api">(1) API 层无模式参数</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/apis/mega.hpp:157-286</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">fp8_fp4_mega_moe</span>(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>y,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor,<span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>l1_weights_,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor,<span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>l2_weights_,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sym_buffer,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sym_buffer_ptrs,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>recipe,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>activation,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>optional<span style="color: #666">&lt;</span><span style="color: #B00040">float</span><span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>activation_clamp_opt,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>fast_math)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 无 mode / kernel_type / is_low_latency 参数</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(arch_major<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">10</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>sm100_fp8_fp4_mega_moe(y,<span style="color: #BBB"> </span>...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 单一实现</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h4 id="2-heuristics">(2) Heuristics 层无模式分支</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit_kernels/heuristics/mega_moe.hpp:183-248</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>MegaMoEConfig<span style="color: #BBB"> </span><span style="color: #00F">get_mega_moe_config</span>(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_ranks,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_experts_per_rank,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_tokens,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_topk,
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>hidden,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>intermediate_hidden,<span style="color: #BBB"> </span>...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 直接计算配置，无 if/else 模式分支</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>block_n<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_stages<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(smem_capacity<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>smem_fixed)<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>smem_size_per_stage;
+<span style="color: #BBB">    </span>DG_HOST_ASSERT(num_stages<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<h3 id="53">5.3 为什么不需要双模式？</h3>
+<h4 id="1-nvlink-symmetric-memory">(1) 硬件基础：NVLink Symmetric Memory</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:545-550</span>
+<span style="color: #3D7B7B; font-style: italic">// TMA load token from remote rank into shared memory</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">        </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">        </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                       </span>current_rank_in_expert_idx),
+<span style="color: #BBB">        </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+}
+</code></pre></div>
+
+<p><strong>关键差异：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信模式</strong></td>
+<td>Push (源端发起)</td>
+<td>Pull (目标端发起)</td>
+</tr>
+<tr>
+<td><strong>通信硬件</strong></td>
+<td>RDMA (IB) + NVLink</td>
+<td>NVLink Symmetric Memory</td>
+</tr>
+<tr>
+<td><strong>拓扑</strong></td>
+<td>NIC-GPU 不对称</td>
+<td>NVLink 全连接</td>
+</tr>
+<tr>
+<td><strong>中继</strong></td>
+<td>需要 Forwarding</td>
+<td>无需中继</td>
+</tr>
+</tbody>
+</table>
+<h4 id="2-pull-based-forwarding">(2) Pull-based 通信消除 Forwarding</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP Normal:
+  Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU
+                                          ↑
+                                   GPU 作为通信中继 (因 NIC-GPU 拓扑不对称)
+
+DeepGEMM:
+  Target GPU → NVLink Pull → Source GPU
+  (直接读取远端 Symmetric Buffer，无需中继)
+</code></pre></div>
+
+<h4 id="3-chunk_1">(3) 融合设计消除 Chunk 需求</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:671-675</span>
+<span style="color: #3D7B7B; font-style: italic">// Wait the entire token arrival for linear 1</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_arrival_count_ptr(pool_block_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expected<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scheduler.<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span>get_valid_m<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>expected);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← Arrival Count 驱动</span>
+}
+</code></pre></div>
+
+<p><strong>Arrival Count 驱动 vs Chunk 聚合：</strong><br />
+- DeepEP Normal: 等待 Chunk 填满再发送 → 提高带宽利用率<br />
+- DeepGEMM: 单 Token 到达即可触发 GEMM → 无需等待聚合</p>
+<h4 id="4-block-m">(4) Block M 自适应（最接近"模式"的机制）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit_kernels/heuristics/mega_moe.hpp:76-113</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_block_config_for_mega_moe(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">float</span><span style="color: #BBB"> </span>num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">float</span><span style="color: #666">&gt;</span>(num_tokens)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_topk<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>num_experts;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">8.5</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// RL long-tail rollout</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">16</span>,<span style="color: #BBB"> </span><span style="color: #666">8</span>,<span style="color: #BBB"> </span><span style="color: #666">256</span>,<span style="color: #BBB"> </span><span style="color: #666">2</span>};<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 最小 block_m</span>
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">16.5</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Decoding, small batch</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #666">16</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">2</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">32.5</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">64</span>,<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">1</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">64.5</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">96</span>,<span style="color: #BBB"> </span><span style="color: #666">16</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">2</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_expected_tokens_per_expert<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">96.5</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">2</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Prefill, or large EP decoding</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">2</span>,<span style="color: #BBB"> </span><span style="color: #666">192</span>,<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>,<span style="color: #BBB"> </span><span style="color: #666">2</span>};<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 最大 block_m</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>这不是"模式"切换，而是根据 Problem Size 的自动调整：</strong><br />
+- Decode (小 batch): block_m = 16~64<br />
+- Prefill (大 batch): block_m = 192<br />
+- 由 heuristics 自动选择，非用户指定</p>
+<h3 id="54-deepgemm-decode">5.4 DeepGEMM 的"隐含 Decode 能力"</h3>
+<p>虽然 DeepGEMM 没有显式的 Decode 模式，但其设计<strong>隐含地</strong>对 Decode 场景有一定支持：</p>
+<ol>
+<li><strong>Arrival Count 驱动</strong>: 单 Token 到达后即可触发计算</li>
+<li><strong>无 Chunk 聚合等待</strong>: 不像 DeepEP Normal 需要等待 Chunk 填满</li>
+<li><strong>Persistent Kernel</strong>: Kernel 启动开销分摊到整个 Batch</li>
+<li><strong>Block M 自适应</strong>: 小 batch 时自动选择小 block_m</li>
+</ol>
+<p><strong>但 Decode 场景下 Mega MoE 仍受限：</strong><br />
+- GEMM 的 M 维度很小（1 Token），Tensor Core 利用率低<br />
+- Combine 阶段的串行处理成为瓶颈（~3μs per token）<br />
+- 预分配的 <code>num_max_tokens_per_rank</code> 造成内存浪费</p>
+<hr />
+<h2 id="6">6. 三系统综合比较</h2>
+<h3 id="61">6.1 设计哲学对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP V1:
+  Normal:     [Dispatch] → [Chunk] → [NVLink/RDMA + Forwarding] → [Combine]
+  Low-Latency:[Dispatch] → [Direct RDMA]                          → [Combine]
+
+DeepEP V2:
+  scaleout&gt;1: [Notify] → [Scaleout Send] → [Forward] → [Scaleup Receive] → [Copy Epilogue]
+  scaleout=1: [Notify] → [Dispatch (NVLink or RDMA)]                           → [Copy Epilogue]
+
+DeepGEMM:
+  Single:     [Dispatch NVLink Pull] → [L1 GEMM + SwiGLU] → [L2 GEMM] → [Combine NVLink Write-back]
+              └────────────────────── Persistent ────────────────────────────┘
+</code></pre></div>
+
+<h3 id="62">6.2 核心维度对比表</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP V1 Normal</th>
+<th>DeepEP V1 LL</th>
+<th>DeepEP V2 (scaleout&gt;1)</th>
+<th>DeepEP V2 (scaleout=1)</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>场景</strong></td>
+<td>Training/Prefill</td>
+<td>Decode</td>
+<td>Training/Prefill</td>
+<td>单节点 EP</td>
+<td>Training/Prefill</td>
+</tr>
+<tr>
+<td><strong>目标</strong></td>
+<td>最大化吞吐</td>
+<td>最小化延迟</td>
+<td>最大化吞吐</td>
+<td>低延迟</td>
+<td>最大化吞吐</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>关键</td>
+<td>减少</td>
+<td>有 (kScaleoutUpdateInterval)</td>
+<td>无</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>Forwarding</strong></td>
+<td>有</td>
+<td>无</td>
+<td>有 (Forward warps)</td>
+<td>无</td>
+<td>无此概念</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>深 (多 Stage)</td>
+<td>浅 (少 Stage)</td>
+<td>深 (多 Stage)</td>
+<td>浅 (少 Stage)</td>
+<td>固定深度</td>
+</tr>
+<tr>
+<td><strong>通信路径</strong></td>
+<td>NVLink + RDMA</td>
+<td>Direct RDMA</td>
+<td>NVLink + RDMA</td>
+<td>NVLink or RDMA</td>
+<td>NVLink Symmetric</td>
+</tr>
+<tr>
+<td><strong>通信模式</strong></td>
+<td>Push</td>
+<td>Push</td>
+<td>Push</td>
+<td>Push</td>
+<td>Pull</td>
+</tr>
+<tr>
+<td><strong>模式切换</strong></td>
+<td>运行时参数</td>
+<td>运行时参数</td>
+<td>编译期模板</td>
+<td>编译期模板</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>硬件范围</strong></td>
+<td>跨节点</td>
+<td>跨节点</td>
+<td>跨节点</td>
+<td>单节点</td>
+<td>单节点</td>
+</tr>
+<tr>
+<td><strong>SM 使用</strong></td>
+<td>固定 20</td>
+<td>动态</td>
+<td>动态 (带宽模型)</td>
+<td>动态 (带宽模型)</td>
+<td>全部 SM</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63">6.3 性能数据对比</h3>
+<blockquote>
+<p>来源: DeepEP README.md</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th>硬件</th>
+<th>带宽</th>
+<th>SM 使用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EP 8 x 2 (V2)</td>
+<td>SM90 CX7</td>
+<td>90 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>EP 8 x 4 (V2)</td>
+<td>SM90 CX7</td>
+<td>61 GB/s (RDMA)</td>
+<td>6</td>
+</tr>
+<tr>
+<td>EP 8 x 2 (V2)</td>
+<td>SM100 CX7</td>
+<td>90 GB/s (RDMA)</td>
+<td>12</td>
+</tr>
+<tr>
+<td>EP 8 (V2)</td>
+<td>SM100</td>
+<td>726 GB/s (NVLink)</td>
+<td>64 (Max perf)</td>
+</tr>
+<tr>
+<td>EP 8 (V2)</td>
+<td>SM100</td>
+<td>643 GB/s (NVLink)</td>
+<td>24 (Min #SM)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>V2 vs V1 改进：</strong><br />
+- 峰值性能提升 1.3x<br />
+- SM 使用减少 4x (V1 用 24 SM, V2 用 4-6 SM)</p>
+<h3 id="64">6.4 模式统一的技术路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP V1 (物理分离)
+    │
+    │ 问题: 两套代码维护成本高，模式切换不灵活
+    ▼
+DeepEP V2 (逻辑统一)
+    │
+    │ 方法: JIT 编译 + 模板参数 (kIsScaleupNVLink, num_scaleout_ranks)
+    │ 效果: 同一份代码，编译期分化
+    ▼
+DeepGEMM (硬件消除)
+    │
+    │ 方法: NVLink Symmetric Memory + Pull-based 通信
+    │ 效果: 硬件能力抹平模式分化，单内核覆盖全场景
+    ▼
+未来方向: ?
+    - CFT (Compute Fabric Transport) 进一步降低延迟
+    - 跨节点扩展 (DeepGEMM 当前仅支持单节点)
+</code></pre></div>
+
+<hr />
+<h2 id="7">7. 跨引用分析</h2>
+<h3 id="71-nvlinkrdma-agent-6">7.1 与 NVLink/RDMA (Agent 6) 的关系</h3>
+<p><strong>DeepEP V1/V2 的通信域划分：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Agent 6 分析的拓扑:
+  Intra-node:  NVLink 全连接 (对称)
+  Inter-node:  RDMA (IB) (NIC-GPU 不对称)
+
+Normal 模式必须处理:
+  GPU → NVLink domain → NIC → RDMA → NVLink domain → GPU
+         ↑
+    Forwarding 解决 NIC-GPU 不对称
+
+Low-Latency 模式:
+  GPU → Direct RDMA → GPU
+  (旁路 NVLink 域)
+</code></pre></div>
+
+<p><strong>DeepGEMM 的拓扑简化：</strong><br />
+- 仅使用 NVLink Symmetric Memory<br />
+- 无 NIC 拓扑问题<br />
+- Pull-based 通信无需中继</p>
+<h3 id="72-chunk-streaming-agent-9">7.2 与 Chunk Streaming (Agent 9) 的关系</h3>
+<p><strong>DeepEP V1 Normal 的 Chunk：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Token 流 → Chunk → 网络传输</span>
+<span style="color: #3D7B7B; font-style: italic">// Token 是调度粒度，Chunk 是通信粒度</span>
+Token<span style="color: #BBB"> </span>Stream<span style="color: #BBB"> </span><span style="border: 1px solid #F00">→</span><span style="color: #BBB"> </span>Chunk<span style="color: #BBB"> </span><span style="border: 1px solid #F00">→</span><span style="color: #BBB"> </span>Network<span style="color: #BBB"> </span>Transfer
+</code></pre></div>
+
+<p><strong>DeepEP V2 的 Chunk：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh 中的 Chunk</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">6</span>,<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// Chunk 更新间隔</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSlotsPerForwardChunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// Chunk 大小</span>
+</code></pre></div>
+
+<p><strong>DeepGEMM 的"反 Chunk"：</strong><br />
+- Arrival Count 驱动，单 Token 到达即可触发 GEMM<br />
+- 无需 Chunk 聚合等待<br />
+- Combine 阶段的 Hidden 维度分块 (kNumChunks = 1~2) 是<strong>寄存器容量约束</strong>，非通信优化</p>
+<h3 id="73-buffer-agent-2">7.3 与 Buffer (Agent 2) 的关系</h3>
+<p><strong>DeepEP V1 的 Buffer 系统：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Normal:
+  Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink / RDMA Pipeline → Receive Buffer → Expert Buffer
+
+Low-Latency:
+  Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer
+</code></pre></div>
+
+<p><strong>DeepEP V2 的 ElasticBuffer：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 统一 Buffer，支持多种后端</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ElasticBuffer</span>:
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;</span>
+<span style="color: #BA2121; font-style: italic">    支持:</span>
+<span style="color: #BA2121; font-style: italic">    - high-throughput expert-parallel all-to-all (NVLink + RDMA)</span>
+<span style="color: #BA2121; font-style: italic">    - Engram (remote KV cache fetch, RDMA)</span>
+<span style="color: #BA2121; font-style: italic">    - pipeline-parallel send/recv (PP, NVLink)</span>
+<span style="color: #BA2121; font-style: italic">    - all-gather reduce-scatter (AGRS, NVLink)</span>
+<span style="color: #BA2121; font-style: italic">    &quot;&quot;&quot;</span>
+</code></pre></div>
+
+<p><strong>DeepGEMM 的 SymmBuffer：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/mega/__init__.py:18-66</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymmBuffer</span>:
+<span style="color: #BBB">    </span><span style="color: #BA2121; font-style: italic">&quot;&quot;&quot;NVLink Symmetric Memory Buffer&quot;&quot;&quot;</span>
+    <span style="color: #3D7B7B; font-style: italic"># 单一 Buffer，包含所有输入/输出视图</span>
+    <span style="color: #3D7B7B; font-style: italic"># x, x_sf, topk_idx, topk_weights</span>
+    <span style="color: #3D7B7B; font-style: italic"># l1_acts, l1_acts_sf, l2_acts, l2_acts_sf</span>
+</code></pre></div>
+
+<hr />
+<h2 id="8">8. 深层洞察</h2>
+<h3 id="81">8.1 模式分化的根本原因</h3>
+<p><strong>Normal 和 Low-Latency 的分化源于硬件拓扑的不对称：</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Normal 模式存在的前提:
+  1. NIC-GPU 拓扑不对称 (部分 GPU 直连 NIC)
+  2. 需要 Forwarding 中继
+  3. 需要 Chunk 聚合提高带宽利用率
+
+Low-Latency 模式存在的前提:
+  1. 每个 GPU 可直接访问 RDMA (或旁路 Forwarding)
+  2. 单 Token 延迟敏感，不能等待 Chunk 聚合
+  3. 浅流水线减少 Stage 延迟
+</code></pre></div>
+
+<h3 id="82-deepgemm">8.2 DeepGEMM 消除模式分化的条件</h3>
+<p>DeepGEMM 能使用单内核的前提条件：</p>
+<ol>
+<li><strong>NVLink 全连接</strong>: 所有 GPU 可直接访问所有其他 GPU 的 Symmetric Memory</li>
+<li><strong>无 NIC 拓扑问题</strong>: 单节点内通信，无需 RDMA</li>
+<li><strong>Pull-based 通信</strong>: 目标端发起读取，无需源端推送 + 中继</li>
+<li><strong>通信-计算融合</strong>: NVLink Pull 和 GEMM 在 SM 级别交替执行</li>
+</ol>
+<h3 id="83">8.3 未来演进方向</h3>
+<p><strong>如果 DeepGEMM 要支持 Decode 场景：</strong></p>
+<ol>
+<li><strong>引入 Low-Latency 变体</strong>: 减少流水线深度，优化单 Token 路径</li>
+<li><strong>跨节点支持</strong>: 扩展到 RDMA 环境 (需要重新引入 Forwarding)</li>
+<li><strong>Dynamic Shape</strong>: 支持可变 Token 数而无需预分配</li>
+<li><strong>KV Cache 融合</strong>: 与 Attention 内核融合</li>
+</ol>
+<p><strong>如果 DeepEP 要简化双模式：</strong></p>
+<ol>
+<li><strong>硬件层面</strong>: NVLink-RDMA 统一 fabric (如 NVLink-C2C + RDMA 融合)</li>
+<li><strong>软件层面</strong>: 更精细的 SM 动态分配 (已有 <code>get_theoretical_num_sms</code>)</li>
+<li><strong>算法层面</strong>: 自适应 Chunk 大小 (Decode 时 Chunk=1, Training 时 Chunk=N)</li>
+</ol>
+<hr />
+<h2 id="9">9. 源码索引</h2>
+<h3 id="deepep-v1">DeepEP V1</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键行</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>87-90</td>
+<td><code>kLowLatencyMode</code> 模板参数：RDMA rank 转换</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>487-516</td>
+<td>Warp 角色分配 (5 种角色)</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>527-529</td>
+<td>Chunk Buffer 定义</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>583-585</td>
+<td>Forwarding 同步机制</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>809-817</td>
+<td>Chunk 粒度发送</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>128-155</td>
+<td>Low-Latency dispatch kernel</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>179-182</td>
+<td>单 Token 消息格式</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>362-370</td>
+<td>按 Expert 组织的接收端</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>383-408</td>
+<td>超时与 Mask 机制</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>24-51</td>
+<td>Config 结构 (双 Buffer)</td>
+</tr>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>102-183</td>
+<td>LowLatencyLayout</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td>37-93</td>
+<td>Buffer 类 (low_latency_mode 参数)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="deepep-v2">DeepEP V2</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键行</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>53-78</td>
+<td><code>generate_impl</code> 模式选择逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>186-196</td>
+<td><code>num_scaleout_ranks == 1</code> 分支</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>17-30</td>
+<td><code>kIsScaleupNVLink</code> 模板参数</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>278-292</td>
+<td>单 Token 处理循环</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>362-393</td>
+<td>NVLink Store + RDMA Put</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>14-32</td>
+<td>Hybrid dispatch 模板参数</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>88-97</td>
+<td>Forwarding buffer 定义</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>24-27</td>
+<td>Chunk 参数</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>728-834</td>
+<td><code>get_theoretical_num_sms</code></td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>836-853</td>
+<td><code>get_theoretical_num_qps</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="deepgemm">DeepGEMM</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键行</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>157-286</td>
+<td>C++ 单一入口，无模式分支</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>153-176</td>
+<td>Python 单一 API</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>76-113</td>
+<td>Block M 自适应 (非模式)</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>115-181</td>
+<td>Pipeline 深度由 smem 决定</td>
+</tr>
+<tr>
+<td><code>csrc/jit_kernels/heuristics/mega_moe.hpp</code></td>
+<td>183-248</td>
+<td>Heuristics 无模式区分</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10">10. 总结</h2>
+<h3 id="101">10.1 三种实现的设计哲学</h3>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>哲学</th>
+<th>优势</th>
+<th>劣势</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DeepEP V1</strong></td>
+<td>物理分离</td>
+<td>各模式独立优化，性能极致</td>
+<td>代码冗余，维护成本高</td>
+</tr>
+<tr>
+<td><strong>DeepEP V2</strong></td>
+<td>逻辑统一</td>
+<td>一份代码，编译期分化</td>
+<td>JIT 编译开销，首次调用延迟</td>
+</tr>
+<tr>
+<td><strong>DeepGEMM</strong></td>
+<td>硬件消除</td>
+<td>单内核，零模式开销</td>
+<td>仅支持单节点，无 Decode 优化</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102">10.2 核心结论</h3>
+<ol>
+<li>
+<p><strong>Blog 的两种通信哲学在 DeepEP V1 中精确映射</strong>：Normal = <code>internode.cu</code> (kLowLatencyMode=false)，Low-Latency = <code>internode_ll.cu</code></p>
+</li>
+<li>
+<p><strong>DeepEP V2 通过 JIT + 模板参数实现逻辑统一</strong>：<code>kIsScaleupNVLink</code> 和 <code>num_scaleout_ranks</code> 在编译期选择代码路径，不再需要运行时 <code>low_latency_mode</code> 参数</p>
+</li>
+<li>
+<p><strong>DeepGEMM 通过硬件能力消除模式分化</strong>：NVLink Symmetric Memory + Pull-based 通信使得 Forwarding 和 Chunk 聚合失去意义，单内核即可覆盖 Training/Prefill 场景</p>
+</li>
+<li>
+<p><strong>模式分化的根本原因是硬件拓扑不对称</strong>：NIC-GPU 不对称 → 需要 Forwarding；带宽利用率需求 → 需要 Chunk 聚合。当硬件全连接时（如 NVLink Symmetric Memory），这些需求消失</p>
+</li>
+<li>
+<p><strong>DeepGEMM 不是 DeepEP 的替代品，而是特定硬件约束下的特化演进</strong>：单节点、Training 导向、无 Decode 优化，但在其设计域内达到极致效率</p>
+</li>
+</ol>
+<hr />
+<p><em>分析基于 DeepEP 源码、DeepGEMM 源码和 blog 文本，代码路径：</em><br />
+- <em>DeepEP: <code>/Users/backyes/work/claude_workspace/deepgemm_research/</code></em><br />
+- <em>DeepGEMM: <code>/Users/backyes/work/claude_workspace/deepgemm_research/DeepGEMM/</code></em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

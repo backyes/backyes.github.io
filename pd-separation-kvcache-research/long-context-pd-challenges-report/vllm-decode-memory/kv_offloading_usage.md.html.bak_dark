@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>kv_offloading_usage.md</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--line:#30363d;--code:#1c2128;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Text','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.7;padding:18px 24px;max-width:980px;margin:0 auto}
+h1{font-size:1.3em;color:var(--accent);margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:6px}
+h2{color:var(--accent);font-size:1.1em;margin:14px 0 6px}
+.meta{color:var(--muted);font-size:.85em;margin:8px 0 16px}
+.src-tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:.72em;margin:2px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82em;line-height:1.5;max-height:70vh}
+pre.raw{white-space:pre-wrap;word-break:break-word}
+a{color:var(--accent);text-decoration:noneword-break:break-all}
+a:hover{text-decoration:underline}
+.nav{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;margin:8px 0;font-size:.85em}
+.nav a{margin-right:12px}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:.78em;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="nav"><a href="../report.html">← 返回主报告</a> <span style="color:var(--muted)">kv_offloading_usage.md</span></div>
+<div class="meta"><span class="src-tag">vllm-decode-memory/kv_offloading_usage.md</span> <span class="src-tag">14859 chars</span></div>
+
+<h1>KV Offloading Usage Guide</h1>
+
+<p>This guide covers configuration of the [`OffloadingConnector`](disagg_prefill.md), which extends the prefix cache by offloading completed KV blocks to slower but larger tiers (CPU host memory, plus optional secondary tiers) as they are produced. Hits in the offload tiers are promoted back to GPU on demand. Transfers between GPU and CPU use DMA (`cudaMemcpyAsync`) and run asynchronously alongside model computation, so offloading adds minimal CPU- and GPU-core overhead.</p>
+
+<p>!!! note</p>
+<p>    The `OffloadingConnector` currently supports CUDA, ROCm, and XPU only.</p>
+
+<h2>Overview</h2>
+
+<p>Two specs are available, selected by the `spec_name` key in `kv_connector_extra_config`:</p>
+
+<p>- `CPUOffloadingSpec` (default): single CPU tier. Completed GPU blocks are copied into pinned host memory.</p>
+<p>- `TieringOffloadingSpec`: multi-tier. A CPU primary tier plus one or more secondary tiers.</p>
+
+<p>Only the CPU primary tier has direct GPU access. Secondary tiers cannot read from or write to GPU memory; all GPU↔secondary transfers are staged through the CPU primary tier.</p>
+
+<pre>flowchart LR
+    GPU &lt;--&gt; CPU[&quot;CPU primary tier&quot;]
+    CPU &lt;--&gt; S0[&quot;Secondary tier 0&quot;]
+    CPU &lt;--&gt; S1[&quot;Secondary tier 1&quot;]
+    CPU &lt;--&gt; SN[&quot;...&quot;]</pre>
+
+<h2>Single-Tier Setup (CPU Only)</h2>
+
+<pre>vllm serve &lt;model&gt; \
+  --kv-transfer-config &#x27;{
+    &quot;kv_connector&quot;: &quot;OffloadingConnector&quot;,
+    &quot;kv_role&quot;: &quot;kv_both&quot;,
+    &quot;kv_connector_extra_config&quot;: {
+      &quot;block_size&quot;: 64,
+      &quot;cpu_bytes_to_use&quot;: 1000000000
+    }
+  }&#x27;</pre>
+
+<h2>Multi-Tier Setup</h2>
+
+<p>Set `spec_name` to `&quot;TieringOffloadingSpec&quot;` and supply a `secondary_tiers` list. Each entry is a dict with a required `type` key plus tier-specific fields. The list is ordered: tier 0 is consulted before tier 1, and so on. See [Secondary Tiers](#secondary-tiers) for tier-specific keys.</p>
+
+<pre>vllm serve &lt;model&gt; \
+  --kv-transfer-config &#x27;{
+    &quot;kv_connector&quot;: &quot;OffloadingConnector&quot;,
+    &quot;kv_role&quot;: &quot;kv_both&quot;,
+    &quot;kv_connector_extra_config&quot;: {
+      &quot;spec_name&quot;: &quot;TieringOffloadingSpec&quot;,
+      &quot;cpu_bytes_to_use&quot;: 10737418240,
+      &quot;block_size&quot;: 16,
+      &quot;eviction_policy&quot;: &quot;lru&quot;,
+      &quot;secondary_tiers&quot;: [
+        {
+          &quot;type&quot;: &quot;fs&quot;,
+          &quot;root_dir&quot;: &quot;/mnt/kv_cache&quot;,
+          &quot;n_read_threads&quot;: 32,
+          &quot;n_write_threads&quot;: 16
+        }
+      ]
+    }
+  }&#x27;</pre>
+
+<h2>`kv_connector_extra_config` Reference</h2>
+
+<p>| Key | Required | Default | Scope | Notes |</p>
+<p>| --- | --- | --- | --- | --- |</p>
+<p>| `spec_name` | no | `CPUOffloadingSpec` | both | Set to `TieringOffloadingSpec` for multi-tier. |</p>
+<p>| `cpu_bytes_to_use` | yes | — | both | Total bytes of host memory reserved for the CPU tier across all workers (not per-worker). |</p>
+<p>| `block_size` | no | GPU block size | both | Offloaded block size in tokens; must be a multiple of the GPU block size. |</p>
+<p>| `eviction_policy` | no | `lru` | both | Primary tier policy: `lru` or `arc`. |</p>
+<p>| `store_threshold` | no | `0` | single-tier | Min lookups before a block is offloaded. Values ≥ 2 are rejected by `TieringOffloadingSpec`. |</p>
+<p>| `max_tracker_size` | no | `64000` | single-tier | Max entries in the lookup tracker. |</p>
+<p>| `secondary_tiers` | no | `[]` | multi-tier | List of secondary tier configs (see below). |</p>
+<p>| `offload_prompt_only` | no | `true` | both | If `true`, only prompt (prefill) blocks are offloaded; decode blocks are skipped. |</p>
+<p>| `self_describing_kv_events` | no | `false` | single-tier | Opt-in. When `true` *and* KV cache events are enabled (`--kv-events-config` with `enable_kv_cache_events`), the connector emits self-describing block-granular `BlockStored`/`BlockRemoved` payloads (constituent block hashes, whole-chunk `token_ids`, per-block `block_size`, parent hash, LoRA + group/cache-spec metadata) instead of the placeholder fallback, so external KV-event consumers can index offloaded blocks. Inert unless events are enabled. Currently rejected by `TieringOffloadingSpec`. Full-attention groups only; sliding-window/SSM groups keep the placeholder fallback. In chunk mode (`block_size` &gt; GPU block size), overlapping chunks re-announce shared per-block hashes, so consumers must reference-count (deduplicate) repeated store/remove announcements. |</p>
+<p>| `spec_module_path` | no | — | both | Python import path for a custom `OffloadingSpec` not in the built-in registry. Required only when `spec_name` is not built-in (advanced). |</p>
+
+<h2>Secondary Tiers</h2>
+
+<p>Each entry in `secondary_tiers` is a dict with a required `type` field plus tier-specific fields.</p>
+
+<p>The filesystem and object-store tiers can publish hash-only `BlockStored` KV events for blocks they successfully store, tagged with a stable per-tier `medium` (`FS` for the filesystem tier, `OBJ` for the object-store tier). Set `enable_kv_events: true` in the tier&#x27;s entry to opt in; events are published only when KV cache events are also enabled globally via `--kv-events-config`.</p>
+
+<h3>Filesystem (FS)</h3>
+
+<p>The filesystem tier (`type: &quot;fs&quot;`) writes blocks to a directory on local storage.</p>
+
+<p>| Key | Required | Default | Notes |</p>
+<p>| --- | --- | --- | --- |</p>
+<p>| `type` | yes | — | Must be `fs`. |</p>
+<p>| `root_dir` | yes | — | Base directory; vLLM creates subdirectories beneath it (see [On-Disk Layout](#on-disk-layout)). |</p>
+<p>| `n_read_threads` | no | `16` | Read-priority I/O threads (load path). |</p>
+<p>| `n_write_threads` | no | `16` | Write-priority I/O threads (store path). |</p>
+<p>| `enable_kv_events` | no | `false` | Publish `BlockStored` KV events (medium `FS`) for successfully stored blocks. Requires KV cache events to be enabled globally. |</p>
+
+<p>Each thread group prefers its own queue but pulls from the other when its primary queue is empty, so a write-heavy or read-heavy burst won&#x27;t leave the off-priority queue waiting. Size the totals to your storage&#x27;s effective concurrency.</p>
+
+<p>#### On-Disk Layout</p>
+
+<p>Under `root_dir`, vLLM creates a subdirectory `&lt;model&gt;_&lt;digest&gt;`, where `&lt;model&gt;` is the model name with `/` replaced by `_` (so HuggingFace IDs like `meta-llama/Llama-3-8B` don&#x27;t nest), and `&lt;digest&gt;` is a short SHA256 prefix derived from the run configuration (model, block size, parallelism, dtype, etc.). Runs with the same configuration share the same subdirectory; runs with different configurations live side-by-side under the same `root_dir` without colliding.</p>
+
+<p>Inside that subdirectory, blocks are sharded across hash-prefix subdirectories to limit directory fan-out:</p>
+
+<pre>&lt;root_dir&gt;/
+  &lt;model&gt;_&lt;digest&gt;/
+    config.json
+  &lt;model&gt;_&lt;digest&gt;_r&lt;rank&gt;/
+    &lt;hhh&gt;/                    # first 3 hex chars of the block hash
+      &lt;hh&gt;_g&lt;group_idx&gt;/      # next 2 hex chars + KV cache group index
+        &lt;hash_hex&gt;.bin        # full block hash (in hex)</pre>
+
+<p>`config.json` records the run (block size, number of KV groups, etc.) and is written on first start. Each rank writes blocks under its own `_r&lt;rank&gt;` sibling directory, so multiple ranks can safely share the same `root_dir`.</p>
+
+<p>#### Cross-Process Sharing</p>
+
+<p>To enable KV cache sharing between multiple vLLM instances using the same `root_dir` (e.g., via a shared PVC), the `PYTHONHASHSEED` environment variable must be set to the same fixed value (e.g., `&quot;0&quot;`) on every instance. Without this, each process initializes `NONE_HASH` (the chain-hash seed for block content hashes) with random bytes, producing different block filenames for identical token content.</p>
+
+<pre>PYTHONHASHSEED=0 vllm serve ...</pre>
+
+<h3>Object Store (OBJ)</h3>
+
+<p>The object-store tier (`type: &quot;obj&quot;`) offloads blocks to an S3-compatible object store through the NIXL OBJ backend.</p>
+
+<p>| Key | Required | Default | Notes |</p>
+<p>| --- | --- | --- | --- |</p>
+<p>| `type` | yes | — | Must be `obj`. |</p>
+<p>| `store_config` | yes | — | Object store connection parameters (see below). |</p>
+<p>| `prefix` | no | `&quot;&quot;` | Key prefix prepended to all object keys. |</p>
+<p>| `io_threads` | no | `4` | Number of NIXL OBJ backend I/O threads. |</p>
+<p>| `enable_kv_events` | no | `false` | Publish `BlockStored` KV events (medium `OBJ`) for successfully stored blocks. Requires KV cache events to be enabled globally. |</p>
+
+<p>`store_config` fields:</p>
+
+<p>| Key | Required | Default | Notes |</p>
+<p>| --- | --- | --- | --- |</p>
+<p>| `bucket` | yes | — | Bucket name. |</p>
+<p>| `endpoint_override` | yes | — | Object store endpoint host; the URL scheme is set separately via `scheme`. |</p>
+<p>| `scheme` | no | `http` | `http` or `https`. |</p>
+<p>| `access_key`, `secret_key`, `session_token` | no | `&quot;&quot;` | Explicit credentials. When left empty, the NIXL OBJ plugin falls back to the AWS SDK default credential provider chain (IAM roles, environment variables, credential files), which enables workload-identity auth on Kubernetes. |</p>
+<p>| `region` | no | `&quot;&quot;` | Bucket region, if the endpoint requires one. |</p>
+<p>| `ca_bundle` | no | `&quot;&quot;` | CA bundle path for TLS verification. |</p>
+
+<p>Object keys follow the same run-configuration digest scheme as the filesystem tier (see [On-Disk Layout](#on-disk-layout)) and are stored under the optional `prefix`. The [Cross-Process Sharing](#cross-process-sharing) requirement (`PYTHONHASHSEED`) applies to shared buckets as well, so instances sharing a bucket produce identical keys for identical content. At startup the tier probes object store connectivity and fails fast with a configuration error if the bucket is unreachable.</p>
+
+<h3>P2P (Including P/D)</h3>
+
+<p>The P2P tier (`type: &quot;p2p&quot;`) shares completed KV blocks between vLLM instances over RDMA via NIXL. Each instance binds a control socket on `host:port` and exchanges blocks directly with peers — no shared filesystem required.</p>
+
+<p>PYTHONHASHSEED environment variable must be set to the same fixed value on all nodes.</p>
+
+<p>| Key | Required | Default | Notes |</p>
+<p>| --- | --- | --- | --- |</p>
+<p>| `type` | yes | — | Must be `p2p`. |</p>
+<p>| `host` | no | `$VLLM_P2P_SIDE_CHANNEL_HOST` (`localhost`) | Address the control socket binds to, used verbatim as the identity peers dial back. When omitted, resolves from the env var below. The `localhost` default binds loopback only — for cross-host P2P you **must** set it to the node&#x27;s routable IP (see below). |</p>
+<p>| `port` | no | `$VLLM_P2P_SIDE_CHANNEL_PORT` (`5710`) | Base port for the control socket. Must be reachable from peers. The bound port is `base + data_parallel_index` (one socket per DP replica). When omitted, the base resolves from the env var below. |</p>
+<p>| `backends` | no | `[&quot;UCX&quot;]` | NIXL transport backends. See [NixlConnector Usage Guide](nixl_connector_usage.md#selecting-a-nixl-transport-backend-plugin) for available backends and selection guidance. |</p>
+<p>| `num_threads` | no | `4` | NIXL agent worker threads. Only used when `backends` is UCX-only; ignored when any non-UCX backend is requested. |</p>
+
+<p>The `backends` and `num_threads` options mirror the conditional logic used by [`NixlConnector`](nixl_connector_usage.md#selecting-a-nixl-transport-backend-plugin): when any non-UCX backend is configured, NIXL is initialised with `backends=...`; otherwise it falls back to a UCX-only agent with the configured `num_threads`. This lets the P2P tier use a different transport (e.g. `MOONCAKE`, `GDS_MT`, `LIBFABRIC`) than the main `NixlConnector` running in the same process.</p>
+
+<p>#### Environment Variables</p>
+
+<p>Rather than embedding `host`/`port` in each `secondary_tiers` entry, set them once at deploy time via environment variables (mirroring `VLLM_NIXL_SIDE_CHANNEL_HOST`/`VLLM_NIXL_SIDE_CHANNEL_PORT`). Explicit `host`/`port` config keys, when present, take precedence.</p>
+
+<p>- `VLLM_P2P_SIDE_CHANNEL_HOST` (default `localhost`): address the P2P control socket binds to. It is used **verbatim** as both the bind address and the identity peers dial back — there is no auto-detection (this mirrors `VLLM_NIXL_SIDE_CHANNEL_HOST`). The default binds the loopback interface only, so peers on another host cannot reach it. **For any cross-host P2P deployment you must set this explicitly to the node&#x27;s routable IP** (e.g. the pod IP) before launching `vllm serve` — otherwise remote peers will fail to connect. The NIXL agent name is a separate per-process identifier, so peers sharing a `host:port` never collide.</p>
+<p>- `VLLM_P2P_SIDE_CHANNEL_PORT` (default `5710`): base port for the P2P control socket. The port actually bound is `VLLM_P2P_SIDE_CHANNEL_PORT + data_parallel_index` — one socket per DP replica, matching NIXL (for DP=1 the offset is 0). The peer&#x27;s port is passed as `remote_port` in `kv_transfer_params`; the router/EPP that selects the DP rank (e.g. via the `X-data-parallel-rank` header) computes `remote_port = base + rank`. The DP-index offset separates replicas *within* one deployment; two co-located *deployments* (a prefiller and a decoder on the same host) still need distinct base ports (e.g. decoder base `5711`) to avoid a bind collision.</p>
+
+<h2>Tuning Tips</h2>
+
+<p>- `cpu_bytes_to_use`: a bigger CPU tier means fewer trips to slower secondary tiers and a higher hit rate. The value is total across all workers, not per-worker. Leave headroom for the rest of the host workload.</p>
+<p>- For single-tier (CPU-only) setups, set `cpu_bytes_to_use` larger than the aggregate GPU KV cache. Because offloading is immediate, a smaller CPU tier just mirrors what the GPU already holds and adds no hit rate.</p>
+<p>- `block_size`: larger offloaded blocks reduce per-block bookkeeping overhead but increase the granularity of lookups. Must be a multiple of the GPU block size.</p>
+<p>- FS thread counts: tune `n_read_threads` and `n_write_threads` to the parallelism your storage can sustain. Reads are latency-sensitive on the prefill path, so prefer more read threads when prefill hit rates are high.</p>
+<p>- Sharing `root_dir` across runs: runs with the same model, `block_size`, parallelism layout, and dtype share files under the same `&lt;digest&gt;` subdirectory. Changing any of these produces a new subdirectory; old ones are orphaned but harmless. Delete them to reclaim disk.</p>
+
+<h2>Per-Request Selective Offload</h2>
+
+<p>Individual requests can cap how many of their tokens are eligible for offload by setting `max_offload_tokens` in the request&#x27;s `kv_transfer_params`. Only the first `max_offload_tokens` tokens of the request are offloaded; blocks beyond that point are skipped on the store path. This is useful when a known prefix (e.g., a system prompt or shared context) is worth caching but later request-specific tokens are not.</p>
+
+<p>| Key | Type | Notes |</p>
+<p>| --- | --- | --- |</p>
+<p>| `max_offload_tokens` | non-negative `int` | Upper bound on tokens to offload for this request. `0` disables offload for the request entirely; omit the key (or set to `None`) for no cap. Non-`int`, negative, or `bool` values are rejected with a warning and treated as no cap. |</p>
+
+<p>!!! note</p>
+<p>    `max_offload_tokens` is experimental and subject to change.</p>
+
+<p>Example (OpenAI-compatible completions request):</p>
+
+<pre>{
+  &quot;model&quot;: &quot;&lt;model&gt;&quot;,
+  &quot;prompt&quot;: &quot;...&quot;,
+  &quot;kv_transfer_params&quot;: {
+    &quot;max_offload_tokens&quot;: 1024
+  }
+}</pre>
+
+<h2>Further Reading</h2>
+
+<p>- [vLLM blog: KV Offloading Connector](https://vllm.ai/blog/2026-01-08-kv-offloading-connector) — motivation, architecture (DMA-based async transfer), and benchmarks (TTFT and throughput).</p>
+
+<footer>📁 调研资料存档 · 原始抓取 · 2026-07-15 · <a href="../report.html">返回主报告</a></footer>
+</body>
+</html>

@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warp Specialization 三方对比: 博客理论 ↔ DeepEP 源码 ↔ DeepGEMM Mega MoE</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="warp-specialization-deepep-deepgemm-mega-moe">Warp Specialization 三方对比: 博客理论 ↔ DeepEP 源码 ↔ DeepGEMM Mega MoE</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 验证博客 Section 5 的 Warp Specialization 描述是否与 DeepEP 源码一致，并对比 DeepGEMM Mega MoE 的实现</p>
+</blockquote>
+<hr />
+<h2 id="1-tldr">1. 核心结论 (TL;DR)</h2>
+<p><strong>博客描述的 "Send → Forward → Receive" 三阶段 Warp Specialization 在 DeepEP 源码中部分成立，但需要重要修正：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>博客描述</th>
+<th>实际 DeepEP 源码</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp 角色数</strong></td>
+<td>3 (Send/Forward/Receive)</td>
+<td><strong>4</strong> (Notify + Scaleout + Forward + 隐式接收)</td>
+<td><strong>4+</strong> (Dispatch + TMA Load + MMA Issue + Epilogue)</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>Send → Forward → Receive</td>
+<td>Notify → Scaleout Send → Forward → (接收隐含)</td>
+<td>Dispatch → TMA Load → MMA → Epilogue</td>
+</tr>
+<tr>
+<td><strong>定位</strong></td>
+<td>纯通信 kernel</td>
+<td>纯通信 kernel (多节点)</td>
+<td>通信+计算融合 kernel</td>
+</tr>
+<tr>
+<td><strong>关键差异</strong></td>
+<td>未提及 Notify warps</td>
+<td>Notify warps 负责元数据同步</td>
+<td>无 Notify，Dispatch 兼具计数+拉取</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键洞察</strong>: 博客描述的是 DeepEP <strong>hybrid (多节点)</strong> 模式下的 Warp Specialization。单节点 (scale-up only) 模式只有 Notify + Dispatch 两种 warp 角色。</p>
+<hr />
+<h2 id="2-warp-specialization">2. 博客原文: Warp Specialization 描述</h2>
+<p>博客 Section 5 原文:</p>
+<blockquote>
+<p><strong>5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</strong></p>
+<p>Warp Specialization in DeepEP is <strong>not</strong> about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
+<p>Different Warp Groups handle:<br />
+- Warp Group A: IB Sending<br />
+- Warp Group B: IB-NVLink Forwarding<br />
+- Warp Group C: NVLink Receiving</p>
+<p>Forming: <strong>Send → Forward → Receive</strong></p>
+</blockquote>
+<p>博客 Section 4.2 进一步说明:</p>
+<blockquote>
+<p>Normal Kernel divides into three roles:<br />
+Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</p>
+</blockquote>
+<p><strong>分析</strong>: 博客将 Warp Specialization 描述为通信 kernel 内部的三阶段流水线并行化，核心目的是解决 GPU-NIC 拓扑不对称问题。</p>
+<hr />
+<h2 id="3-deepep-warp">3. DeepEP 实际实现: Warp 角色分析</h2>
+<h3 id="31-dispatchcuh-combinecuh">3.1 单节点模式 (dispatch.cuh / combine.cuh)</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 21-30 行: 模板参数定义两种 warp 角色</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsScaleupNVLink,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoCPUSync,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kReuseSlotIndices,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumDispatchWarps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 只有两种 warp 角色</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>__launch_bounds__(kNumThreads,<span style="color: #BBB"> </span><span style="color: #666">1</span>)
+dispatch_impl(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 79 行: warp 分派</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Notify warps: 元数据计数、前缀和、peer 通知</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - atomicAdd 统计 expert_count / rank_count</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - full-grid reduction</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - 写入 peer 的 rank_expert_count</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - 计算 prefix sum</span>
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Dispatch warps: 数据搬运</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - TMA load token from global memory</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - TMA store to send buffer</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - NVLink store (tma_store_1d to sym_ptr)</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// - RDMA put (gin.put)</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>单节点模式 Warp 角色:</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌───────────────────────────────────────────────────────────────┐
+│              DeepEP Scale-up Only CTA                          │
+├────────────────────────────┬──────────────────────────────────┤
+│ Notify Warps               │ Dispatch Warps                   │
+│ (warp_idx &lt; kNumNotifyWarps)│ (warp_idx &gt;= kNumNotifyWarps)    │
+├────────────────────────────┼────────────────────────────────┤
+│ • Expert/Rank 计数          │ • TMA Load tokens              │
+│ • Prefix sum 计算           │ • TMA Store to send buffer     │
+│ • Peer 元数据同步           │ • NVLink Store (对称内存)       │
+│ • Host workspace 写入       │ • RDMA Put (若非 NVLink 可达)   │
+└────────────────────────────┴──────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>注意</strong>: 单节点模式下<strong>没有 Forward warps</strong>，因为所有 GPU 通过 NVLink 直接可达。</p>
+<h3 id="32-hybrid-hybrid_dispatchcuh">3.2 多节点 Hybrid 模式 (hybrid_dispatch.cuh) — 关键发现</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 16-32 行: 模板参数定义**三种**数据路径 warp 角色</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoCPUSync,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kReuseSlotIndices,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumForwardWarps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 三种!</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleupRanks,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumHiddenBytes,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSFPacks,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxTokensPerRank,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumExperts,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumTopk,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kExpertAlignment,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutSendThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumForwardThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumForwardWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumNotifyThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutSendThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumForwardThreads<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>__launch_bounds__(kNumThreads,<span style="color: #BBB"> </span><span style="color: #666">1</span>)
+hybrid_dispatch_impl(...)<span style="color: #BBB"> </span>{
+</code></pre></div>
+
+<p><strong>Hybrid Dispatch 的 Warp 分派:</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 107 行: 三种 warp 角色</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Notify Warps ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 元数据收集与同步</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. atomicAdd 统计 expert_count / rank_count</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. full-grid reduction</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 写入 scale-out peers 的 rank_expert_count (RDMA)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. 写入 scale-up peers 的 rank_expert_count (NVLink)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 5. 计算 prefix sum</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Scaleout Warps (IBGDA/RDMA Sending) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 跨节点数据发送</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 389 行:</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>channel_idx;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumChannels)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA load token</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA store to scaleout_send_buffer</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// gin.put&lt;ncclTeamTagRail&gt;(..., stored_dst_scaleout_rank_idx)  // IBGDA!</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Issue scale-out tail update</span>
+<span style="color: #BBB">    </span>}
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Forward Warps (NVLink Forwarding) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从 scale-out 接收 buffer 转发到 scale-up 目标</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 484 行: &quot;Forward tokens from scale-out ranks&quot;</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>forward_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutWarps);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 538 行: 从 scaleout_recv_buffer 读取</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>start_slot_idx;<span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>end_slot_idx;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>slot_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_token_buffer(slot_idx);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA load into shared memory</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA store to scaleup_buffer (NVLink sym_ptr)</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>Hybrid Dispatch Warp 角色完整视图:</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    DeepEP Hybrid Dispatch CTA                                    │
+├──────────────────┬──────────────────────────┬───────────────────────────────────┤
+│ Notify Warps     │ Scaleout Warps           │ Forward Warps                     │
+│ (元数据同步)      │ (IBGDA/RDMA 跨节点发送)   │ (NVLink 节点内转发)                │
+├──────────────────┼──────────────────────────┼───────────────────────────────────┤
+│ • Expert 计数     │ • Token TMA Load         │ • 从 scaleout_recv 读取           │
+│ • Rank 计数       │ • Send buffer 写入        │ • TMA Load → smem                 │
+│ • Prefix sum     │ • IBGDA put (RDMA)       │ • TMA Store → scaleup_buffer     │
+│ • Peer 元数据同步  │ • Tail update            │ • 按 scale-up rank 分发            │
+│ • Grid sync      │ • Channel 流控            │ • Linked list 索引维护             │
+└──────────────────┴──────────────────────────┴───────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="33-hybrid-combine-warp">3.3 Hybrid Combine 的 Warp 角色</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 25 行: 两种 warp 角色</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleupWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumForwardWarps;
+
+<span style="color: #3D7B7B; font-style: italic">// 106 行: warp 分派</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumScaleupWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Scaleup Warps (节点内发送) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从本地 buffer 发送到 scale-up peers</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 241 行: TMA load from global memory</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 328 行: TMA store to remote scale-up buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 127 行: update_tails (通知 forward warps)</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Forward Warps (节点间转发) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从 scale-up buffer 转发到 scale-out peers</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>forward_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumScaleupWarps;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 467 行: TMA load from scaleup_buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 477 行: TMA store to scaleout_send_buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 484 行: gin.put&lt;ncclTeamTagRail&gt; (RDMA)</span>
+}
+</code></pre></div>
+
+<p><strong>注意</strong>: Hybrid Combine 还使用了<strong>寄存器重分配</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 101-103 行</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kAdjustRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">4</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">8</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kUseExpandedLayout;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">40</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 少</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForForwardWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span><span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 多 (216)</span>
+</code></pre></div>
+
+<hr />
+<h2 id="4-deepgemm-mega-moe-warp-specialization">4. DeepGEMM Mega MoE 的 Warp Specialization</h2>
+<h3 id="41">4.1 线程配置</h3>
+<p><strong>文件</strong>: <code>DeepGEMM/csrc/jit_kernels/heuristics/mega_moe.hpp</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 205-206 行</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_dispatch_threads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 4 warps</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_non_epilogue_threads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">128</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 4 warps (TMA load + MMA issue)</span>
+<span style="color: #3D7B7B; font-style: italic">// num_epilogue_threads 由 heuristics 决定 (通常 256 = 8 warps)</span>
+</code></pre></div>
+
+<h3 id="42-warp">4.2 Warp 角色分派</h3>
+<p><strong>文件</strong>: <code>DeepGEMM/deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 44-49 行: warp 角色定义</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumDispatchThreads<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// 4 warps</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumNonEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// 4 warps</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// 8 warps</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumEpilogueWarpgroups<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">4</span>,<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 2 WGs</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumDispatchThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumNonEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumEpilogueThreads;
+<span style="color: #3D7B7B; font-style: italic">// 总计: 512 threads = 16 warps per CTA</span>
+
+<span style="color: #3D7B7B; font-style: italic">// 328 行: warp 分派主逻辑</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 0-3: Dispatch Warps (48 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumDispatchRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. Expert token 计数 (atomicAdd)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Grid sync 后写入 expert count</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. NVLink Pull: TMA load tokens from remote rank</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. red_add_rel 更新 l1_arrival_count</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 4: TMA Load for Tokens + SFA (40 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA copy tokens from L1 → smem_a</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA copy SFA (scale factor A)</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 5: TMA Load for Weights + SFB (40 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA copy weights from global → smem_b</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA copy SFB (scale factor B)</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 6: MMA Issue (40 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 创建 UMMA 指令描述符</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 等待 full_barriers</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// UTCCP copy SFA/SFB to TMEM</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Issue UMMA to Tensor Core</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Commit to empty barrier</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">3</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 7: 预留 (40 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_dealloc<span style="color: #666">&lt;</span>kNumNonEpilogueRegisters<span style="color: #666">&gt;</span>();
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumMMANonEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Warp 8-15: Epilogue (208 regs) ======</span>
+<span style="color: #BBB">    </span>cutlass<span style="color: #666">::</span>arch<span style="color: #666">::</span>warpgroup_reg_alloc<span style="color: #666">&lt;</span>kNumEpilogueRegisters<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// L1 Epilogue:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - TMEM Load</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - SwiGLU: silu(gate) * up</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - Amax reduction + SF 计算</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - Cast to FP8 + STSM store</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - TMA Store</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// L2 Epilogue:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - TMEM Load</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - Write to remote combine buffer (NVLink)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Combine:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - Top-K reduce</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//   - TMA Store to output</span>
+}
+</code></pre></div>
+
+<h3 id="43-mega-moe-warp">4.3 Mega MoE Warp 角色视图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌───────────────────────────────────────────────────────────────────────────────┐
+│                   Mega MoE CTA (512 threads = 16 warps)                       │
+├──────────┬──────────┬──────────┬─────────────────────────────────────────────┤
+│Warp 0-3  │Warp 4-5  │Warp 6-7  │Warp 8-15                                   │
+│Dispatch  │TMA Load  │MMA Issue │Epilogue (8 warps = 2 WGs)                  │
+│4 warps   │2 warps   │2 warps   │8 warps                                     │
+│48 regs   │40 regs   │40 regs   │208 regs                                    │
+├──────────┼──────────┼──────────┼─────────────────────────────────────────────┤
+│• Expert  │• Tokens  │• UMMA    │• TMEM Load                                 │
+│  count   │  + SFA   │  issue   │• SwiGLU (L1)                               │
+│• NVLink  │• Weights │• UTCCP   │• FP8 Quant (L1)                            │
+│  Pull    │  + SFB   │• Barrier │• Write Combine Buffer (L2)                  │
+│• Grid    │• Barrier │  manage  │• Top-K Reduce                              │
+│  sync    │  update  │          │• TMA Store                                 │
+└──────────┴──────────┴──────────┴─────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="5-deepep-deepgemm">5. 三方对比: 博客 ↔ DeepEP ↔ DeepGEMM</h2>
+<h3 id="51-warp">5.1 Warp 角色映射</h3>
+<table>
+<thead>
+<tr>
+<th>博客描述</th>
+<th>DeepEP 单节点</th>
+<th>DeepEP Hybrid</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>IB Sending</strong></td>
+<td>Dispatch warps (NVLink store + RDMA put)</td>
+<td>Scaleout warps (IBGDA put)</td>
+<td>Dispatch warps (NVLink Pull)</td>
+</tr>
+<tr>
+<td><strong>IB-NVLink Forwarding</strong></td>
+<td>❌ 不存在</td>
+<td>Forward warps (scaleout → scaleup)</td>
+<td>❌ 不存在</td>
+</tr>
+<tr>
+<td><strong>NVLink Receiving</strong></td>
+<td>隐含在 Dispatch 中</td>
+<td>隐含 (Forward 直接写入目标)</td>
+<td>Dispatch warps (主动拉取)</td>
+</tr>
+<tr>
+<td><strong>Notify/元数据</strong></td>
+<td>Notify warps (未提及)</td>
+<td>Notify warps (未提及)</td>
+<td>Dispatch warps (融合)</td>
+</tr>
+<tr>
+<td><strong>计算 (MMA)</strong></td>
+<td>❌ 无</td>
+<td>❌ 无</td>
+<td>MMA Issue warps</td>
+</tr>
+<tr>
+<td><strong>计算 (Epilogue)</strong></td>
+<td>❌ 无</td>
+<td>❌ 无</td>
+<td>Epilogue warps</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 流水线图对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;博客描述的 DeepEP (3 阶段)&quot;
+        A_blog[IB Sending&lt;br/&gt;Warp Group A] --&gt; B_blog[IB-NVLink Forwarding&lt;br/&gt;Warp Group B] --&gt; C_blog[NVLink Receiving&lt;br/&gt;Warp Group C]
+    end
+
+    subgraph &quot;DeepEP 单节点 (2 角色)&quot;
+        A1[Notify Warps&lt;br/&gt;元数据同步] 
+        A2[Dispatch Warps&lt;br/&gt;NVLink Store + RDMA Put]
+        A1 --&gt; A2
+    end
+
+    subgraph &quot;DeepEP Hybrid (3+1 角色)&quot;
+        B1[Notify Warps&lt;br/&gt;Expert/Rank 计数 + Prefix Sum]
+        B2[Scaleout Warps&lt;br/&gt;IBGDA RDMA 跨节点发送]
+        B3[Forward Warps&lt;br/&gt;NVLink 节点内转发]
+        B1 --&gt; B2 --&gt; B3
+    end
+
+    subgraph &quot;DeepGEMM Mega MoE (4 角色)&quot;
+        C1[Dispatch Warps 0-3&lt;br/&gt;Expert Count + NVLink Pull]
+        C2[TMA Load Warps 4-5&lt;br/&gt;Tokens + Weights → smem]
+        C3[MMA Issue Warp 6&lt;br/&gt;UMMA → Tensor Core]
+        C4[Epilogue Warps 8-15&lt;br/&gt;SwiGLU + Combine]
+        C1 --&gt; C2 --&gt; C3 --&gt; C4
+    end
+
+    style A_blog fill:#e1f5fe
+    style B_blog fill:#e1f5fe
+    style C_blog fill:#e1f5fe
+    style B2 fill:#ffebee
+    style B3 fill:#fff3e0
+    style C1 fill:#e1f5fe
+    style C2 fill:#fff3e0
+    style C3 fill:#f3e5f5
+    style C4 fill:#e8f5e9
+</code></pre></div>
+
+<h3 id="53-vs">5.3 博客描述 vs 源码差异分析</h3>
+<table>
+<thead>
+<tr>
+<th>差异点</th>
+<th>博客描述</th>
+<th>实际源码</th>
+<th>评价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp 角色数量</strong></td>
+<td>3 (Send/Forward/Receive)</td>
+<td>4 (Notify + Scaleout + Forward + 隐式接收)</td>
+<td>博客忽略了 Notify warps</td>
+</tr>
+<tr>
+<td><strong>Receive 独立存在</strong></td>
+<td>Warp Group C 专门接收</td>
+<td>接收被 Forward warps 隐含完成</td>
+<td>博客过度简化</td>
+</tr>
+<tr>
+<td><strong>Notify warps</strong></td>
+<td>未提及</td>
+<td>关键的元数据同步角色</td>
+<td>重要遗漏</td>
+</tr>
+<tr>
+<td><strong>IB vs IBGDA</strong></td>
+<td>写 "IB Sending"</td>
+<td>实际用 IBGDA (GPU-initiated RDMA)</td>
+<td>术语不够精确</td>
+</tr>
+<tr>
+<td><strong>流水线方向</strong></td>
+<td>Send → Forward → Receive</td>
+<td>Notify → Send → Forward (→ 接收)</td>
+<td>博客忽略了 Notify 阶段</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>: 博客描述基本正确但过度简化。实际 DeepEP Hybrid 模式有 <strong>4 种 warp 角色</strong> (Notify + Scaleout + Forward + 隐式接收)，Notify warps 是元数据同步的关键。</p>
+<hr />
+<h2 id="6-deepep-vs-deepgemm-warp-specialization">6. DeepEP vs DeepGEMM: Warp Specialization 本质差异</h2>
+<h3 id="61">6.1 设计哲学对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>问题</strong></td>
+<td>如何并行化通信阶段?</td>
+<td>如何融合通信+计算?</td>
+</tr>
+<tr>
+<td><strong>Warp 角色</strong></td>
+<td>通信阶段 (Notify/Send/Forward)</td>
+<td>计算+通信阶段 (Dispatch/Load/MMA/Epi)</td>
+</tr>
+<tr>
+<td><strong>流水线深度</strong></td>
+<td>3-4 阶段 (通信)</td>
+<td>4+ 阶段 (通信+2层GEMM+Epilogue)</td>
+</tr>
+<tr>
+<td><strong>同步机制</strong></td>
+<td>FIFO + timeout_while + barrier</td>
+<td>mbarrier + TMEM barrier + grid_sync</td>
+</tr>
+<tr>
+<td><strong>寄存器策略</strong></td>
+<td>显式重分配 (40/216)</td>
+<td>显式重分配 (40/48/208)</td>
+</tr>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>非对称 (需显式 Send)</td>
+<td>对称内存 (直接远端访问)</td>
+</tr>
+<tr>
+<td><strong>通信范式</strong></td>
+<td>Push (发送端主动)</td>
+<td>Pull (接收端主动读取)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-push-vs-pull">6.2 通信范式差异: Push vs Pull</h3>
+<p><strong>DeepEP (Push 范式):</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh 449 行: Scaleout warp 主动发送</span>
+gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">    </span>stored_dst_scaleout_rank_idx,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 指定目标 rank</span>
+<span style="color: #BBB">    </span>ncclGinOptFlagsAggregateRequests);
+</code></pre></div>
+
+<p><strong>DeepGEMM (Pull 范式):</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh 430 行: Dispatch warp 主动拉取</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_idx;<span style="color: #BBB"> </span>;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumGlobalWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 读取远端 token 的 topk_idx</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>src_token_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_src_token_topk_idx_ptr(...);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA load token from remote rank into local</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(pull_buffer.get_base_ptr(),
+<span style="color: #BBB">                     </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                                    </span>current_rank_in_expert_idx),<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 映射远端地址</span>
+<span style="color: #BBB">                     </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);
+}
+</code></pre></div>
+
+<h3 id="63-forwarding">6.3 对称内存消除了 Forwarding 需求</h3>
+<p><strong>DeepEP 为什么需要 Forwarding?</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>GPU0 要发送到 NIC1，但 NIC1 绑定在 GPU4 上
+→ 需要 GPU0 → NVLink → GPU4 (Forward) → PCIe → NIC1
+→ 需要 Forward warps 做通信中继
+</code></pre></div>
+
+<p><strong>DeepGEMM 为什么不需要 Forwarding?</strong></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sym_buffer.cuh - 对称内存映射</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+}
+</code></pre></div>
+
+<p>每个 rank 都有<strong>对称的虚拟地址映射</strong>，可以直接通过 NVLink 访问其他 rank 的内存，无需 GPU SM 做通信中继。</p>
+<hr />
+<h2 id="7">7. 与其他机制的关联分析</h2>
+<h3 id="71-warp-spec-nvlinkrdma-agent-6">7.1 Warp Spec ↔ NVLink/RDMA (Agent 6)</h3>
+<table>
+<thead>
+<tr>
+<th>机制</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NVLink 使用</strong></td>
+<td>Forward warps 做节点内转发</td>
+<td>Dispatch warps 直接读取远端</td>
+</tr>
+<tr>
+<td><strong>RDMA 使用</strong></td>
+<td>Scaleout warps (IBGDA put)</td>
+<td>无 (纯 NVLink)</td>
+</tr>
+<tr>
+<td><strong>GPU-NIC 拓扑</strong></td>
+<td>需要 Forward warps 解决不对称</td>
+<td>不涉及 NIC</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72-warp-spec-fifo-agent-4">7.2 Warp Spec ↔ FIFO (Agent 4)</h3>
+<p><strong>博客 Section 6 描述:</strong></p>
+<blockquote>
+<p>With FIFO: Send → FIFO → Forward → FIFO → Receive</p>
+</blockquote>
+<p><strong>实际 DeepEP 实现:</strong><br />
+- 使用 <code>timeout_while</code> + <code>ld_acquire_sys</code> 实现 FIFO 语义<br />
+- Scaleout warps 写入 <code>scaleout_channel_signaled_tail</code><br />
+- Forward warps 轮询 tail 更新</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh 500 行: Forward warp 等待数据到达</span>
+comm<span style="color: #666">::</span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>([<span style="color: #666">&amp;</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>arrived_or_finished<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">        </span>stored_scaleout_tail_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>stored_scaleout_old_tail_idx<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>stored_finish_flag<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>exchange(arrived_or_finished,<span style="color: #BBB"> </span>recv_scaleout_rank_idx))
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumScaleoutRanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signaled_tail<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>workspace_layout.get_scaleout_channel_signaled_tail_ptr(channel_idx,<span style="color: #BBB"> </span>lane_idx));
+<span style="color: #BBB">        </span>math<span style="color: #666">::</span>unpack2<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(signaled_tail,<span style="color: #BBB"> </span>stored_finish_flag,<span style="color: #BBB"> </span>stored_scaleout_tail_idx);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>;
+});
+</code></pre></div>
+
+<p><strong>DeepGEMM 的 FIFO 替代:</strong><br />
+- 使用 <code>mbarrier</code> + <code>full_barriers</code> / <code>empty_barriers</code><br />
+- 使用 <code>tmem_full_barriers</code> / <code>tmem_empty_barriers</code><br />
+- 更硬件化的同步机制</p>
+<h3 id="73-warp-spec-intrainter-node-agent-6">7.3 Warp Spec ↔ Intra/Inter-node (Agent 6)</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Intra-node (单节点)</strong></td>
+<td>Notify + Dispatch (2 角色)</td>
+<td>Dispatch + TMA + MMA + Epilogue</td>
+</tr>
+<tr>
+<td><strong>Inter-node (多节点)</strong></td>
+<td>Notify + Scaleout + Forward (3+1 角色)</td>
+<td>不涉及 (单节点设计)</td>
+</tr>
+<tr>
+<td><strong>Hybrid (混合)</strong></td>
+<td>完整 4 角色</td>
+<td>N/A</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8">8. 寄存器策略对比</h2>
+<h3 id="81-deepep-hybrid-combine">8.1 DeepEP Hybrid Combine 寄存器分配</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_combine.cuh 101-103 行</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kAdjustRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">4</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">8</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kUseExpandedLayout;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">40</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 节点内发送: 少</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForForwardWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span><span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 节点间转发: 多 (216)</span>
+</code></pre></div>
+
+<h3 id="82-deepgemm-mega-moe">8.2 DeepGEMM Mega MoE 寄存器分配</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh 315-322 行</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kUseMoreEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">64</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumDispatchRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kUseMoreEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">48</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">96</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumNonEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kUseMoreEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">40</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">88</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kUseMoreEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">208</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">160</span>;
+DG_STATIC_ASSERT(kNumDispatchRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchThreads<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                 </span>kNumNonEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumNonEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">                 </span>kNumEpilogueRegisters<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueThreads<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">64512</span>,
+<span style="color: #BBB">                 </span><span style="color: #BA2121">&quot;Too many registers&quot;</span>);
+</code></pre></div>
+
+<h3 id="83">8.3 寄存器策略对比表</h3>
+<table>
+<thead>
+<tr>
+<th>Warp 角色</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+<th>分析</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信发送</strong></td>
+<td>40 regs (Scaleup)</td>
+<td>48 regs (Dispatch)</td>
+<td>DeepGEMM 稍多 (需要 token routing)</td>
+</tr>
+<tr>
+<td><strong>通信转发</strong></td>
+<td>216 regs (Forward)</td>
+<td>N/A</td>
+<td>DeepEP 需要大量寄存器处理转发逻辑</td>
+</tr>
+<tr>
+<td><strong>计算 (MMA)</strong></td>
+<td>N/A</td>
+<td>40 regs</td>
+<td>最少，纯 issue 指令</td>
+</tr>
+<tr>
+<td><strong>计算 (Epilogue)</strong></td>
+<td>N/A</td>
+<td>208 regs</td>
+<td>最多，SwiGLU + 量化 + Combine</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-mermaid">9. 完整流水线 Mermaid 图</h2>
+<h3 id="91-deepep-hybrid-dispatch">9.1 DeepEP Hybrid Dispatch 流水线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>gantt
+    title DeepEP Hybrid Dispatch Warp Pipeline (单 CTA 视角)
+    dateFormat X
+    axisFormat %L
+
+    section Notify Warps
+    Expert/Rank 计数 (atomicAdd)    :active, n1, 0, 10
+    Full-grid reduction            :active, n2, after n1, 8
+    Peer 元数据同步 (RDMA+NVLink)   :active, n3, after n2, 15
+    Prefix sum 计算                 :active, n4, after n3, 5
+
+    section Scaleout Warps
+    Wait metadata                  :crit, s0, 10, 5
+    Token TMA Load                 :active, s1, after n4, 10
+    Send buffer 写入 + IBGDA put    :active, s2, after s1, 20
+    Tail update                    :s3, after s2, 3
+
+    section Forward Warps
+    Wait tail update               :crit, f0, 25, 5
+    Scaleout recv → smem           :active, f1, after f0, 10
+    TMA Store → scaleup buffer     :active, f2, after f1, 10
+    Linked list 维护                :f3, after f2, 5
+</code></pre></div>
+
+<h3 id="92-deepgemm-mega-moe">9.2 DeepGEMM Mega MoE 流水线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>gantt
+    title Mega MoE Warp Pipeline (单 CTA 视角)
+    dateFormat X
+    axisFormat %L
+
+    section Dispatch (Warp 0-3)
+    Expert token 计数 (atomicAdd)   :active, d1, 0, 10
+    Grid sync + expert count 写入   :active, d2, after d1, 8
+    NVLink Pull (TMA Load)         :active, d3, after d2, 20
+
+    section TMA Load (Warp 4-5)
+    Wait L1 arrival                :crit, t0, 10, 5
+    TMA Copy Tokens+Weights → smem :active, t1, after d3, 15
+
+    section MMA Issue (Warp 6)
+    Wait full_barriers             :crit, m0, 15, 3
+    Issue UMMA (L1)                :active, m1, after t1, 20
+    Issue UMMA (L2)                :active, m2, after m1, 20
+
+    section Epilogue (Warp 8-15)
+    Wait tmem_full_barriers        :crit, e0, 20, 3
+    SwiGLU + Quantize (L1)         :active, e1, after m1, 15
+    Write Combine Buffer (L2)      :active, e2, after m2, 15
+    Top-K Reduce + TMA Store       :active, e3, after e2, 10
+</code></pre></div>
+
+<hr />
+<h2 id="10-warp-specialization">10. 总结: Warp Specialization 的演化</h2>
+<h3 id="101">10.1 三种形态对比</h3>
+<table>
+<thead>
+<tr>
+<th>形态</th>
+<th>代表</th>
+<th>Warp 角色</th>
+<th>核心目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>通信并行化</strong></td>
+<td>DeepEP Hybrid</td>
+<td>Notify/Send/Forward/Receive</td>
+<td>解决 GPU-NIC 拓扑不对称</td>
+</tr>
+<tr>
+<td><strong>计算+通信融合</strong></td>
+<td>DeepGEMM Mega MoE</td>
+<td>Dispatch/TMA/MMA/Epilogue</td>
+<td>消除中间 buffer，减少内存 traffic</td>
+</tr>
+<tr>
+<td><strong>纯计算</strong></td>
+<td>传统 GEMM</td>
+<td>MMA/Epilogue</td>
+<td>最大化 Tensor Core 利用率</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102">10.2 关键洞察</h3>
+<ol>
+<li>
+<p><strong>博客描述基本正确但过度简化</strong> — 实际 DeepEP Hybrid 有 4 种 warp 角色 (Notify + Scaleout + Forward + 隐式接收)，Notify warps 是元数据同步的关键</p>
+</li>
+<li>
+<p><strong>Warp Specialization 的目的不同</strong>:<br />
+   - DeepEP: 通信阶段并行化 (解决拓扑不对称)<br />
+   - DeepGEMM: 通信+计算融合 (消除中间 buffer)</p>
+</li>
+<li>
+<p><strong>对称内存改变了通信范式</strong> — 从 "Push + Forward" 到 "Pull"，消除了 Forwarding 需求</p>
+</li>
+<li>
+<p><strong>寄存器重分配是关键优化</strong> — 两种实现都使用显式寄存器重分配，但策略不同</p>
+</li>
+<li>
+<p><strong>同步机制演化</strong> — 从 DeepEP 的 FIFO + timeout_while 到 DeepGEMM 的 mbarrier + TMEM barrier</p>
+</li>
+</ol>
+<h3 id="103">10.3 演化路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP (通信并行化)  →  DeepGEMM (通信+计算融合)  →  未来 (全融合 MoE Runtime)
+   │                        │                           │
+   ├─ Notify warps          ├─ Dispatch warps           ├─ 统一调度
+   ├─ Scaleout warps        ├─ TMA Load warps          ├─ 硬件同步
+   ├─ Forward warps         ├─ MMA Issue warps         ├─ 动态 Warp 分配
+   └─ FIFO 解耦             └─ TMEM 解耦               └─ 全硬件化
+</code></pre></div>
+
+<hr />
+<h2 id="11">11. 参考代码位置</h2>
+<h3 id="deepep">DeepEP</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>16-32</td>
+<td>三种 warp 角色模板参数定义</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>107</td>
+<td>warp 分派主逻辑</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>329-460</td>
+<td>Scaleout warps (IBGDA 发送)</td>
+</tr>
+<tr>
+<td><code>hybrid_dispatch.cuh</code></td>
+<td>464-659</td>
+<td>Forward warps (NVLink 转发)</td>
+</tr>
+<tr>
+<td><code>hybrid_combine.cuh</code></td>
+<td>101-103</td>
+<td>寄存器重分配策略</td>
+</tr>
+<tr>
+<td><code>hybrid_combine.cuh</code></td>
+<td>106-351</td>
+<td>Scaleup warps (节点内发送)</td>
+</tr>
+<tr>
+<td><code>hybrid_combine.cuh</code></td>
+<td>351-621</td>
+<td>Forward warps (节点间转发)</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>21-30</td>
+<td>单节点模式 warp 角色定义</td>
+</tr>
+<tr>
+<td><code>dispatch.cuh</code></td>
+<td>79</td>
+<td>单节点 warp 分派</td>
+</tr>
+</tbody>
+</table>
+<h3 id="deepgemm">DeepGEMM</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>44-49</td>
+<td>warp 角色定义</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>315-322</td>
+<td>寄存器预算 static_assert</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>328-700</td>
+<td>Dispatch warps</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>735-793</td>
+<td>TMA Load warps</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>794-872</td>
+<td>MMA Issue warp</td>
+</tr>
+<tr>
+<td><code>sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>877+</td>
+<td>Epilogue warps</td>
+</tr>
+<tr>
+<td><code>mega_moe.hpp</code></td>
+<td>205-206</td>
+<td>线程块配置</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>分析基于 DeepEP 源码: <code>/Users/backyes/work/claude_workspace/deepgemm_research/deep_ep/</code></em><br />
+<em>分析基于 DeepGEMM 源码: <code>/Users/backyes/work/claude_workspace/deepgemm_research/DeepGEMM/</code></em><br />
+<em>博客参考: <code>/tmp/deep_ep_blog_text.txt</code> Section 5</em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

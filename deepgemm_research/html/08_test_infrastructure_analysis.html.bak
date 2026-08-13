@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP 测试基础设施与通用工具深度分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepep">DeepEP 测试基础设施与通用工具深度分析</h1>
+<h2 id="1">1. 概述</h2>
+<p>DeepEP 的测试基础设施是一个面向多 GPU 分布式 Expert Parallelism (EP) 场景的<strong>全栈验证系统</strong>，涵盖分布式进程组初始化、参考实现（Reference Implementation）、数值精度验证、性能基准测试（Benchmark）、硬件带宽探测等核心模块。测试设计的核心哲学是 <strong>"bitwise identical"</strong> —— 对于确定性算法，要求 GPU kernel 输出与 PyTorch 参考实现<strong>逐比特一致</strong>，而非传统的误差容忍比较。</p>
+<h3 id="_1">文件结构总览</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP/
+├── tests/
+│   ├── elastic/
+│   │   ├── test_ep.py          # 核心: Dispatch/Combine 正确性 + 性能测试
+│   │   ├── test_agrs.py        # AllGather/ReduceScatter 测试
+│   │   ├── test_barrier.py     # Barrier 同步原语测试
+│   │   ├── test_engram.py      # Engram 内存管理测试
+│   │   └── test_pp.py          # Pipeline Parallelism 测试
+│   ├── legacy/                 # 旧版 (V1) 测试
+│   └── utils/                  # 工具测试
+└── deep_ep/utils/
+    ├── __init__.py             # 导出 EventHandle
+    ├── testing.py              # bench / bench_kineto / flush_l2_cache
+    ├── gate.py                 # 非均衡 MoE 流量生成 (Unbalanced Score)
+    ├── comm.py                 # NCCL Communicator 封装
+    ├── envs.py                 # 分布式初始化 / 硬件探测
+    ├── event.py                # EventOverlap CUDA 事件封装
+    ├── refs.py                 # PyTorch 参考实现 (dispatch / combine)
+    ├── math.py                 # FP8 编解码 / 对齐 / 差异计算
+    ├── semantic.py             # weak_lru / value_or
+    └── find_pkgs.py            # NVIDIA 包路径探测
+</code></pre></div>
+
+<hr />
+<h2 id="2">2. 测试初始化：分布式进程组构建</h2>
+<h3 id="21-init_dist">2.1 <code>init_dist</code> —— 分布式环境初始化</h3>
+<p><code>envs.py:73-113</code> 定义了测试入口的分布式初始化流程：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:73-113</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">init_dist</span>(local_rank: <span style="color: #008000">int</span>, num_local_ranks: <span style="color: #008000">int</span>, seed: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">0</span>) <span style="color: #666">-&gt;</span> Tuple[<span style="color: #008000">int</span>, <span style="color: #008000">int</span>, dist<span style="color: #666">.</span>ProcessGroup]:
+    ip <span style="color: #666">=</span> os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;MASTER_ADDR&#39;</span>, <span style="color: #BA2121">&#39;127.0.0.1&#39;</span>)
+    port <span style="color: #666">=</span> <span style="color: #008000">int</span>(os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;MASTER_PORT&#39;</span>, <span style="color: #BA2121">&#39;8361&#39;</span>))
+    num_nodes <span style="color: #666">=</span> <span style="color: #008000">int</span>(os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;WORLD_SIZE&#39;</span>, <span style="color: #666">1</span>))
+    node_rank <span style="color: #666">=</span> <span style="color: #008000">int</span>(os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;RANK&#39;</span>, <span style="color: #666">0</span>))
+
+    sig <span style="color: #666">=</span> inspect<span style="color: #666">.</span>signature(dist<span style="color: #666">.</span>init_process_group)
+    params <span style="color: #666">=</span> {
+        <span style="color: #BA2121">&#39;backend&#39;</span>: <span style="color: #BA2121">&#39;nccl&#39;</span>,
+        <span style="color: #BA2121">&#39;init_method&#39;</span>: <span style="color: #BA2121">f&#39;tcp://</span><span style="color: #A45A77; font-weight: bold">{</span>ip<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">:</span><span style="color: #A45A77; font-weight: bold">{</span>port<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>,
+        <span style="color: #BA2121">&#39;world_size&#39;</span>: num_nodes <span style="color: #666">*</span> num_local_ranks,
+        <span style="color: #BA2121">&#39;rank&#39;</span>: node_rank <span style="color: #666">*</span> num_local_ranks <span style="color: #666">+</span> local_rank,
+    }
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #BA2121">&#39;device_id&#39;</span> <span style="color: #A2F; font-weight: bold">in</span> sig<span style="color: #666">.</span>parameters:
+        params[<span style="color: #BA2121">&#39;device_id&#39;</span>] <span style="color: #666">=</span> torch<span style="color: #666">.</span>device(<span style="color: #BA2121">f&#39;cuda:</span><span style="color: #A45A77; font-weight: bold">{</span>local_rank<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>)
+    dist<span style="color: #666">.</span>init_process_group(<span style="color: #666">**</span>params)
+    torch<span style="color: #666">.</span>set_default_dtype(torch<span style="color: #666">.</span>bfloat16)
+    torch<span style="color: #666">.</span>set_default_device(<span style="color: #BA2121">&#39;cuda&#39;</span>)
+    torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>set_device(local_rank)
+
+    init_seed(seed)
+    <span style="color: #008000; font-weight: bold">return</span> dist<span style="color: #666">.</span>get_rank(), dist<span style="color: #666">.</span>get_world_size(), dist<span style="color: #666">.</span>new_group(<span style="color: #008000">list</span>(<span style="color: #008000">range</span>(num_local_ranks <span style="color: #666">*</span> num_nodes)))
+</code></pre></div>
+
+<p><strong>关键设计要点</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>要素</th>
+<th>实现</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>后端</td>
+<td><code>nccl</code></td>
+<td>强制使用 NCCL 后端，匹配生产环境</td>
+</tr>
+<tr>
+<td>默认 dtype</td>
+<td><code>torch.bfloat16</code></td>
+<td>全局设定，所有未指定 dtype 的张量默认为 BF16</td>
+</tr>
+<tr>
+<td>默认 device</td>
+<td><code>cuda</code></td>
+<td>避免 CPU/GPU 混用导致的隐性同步</td>
+</tr>
+<tr>
+<td><code>device_id</code> 兼容</td>
+<td><code>inspect.signature</code> 探测</td>
+<td>适配不同 PyTorch 版本（新版的 <code>device_id</code> 参数）</td>
+</tr>
+<tr>
+<td>全局 group</td>
+<td><code>dist.new_group(list(range(N)))</code></td>
+<td>创建包含所有 rank 的全局通信组</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 测试启动流程</h3>
+<p><code>test_ep.py:564-609</code> 使用 <code>torch.multiprocessing.spawn</code> 启动多进程测试：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:609</span>
+torch<span style="color: #666">.</span>multiprocessing<span style="color: #666">.</span>spawn(test_loop, args<span style="color: #666">=</span>(num_processes, args), nprocs<span style="color: #666">=</span>num_processes)
+</code></pre></div>
+
+<h3 id="23">2.3 初始化流程图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[&quot;__main__: argparse 解析参数&quot;] --&gt; B[&quot;torch.multiprocessing.spawn&lt;br/&gt;启动 N 个 test_loop 进程&quot;]
+    B --&gt; C[&quot;init_dist: 设置 MASTER_ADDR/PORT&quot;]
+    C --&gt; D[&quot;dist.init_process_group&lt;br/&gt;(NCCL backend)&quot;]
+    D --&gt; E[&quot;torch.set_default_dtype(bfloat16)&lt;br/&gt;torch.set_default_device(cuda)&quot;]
+    E --&gt; F[&quot;init_seed: global_seed + rank&quot;]
+    F --&gt; G[&quot;dist.new_group 创建全局 group&quot;]
+    G --&gt; H[&quot;construct_elastic_buffer&lt;br/&gt;构建 ElasticBuffer&quot;]
+    H --&gt; I[&quot;test_dispatch_combine&lt;br/&gt;执行正确性 + 性能测试&quot;]
+    I --&gt; J{&quot;do_pressure_test?&quot;}
+    J --&gt;|Yes| K[&quot;循环 seed in range(1e9)&lt;br/&gt;重建 buffer 并重复测试&quot;]
+    J --&gt;|No| L[&quot;buffer.destroy()&quot;]
+    K --&gt; L
+    L --&gt; M[&quot;dist.destroy_process_group()&quot;]
+</code></pre></div>
+
+<hr />
+<h2 id="3-testingpy">3. <code>testing.py</code> —— 性能基准测试工具集</h2>
+<p><code>testing.py</code> 提供了三个核心工具：<code>flush_l2_cache</code>、<code>bench</code>、<code>bench_kineto</code>，以及一个 IO 抑制上下文管理器。</p>
+<h3 id="31-flush_l2_cache-l2-cache">3.1 <code>flush_l2_cache</code> —— L2 Cache 刷新</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># testing.py:12-21</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">flush_l2_cache</span>(enabled: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">True</span>):
+    l2_flush_cache_size <span style="color: #666">=</span> <span style="color: #666">256e6</span>
+    <span style="color: #008000; font-weight: bold">if</span> enabled:
+        torch<span style="color: #666">.</span>empty(<span style="color: #008000">int</span>(l2_flush_cache_size <span style="color: #666">//</span> <span style="color: #666">4</span>), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)<span style="color: #666">.</span>zero_()
+</code></pre></div>
+
+<p><strong>原理</strong>：分配 256MB / 4 = 64M 个 int（256MB）零初始化张量，用大量无效数据冲刷 L2 Cache，确保每次 benchmark 迭代从相同的缓存状态开始。这是 GPU benchmark 的标准做法 —— 避免前一次迭代的残留缓存影响当前迭代的命中率。</p>
+<h3 id="32-bench-cuda-event-benchmark">3.2 <code>bench</code> —— 基于 CUDA Event 的粗粒度 Benchmark</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># testing.py:24-60</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">bench</span>(fn, num_warmups: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">50</span>, num_tests: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">50</span>,
+          post_fn: Optional[Callable] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>, flush_l2: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">True</span>):
+    torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>synchronize()
+    <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_warmups):
+        fn()
+    start_events <span style="color: #666">=</span> [torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>Event(enable_timing<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>) <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests)]
+    end_events <span style="color: #666">=</span> [torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>Event(enable_timing<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>) <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests)]
+    <span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests):
+        flush_l2_cache(flush_l2)
+        start_events[i]<span style="color: #666">.</span>record()
+        fn()
+        end_events[i]<span style="color: #666">.</span>record()
+        <span style="color: #008000; font-weight: bold">if</span> post_fn <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>:
+            post_fn()
+    torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>synchronize()
+    times <span style="color: #666">=</span> np<span style="color: #666">.</span>array([s<span style="color: #666">.</span>elapsed_time(e) <span style="color: #666">/</span> <span style="color: #666">1e3</span> <span style="color: #008000; font-weight: bold">for</span> s, e <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">zip</span>(start_events, end_events)])[<span style="color: #666">1</span>:]
+    <span style="color: #008000; font-weight: bold">return</span> np<span style="color: #666">.</span>average(times), np<span style="color: #666">.</span>min(times), np<span style="color: #666">.</span>max(times)
+</code></pre></div>
+
+<p><strong>设计要点</strong>：<br />
+- <strong>Warmup 50 次</strong>：消除 JIT 编译、CUDA context 初始化等一次性开销<br />
+- <strong>跳过首次测量</strong>：<code>times[1:]</code> 排除第一次可能存在的延迟峰值<br />
+- <strong>返回 avg/min/max</strong>：提供统计分布信息</p>
+<h3 id="33-bench_kineto-pytorch-profiler-kernel-benchmark">3.3 <code>bench_kineto</code> —— 基于 PyTorch Profiler 的细粒度 Kernel 级 Benchmark</h3>
+<p>这是测试框架中<strong>最精巧的工具</strong>，用于测量单个 CUDA kernel 的执行时间：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># testing.py:111-219</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">bench_kineto</span>(fn, kernel_names: Union[<span style="color: #008000">str</span>, <span style="color: #008000">tuple</span>], num_tests: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">30</span>,
+                 suppress_kineto_output: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>, trace_path: Optional[<span style="color: #008000">str</span>] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>,
+                 flush_l2: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">True</span>, barrier_comm_profiling: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>,
+                 num_kernels_per_period: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">1</span>, barrier: Optional[Callable] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>):
+</code></pre></div>
+
+<p><strong>核心流程</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[&quot;检查 EP_USENVIDIA_TOOLS 环境变量&quot;] --&gt;|已设置| Z[&quot;返回 1 (跳过)&quot;]
+    A --&gt;|未设置| B[&quot;fn() 预热&quot;]
+    B --&gt; C[&quot;torch.profiler.profile 配置&lt;br/&gt;schedule: wait=0, warmup=1, active=1&quot;]
+    C --&gt; D[&quot;循环 num_tests 次&quot;]
+    D --&gt; E[&quot;flush_l2_cache&quot;]
+    E --&gt; F{&quot;barrier_comm_profiling?&quot;}
+    F --&gt;|Yes| G[&quot;torch.cuda._sleep(2e7)&lt;br/&gt;dist.all_reduce 同步&quot;]
+    F --&gt;|No| H[&quot;fn()&quot;]
+    G --&gt; H
+    H --&gt; I[&quot;profiler.step()&quot;]
+    I --&gt; J[&quot;解析 key_averages().table()&quot;]
+    J --&gt; K[&quot;匹配 kernel_names&lt;br/&gt;提取 time × count&quot;]
+    K --&gt; L{&quot;num_kernels_per_period &gt; 1?&quot;}
+    L --&gt;|Yes| M[&quot;Chrome trace JSON 解析&lt;br/&gt;按时间戳排序分段聚合&quot;]
+    L --&gt;|No| N[&quot;返回平均 duration&quot;]
+    M --&gt; N
+</code></pre></div>
+
+<p><strong>关键设计</strong>：</p>
+<ol>
+<li><strong>与 Nsight 工具互斥</strong>（L143-144）：检测到 <code>EP_USE_NVIDIA_TOOLS</code> 时直接跳过，避免 profiler 冲突</li>
+<li><strong>Barrier 消除 CPU 发射不均</strong>（L164-171）：<code>torch.cuda._sleep(2e7)</code> (~10ms 大 kernel) + <code>dist.all_reduce</code> 同步所有 rank 的 CPU 发射</li>
+<li><strong>多 kernel 周期展开</strong>（L205-216）：当单次 <code>fn()</code> 调用会发射多个同类 kernel 时（如 dispatch 的 <code>dispatch_impl</code> + <code>dispatch_copy_epilogue_impl</code>），从 Chrome trace 按时间戳排序后分段计算每个 kernel pattern 的平均耗时</li>
+</ol>
+<h3 id="34-suppress_stdout_stderr-io">3.4 <code>suppress_stdout_stderr</code> —— IO 抑制</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># testing.py:72-108</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">suppress_stdout_stderr</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__enter__</span>(<span style="color: #008000">self</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>outnull_file <span style="color: #666">=</span> <span style="color: #008000">open</span>(os<span style="color: #666">.</span>devnull, <span style="color: #BA2121">&#39;w&#39;</span>)
+        <span style="color: #008000">self</span><span style="color: #666">.</span>errnull_file <span style="color: #666">=</span> <span style="color: #008000">open</span>(os<span style="color: #666">.</span>devnull, <span style="color: #BA2121">&#39;w&#39;</span>)
+        <span style="color: #008000">self</span><span style="color: #666">.</span>old_stdout_fileno <span style="color: #666">=</span> os<span style="color: #666">.</span>dup(sys<span style="color: #666">.</span>stdout<span style="color: #666">.</span>fileno())
+        <span style="color: #008000">self</span><span style="color: #666">.</span>old_stderr_fileno <span style="color: #666">=</span> os<span style="color: #666">.</span>dup(sys<span style="color: #666">.</span>stderr<span style="color: #666">.</span>fileno())
+        os<span style="color: #666">.</span>dup2(<span style="color: #008000">self</span><span style="color: #666">.</span>outnull_file<span style="color: #666">.</span>fileno(), <span style="color: #008000">self</span><span style="color: #666">.</span>old_stdout_fileno_undup)
+        os<span style="color: #666">.</span>dup2(<span style="color: #008000">self</span><span style="color: #666">.</span>errnull_file<span style="color: #666">.</span>fileno(), <span style="color: #008000">self</span><span style="color: #666">.</span>old_stderr_fileno_undup)
+        <span style="color: #666">...</span>
+</code></pre></div>
+
+<p>通过 <code>os.dup2</code> 将 stdout/stderr 重定向到 <code>/dev/null</code>，用于抑制 PyTorch profiler 的冗余输出。使用底层文件描述符操作而非简单的 <code>sys.stdout</code> 赋值，确保 C 扩展层的输出也被抑制。</p>
+<hr />
+<h2 id="4-gatepy-moe">4. <code>gate.py</code> —— 非均衡 MoE 流量生成</h2>
+<p><code>gate.py</code> 是测试数据生成的核心，专门用于模拟<strong>非均衡 Expert 选择</strong>（Unbalanced Routing），这是 MoE 系统中最具挑战性的场景。</p>
+<h3 id="41">4.1 问题定义</h3>
+<p>在真实 MoE 负载中，某些 Expert 会被过度选择（Hot Expert 问题），导致通信不均。测试框架需要可控地生成这种非均衡分布：</p>
+<ul>
+<li><strong>ratio = 1.0</strong>：完全均衡</li>
+<li><strong>ratio &gt; 1.0</strong>：某个特殊 rank 的流量是其他 rank 的 <code>ratio</code> 倍</li>
+</ul>
+<h3 id="42">4.2 两种生成策略</h3>
+<h4 id="aget_precise_unbalanced_scores">策略 A：<code>get_precise_unbalanced_scores</code> —— 精确非均衡</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># gate.py:116-137</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_precise_unbalanced_scores</span>(num_tokens, num_experts, num_ranks, num_topk, ratio):
+    rank_count <span style="color: #666">=</span> generate_rank_count(num_tokens, num_experts, num_ranks, num_topk, ratio)
+    threshold <span style="color: #666">=</span> <span style="color: #666">0.9</span>
+    scores <span style="color: #666">=</span> torch<span style="color: #666">.</span>empty((num_tokens, num_experts), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>float32, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+    scores<span style="color: #666">.</span>uniform_(to<span style="color: #666">=</span>threshold)                  <span style="color: #3D7B7B; font-style: italic"># 低分填充</span>
+    topk_idx <span style="color: #666">=</span> generate_topk_idx(rank_count, <span style="color: #666">...</span>)
+    topk_scores <span style="color: #666">=</span> torch<span style="color: #666">.</span>empty((num_tokens, num_topk), <span style="color: #666">...</span>)
+    topk_scores<span style="color: #666">.</span>uniform_(threshold <span style="color: #666">+</span> <span style="color: #666">1e-6</span>, <span style="color: #666">1.0</span>)    <span style="color: #3D7B7B; font-style: italic"># 高分填充</span>
+    scores[row_idx, topk_idx] <span style="color: #666">=</span> topk_scores
+    <span style="color: #008000; font-weight: bold">return</span> scores
+</code></pre></div>
+
+<p><strong>算法流程</strong>：<br />
+1. <code>generate_rank_count</code>：先生成每个 token 选择各 rank 的 Expert 数量分布（一个 <code>(num_tokens, num_ranks)</code> 的 count 矩阵）<br />
+2. <code>generate_topk_idx</code>：将 count 映射为具体的 Expert 索引，通过随机排列避免模式化<br />
+3. <strong>高低分分离</strong>：被选中的 Expert 给 0.9-1.0 高分，其余给 0-0.9 低分，确保 topk 选择的确定性</p>
+<h4 id="bget_random_unbalanced_scores">策略 B：<code>get_random_unbalanced_scores</code> —— 随机非均衡</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># gate.py:167-173</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_random_unbalanced_scores</span>(num_tokens, num_experts, num_ranks, num_topk, ratio):
+    factor <span style="color: #666">=</span> <span style="color: #666">1.0</span>
+    <span style="color: #008000; font-weight: bold">if</span> ratio <span style="color: #666">!=</span> <span style="color: #666">1.0</span>:
+        factor <span style="color: #666">=</span> map_unbalanced_ratio_to_factor(num_tokens, num_experts, num_ranks, num_topk, ratio)
+    <span style="color: #008000; font-weight: bold">return</span> get_scores_by_factor(num_tokens, num_experts, num_ranks, factor)
+</code></pre></div>
+
+<p>使用<strong>二分搜索</strong>（<code>map_unbalanced_ratio_to_factor</code>，L148-164）找到使 rank 0 流量达到 <code>ratio</code> 倍的 factor 值：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># gate.py:148-164</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">map_unbalanced_ratio_to_factor</span>(<span style="color: #666">...</span>):
+    factor_l, factor_r <span style="color: #666">=</span> <span style="color: #666">1.0</span>, <span style="color: #666">100.0</span>
+    <span style="color: #008000; font-weight: bold">for</span> _i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_iterations):  <span style="color: #3D7B7B; font-style: italic"># 20 次迭代</span>
+        factor_mid <span style="color: #666">=</span> (factor_l <span style="color: #666">+</span> factor_r) <span style="color: #666">/</span> <span style="color: #666">2</span>
+        scores <span style="color: #666">=</span> get_scores_by_factor(<span style="color: #666">...</span>)
+        _, topk_idx <span style="color: #666">=</span> torch<span style="color: #666">.</span>topk(scores, num_topk, <span style="color: #666">...</span>)
+        rank_idx <span style="color: #666">=</span> topk_idx <span style="color: #666">//</span> num_experts_per_rank
+        one_hot <span style="color: #666">=</span> torch<span style="color: #666">.</span>nn<span style="color: #666">.</span>functional<span style="color: #666">.</span>one_hot(rank_idx, num_ranks)
+        counts <span style="color: #666">=</span> one_hot<span style="color: #666">.</span>any(dim<span style="color: #666">=1</span>)<span style="color: #666">.</span>to(torch<span style="color: #666">.</span>float)<span style="color: #666">.</span>sum(dim<span style="color: #666">=0</span>)
+        <span style="color: #008000; font-weight: bold">if</span> counts[<span style="color: #666">0</span>]<span style="color: #666">.</span>item() <span style="color: #666">&gt;</span> counts[<span style="color: #666">1</span>:]<span style="color: #666">.</span>mean()<span style="color: #666">.</span>item() <span style="color: #666">*</span> ratio:
+            factor_r <span style="color: #666">=</span> factor_mid
+        <span style="color: #008000; font-weight: bold">else</span>:
+            factor_l <span style="color: #666">=</span> factor_mid
+    <span style="color: #008000; font-weight: bold">return</span> factor_l
+</code></pre></div>
+
+<h3 id="43-generate_rank_count">4.3 <code>generate_rank_count</code> —— 核心分布生成算法</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># gate.py:32-113</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_rank_count</span>(num_tokens, num_experts, num_ranks, num_topk, ratio):
+    <span style="color: #3D7B7B; font-style: italic"># 1. 随机 topk 选择，计算每个 token 覆盖的 rank 数 a[i]</span>
+    random_scores <span style="color: #666">=</span> torch<span style="color: #666">.</span>rand(num_tokens, num_experts, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+    topk_weights_, topk_indices <span style="color: #666">=</span> torch<span style="color: #666">.</span>topk(random_scores, num_topk, <span style="color: #666">...</span>)
+    topk_indices <span style="color: #666">//=</span> num_experts_per_rank
+    sorted_topk_indices <span style="color: #666">=</span> torch<span style="color: #666">.</span>sort(topk_indices, dim<span style="color: #666">=1</span>)[<span style="color: #666">0</span>]
+    topk_indices_diff_mask <span style="color: #666">=</span> sorted_topk_indices[:, <span style="color: #666">1</span>:] <span style="color: #666">!=</span> sorted_topk_indices[:, :<span style="color: #666">-1</span>]
+    a <span style="color: #666">=</span> topk_indices_diff_mask<span style="color: #666">.</span>sum(dim<span style="color: #666">=1</span>) <span style="color: #666">+</span> <span style="color: #666">1</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 2. 计算特殊 rank 必须/可选出现的 token 数</span>
+    upper_bound_per_token <span style="color: #666">=</span> <span style="color: #008000">int</span>(num_normal_ranks <span style="color: #666">/</span> ratio) <span style="color: #666">+</span> <span style="color: #666">1</span>
+    a <span style="color: #666">=</span> torch<span style="color: #666">.</span>clamp(a, <span style="color: #008000; font-weight: bold">None</span>, upper_bound_per_token)
+    must_mask <span style="color: #666">=</span> (a <span style="color: #666">==</span> num_ranks)
+    <span style="color: #666">...</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 3. 生成 rank 排列并插入特殊 rank</span>
+    rank_perm <span style="color: #666">=</span> (torch<span style="color: #666">.</span>randperm(num_normal_ranks, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>) <span style="color: #666">+</span> <span style="color: #666">1</span>)<span style="color: #666">.</span>repeat(<span style="color: #666">...</span>)
+    rank_perm_with_special_rank <span style="color: #666">=</span> torch<span style="color: #666">.</span>zeros(num_tokens <span style="color: #666">*</span> num_topk, <span style="color: #666">...</span>)
+    <span style="color: #3D7B7B; font-style: italic"># ... 复杂的索引计算 ...</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 4. scatter_add 生成最终 count</span>
+    rank_count <span style="color: #666">=</span> torch<span style="color: #666">.</span>zeros((num_tokens, num_ranks), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int32, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+    rank_count<span style="color: #666">.</span>scatter_add_(dim<span style="color: #666">=1</span>, index<span style="color: #666">=</span>result, src<span style="color: #666">=</span>torch<span style="color: #666">.</span>ones_like(result, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int32))
+    <span style="color: #008000; font-weight: bold">return</span> rank_count
+</code></pre></div>
+
+<p><strong>算法本质</strong>：通过控制"特殊 rank 必须出现在 topk 中的 token 数量"来精确调控流量倾斜比，同时保持随机性以避免测试偏差。</p>
+<h3 id="44">4.4 数据生成流程图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TD
+    A[&quot;get_unbalanced_scores&lt;br/&gt;(ratio, precise)&quot;] --&gt;|precise=True| B[&quot;get_precise_unbalanced_scores&quot;]
+    A --&gt;|precise=False| C[&quot;get_random_unbalanced_scores&quot;]
+    B --&gt; D[&quot;generate_rank_count&lt;br/&gt;生成 (num_tokens, num_ranks) count 矩阵&quot;]
+    D --&gt; E[&quot;generate_topk_idx&lt;br/&gt;count → 具体 Expert 索引&quot;]
+    E --&gt; F[&quot;高低分分离填充 scores&quot;]
+    C --&gt; G[&quot;map_unbalanced_ratio_to_factor&lt;br/&gt;二分搜索 factor&quot;]
+    G --&gt; H[&quot;get_scores_by_factor&lt;br/&gt;rank 0 用 factor 加权&quot;]
+    F --&gt; I[&quot;返回 scores (num_tokens, num_experts)&quot;]
+    H --&gt; I
+</code></pre></div>
+
+<hr />
+<h2 id="5-commpy-nccl-communicator">5. <code>comm.py</code> —— NCCL Communicator 封装</h2>
+<h3 id="51-ncclcommhandle">5.1 <code>NCCLCommHandle</code> —— 生命周期管理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># comm.py:11-37</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">NCCLCommHandle</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__init__</span>(<span style="color: #008000">self</span>, nccl_comm: <span style="color: #008000">int</span>, managed: <span style="color: #008000">bool</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>nccl_comm <span style="color: #666">=</span> nccl_comm
+        <span style="color: #008000">self</span><span style="color: #666">.</span>managed <span style="color: #666">=</span> managed
+        <span style="color: #008000">self</span><span style="color: #666">.</span>destroy <span style="color: #666">=</span> _C<span style="color: #666">.</span>destroy_nccl_comm
+
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__del__</span>(<span style="color: #008000">self</span>):
+        <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>managed:
+            <span style="color: #008000">self</span><span style="color: #666">.</span>destroy(<span style="color: #008000">self</span><span style="color: #666">.</span>nccl_comm)
+</code></pre></div>
+
+<p>DeepEP 的 C++ 层需要直接操作 NCCL communicator 的裸指针（<code>int</code> 类型）。<code>NCCLCommHandle</code> 封装了这个指针的生命周期：<br />
+- <code>managed=True</code>：DeepEP 自己创建的 comm，<code>__del__</code> 时调用 <code>_C.destroy_nccl_comm</code> 销毁<br />
+- <code>managed=False</code>：复用 PyTorch 的 comm，不主动销毁</p>
+<h3 id="52-get_nccl_comm_handle">5.2 <code>get_nccl_comm_handle</code> —— 缓存与复用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># comm.py:42-75</span>
+_storage <span style="color: #666">=</span> <span style="color: #008000">dict</span>()
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_nccl_comm_handle</span>(group: dist<span style="color: #666">.</span>ProcessGroup, force_new_comm: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>) <span style="color: #666">-&gt;</span> NCCLCommHandle:
+    <span style="color: #008000; font-weight: bold">global</span> _storage
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #A2F; font-weight: bold">not</span> force_new_comm <span style="color: #A2F; font-weight: bold">and</span> group <span style="color: #A2F; font-weight: bold">in</span> _storage:
+        <span style="color: #008000; font-weight: bold">return</span> _storage[group]
+
+    backend <span style="color: #666">=</span> group<span style="color: #666">.</span>_get_backend(torch<span style="color: #666">.</span>device(<span style="color: #BA2121">&#39;cuda&#39;</span>))
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #A2F; font-weight: bold">not</span> force_new_comm <span style="color: #A2F; font-weight: bold">and</span> <span style="color: #008000">hasattr</span>(backend, <span style="color: #BA2121">&#39;_comm_ptr&#39;</span>) <span style="color: #A2F; font-weight: bold">and</span> <span style="color: #008000">int</span>(os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;EP_REUSE_NCCL_COMM&#39;</span>, <span style="color: #BA2121">&#39;1&#39;</span>)):
+        _storage[group] <span style="color: #666">=</span> NCCLCommHandle(backend<span style="color: #666">.</span>_comm_ptr(), <span style="color: #008000; font-weight: bold">False</span>)
+        <span style="color: #008000; font-weight: bold">return</span> _storage[group]
+
+    <span style="color: #3D7B7B; font-style: italic"># 旧版 PyTorch: 手动 all_gather unique_id 后创建新 comm</span>
+    nccl_unique_ids <span style="color: #666">=</span> [<span style="color: #008000; font-weight: bold">None</span>, ] <span style="color: #666">*</span> group<span style="color: #666">.</span>size()
+    dist<span style="color: #666">.</span>all_gather_object(nccl_unique_ids, _C<span style="color: #666">.</span>get_local_nccl_unique_id(), group)
+    root_unique_id <span style="color: #666">=</span> nccl_unique_ids[<span style="color: #666">0</span>]
+    key <span style="color: #666">=</span> time<span style="color: #666">.</span>time_ns() <span style="color: #008000; font-weight: bold">if</span> force_new_comm <span style="color: #008000; font-weight: bold">else</span> group
+    _storage[key] <span style="color: #666">=</span> NCCLCommHandle(
+        _C<span style="color: #666">.</span>create_nccl_comm(root_unique_id, group<span style="color: #666">.</span>size(), group<span style="color: #666">.</span>rank()), <span style="color: #008000; font-weight: bold">True</span>)
+    <span style="color: #008000; font-weight: bold">return</span> _storage[key]
+</code></pre></div>
+
+<p><strong>三种获取路径</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>行为</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>缓存命中</td>
+<td>直接返回</td>
+<td>避免重复创建</td>
+</tr>
+<tr>
+<td>PyTorch 有 <code>_comm_ptr</code></td>
+<td>复用，<code>managed=False</code></td>
+<td>现代 PyTorch 默认路径</td>
+</tr>
+<tr>
+<td>旧版 PyTorch</td>
+<td><code>all_gather_object</code> + 新建</td>
+<td>兼容性回退</td>
+</tr>
+</tbody>
+</table>
+<p><code>EP_REUSE_NCCL_COMM=1</code>（默认）控制是否允许复用 PyTorch 的 communicator。<code>force_new_comm=True</code> 用于需要独立 comm 的场景（避免与 PyTorch 的通信冲突）。</p>
+<hr />
+<h2 id="6-envspy">6. <code>envs.py</code> —— 环境探测与硬件检测</h2>
+<h3 id="61">6.1 种子管理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:24-35</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">init_seed</span>(global_seed: <span style="color: #008000">int</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>:
+    <span style="color: #008000; font-weight: bold">global</span> _local_seed, _global_seed
+    _local_seed <span style="color: #666">=</span> global_seed <span style="color: #666">+</span> dist<span style="color: #666">.</span>get_rank()
+    _global_seed <span style="color: #666">=</span> global_seed
+    torch<span style="color: #666">.</span>manual_seed(_local_seed)
+    random<span style="color: #666">.</span>seed(_local_seed)
+</code></pre></div>
+
+<p><strong>设计</strong>：local_seed = global_seed + rank，确保每个 rank 生成<strong>不同的随机数据</strong>（这对 EP 正确性至关重要 —— 不同 rank 必须有不同的 token 和路由），同时保持可复现性。</p>
+<h3 id="62-dist_print">6.2 <code>dist_print</code> —— 分布式安全打印</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:58-70</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">dist_print</span>(s: <span style="color: #008000">str</span> <span style="color: #666">=</span> <span style="color: #BA2121">&#39;&#39;</span>, once_in_node: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>:
+    <span style="color: #008000; font-weight: bold">global</span> _local_rank
+    <span style="color: #008000; font-weight: bold">assert</span> _local_rank <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #A2F; font-weight: bold">not</span> once_in_node <span style="color: #A2F; font-weight: bold">or</span> _local_rank <span style="color: #666">==</span> <span style="color: #666">0</span>:
+        <span style="color: #008000">print</span>(s, flush<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>)
+    dist<span style="color: #666">.</span>barrier()
+</code></pre></div>
+
+<p><strong>关键</strong>：末尾有 <code>dist.barrier()</code>，确保所有 rank 同步到达后才继续，避免某 rank 的打印阻塞其他 rank 的等待。<code>once_in_node=True</code> 时仅 local_rank 0 打印，减少多节点场景下的输出冗余。</p>
+<h3 id="63">6.3 物理 / 逻辑域大小获取</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:116-142</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_physical_domain_size</span>(group) <span style="color: #666">-&gt;</span> Tuple[<span style="color: #008000">int</span>, <span style="color: #008000">int</span>]:
+    <span style="color: #008000; font-weight: bold">return</span> _C<span style="color: #666">.</span>get_physical_domain_size(get_nccl_comm_handle(group)<span style="color: #666">.</span>get())
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_logical_domain_size</span>(group, allow_hybrid_mode<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>) <span style="color: #666">-&gt;</span> Tuple[<span style="color: #008000">int</span>, <span style="color: #008000">int</span>]:
+    <span style="color: #008000; font-weight: bold">return</span> _C<span style="color: #666">.</span>get_logical_domain_size(get_nccl_comm_handle(group)<span style="color: #666">.</span>get(), allow_hybrid_mode)
+</code></pre></div>
+
+<ul>
+<li><strong>物理域</strong>：<code>(num_rdma_ranks, num_nvlink_ranks)</code> —— 硬件拓扑决定</li>
+<li><strong>逻辑域</strong>：<code>(num_scaleout_ranks, num_scaleup_ranks)</code> —— 由 EP 配置决定，<code>allow_hybrid_mode</code> 控制是否允许混合模式</li>
+</ul>
+<h3 id="64">6.4 硬件带宽探测</h3>
+<h4 id="nvlink">NVLink 带宽</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:192-219</span>
+<span style="color: #A2F">@functools</span><span style="color: #666">.</span>lru_cache()
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_nvlink_gbs</span>(factor: <span style="color: #008000">float</span> <span style="color: #666">=</span> <span style="color: #666">0.9</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">float</span>:
+    result <span style="color: #666">=</span> subprocess<span style="color: #666">.</span>run([<span style="color: #BA2121">&#39;nvidia-smi&#39;</span>, <span style="color: #BA2121">&#39;nvlink&#39;</span>, <span style="color: #BA2121">&#39;-s&#39;</span>], <span style="color: #666">...</span>)
+    pattern <span style="color: #666">=</span> <span style="color: #BA2121">r&#39;GPU \d+:.*?(?=^GPU \d+:|^$)&#39;</span>
+    match <span style="color: #666">=</span> re<span style="color: #666">.</span>search(pattern, output, re<span style="color: #666">.</span>MULTILINE <span style="color: #666">|</span> re<span style="color: #666">.</span>DOTALL)
+    gpu_block <span style="color: #666">=</span> match<span style="color: #666">.</span>group(<span style="color: #666">0</span>)
+    link_pattern <span style="color: #666">=</span> <span style="color: #BA2121">r&#39;Link \d+:\s*([\d\.]+) GB/s&#39;</span>
+    link_matches <span style="color: #666">=</span> re<span style="color: #666">.</span>findall(link_pattern, gpu_block)
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #008000">sum</span>(<span style="color: #008000">float</span>(bw) <span style="color: #008000; font-weight: bold">for</span> bw <span style="color: #A2F; font-weight: bold">in</span> link_matches) <span style="color: #666">*</span> factor
+</code></pre></div>
+
+<p>解析 <code>nvidia-smi nvlink -s</code> 输出，汇总所有 Link 的带宽后乘以 <code>factor=0.9</code>（效率系数）。</p>
+<h4 id="rdma">RDMA 带宽</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:245-268</span>
+<span style="color: #A2F">@functools</span><span style="color: #666">.</span>lru_cache()
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_rdma_gbs</span>(nic_name: <span style="color: #008000">str</span> <span style="color: #666">=</span> _DEFAULT_NIC_NAME) <span style="color: #666">-&gt;</span> <span style="color: #008000">float</span>:
+    result <span style="color: #666">=</span> subprocess<span style="color: #666">.</span>run([<span style="color: #BA2121">&#39;ibstat&#39;</span>], <span style="color: #666">...</span>)
+    pattern <span style="color: #666">=</span> <span style="color: #BA2121">rf&quot;CA &#39;</span><span style="color: #A45A77; font-weight: bold">{</span>nic_name<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;.*?Port \d+:\s*.*?Rate:\s*(\d+)&quot;</span>
+    match <span style="color: #666">=</span> re<span style="color: #666">.</span>search(pattern, output, re<span style="color: #666">.</span>DOTALL)
+    rate <span style="color: #666">=</span> <span style="color: #008000">int</span>(match<span style="color: #666">.</span>group(<span style="color: #666">1</span>))
+    <span style="color: #008000; font-weight: bold">return</span> rate <span style="color: #666">/</span> <span style="color: #666">8</span>  <span style="color: #3D7B7B; font-style: italic"># Gb/s → GB/s</span>
+</code></pre></div>
+
+<p>解析 <code>ibstat</code> 输出，提取指定 NIC（默认 <code>mlx5_0</code>）的端口速率。<code>rate / 8</code> 将 Gb/s 转为 GB/s。</p>
+<h4 id="rdma_1">快速 RDMA 原子操作检测</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># envs.py:222-242</span>
+<span style="color: #A2F">@functools</span><span style="color: #666">.</span>lru_cache()
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">check_fast_rdma_atomic_support</span>(nic_name: <span style="color: #008000">str</span> <span style="color: #666">=</span> _DEFAULT_NIC_NAME) <span style="color: #666">-&gt;</span> <span style="color: #008000">bool</span>:
+    result <span style="color: #666">=</span> subprocess<span style="color: #666">.</span>run([<span style="color: #BA2121">&#39;ibstat&#39;</span>], <span style="color: #666">...</span>)
+    pattern <span style="color: #666">=</span> <span style="color: #BA2121">rf&quot;CA &#39;</span><span style="color: #A45A77; font-weight: bold">{</span>nic_name<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;.*?CA type:\s*(\S+)&quot;</span>
+    match <span style="color: #666">=</span> re<span style="color: #666">.</span>search(pattern, output, re<span style="color: #666">.</span>DOTALL)
+    <span style="color: #008000; font-weight: bold">return</span> match<span style="color: #666">.</span>group(<span style="color: #666">1</span>) <span style="color: #666">==</span> <span style="color: #BA2121">&#39;MT4131&#39;</span>
+</code></pre></div>
+
+<p>检测 NIC 是否为 MT4131 型号（支持快速 RDMA 原子操作），用于决定是否启用某些低延迟优化路径。</p>
+<h3 id="65">6.5 其他环境检测</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>check_nvlink_connections</code></td>
+<td>PCIe GPU 场景下用 <code>pynvml</code> 检查 NVLink P2P 连通性</td>
+</tr>
+<tr>
+<td><code>check_torch_deterministic</code></td>
+<td>确保 <code>deterministic_algorithms</code> 和 <code>fill_uninitialized_memory</code> 不同时为 True（会导致 <code>torch.empty</code> 初始化 kernel 与通信 stream 冲突）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-eventpy-eventoverlap-cuda">7. <code>event.py</code> —— EventOverlap CUDA 事件封装</h2>
+<h3 id="71">7.1 类设计</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># event.py:8-96</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">EventOverlap</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__init__</span>(<span style="color: #008000">self</span>, event: Optional[EventHandle] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>,
+                 extra_tensors: Optional[Tuple[torch<span style="color: #666">.</span>Tensor]] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>event <span style="color: #666">=</span> event
+        <span style="color: #008000">self</span><span style="color: #666">.</span>extra_tensors <span style="color: #666">=</span> extra_tensors
+        <span style="color: #008000">self</span><span style="color: #666">.</span>_release_handle_by_call <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>
+        <span style="color: #008000">self</span><span style="color: #666">.</span>hook_after_wait: Optional[Callable] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>
+</code></pre></div>
+
+<h3 id="72">7.2 核心方法</h3>
+<h4 id="current_stream_wait-hook"><code>current_stream_wait</code> —— 流同步 + Hook 触发</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># event.py:39-54</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">current_stream_wait</span>(<span style="color: #008000">self</span>, release_handle: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>:
+    <span style="color: #008000; font-weight: bold">assert</span> <span style="color: #008000">self</span><span style="color: #666">.</span>event <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000">self</span><span style="color: #666">.</span>event<span style="color: #666">.</span>current_stream_wait()
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>hook_after_wait <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>:
+        <span style="color: #008000">self</span><span style="color: #666">.</span>hook_after_wait()
+        <span style="color: #008000">self</span><span style="color: #666">.</span>hook_after_wait <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000; font-weight: bold">if</span> release_handle:
+        <span style="color: #008000">self</span><span style="color: #666">.</span>event <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>
+</code></pre></div>
+
+<p><strong>Hook 机制</strong>：<code>hook_after_wait</code> 允许在等待完成后执行回调，用于 deterministic dispatch 场景 —— 通信完成后需要在当前 stream 上执行排序操作。</p>
+<h4 id="_2">上下文管理器模式 —— 计算与通信重叠</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># event.py:74-96</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__enter__</span>(<span style="color: #008000">self</span>) <span style="color: #666">-&gt;</span> Any:
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #008000">self</span>
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__exit__</span>(<span style="color: #008000">self</span>, exc_type, exc_val, exc_tb) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>:
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>event <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>:
+        <span style="color: #008000">self</span><span style="color: #666">.</span>current_stream_wait(release_handle<span style="color: #666">=</span><span style="color: #008000">self</span><span style="color: #666">.</span>_release_handle_by_call)
+    <span style="color: #008000">self</span><span style="color: #666">.</span>_release_handle_by_call <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>
+</code></pre></div>
+
+<p><strong>使用模式</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>event_overlap <span style="color: #666">=</span> event_after_all_to_all_kernels()
+<span style="color: #008000; font-weight: bold">with</span> event_overlap:
+    do_something_on_current_stream()  <span style="color: #3D7B7B; font-style: italic"># 与通信并行执行</span>
+<span style="color: #3D7B7B; font-style: italic"># 退出 with 时自动 current_stream_wait</span>
+</code></pre></div>
+
+<h3 id="73-extra_tensors-cuda-graph-stream-recording">7.3 <code>extra_tensors</code> —— CUDA Graph 兼容的 Stream Recording</h3>
+<p>注释说明（L27-29）：<code>extra_tensors</code> 用于模拟 PyTorch tensor 的 <code>record_stream</code> 行为。标准 <code>record_stream</code> 与 CUDA Graph 不兼容，通过持有 tensor 的额外引用来延迟释放，确保事件等待完成前 tensor 不被回收。</p>
+<h3 id="74-eventoverlap">7.4 EventOverlap 使用模式图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant Compute as Compute Stream
+    participant Comm as Communication Stream
+    participant Event as EventOverlap
+
+    Compute-&gt;&gt;Comm: dispatch / combine 启动
+    Comm-&gt;&gt;Event: event.capture()
+    Compute-&gt;&gt;Compute: do_something_on_current_stream()
+    Compute-&gt;&gt;Event: __exit__ → current_stream_wait()
+    Event-&gt;&gt;Comm: wait for event
+    Comm-&gt;&gt;Compute: 通信完成，继续执行
+</code></pre></div>
+
+<hr />
+<h2 id="8-refspy-pytorch">8. <code>refs.py</code> —— PyTorch 参考实现</h2>
+<p>参考实现（Reference Implementation）是测试正确性的<strong>金标准</strong>。DeepEP 的 GPU kernel 输出必须与参考实现 bitwise identical。</p>
+<h3 id="81-ref_dispatch-dispatch">8.1 <code>ref_dispatch</code> —— Dispatch 参考实现</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># refs.py:10-123</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">dispatch</span>(x, topk_idx, topk_weights, num_max_tokens_per_rank, num_experts):
+    <span style="color: #3D7B7B; font-style: italic"># 1. 按目标 rank 分组发送数据</span>
+    <span style="color: #008000; font-weight: bold">for</span> dst_rank_idx <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks):
+        expert_start_idx <span style="color: #666">=</span> dst_rank_idx <span style="color: #666">*</span> num_experts_per_rank
+        expert_end_idx <span style="color: #666">=</span> expert_start_idx <span style="color: #666">+</span> num_experts_per_rank
+        mask_to_send <span style="color: #666">=</span> ((expert_start_idx <span style="color: #666">&lt;=</span> topk_idx) <span style="color: #666">&amp;</span> (topk_idx <span style="color: #666">&lt;</span> expert_end_idx))<span style="color: #666">.</span>any(dim<span style="color: #666">=1</span>)
+        indices_to_send <span style="color: #666">=</span> mask_to_send<span style="color: #666">.</span>nonzero(as_tuple<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>)[<span style="color: #666">0</span>]
+        <span style="color: #3D7B7B; font-style: italic"># ... 选择 x, sf, topk_idx, topk_weights ...</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 2. all_to_all_single 交换大小和数据</span>
+    dist<span style="color: #666">.</span>all_to_all_single(num_recv_tokens_per_rank, num_send_tokens_per_rank)
+    dist<span style="color: #666">.</span>all_to_all_single(recv_x, send_x, <span style="color: #666">...</span>)
+    <span style="color: #3D7B7B; font-style: italic"># ... 其他张量同理 ...</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 3. 本地 Expert 索引转换 + mask</span>
+    recv_topk_idx <span style="color: #666">=</span> recv_topk_idx <span style="color: #666">-</span> expert_start_idx
+    recv_topk_idx<span style="color: #666">.</span>masked_fill_(<span style="color: #666">~</span>mask, <span style="color: #666">-1</span>)
+</code></pre></div>
+
+<p><strong>关键点</strong>：<br />
+- 使用 <code>dist.all_to_all_single</code>（PyTorch 的 NCCL 封装）作为通信原语<br />
+- <code>src_token_global_idx = src_rank_idx * num_max_tokens_per_rank + src_token_local_idx</code> 的全局索引编码方式与 DeepEP 一致<br />
+- 不在本 rank 的 Expert 索引置为 <code>-1</code></p>
+<h3 id="82-ref_combine-combine">8.2 <code>ref_combine</code> —— Combine 参考实现</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># refs.py:177-243</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">combine</span>(y, topk_idx, num_scaleout_ranks, num_scaleup_ranks, num_experts,
+            bias, reduce_in_local, reduce_in_scaleup):
+</code></pre></div>
+
+<p><strong>三种模式</strong>：<br />
+- <code>(True, True)</code> → Hybrid combine（先 rank 内 reduce，再 scaleup 内 reduce）<br />
+- <code>(True, False)</code> → Non-hybrid combine（仅 rank 内 reduce）<br />
+- <code>(False, False)</code> → 无 reduce，直接 accumulate</p>
+<p>核心是 <code>grouped_reduce</code> 函数，按 <code>group_id</code> 分组进行<strong>有序 segmented reduce</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># refs.py:201-234</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">grouped_reduce</span>(data_to_reduce, group_id):
+    group_id, src_indices <span style="color: #666">=</span> torch<span style="color: #666">.</span>sort(group_id, dim<span style="color: #666">=-1</span>, stable<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>)
+    <span style="color: #3D7B7B; font-style: italic"># 重排 data 使同组连续</span>
+    data_to_reduce <span style="color: #666">=</span> data_to_reduce<span style="color: #666">.</span>view(<span style="color: #666">-1</span>, hidden)[transformed_src_indices]<span style="color: #666">...</span>
+    <span style="color: #3D7B7B; font-style: italic"># 逐 topk 维度扫描，检测 segment break</span>
+    <span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_topk):
+        is_segment_break <span style="color: #666">=</span> <span style="color: #666">...</span> group_id[:, i] <span style="color: #666">!=</span> group_id[:, i <span style="color: #666">+</span> <span style="color: #666">1</span>]
+        cur_accum_buf <span style="color: #666">+=</span> data_to_reduce[:, i, :]<span style="color: #666">.</span>float()
+        data_to_reduce[segment_break_token_indices, i] <span style="color: #666">=</span> cur_accum_buf[<span style="color: #666">...</span>]
+        cur_accum_buf[segment_break_token_indices] <span style="color: #666">=</span> <span style="color: #666">0.0</span>
+</code></pre></div>
+
+<h3 id="83-generate_pre_combine_data">8.3 <code>generate_pre_combine_data</code> —— 确定性测试数据生成</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># refs.py:126-153</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_pre_combine_data</span>(src_token_global_idx, num_max_tokens_per_rank, num_topk, hidden):
+    token_seeds <span style="color: #666">=</span> (src_token_global_idx<span style="color: #666">.</span>unsqueeze(<span style="color: #666">1</span>) <span style="color: #666">*</span> num_topk <span style="color: #666">+</span>
+                   torch<span style="color: #666">.</span>arange(num_topk, <span style="color: #666">...</span>)<span style="color: #666">.</span>unsqueeze(<span style="color: #666">0</span>))
+    max_seed <span style="color: #666">=</span> num_ranks <span style="color: #666">*</span> num_max_tokens_per_rank <span style="color: #666">*</span> num_topk
+    result <span style="color: #666">=</span> torch<span style="color: #666">.</span>sin(
+        (((token_seeds <span style="color: #666">*</span> <span style="color: #666">131071</span> <span style="color: #666">%</span> max_seed)<span style="color: #666">.</span>float() <span style="color: #666">+</span> <span style="color: #666">1</span>) <span style="color: #666">/</span> max_seed)<span style="color: #666">.</span>unsqueeze(<span style="color: #666">-1</span>) <span style="color: #666">*</span>
+        torch<span style="color: #666">.</span>arange(<span style="color: #666">1</span>, hidden <span style="color: #666">+</span> <span style="color: #666">1</span>, <span style="color: #666">...</span>) <span style="color: #666">+</span>
+        math<span style="color: #666">.</span>sin(<span style="color: #008000">float</span>(get_global_seed()))
+    )
+    <span style="color: #008000; font-weight: bold">return</span> result<span style="color: #666">.</span>to(torch<span style="color: #666">.</span>bfloat16)
+</code></pre></div>
+
+<p><strong>设计精妙之处</strong>：<br />
+1. <strong>确定性</strong>：仅依赖 <code>src_token_global_idx</code> 和 <code>global_seed</code>，所有 rank 可独立生成<br />
+2. <strong>唯一性</strong>：<code>token_seeds = global_idx * num_topk + j</code> 保证每个 (token, topk_slot) 有不同的 seed<br />
+3. <strong>素数哈希</strong>：<code>131071</code>（2^17 - 1，Mersenne 素数）取模确保 seed 分布均匀<br />
+4. <strong>sin 函数</strong>：将 seed 映射到 BF16 可表示的值域<br />
+5. <strong>可复现性</strong>：<code>math.sin(float(get_global_seed()))</code> 引入全局种子偏移</p>
+<hr />
+<h2 id="9-mathpy">9. <code>math.py</code> —— 数学工具集</h2>
+<h3 id="91-fp8">9.1 FP8 编解码</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># math.py:30-56</span>
+<span style="color: #A2F">@torch</span><span style="color: #666">.</span>compile(dynamic<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>)
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">per_token_cast_to_fp8</span>(x: torch<span style="color: #666">.</span>Tensor) <span style="color: #666">-&gt;</span> Tuple[torch<span style="color: #666">.</span>Tensor, torch<span style="color: #666">.</span>Tensor]:
+    <span style="color: #3D7B7B; font-style: italic"># 1. align hidden 到 128</span>
+    x_padded <span style="color: #666">=</span> torch<span style="color: #666">.</span>nn<span style="color: #666">.</span>functional<span style="color: #666">.</span>pad(x, (<span style="color: #666">0</span>, aligned_n <span style="color: #666">-</span> n), mode<span style="color: #666">=</span><span style="color: #BA2121">&#39;constant&#39;</span>, value<span style="color: #666">=0</span>)
+    <span style="color: #3D7B7B; font-style: italic"># 2. 按 128 分组计算 amax</span>
+    x_padded_view <span style="color: #666">=</span> x_padded<span style="color: #666">.</span>view(m, <span style="color: #666">-1</span>, <span style="color: #666">128</span>)
+    x_amax <span style="color: #666">=</span> x_padded_view<span style="color: #666">.</span>abs()<span style="color: #666">.</span>float()<span style="color: #666">.</span>amax(dim<span style="color: #666">=2</span>)<span style="color: #666">.</span>view(m, <span style="color: #666">-1</span>)<span style="color: #666">.</span>clamp(<span style="color: #666">1e-4</span>)
+    <span style="color: #3D7B7B; font-style: italic"># 3. scale = 448 / amax (FP8 E4M3 max = 448)</span>
+    <span style="color: #008000; font-weight: bold">return</span> (x_padded_view <span style="color: #666">*</span> (<span style="color: #666">448.0</span> <span style="color: #666">/</span> x_amax<span style="color: #666">.</span>unsqueeze(<span style="color: #666">2</span>)))<span style="color: #666">.</span>to(torch<span style="color: #666">.</span>float8_e4m3fn)<span style="color: #666">.</span>view(m, aligned_n)[:, :n]<span style="color: #666">.</span>contiguous(), \
+           (x_amax <span style="color: #666">/</span> <span style="color: #666">448.0</span>)<span style="color: #666">.</span>view(m, <span style="color: #666">-1</span>)
+</code></pre></div>
+
+<p><strong>关键</strong>：<code>@torch.compile(dynamic=True)</code> 启用 TorchCompile 加速，<code>dynamic=True</code> 允许动态 shape。</p>
+<h3 id="92">9.2 差异计算</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># math.py:5-9</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">calc_diff</span>(x: torch<span style="color: #666">.</span>Tensor, y: torch<span style="color: #666">.</span>Tensor) <span style="color: #666">-&gt;</span> <span style="color: #008000">float</span>:
+    x, y <span style="color: #666">=</span> x<span style="color: #666">.</span>double() <span style="color: #666">+</span> <span style="color: #666">1</span>, y<span style="color: #666">.</span>double() <span style="color: #666">+</span> <span style="color: #666">1</span>
+    denominator <span style="color: #666">=</span> (x <span style="color: #666">*</span> x <span style="color: #666">+</span> y <span style="color: #666">*</span> y)<span style="color: #666">.</span>sum()
+    sim <span style="color: #666">=</span> <span style="color: #666">2</span> <span style="color: #666">*</span> (x <span style="color: #666">*</span> y)<span style="color: #666">.</span>sum() <span style="color: #666">/</span> denominator
+    <span style="color: #008000; font-weight: bold">return</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> sim)<span style="color: #666">.</span>item()
+</code></pre></div>
+
+<p>这是 <strong>Cosine Similarity 的变体</strong>（加 1 避免零向量问题），用于量化两个张量的差异。返回值越接近 0 表示越相似。</p>
+<hr />
+<h2 id="10">10. 测试数据生成模式</h2>
+<h3 id="101">10.1 随机输入生成</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:94-98</span>
+x <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((num_tokens, hidden), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+x <span style="color: #666">=</span> per_token_cast_to_fp8(x) <span style="color: #008000; font-weight: bold">if</span> use_fp8_dispatch <span style="color: #008000; font-weight: bold">else</span> x
+bias <span style="color: #666">=</span> torch<span style="color: #666">.</span>randn((num_tokens, hidden), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>) <span style="color: #008000; font-weight: bold">if</span> num_bias <span style="color: #666">==</span> <span style="color: #666">1</span> <span style="color: #008000; font-weight: bold">else</span> <span style="color: #008000; font-weight: bold">None</span>
+</code></pre></div>
+
+<h3 id="102-masked-expert-selection">10.2 Masked Expert Selection</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:78-81</span>
+<span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>masked_ratio <span style="color: #666">&gt;</span> <span style="color: #666">0</span>:
+    rand_mask <span style="color: #666">=</span> torch<span style="color: #666">.</span>rand_like(topk_idx, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>float)
+    topk_idx<span style="color: #666">.</span>masked_fill_(rand_mask <span style="color: #666">&lt;</span> args<span style="color: #666">.</span>masked_ratio, <span style="color: #666">-1</span>)
+    topk_weights<span style="color: #666">.</span>masked_fill_(topk_idx <span style="color: #666">&lt;</span> <span style="color: #666">0</span>, <span style="color: #666">0</span>)
+</code></pre></div>
+
+<p>模拟 token 未选中任何 Expert 的场景（topk_idx = -1）。</p>
+<h3 id="103">10.3 全模式枚举</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:22-31</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">enumerate_ep_modes</span>():
+    <span style="color: #008000; font-weight: bold">for</span> do_handle_copy <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">1</span>, <span style="color: #666">0</span>):
+        <span style="color: #008000; font-weight: bold">for</span> expert_alignment <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">128</span>, <span style="color: #666">1</span>):
+            <span style="color: #008000; font-weight: bold">for</span> use_fp8_dispatch <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">1</span>, <span style="color: #666">0</span>):
+                <span style="color: #008000; font-weight: bold">for</span> num_bias <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">0</span>, <span style="color: #666">1</span>, <span style="color: #666">2</span>):
+                    <span style="color: #008000; font-weight: bold">for</span> with_previous_event <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">0</span>, <span style="color: #666">1</span>):
+                        <span style="color: #008000; font-weight: bold">for</span> async_with_compute_stream <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">0</span>, <span style="color: #666">1</span>):
+                            <span style="color: #008000; font-weight: bold">for</span> allocate_on_comm_stream <span style="color: #A2F; font-weight: bold">in</span> ((<span style="color: #666">1</span>, ) <span style="color: #008000; font-weight: bold">if</span> with_previous_event <span style="color: #008000; font-weight: bold">else</span> (<span style="color: #666">0</span>, <span style="color: #666">1</span>)):
+                                <span style="color: #008000; font-weight: bold">yield</span> (do_handle_copy, expert_alignment, use_fp8_dispatch, num_bias,
+                                       with_previous_event, async_with_compute_stream, allocate_on_comm_stream)
+</code></pre></div>
+
+<p><strong>2 × 2 × 2 × 3 × 2 × 2 × ~1 = ~96 种组合</strong>，覆盖所有功能交叉场景。这是<strong>组合测试</strong>的典型案例。</p>
+<hr />
+<h2 id="11">11. 验证模式</h2>
+<h3 id="111-bitwise-identical">11.1 Bitwise Identical（主要验证方式）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:503-508</span>
+<span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(combined_x, ref_combined_y), \
+    <span style="color: #BA2121">f&#39;Diff: </span><span style="color: #A45A77; font-weight: bold">{</span>calc_diff(combined_x,<span style="color: #BBB"> </span>ref_combined_y)<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+<span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(reduced_combined_x, ref_reduced_combined_y), \
+    <span style="color: #BA2121">f&#39;Diff: </span><span style="color: #A45A77; font-weight: bold">{</span>calc_diff(reduced_combined_x,<span style="color: #BBB"> </span>ref_reduced_combined_y)<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+<span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(combined_topk_weights, topk_weights), \
+    <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>calc_diff(combined_topk_weights,<span style="color: #BBB"> </span>topk_weights)<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+</code></pre></div>
+
+<p><strong><code>torch.equal</code></strong> 要求逐比特一致。这是 DeepEP 测试的核心验证方式，因为：<br />
+1. Dispatch 是确定性路由 —— 给定相同输入，接收的数据应完全相同<br />
+2. Combine 使用 deterministic algorithm —— 累加顺序确定，结果唯一<br />
+3. BF16 精度下，只要计算顺序一致，结果必然 bitwise identical</p>
+<h3 id="112">11.2 差异诊断</h3>
+<p>当 bitwise 不一致时，<code>calc_diff</code> 提供量化诊断信息：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:500</span>
+<span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(ref_t, t), <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>ref_t<span style="color: #A45A77; font-weight: bold">=}</span><span style="color: #BA2121">, </span><span style="color: #A45A77; font-weight: bold">{</span>t<span style="color: #A45A77; font-weight: bold">=}</span><span style="color: #BA2121">&#39;</span>
+</code></pre></div>
+
+<h3 id="113">11.3 专家计数验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:448-462</span>
+<span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_local_experts):
+    ref_count <span style="color: #666">=</span> (ref_recv_topk_idx <span style="color: #666">==</span> i)<span style="color: #666">.</span>sum()<span style="color: #666">.</span>item()
+    aligned_ref_count <span style="color: #666">=</span> align(ref_count, expert_alignment)
+    <span style="color: #008000; font-weight: bold">assert</span> ref_count <span style="color: #666">==</span> cumulative_local_expert_recv_stats[i]<span style="color: #666">.</span>item()
+    <span style="color: #008000; font-weight: bold">assert</span> aligned_ref_count <span style="color: #666">==</span> handle<span style="color: #666">.</span>num_recv_tokens_per_expert_list[i]
+</code></pre></div>
+
+<h3 id="114-zero-padding">11.4 Zero Padding 验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:424-428</span>
+<span style="color: #008000; font-weight: bold">for</span> expert_idx <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_local_experts):
+    start <span style="color: #666">=</span> expanded_handle<span style="color: #666">.</span>psum_num_recv_tokens_per_expert[expert_idx]<span style="color: #666">.</span>item()
+    end <span style="color: #666">=</span> align(start, expert_alignment)
+    <span style="color: #008000; font-weight: bold">assert</span> (cached_expanded_recv_x_bf16[start:end] <span style="color: #666">==</span> <span style="color: #666">0</span>)<span style="color: #666">.</span>all()
+    <span style="color: #008000; font-weight: bold">assert</span> (cached_expanded_recv_topk_weights[start:end] <span style="color: #666">==</span> <span style="color: #666">0</span>)<span style="color: #666">.</span>all()
+</code></pre></div>
+
+<h3 id="115-deterministic">11.5 Deterministic 模式验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:388-397</span>
+<span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>deterministic:
+    recv_x_twice, <span style="color: #666">...</span> <span style="color: #666">=</span> launch(buffer, <span style="color: #BA2121">&#39;dispatch&#39;</span>, <span style="color: #666">...</span>)
+    <span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(recv_x_bf16, recv_x_twice_bf16)
+    <span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(recv_topk_idx, recv_topk_idx_twice[:num_recv_tokens])
+</code></pre></div>
+
+<p>运行两次 dispatch 并验证结果完全一致，确保 deterministic 算法的可靠性。</p>
+<hr />
+<h2 id="12">12. 性能度量模式</h2>
+<h3 id="121">12.1 带宽计算</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:253-255</span>
+num_bytes_per_dispatch_token <span style="color: #666">=</span> safe_div(count_bytes(recv_x, recv_topk_idx, recv_topk_weights), recv_topk_idx<span style="color: #666">.</span>size(<span style="color: #666">0</span>))
+num_scaleup_bytes <span style="color: #666">=</span> num_bytes_per_dispatch_token <span style="color: #666">*</span> num_scaleup_recv_tokens
+num_scaleout_bytes <span style="color: #666">=</span> num_bytes_per_dispatch_token <span style="color: #666">*</span> num_scaleout_send_tokens
+</code></pre></div>
+
+<h3 id="122">12.2 吞吐量报告</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:259-263</span>
+dist_print(<span style="color: #BA2121">f&#39;   * EP: </span><span style="color: #A45A77; font-weight: bold">{</span>buffer<span style="color: #666">.</span>rank_idx<span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">3</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">/</span><span style="color: #A45A77; font-weight: bold">{</span>buffer<span style="color: #666">.</span>num_ranks<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> | &#39;</span>
+        <span style="color: #BA2121">f&#39;dispatch: &#39;</span>
+        <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>num_scaleout_bytes<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>t<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">1e9</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.0f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> GB/s (SO), &#39;</span>
+        <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>num_scaleup_bytes<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>t<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">1e9</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.0f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> GB/s (SU), </span><span style="color: #A45A77; font-weight: bold">{</span>t<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">1e6</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.3f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> us, </span><span style="color: #A45A77; font-weight: bold">{</span>num_scaleup_bytes<span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.0f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> bytes | &#39;</span>
+        <span style="color: #BA2121">f&#39;copy: </span><span style="color: #A45A77; font-weight: bold">{</span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_dispatch_token<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>copy_t<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">1e9</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.0f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> GB/s, </span><span style="color: #A45A77; font-weight: bold">{</span>copy_t<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">1e6</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.3f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> us&#39;</span>)
+</code></pre></div>
+
+<p><strong>报告维度</strong>：<br />
+- Scale-Out GB/s：跨节点 RDMA 吞吐<br />
+- Scale-Up GB/s：节点内 NVLink 吞吐<br />
+- 延迟 (μs)<br />
+- Copy 阶段带宽<br />
+- 总字节数</p>
+<h3 id="123">12.3 流量分析</h3>
+<p>测试框架精确计算每个 rank 的发送/接收 token 数，区分 scaleout 和 scaleup 流量：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># test_ep.py:240-245</span>
+dst_scaleout_rank_idx <span style="color: #666">=</span> topk_idx <span style="color: #666">//</span> (num_experts <span style="color: #666">//</span> num_scaleout_ranks)
+num_scaleout_send_tokens <span style="color: #666">=</span> <span style="color: #666">0</span>
+<span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_scaleout_ranks <span style="color: #008000; font-weight: bold">if</span> num_scaleout_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span> <span style="color: #008000; font-weight: bold">else</span> <span style="color: #666">0</span>):
+    <span style="color: #008000; font-weight: bold">if</span> args<span style="color: #666">.</span>ignore_local_traffic <span style="color: #A2F; font-weight: bold">and</span> i <span style="color: #666">==</span> dist<span style="color: #666">.</span>get_rank() <span style="color: #666">//</span> num_scaleup_ranks:
+        <span style="color: #008000; font-weight: bold">continue</span>
+    num_scaleout_send_tokens <span style="color: #666">+=</span> (dst_scaleout_rank_idx <span style="color: #666">==</span> i)<span style="color: #666">.</span>any(dim<span style="color: #666">=1</span>)<span style="color: #666">.</span>sum()<span style="color: #666">.</span>item()
+</code></pre></div>
+
+<hr />
+<h2 id="13">13. 其他工具</h2>
+<h3 id="131-semanticpy-weak_lru">13.1 <code>semantic.py</code> —— <code>weak_lru</code></h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># semantic.py:9-27</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">weak_lru</span>(maxsize: Optional[<span style="color: #008000">int</span>] <span style="color: #666">=</span> <span style="color: #666">128</span>, typed: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>):
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">wrapper</span>(func):
+        <span style="color: #A2F">@functools</span><span style="color: #666">.</span>lru_cache(maxsize, typed)
+        <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">_func</span>(_self, <span style="color: #666">*</span>args, <span style="color: #666">**</span>kwargs):
+            <span style="color: #008000; font-weight: bold">return</span> func(_self(), <span style="color: #666">*</span>args, <span style="color: #666">**</span>kwargs)
+        <span style="color: #A2F">@functools</span><span style="color: #666">.</span>wraps(func)
+        <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">inner</span>(<span style="color: #008000">self</span>, <span style="color: #666">*</span>args, <span style="color: #666">**</span>kwargs):
+            <span style="color: #008000; font-weight: bold">return</span> _func(weakref<span style="color: #666">.</span>ref(<span style="color: #008000">self</span>), <span style="color: #666">*</span>args, <span style="color: #666">**</span>kwargs)
+        <span style="color: #008000; font-weight: bold">return</span> inner
+    <span style="color: #008000; font-weight: bold">return</span> wrapper
+</code></pre></div>
+
+<p>使用 <code>weakref.ref(self)</code> 作为 LRU cache 的键，避免 <code>lru_cache</code> 持有 <code>self</code> 的强引用导致内存泄漏。适用于需要缓存方法的场景。</p>
+<h3 id="132-find_pkgspy-nvidia">13.2 <code>find_pkgs.py</code> —— NVIDIA 包路径探测</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># find_pkgs.py:8-54</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">find_pkg_root</span>(name: <span style="color: #008000">str</span>, lib_name: Optional[<span style="color: #008000">str</span>] <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">None</span>, optional: <span style="color: #008000">bool</span> <span style="color: #666">=</span> <span style="color: #008000; font-weight: bold">False</span>):
+    <span style="color: #3D7B7B; font-style: italic"># 1. 检查环境变量 EP_{NAME}_ROOT_DIR 和 {NAME}_DIR</span>
+    <span style="color: #3D7B7B; font-style: italic"># 2. 遍历 importlib.metadata.distributions()</span>
+    <span style="color: #3D7B7B; font-style: italic"># 3. 匹配 nvidia-{name} 包名</span>
+    <span style="color: #3D7B7B; font-style: italic"># 4. 查找 lib_name 文件确定 root</span>
+</code></pre></div>
+
+<p>用于在构建 / 运行时定位 NCCL、NVSHMEM 等 NVIDIA 库的安装路径。</p>
+<hr />
+<h2 id="14">14. 设计哲学总结</h2>
+<h3 id="141-bitwise-or-nothing">14.1 "Bitwise or Nothing"</h3>
+<p>DeepEP 测试不采用误差容忍（atol/rtol）比较，而是要求 <strong>bitwise identical</strong>。这之所以可行，是因为：<br />
+1. 所有计算在 BF16 下是确定性的（无 TF32 等自动精度提升）<br />
+2. 使用 <code>deterministic_sort</code> 保证累加顺序一致<br />
+3. 通信是 all_to_all 的确定性置换</p>
+<h3 id="142">14.2 全模式覆盖</h3>
+<p><code>enumerate_ep_modes</code> 枚举所有功能开关的组合，确保新功能不会在某个组合下回归。</p>
+<h3 id="143">14.3 硬件感知</h3>
+<p><code>get_nvlink_gbs</code>、<code>get_rdma_gbs</code>、<code>check_fast_rdma_atomic_support</code> 使测试能感知硬件能力，据此调整性能预期或启用/禁用特定优化路径。</p>
+<h3 id="144">14.4 参考实现驱动</h3>
+<p>所有正确性验证基于独立的 PyTorch 参考实现（<code>refs.py</code>），而非手工计算的期望值。这保证了：<br />
+- 参考实现易于理解和验证<br />
+- 任何协议变更只需修改参考实现<br />
+- GPU kernel 与参考实现对齐</p>
+<h3 id="145-benchmark">14.5 生产级 Benchmark</h3>
+<p><code>bench_kineto</code> 不是简单的 <code>time.time()</code> 测量，而是：<br />
+- 使用 PyTorch profiler 获取真实 kernel 时间<br />
+- 消除 CPU 发射不均（barrier_comm_profiling）<br />
+- 消除缓存效应（flush_l2_cache）<br />
+- 支持多 kernel 周期分析（num_kernels_per_period）</p>
+<hr />
+<h2 id="15">15. 关键文件行数统计</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>核心职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/elastic/test_ep.py</code></td>
+<td>610</td>
+<td>集成测试主入口</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/testing.py</code></td>
+<td>220</td>
+<td>Benchmark 工具</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/gate.py</code></td>
+<td>181</td>
+<td>非均衡流量生成</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/comm.py</code></td>
+<td>84</td>
+<td>NCCL Comm 封装</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/envs.py</code></td>
+<td>269</td>
+<td>环境初始化 / 硬件探测</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/event.py</code></td>
+<td>97</td>
+<td>CUDA Event 封装</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/refs.py</code></td>
+<td>244</td>
+<td>PyTorch 参考实现</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/math.py</code></td>
+<td>104</td>
+<td>FP8 / 数学工具</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/semantic.py</code></td>
+<td>28</td>
+<td>weak_lru 等</td>
+</tr>
+<tr>
+<td><code>deep_ep/utils/find_pkgs.py</code></td>
+<td>83</td>
+<td>包路径探测</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td><strong>~1920</strong></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_3">附录：测试运行命令示例</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># 基本正确性测试 (8 卡)</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--num-tokens<span style="color: #BBB"> </span><span style="color: #666">4096</span><span style="color: #BBB"> </span>--hidden<span style="color: #BBB"> </span><span style="color: #666">7168</span><span style="color: #BBB"> </span>--num-experts<span style="color: #BBB"> </span><span style="color: #666">256</span><span style="color: #BBB"> </span>--num-topk<span style="color: #BBB"> </span><span style="color: #666">6</span>
+
+<span style="color: #3D7B7B; font-style: italic"># 跳过正确性验证，仅做性能测试</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--skip-check
+
+<span style="color: #3D7B7B; font-style: italic"># 压力测试 (循环多种子)</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--do-pressure-test
+
+<span style="color: #3D7B7B; font-style: italic"># 非均衡流量测试</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--unbalanced-ratio<span style="color: #BBB"> </span><span style="color: #666">2</span>.0
+
+<span style="color: #3D7B7B; font-style: italic"># Deterministic 模式</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--deterministic
+
+<span style="color: #3D7B7B; font-style: italic"># 导出 profiling trace</span>
+torchrun<span style="color: #BBB"> </span>--nproc_per_node<span style="color: #666">=8</span><span style="color: #BBB"> </span>tests/elastic/test_ep.py<span style="color: #BBB"> </span>--dump-profile-traces<span style="color: #BBB"> </span>./traces
+</code></pre></div>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

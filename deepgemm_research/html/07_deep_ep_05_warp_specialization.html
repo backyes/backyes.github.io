@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepEP Warp Specialization 深度分析: 博客描述 vs 源码实现 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">DeepEP Warp Specialization 深度分</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#deepep-warp-specialization-深度分析-博客描述-vs-源码实现" class="toc-h1">DeepEP Warp Specialization 深度分析: 博客描述 vs 源码实现</a></li><li><a href="#1-核心结论-tldr" class="toc-h2">1. 核心结论 (TL;DR)</a></li><li><a href="#2-博客原文-warp-specialization-描述" class="toc-h2">2. 博客原文: Warp Specialization 描述</a></li><li><a href="#3-legacy-v1-实现-warprole-枚举" class="toc-h2">3. Legacy (V1) 实现: WarpRole 枚举</a></li><li><a href="#31-dispatch-warprole-5-种角色" class="toc-h3">3.1 Dispatch WarpRole (5 种角色)</a></li><li><a href="#32-dispatch-5-角色详解" class="toc-h3">3.2 Dispatch 5 角色详解</a></li><li><a href="#33-combine-warprole-4-种角色" class="toc-h3">3.3 Combine WarpRole (4 种角色)</a></li><li><a href="#4-转发机制-代码级分析" class="toc-h2">4. 转发机制: 代码级分析</a></li><li><a href="#41-rdmanvl-转发-krdmaandnvlforwarder" class="toc-h3">4.1 RDMA→NVL 转发 (kRDMAAndNVLForwarder)</a></li><li><a href="#42-coordinator-的关键作用" class="toc-h3">4.2 Coordinator 的关键作用</a></li><li><a href="#5-elastic-v2-实现-warp-角色" class="toc-h2">5. Elastic V2 实现: Warp 角色</a></li><li><a href="#51-scale-up-only-模式-dispatchcuh" class="toc-h3">5.1 Scale-up Only 模式 (dispatch.cuh)</a></li><li><a href="#52-hybrid-模式-hybrid_dispatchcuh--三种角色" class="toc-h3">5.2 Hybrid 模式 (hybrid_dispatch.cuh) — 三种角色</a></li><li><a href="#6-hybrid-combine-warp-角色" class="toc-h2">6. Hybrid Combine Warp 角色</a></li><li><a href="#7-producer-consumer-关系" class="toc-h2">7. Producer-Consumer 关系</a></li><li><a href="#71-legacy-dispatch-流水线" class="toc-h3">7.1 Legacy Dispatch 流水线</a></li><li><a href="#72-elastic-hybrid-dispatch-流水线" class="toc-h3">7.2 Elastic Hybrid Dispatch 流水线</a></li><li><a href="#73-数据传递代码证据" class="toc-h3">7.3 数据传递代码证据</a></li><li><a href="#8-准确性评估" class="toc-h2">8. 准确性评估</a></li><li><a href="#81-博客描述准确的部分" class="toc-h3">8.1 博客描述准确的部分</a></li><li><a href="#82-博客遗漏简化的部分" class="toc-h3">8.2 博客遗漏/简化的部分</a></li><li><a href="#83-博客不准确的表述" class="toc-h3">8.3 博客不准确的表述</a></li><li><a href="#9-三代-warp-specialization-对比" class="toc-h2">9. 三代 Warp Specialization 对比</a></li><li><a href="#91-legacy-v1-internodecu" class="toc-h3">9.1 Legacy V1 (internode.cu)</a></li><li><a href="#92-elastic-v2-scale-up-only-dispatchcuh" class="toc-h3">9.2 Elastic V2 Scale-up Only (dispatch.cuh)</a></li><li><a href="#93-elastic-v2-hybrid-hybrid_dispatchcuh" class="toc-h3">9.3 Elastic V2 Hybrid (hybrid_dispatch.cuh)</a></li><li><a href="#10-mermaid-流水线图" class="toc-h2">10. Mermaid 流水线图</a></li><li><a href="#101-legacy-dispatch-warp-pipeline" class="toc-h3">10.1 Legacy Dispatch Warp Pipeline</a></li><li><a href="#102-elastic-hybrid-dispatch-warp-pipeline" class="toc-h3">10.2 Elastic Hybrid Dispatch Warp Pipeline</a></li><li><a href="#103-三代对比图" class="toc-h3">10.3 三代对比图</a></li><li><a href="#11-关键代码索引" class="toc-h2">11. 关键代码索引</a></li><li><a href="#12-总结" class="toc-h2">12. 总结</a></li><li><a href="#121-博客评价" class="toc-h3">12.1 博客评价</a></li><li><a href="#122-架构洞察" class="toc-h3">12.2 架构洞察</a></li><li><a href="#附录-文件路径汇总" class="toc-h2">附录: 文件路径汇总</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="deepep-warp-specialization-vs">DeepEP Warp Specialization 深度分析: 博客描述 vs 源码实现</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 逐层剖析博客 Section 5 的 "Send → Forward → Receive" 三阶段描述，对照 Legacy (V1) 和 Elastic (V2) 两代实现，评估其准确性</p>
+</blockquote>
+<hr />
+<h2 id="1-tldr">1. 核心结论 (TL;DR)</h2>
+<p><strong>博客描述的 "Send → Forward → Receive" 是 DeepEP Warp Specialization 的抽象原型，但存在关键简化：</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>博客描述</th>
+<th>Legacy (V1) 实际</th>
+<th>Elastic V2 实际</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Warp 角色数</strong></td>
+<td>3 (Send/Forward/Receive)</td>
+<td><strong>5</strong> (含 Coordinator)</td>
+<td><strong>3</strong> (Notify/Scaleout/Forward)</td>
+</tr>
+<tr>
+<td><strong>流水线</strong></td>
+<td>Send → Forward → Receive</td>
+<td>Send → Coordinator → Forward → Coordinator → Receive</td>
+<td>Notify → Scaleout Send → Forward</td>
+</tr>
+<tr>
+<td><strong>Coordinator</strong></td>
+<td>未提及</td>
+<td><strong>显式存在</strong> (关键!)</td>
+<td>隐式 (Notify 部分承担)</td>
+</tr>
+<tr>
+<td><strong>元数据阶段</strong></td>
+<td>未提及</td>
+<td>隐含在 SM0</td>
+<td><strong>独立 Notify Warps</strong></td>
+</tr>
+<tr>
+<td><strong>方向</strong></td>
+<td>仅 Dispatch</td>
+<td>Dispatch + Combine 双向</td>
+<td>Dispatch + Combine 双向</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键洞察</strong>:<br />
+1. 博客描述的是 <strong>Dispatch 方向</strong> 的数据流，忽略了 Combine 是反向的 (NVL Send → Forward → RDMA Receive)<br />
+2. <strong>Coordinator Warps</strong> 是流水线中的关键角色，负责流控和同步，博客完全未提及<br />
+3. V2 Elastic 将元数据同步独立为 <strong>Notify Warps</strong>，这是比 V1 更清晰的 Warp Specialization 设计</p>
+<hr />
+<h2 id="2-warp-specialization">2. 博客原文: Warp Specialization 描述</h2>
+<p>博客 Section 5 原文:</p>
+<blockquote>
+<p><strong>5. Warp Specialization: Pipelined Execution Inside the Communication Kernel</strong></p>
+<p>Warp Specialization in DeepEP is <strong>not</strong> about GPU role assignment or SMs dedicated to compute/communication. It is primarily used for <strong>parallelizing different stages within the communication Kernel</strong>.</p>
+<p>Different Warp Groups handle:<br />
+- Warp Group A: IB Sending<br />
+- Warp Group B: IB-NVLink Forwarding<br />
+- Warp Group C: NVLink Receiving</p>
+<p>Forming: <strong>Send → Forward → Receive</strong></p>
+</blockquote>
+<p>博客 Section 4.2 进一步说明:</p>
+<blockquote>
+<p>Normal Kernel divides into three roles:<br />
+Source GPU → IB Sending → RDMA Network → IB-to-NVLink Forwarding → NVLink Receiving → Target GPU</p>
+</blockquote>
+<p><strong>分析</strong>: 博客将 Warp Specialization 定位为通信 kernel 内部的流水线并行化，核心目的是解决 GPU-NIC 拓扑不对称问题 (GPU0 → NIC1 需要经 NVLink 转发)。</p>
+<hr />
+<h2 id="3-legacy-v1-warprole">3. Legacy (V1) 实现: WarpRole 枚举</h2>
+<h3 id="31-dispatch-warprole-5">3.1 Dispatch WarpRole (5 种角色)</h3>
+<p><strong>文件</strong>: <code>csrc/kernels/legacy/internode.cu</code> (487 行)</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">WarpRole</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>kRDMASender,<span style="color: #BBB">              </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送</span>
+<span style="color: #BBB">    </span>kRDMASenderCoordinator,<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送协调</span>
+<span style="color: #BBB">    </span>kRDMAAndNVLForwarder,<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// RDMA-NVL 转发</span>
+<span style="color: #BBB">    </span>kForwarderCoordinator,<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 转发协调</span>
+<span style="color: #BBB">    </span>kNVLReceivers<span style="color: #BBB">             </span><span style="color: #3D7B7B; font-style: italic">// NVL 接收</span>
+};
+</code></pre></div>
+
+<p><strong>角色分派逻辑</strong> (499-513 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>role_meta<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">=</span>]()<span style="color: #BBB"> </span><span style="color: #666">-&gt;</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>pair<span style="color: #666">&lt;</span>WarpRole,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(is_forwarder)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kRDMAAndNVLForwarder,<span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>channel_id)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS};
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kForwarderCoordinator,<span style="color: #BBB"> </span>warp_id<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS};
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumDispatchRDMASenderWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kRDMASender,<span style="color: #BBB"> </span><span style="color: #666">-1</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>kNumDispatchRDMASenderWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kRDMASenderCoordinator,<span style="color: #BBB"> </span><span style="color: #666">-1</span>};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{WarpRole<span style="color: #666">::</span>kNVLReceivers,<span style="color: #BBB"> </span>(warp_id<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>channel_id<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumDispatchRDMASenderWarps)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS};
+<span style="color: #BBB">    </span>}
+}();
+</code></pre></div>
+
+<p><strong>Warp 数量约束</strong> (452 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>__launch_bounds__(((kNumDispatchRDMASenderWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>),<span style="color: #BBB"> </span><span style="color: #666">1</span>)
+<span style="color: #3D7B7B; font-style: italic">// 即: (7 + 1 + 8) * 32 = 512 threads per CTA</span>
+</code></pre></div>
+
+<h3 id="32-dispatch-5">3.2 Dispatch 5 角色详解</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                    DeepEP Legacy Dispatch CTA (1 SM per channel)                         │
+├────────────────┬─────────────────┬─────────────────────┬───────────────┬────────────────┤
+│ RDMA Senders   │ Sender Coord    │ RDMA-NVL Forwarders │ Forward Coord │ NVL Receivers  │
+│ (7 warps)      │ (1 warp)        │ (8 warps)           │ (1 warp)      │ (8 warps)      │
+├────────────────┼─────────────────┼─────────────────────┼───────────────┼────────────────┤
+│ • Token 遍历    │ • 流控窗口维护   │ • RDMA buf 消费      │ • Head 协调   │ • NVL buf 消费  │
+│ • 数据打包      │ • Issue put_nbi │ • NVL buf 生产       │ • RDMA release│ • 数据解包      │
+│ • RDMA buf 生产 │ • Tail 同步     │ • TMA load/store    │ • 流控        │ • TopK 写入     │
+│ • 窗口流控      │                 │ • Round-robin       │               │ • TMA store     │
+└────────────────┴─────────────────┴─────────────────────┴───────────────┴────────────────┘
+         │                 │               │                   │              │
+         └────── Producer ─┘               └───── Producer ────┘              │
+                (RDMA buffer)                  (NVL buffer)                   │
+                                     Consumer ─────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="33-combine-warprole-4">3.3 Combine WarpRole (4 种角色)</h3>
+<p><strong>文件</strong>: <code>csrc/kernels/legacy/internode.cu</code> (1746 行)</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">enum</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">WarpRole</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>kNVLSender,<span style="color: #BBB">          </span><span style="color: #3D7B7B; font-style: italic">// NVL 发送</span>
+<span style="color: #BBB">    </span>kNVLAndRDMAForwarder,<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// NVL-RDMA 转发</span>
+<span style="color: #BBB">    </span>kRDMAReceiver,<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// RDMA 接收</span>
+<span style="color: #BBB">    </span>kCoordinator<span style="color: #BBB">         </span><span style="color: #3D7B7B; font-style: italic">// 协调</span>
+};
+</code></pre></div>
+
+<p><strong>Combine 是 Dispatch 的反向</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Dispatch: RDMA Send → Forward → NVL Receive
+Combine:  NVL Send → Forward → RDMA Receive
+</code></pre></div>
+
+<hr />
+<h2 id="4">4. 转发机制: 代码级分析</h2>
+<h3 id="41-rdmanvl-krdmaandnvlforwarder">4.1 RDMA→NVL 转发 (kRDMAAndNVLForwarder)</h3>
+<p><strong>文件</strong>: <code>csrc/kernels/legacy/internode.cu</code> (849-1013 行)</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_role<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>WarpRole<span style="color: #666">::</span>kRDMAAndNVLForwarder)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// RDMA consumers and NVL producers</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_nvl_rank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>target_rank;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 等待 RDMA 元数据到达</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_tokens_to_recv_from_rdma<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>src_rdma_channel_prefix<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRDMARanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_0<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_nvl_rank);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_1<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_nvl_rank);
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// ... 等待 4 个 meta 都为负值 (编码后的计数)</span>
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(meta_0<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_1<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_2<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_3<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>start_sum<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-</span>meta_0<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>end_sum<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-</span>meta_1<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">                </span>st_relaxed_sys_global(nvl_channel_prefix_start.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id,<span style="color: #BBB"> </span><span style="color: #666">-</span>start_sum<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">                </span>st_relaxed_sys_global(nvl_channel_prefix_end.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id,<span style="color: #BBB"> </span><span style="color: #666">-</span>end_sum<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">break</span>;
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Round-robin 从各 RDMA rank 取数据转发</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>src_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_id<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRDMARanks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(__any_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>num_tokens_to_recv_from_rdma<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>))<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 轮询找下一个有数据的 RDMA rank</span>
+<span style="color: #BBB">        </span>src_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(src_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRDMARanks;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(__shfl_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>num_tokens_to_recv_from_rdma,<span style="color: #BBB"> </span>src_rdma_rank)<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span>...<span style="color: #BBB"> </span>}
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 3. 从 RDMA buffer 读取并写入 NVL buffer</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_rdma_head;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>src_rdma_tail;<span style="color: #BBB"> </span><span style="color: #666">++</span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens;
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>shifted<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>rdma_channel_data.recv_buffer(src_rdma_rank)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>rdma_slot_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token;
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_meta<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_nc_global(<span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>SourceMeta<span style="color: #666">*&gt;</span>(shifted<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>hidden_bytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>scale_bytes));
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 检查是否属于目标 NVL rank</span>
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>src_meta.is_token_in_nvl_rank(dst_nvl_rank))
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">continue</span>;
+
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 4. TMA load from RDMA buffer, TMA store to NVL buffer</span>
+<span style="color: #BBB">            </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(cached_nvl_channel_tail<span style="color: #666">++</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens;
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_shifted<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>nvl_channel_x.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token;
+
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>tma_load_1d(tma_buffer,<span style="color: #BBB"> </span>shifted,<span style="color: #BBB"> </span>tma_mbarrier,<span style="color: #BBB"> </span>num_bytes_per_token,<span style="color: #BBB"> </span><span style="color: #008000">false</span>);
+<span style="color: #BBB">                </span>mbarrier_arrive_and_expect_tx(tma_mbarrier,<span style="color: #BBB"> </span>num_bytes_per_token);
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">            </span>__syncwarp();
+<span style="color: #BBB">            </span>mbarrier_wait(tma_mbarrier,<span style="color: #BBB"> </span>tma_phase);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(elect_one_sync())
+<span style="color: #BBB">                </span>tma_store_1d(tma_buffer,<span style="color: #BBB"> </span>dst_shifted,<span style="color: #BBB"> </span>num_bytes_per_token);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>转发核心逻辑</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>RDMA Buffer (per rank) → TMA Load → Shared Memory → TMA Store → NVL Buffer (per rank)
+                                ↓
+                       检查 SourceMeta.is_token_in_nvl_rank(dst_nvl_rank)
+                       只转发属于本 NVL rank 的 tokens
+</code></pre></div>
+
+<h3 id="42-coordinator">4.2 Coordinator 的关键作用</h3>
+<p><strong>kForwarderCoordinator</strong> (1019-1060 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_role<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>WarpRole<span style="color: #666">::</span>kForwarderCoordinator)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Forward warp coordinator</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(target_rank<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 只有第一个 forwarder SM 的 coordinator 工作</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 清理共享内存</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lane_id;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRDMARanks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)
+<span style="color: #BBB">        </span>forward_channel_head[i<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS][i<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span>sync_forwarder_smem();
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 找所有 forwarder 的最小 head</span>
+<span style="color: #BBB">        </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>min_head<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>numeric_limits<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;::</span>max();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS;<span style="color: #BBB"> </span><span style="color: #666">++</span>i)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>forward_channel_retired[i])
+<span style="color: #BBB">                </span>min_head<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(min_head,<span style="color: #BBB"> </span>forward_channel_head[i][target_rdma]);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 更新远端 RDMA head (释放 RDMA buffer 空间)</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(min_head<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>last_head<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_max_rdma_chunked_send_tokens<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>lane_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRDMARanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>nvshmemi_ibgda_amo_nonfetch_add(rdma_channel_head.buffer(rdma_rank),
+<span style="color: #BBB">                                            </span>min_head<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>last_head,
+<span style="color: #BBB">                                            </span>translate_dst_rdma_rank<span style="color: #666">&lt;</span>kLowLatencyMode<span style="color: #666">&gt;</span>(lane_id,<span style="color: #BBB"> </span>nvl_rank),
+<span style="color: #BBB">                                            </span>channel_id<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_channels,
+<span style="color: #BBB">                                            </span>lane_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>rdma_rank);
+<span style="color: #BBB">            </span>last_head<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min_head;
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>__nanosleep(LEGACY_NUM_WAIT_NANOSECONDS);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 让出 SM 给其他 warps</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>Coordinator 的核心职责</strong>:<br />
+1. <strong>Head 协调</strong>: 收集所有 forwarder 的进度，取最小值<br />
+2. <strong>RDMA 空间释放</strong>: 通知远端 RDMA head 更新，释放已消费的 buffer 槽位<br />
+3. <strong>流控</strong>: 防止 RDMA buffer 溢出</p>
+<hr />
+<h2 id="5-elastic-v2-warp">5. Elastic V2 实现: Warp 角色</h2>
+<h3 id="51-scale-up-only-dispatchcuh">5.1 Scale-up Only 模式 (dispatch.cuh)</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 21-29 行: 模板参数定义</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsScaleupNVLink,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoCPUSync,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kReuseSlotIndices,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumDispatchWarps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 两种 warp 角色</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>__launch_bounds__(kNumThreads,<span style="color: #BBB"> </span><span style="color: #666">1</span>)
+dispatch_impl(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 79 行: warp 分派</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// ====== Notify Warps ======</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 1. atomicAdd 统计 expert_count / rank_count</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 2. full-grid reduction</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 3. 写入 peer 的 rank_expert_count</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 4. 计算 prefix sum</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 5. 写入 host workspace</span>
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// ====== Dispatch Warps ======</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 1. TMA load token from global memory</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 2. TMA store to send buffer</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 3. NVLink store (tma_store_1d to sym_ptr)</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 4. RDMA put (gin.put, 若非 NVLink 可达)</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>Scale-up Only Warp 角色</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌───────────────────────────────────────────────────────────────┐
+│              DeepEP Scale-up Only CTA                          │
+├────────────────────────────┬──────────────────────────────────┤
+│ Notify Warps               │ Dispatch Warps                   │
+│ (warp_idx &lt; kNumNotifyWarps)│ (warp_idx &gt;= kNumNotifyWarps)    │
+├────────────────────────────┼────────────────────────────────┤
+│ • Expert/Rank 计数          │ • TMA Load tokens              │
+│ • Prefix sum 计算           │ • TMA Store to send buffer     │
+│ • Peer 元数据同步           │ • NVLink Store (对称内存)       │
+│ • Host workspace 写入       │ • RDMA Put (若非 NVLink 可达)   │
+└────────────────────────────┴────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>注意</strong>: Scale-up Only 模式下<strong>没有 Forward warps</strong>，因为所有 GPU 通过 NVLink 直接可达。</p>
+<h3 id="52-hybrid-hybrid_dispatchcuh">5.2 Hybrid 模式 (hybrid_dispatch.cuh) — 三种角色</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 16-32 行: 模板参数定义**三种**数据路径 warp 角色</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoCPUSync,
+<span style="color: #BBB">          </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kReuseSlotIndices,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutWarps,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumForwardWarps,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 三种!</span>
+<span style="color: #BBB">          </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleupRanks,
+<span style="color: #BBB">          </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>__launch_bounds__(kNumThreads,<span style="color: #BBB"> </span><span style="color: #666">1</span>)
+hybrid_dispatch_impl(...)<span style="color: #BBB"> </span>{
+</code></pre></div>
+
+<p><strong>线程配置</strong> (29-32 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumNotifyThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumScaleoutSendThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumForwardThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumForwardWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumNotifyThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutSendThreads<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumForwardThreads
+</code></pre></div>
+
+<p><strong>Warp 分派</strong> (107-158, 329-464, 465-659 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Notify Warps ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 元数据收集与同步</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. atomicAdd 统计 expert_count / rank_count</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. full-grid reduction</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 写入 scale-out peers 的 rank_expert_count (RDMA)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. 写入 scale-up peers 的 rank_expert_count (NVLink)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 5. 计算 prefix sum</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Scaleout Warps (IBGDA/RDMA Sending) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 跨节点数据发送</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>channel_idx;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumChannels)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA load token</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA store to scaleout_send_buffer</span>
+<span style="color: #BBB">        </span>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(...,<span style="color: #BBB"> </span>stored_dst_scaleout_rank_idx);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// IBGDA!</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Issue scale-out tail update</span>
+<span style="color: #BBB">    </span>}
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Forward Warps (NVLink Forwarding) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从 scale-out 接收 buffer 转发到 scale-up 目标</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>forward_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(kNumNotifyWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumScaleoutWarps);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Forward tokens from scale-out ranks</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>start_slot_idx;<span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>end_slot_idx;<span style="color: #BBB"> </span><span style="color: #666">++</span>slot_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_token_buffer(slot_idx);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA load into shared memory</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// TMA store to scaleup_buffer (NVLink sym_ptr)</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>Hybrid Dispatch Warp 角色完整视图</strong>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    DeepEP Hybrid Dispatch CTA                                    │
+├──────────────────┬──────────────────────────┬───────────────────────────────────┤
+│ Notify Warps     │ Scaleout Warps           │ Forward Warps                     │
+│ (元数据同步)      │ (IBGDA/RDMA 跨节点发送)   │ (NVLink 节点内转发)                │
+├──────────────────┼──────────────────────────┼─────────────────────────────────┤
+│ • Expert 计数     │ • Token TMA Load         │ • 从 scaleout_recv 读取           │
+│ • Rank 计数       │ • Send buffer 写入        │ • TMA Load → smem                 │
+│ • Prefix sum     │ • IBGDA put (RDMA)       │ • TMA Store → scaleup_buffer     │
+│ • Peer 元数据同步  │ • Tail update            │ • 按 scale-up rank 分发            │
+│ • Grid sync      │ • Channel 流控            │ • Linked list 索引维护             │
+└──────────────────┴──────────────────────────┴─────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="6-hybrid-combine-warp">6. Hybrid Combine Warp 角色</h2>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 25 行: 两种 warp 角色</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleupWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumForwardWarps;
+
+<span style="color: #3D7B7B; font-style: italic">// 106 行: warp 分派</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(warp_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumScaleupWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Scaleup Warps (节点内发送) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从本地 buffer 发送到 scale-up peers</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 241 行: TMA load from global memory</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 328 行: TMA store to remote scale-up buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 127 行: update_tails (通知 forward warps)</span>
+
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ====== Forward Warps (节点间转发) ======</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 功能: 从 scale-up buffer 转发到 scale-out peers</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>forward_warp_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>warp_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumScaleupWarps;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 467 行: TMA load from scaleup_buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 477 行: TMA store to scaleout_send_buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 484 行: gin.put&lt;ncclTeamTagRail&gt; (RDMA)</span>
+}
+</code></pre></div>
+
+<p><strong>寄存器重分配</strong> (101-103 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kAdjustRegisters<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">4</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">8</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kUseExpandedLayout;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">40</span>;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// 少</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRegistersForForwardWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span><span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>kNumRegistersForScaleupWarps;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 多 (216)</span>
+</code></pre></div>
+
+<p><strong>注意</strong>: Hybrid Combine 的 "Forward" 是<strong>反向</strong>的 — 从 scale-up 节点内转发到 scale-out 跨节点，与 Dispatch 的 Forward 方向相反。</p>
+<hr />
+<h2 id="7-producer-consumer">7. Producer-Consumer 关系</h2>
+<h3 id="71-legacy-dispatch">7.1 Legacy Dispatch 流水线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                          Legacy Dispatch Pipeline                                         │
+│                                                                                          │
+│  ┌──────────────┐    RDMA Buffer    ┌──────────────────┐    NVL Buffer    ┌────────────┐│
+│  │ RDMA Senders │ ───────────────→  │ RDMA-NVL Forwarder│ ──────────────→  │ NVL Receiver││
+│  │ (Producer)   │   (per rank)      │ (Consumer/Prod)   │  (per rank)      │ (Consumer)  ││
+│  └──────────────┘                   └──────────────────┘                  └────────────┘│
+│         ↑                               ↑                                     ↑        │
+│         │                               │                                     │        │
+│  ┌──────────────┐                ┌──────────────┐                      ┌────────────┐  │
+│  │ Sender Coord │                │ Forward Coord│                      │ (implicit) │  │
+│  │ (流控/Issue) │                │ (Head 协调)  │                      │            │  │
+│  └──────────────┘                └──────────────┘                      └────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>同步机制</strong>:<br />
+- <strong>RDMA Buffer</strong>: <code>rdma_channel_tail</code> (生产者写), <code>rdma_channel_head</code> (消费者读, Coordinator 释放)<br />
+- <strong>NVL Buffer</strong>: <code>nvl_channel_tail</code> (Forwarder 写), <code>nvl_channel_head</code> (Receiver 读)<br />
+- <strong>元数据</strong>: <code>rdma_channel_meta</code> (Sender 写, Forwarder 读), <code>nvl_channel_prefix_start/end</code> (Forwarder 写, Receiver 读)</p>
+<h3 id="72-elastic-hybrid-dispatch">7.2 Elastic Hybrid Dispatch 流水线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                       Elastic Hybrid Dispatch Pipeline                                    │
+│                                                                                          │
+│  ┌────────────┐                                                    ┌─────────────────┐  │
+│  │ Notify     │ ──────────────────────────────────────────────────→ │ (Barrier/Sync)  │  │
+│  │ Warps      │  (元数据: rank_count, expert_count, prefix sum)     │                 │  │
+│  └────────────┘                                                    └─────────────────┘  │
+│                                                                                          │
+│  ┌────────────────┐   scaleout_send_buffer   ┌─────────────────┐   scaleup_buffer  ┌────┐│
+│  │ Scaleout Warps │ ──────────────────────→  │  Forward Warps   │ ───────────────→ │Done││
+│  │ (RDMA Producer)│   (per channel)          │ (NVL Producer)   │  (per rank)       │    ││
+│  └────────────────┘                          └─────────────────┘                   └────┘│
+│         ↑                                          ↑                                    │
+│         │                                          │                                    │
+│  ┌────────────────┐                        ┌─────────────────┐                          │
+│  │ scaleout_tail  │                        │  scaleup_tail   │                          │
+│  │ (signaled)     │                        │  (linked list)  │                          │
+│  └────────────────┘                        └─────────────────┘                          │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>同步机制</strong>:<br />
+- <strong>Scaleout Channel</strong>: <code>scaleout_channel_signaled_tail</code> (Scaleout Warp 写, Forward Warp 读)<br />
+- <strong>Scaleup Channel</strong>: <code>channel_scaleup_tail</code> (Forward Warp 写, 通知 Combine Scaleup Warp)<br />
+- <strong>Linked List</strong>: Forward Warp 维护 per-rank 的 linked list 索引，Combine 按 list 消费</p>
+<h3 id="73">7.3 数据传递代码证据</h3>
+<p><strong>Legacy: Forwarder 读取 RDMA meta</strong> (857-897 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_id<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRDMARanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_0<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_nvl_rank);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_1<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_nvl_rank);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_2<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>meta_3<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ld_volatile_global(rdma_channel_meta.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(meta_0<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_1<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_2<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>meta_3<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 解码: -value - 1 编码</span>
+<span style="color: #BBB">            </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>start_sum<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-</span>meta_0<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>end_sum<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-</span>meta_1<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">            </span>st_relaxed_sys_global(nvl_channel_prefix_start.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id,<span style="color: #BBB"> </span><span style="color: #666">-</span>start_sum<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">            </span>st_relaxed_sys_global(nvl_channel_prefix_end.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_id,<span style="color: #BBB"> </span><span style="color: #666">-</span>end_sum<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">break</span>;
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>Legacy: Forwarder 写入 NVL buffer</strong> (982-994 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">int</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(cached_nvl_channel_tail<span style="color: #666">++</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens;
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_shifted<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>nvl_channel_x.buffer()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token;
+
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>tma_load_1d(tma_buffer,<span style="color: #BBB"> </span>shifted,<span style="color: #BBB"> </span>tma_mbarrier,<span style="color: #BBB"> </span>num_bytes_per_token,<span style="color: #BBB"> </span><span style="color: #008000">false</span>);
+<span style="color: #BBB">    </span>mbarrier_arrive_and_expect_tx(tma_mbarrier,<span style="color: #BBB"> </span>num_bytes_per_token);
+}
+__syncwarp();
+mbarrier_wait(tma_mbarrier,<span style="color: #BBB"> </span>tma_phase);
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(elect_one_sync())
+<span style="color: #BBB">    </span>tma_store_1d(tma_buffer,<span style="color: #BBB"> </span>dst_shifted,<span style="color: #BBB"> </span>num_bytes_per_token);
+</code></pre></div>
+
+<p><strong>Elastic: Scaleout Warp 发送</strong> (448-455 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Issue IBGDA requests</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>stored_dst_scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>scaleout_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">            </span>scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+<span style="color: #BBB">            </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">            </span>stored_dst_scaleout_rank_idx,
+<span style="color: #BBB">            </span>ncclGinOptFlagsAggregateRequests);
+}
+</code></pre></div>
+
+<p><strong>Elastic: Forward Warp 转发</strong> (546-597 行):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// TMA load into shared memory</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>token_buffer.get_base_ptr(),
+<span style="color: #BBB">                     </span>mbarrier_ptr,<span style="color: #BBB"> </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(mbarrier_ptr,<span style="color: #BBB"> </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier_wait_and_flip_phase(mbarrier_ptr,<span style="color: #BBB"> </span>phase);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// Issue TMAs to scale-up buffer (NVLink)</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>scaleup_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>stored_dst_scaleup_rank_idx);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_commit();
+}
+</code></pre></div>
+
+<hr />
+<h2 id="8">8. 准确性评估</h2>
+<h3 id="81">8.1 博客描述准确的部分</h3>
+<table>
+<thead>
+<tr>
+<th>博客描述</th>
+<th>源码验证</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"不是 GPU role 分配"</td>
+<td>Warp Specialization 确实在 kernel 内部</td>
+<td><strong>准确</strong></td>
+</tr>
+<tr>
+<td>"是通信 kernel 内部并行化"</td>
+<td>同一 CTA 内不同 warp 承担不同阶段</td>
+<td><strong>准确</strong></td>
+</tr>
+<tr>
+<td>"Send → Forward → Receive"</td>
+<td>Dispatch 方向确实如此</td>
+<td><strong>准确 (Dispatch)</strong></td>
+</tr>
+<tr>
+<td>"解决 GPU-NIC 拓扑不对称"</td>
+<td>Forwarder 角色存在原因</td>
+<td><strong>准确</strong></td>
+</tr>
+<tr>
+<td>"IB Sending / IB-NVLink Forwarding / NVLink Receiving"</td>
+<td>与 kRDMASender / kRDMAAndNVLForwarder / kNVLReceivers 对应</td>
+<td><strong>准确</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 博客遗漏/简化的部分</h3>
+<table>
+<thead>
+<tr>
+<th>遗漏项</th>
+<th>源码证据</th>
+<th>重要性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Coordinator Warps</strong></td>
+<td>kRDMASenderCoordinator, kForwarderCoordinator</td>
+<td><strong>高</strong> — 流控核心</td>
+</tr>
+<tr>
+<td><strong>元数据阶段</strong></td>
+<td>Notify Warps (V2) / SM0 metadata (V1)</td>
+<td><strong>高</strong> — 正确性前提</td>
+</tr>
+<tr>
+<td><strong>Combine 反向流水线</strong></td>
+<td>kNVLSender / kNVLAndRDMAForwarder / kRDMAReceiver</td>
+<td><strong>中</strong> — 完整性</td>
+</tr>
+<tr>
+<td><strong>Round-robin 调度</strong></td>
+<td>Forwarder 轮询各 RDMA rank</td>
+<td><strong>中</strong> — 负载均衡</td>
+</tr>
+<tr>
+<td><strong>TMA + mbarrier 同步</strong></td>
+<td>生产者-消费者使用 TMA store/load</td>
+<td><strong>中</strong> — 实现细节</td>
+</tr>
+<tr>
+<td><strong>V2 Elastic 3 角色</strong></td>
+<td>Notify / Scaleout / Forward</td>
+<td><strong>高</strong> — 最新架构</td>
+</tr>
+<tr>
+<td><strong>寄存器重分配</strong></td>
+<td>warpgroup_reg_dealloc/alloc</td>
+<td><strong>低</strong> — 性能优化</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83">8.3 博客不准确的表述</h3>
+<ol>
+<li><strong>"Warp Group A: IB Sending"</strong> — 实际是 <code>kNumDispatchRDMASenderWarps = 7</code> 个 warps，不是单个 Group</li>
+<li><strong>"Warp Group B: IB-NVLink Forwarding"</strong> — 实际是 <code>LEGACY_NUM_MAX_NVL_PEERS = 8</code> 个 warps</li>
+<li><strong>"Warp Group C: NVLink Receiving"</strong> — 同样是 8 个 warps</li>
+<li><strong>未区分 Dispatch/Combine</strong> — Combine 是反向的 NVL Send → Forward → RDMA Receive</li>
+<li><strong>未提及 V2 Elastic</strong> — Notify Warps 是 V2 的核心创新</li>
+</ol>
+<hr />
+<h2 id="9-warp-specialization">9. 三代 Warp Specialization 对比</h2>
+<h3 id="91-legacy-v1-internodecu">9.1 Legacy V1 (internode.cu)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│ Legacy Dispatch (5 roles)                                                   │
+├─────────────┬──────────────┬────────────────┬──────────────┬────────────────┤
+│ RDMA Sender │ Sender Coord │ RDMA-NVL Fwd   │ Forward Coord│ NVL Receiver   │
+│ 7 warps     │ 1 warp       │ 8 warps        │ 1 warp       │ 8 warps        │
+├─────────────┴──────────────┴────────────────┴──────────────┴────────────────┤
+│ 同步: rdma_channel_tail/head, nvl_channel_tail/head, rdma_channel_meta     │
+│ 特点: 显式 Coordinator, 基于 nvshmem put_nbi, 共享内存 barrier.sync         │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="92-elastic-v2-scale-up-only-dispatchcuh">9.2 Elastic V2 Scale-up Only (dispatch.cuh)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│ Elastic Scale-up Dispatch (2 roles)                                         │
+├────────────────────────────┬────────────────────────────────────────────────┤
+│ Notify Warps               │ Dispatch Warps                                 │
+│ (元数据 + 同步)             │ (数据搬运)                                      │
+├────────────────────────────┴────────────────────────────────────────────────┤
+│ 同步: gpu_barrier, NCCL Gin, tma_store_wait                                │
+│ 特点: 无 Forward (全 NVLink 直达), Notify 独立化, TMA load/store            │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="93-elastic-v2-hybrid-hybrid_dispatchcuh">9.3 Elastic V2 Hybrid (hybrid_dispatch.cuh)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│ Elastic Hybrid Dispatch (3 roles)                                           │
+├────────────────┬─────────────────────────┬──────────────────────────────────┤
+│ Notify Warps   │ Scaleout Warps          │ Forward Warps                    │
+│ (元数据同步)    │ (RDMA 跨节点发送)         │ (NVLink 节点内转发)               │
+├────────────────┴─────────────────────────┴──────────────────────────────────┤
+│ 同步: scaleout_channel_signaled_tail, channel_scaleup_tail, linked list     │
+│ 特点: 3 角色, 显式 Notify, Round-robin 调度, 寄存器重分配 (Combine)          │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="10-mermaid">10. Mermaid 流水线图</h2>
+<h3 id="101-legacy-dispatch-warp-pipeline">10.1 Legacy Dispatch Warp Pipeline</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph LR
+    subgraph &quot;Legacy Dispatch CTA&quot;
+        A[RDMA Senders&lt;br/&gt;7 warps] --&gt;|rdma_channel_tail| B[RDMA Buffer]
+        B --&gt;|rdma_channel_head| C[RDMA-NVL Forwarder&lt;br/&gt;8 warps]
+        C --&gt;|nvl_channel_tail| D[NVL Buffer]
+        D --&gt;|nvl_channel_head| E[NVL Receiver&lt;br/&gt;8 warps]
+
+        F[Sender Coord&lt;br/&gt;1 warp] --&gt;|issue put_nbi| A
+        G[Forward Coord&lt;br/&gt;1 warp] --&gt;|release head| C
+    end
+
+    subgraph &quot;同步信号&quot;
+        H[rdma_channel_meta] --&gt;|通知到达| C
+        I[nvl_channel_prefix] --&gt;|偏移通知| E
+    end
+</code></pre></div>
+
+<h3 id="102-elastic-hybrid-dispatch-warp-pipeline">10.2 Elastic Hybrid Dispatch Warp Pipeline</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Elastic Hybrid Dispatch CTA&quot;
+        A[Notify Warps&lt;br/&gt;元数据同步] --&gt;|rank_count, expert_count, prefix_sum| B[Global Sync]
+
+        C[Scaleout Warps&lt;br/&gt;RDMA 发送] --&gt;|gin.put + tail update| D[scaleout_recv_buffer]
+        D --&gt;|signaled_tail| E[Forward Warps&lt;br/&gt;NVLink 转发]
+        E --&gt;|TMA store + linked_list| F[scaleup_buffer]
+    end
+
+    subgraph &quot;数据流&quot;
+        G[Token Buffer] --&gt;|TMA load| C
+        F --&gt;|arrival| H[Scale-up Peers]
+    end
+</code></pre></div>
+
+<h3 id="103">10.3 三代对比图</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>graph TB
+    subgraph &quot;Legacy V1&quot;
+        L1[RDMA Sender] --&gt; L2[RDMA-NVL Forwarder] --&gt; L3[NVL Receiver]
+        L1 -.-&gt; LC1[Sender Coord]
+        L2 -.-&gt; LC2[Forward Coord]
+    end
+
+    subgraph &quot;Elastic V2 Scale-up&quot;
+        E1[Notify Warps] --&gt; E2[Dispatch Warps]
+    end
+
+    subgraph &quot;Elastic V2 Hybrid&quot;
+        H1[Notify Warps] --&gt; H2[Scaleout Warps] --&gt; H3[Forward Warps]
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="11">11. 关键代码索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>487</td>
+<td>Dispatch WarpRole 枚举 (5 角色)</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>499-513</td>
+<td>Dispatch warp 分派逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>587-757</td>
+<td>kRDMASender 逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>758-848</td>
+<td>kRDMASenderCoordinator 逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>849-1013</td>
+<td>kRDMAAndNVLForwarder 逻辑 (核心转发)</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>1019-1060</td>
+<td>kForwarderCoordinator 逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>1061-1196</td>
+<td>kNVLReceivers 逻辑</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>1746</td>
+<td>Combine WarpRole 枚举 (4 角色)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>21-30</td>
+<td>V2 Scale-up 模板参数</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>79-395</td>
+<td>V2 Scale-up warp 分派 (Notify/Dispatch)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>16-32</td>
+<td>V2 Hybrid 模板参数 (3 角色)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>107-158</td>
+<td>Notify warps</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>329-464</td>
+<td>Scaleout warps</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>465-659</td>
+<td>Forward warps</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>25</td>
+<td>Combine warp 配置 (Scaleup + Forward)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>101-103</td>
+<td>寄存器重分配</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td>56-86</td>
+<td>get_qp_mode (warp-level QP 分配)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12">12. 总结</h2>
+<h3 id="121">12.1 博客评价</h3>
+<p><strong>博客的 "Send → Forward → Receive" 描述是 DeepEP Warp Specialization 的有效抽象</strong>，但存在以下局限:</p>
+<ol>
+<li><strong>角色数量</strong>: 博客说 3，实际 Legacy 有 5 种 (含 2 种 Coordinator)</li>
+<li><strong>Coordinator 遗漏</strong>: Coordinator 是流控核心，博客完全未提及</li>
+<li><strong>方向性</strong>: 只描述了 Dispatch 方向，未提 Combine 反向</li>
+<li><strong>版本差异</strong>: 未区分 Legacy (V1) 和 Elastic (V2) 的实现差异</li>
+<li><strong>元数据阶段</strong>: 未提及 Notify Warps (V2) 或 SM0 metadata (V1)</li>
+</ol>
+<h3 id="122">12.2 架构洞察</h3>
+<p><strong>Warp Specialization 的本质是 "通信 kernel 内部的流水线并行"</strong>:</p>
+<ol>
+<li><strong>解耦计算与通信阶段</strong>: 不同 warp 专注于不同阶段，避免同步等待</li>
+<li><strong>隐藏延迟</strong>: Sender 提前打包，Forwarder 异步转发，Receiver 独立消费</li>
+<li><strong>动态负载均衡</strong>: Round-robin 调度 + Coordinator 协调</li>
+<li><strong>流控分离</strong>: Coordinator 独立管理 buffer 空间释放</li>
+</ol>
+<p><strong>V1 → V2 演化趋势</strong>:<br />
+- V1: 隐式元数据 (SM0)，显式 Coordinator<br />
+- V2: 显式 Notify Warps，Coordinator 功能分散到 Notify + Barrier<br />
+- V2: 更清晰的职责分离，更好的可扩展性</p>
+<hr />
+<h2 id="_1">附录: 文件路径汇总</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DeepEP/csrc/kernels/legacy/internode.cu</code></td>
+<td>Legacy Dispatch/Combine kernel</td>
+</tr>
+<tr>
+<td><code>DeepEP/csrc/kernels/legacy/intranode.cu</code></td>
+<td>Legacy Intra-node kernel</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>V2 Elastic Scale-up Dispatch</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>V2 Elastic Combine</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>V2 Elastic Hybrid Dispatch</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>V2 Elastic Hybrid Combine</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td>Warp-level 通信原语</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/common/ptx.cuh</code></td>
+<td>PTX 原语 (TMA, mbarrier)</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

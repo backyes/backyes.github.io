@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP V2 ElasticBuffer 架构深度分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepep-v2-elasticbuffer">DeepEP V2 ElasticBuffer 架构深度分析</h1>
+<blockquote>
+<p><strong>分析范围</strong>：DeepEP v2.1.0 ElasticBuffer 新架构的 13 个关键设计维度，细化到源码级别</p>
+<p><strong>核心源码文件</strong>：<br />
+- <code>csrc/elastic/buffer.hpp</code> (1382 行) — ElasticBuffer 核心 C++ 实现<br />
+- <code>deep_ep/buffers/elastic.py</code> (1107 行) — Python 入口与高级 API<br />
+- <code>csrc/jit/</code> — 全 JIT 编译系统 (8 个文件，~800 行)<br />
+- <code>csrc/kernels/backend/nccl.cu</code> + <code>symmetric.hpp</code> — NCCL Gin 后端<br />
+- <code>csrc/kernels/elastic/</code> — 6 个 kernel launch runtime<br />
+- <code>deep_ep/include/deep_ep/impls/</code> — 11 个 header-only kernel 实现</p>
+</blockquote>
+<hr />
+<h2 id="_1">目录</h2>
+<ol>
+<li><a href="#1-fully-jit全即时编译">Fully JIT（全即时编译）</a></li>
+<li><a href="#2-nccl-gin-backend">NCCL Gin Backend</a></li>
+<li><a href="#3-header-only--lightweight">Header-only &amp; Lightweight</a></li>
+<li><a href="#4-复用已有-nccl-communicator">复用已有 NCCL Communicator</a></li>
+<li><a href="#5-epv2-架构总览">EPv2 架构总览</a></li>
+<li><a href="#6-统一-elasticbuffer-接口--新-gemm-layout">统一 ElasticBuffer 接口 + 新 GEMM Layout</a></li>
+<li><a href="#7-大规模-ep2048-支持">大规模 EP2048 支持</a></li>
+<li><a href="#8-解析式-smqp-计算告别-auto-tuning">解析式 SM/QP 计算（告别 Auto-tuning）</a></li>
+<li><a href="#9-hybrid--direct-双模式并存">Hybrid &amp; Direct 双模式并存</a></li>
+<li><a href="#10-v3-训练-sm-数从-244-6">V3 训练 SM 数从 24→4-6</a></li>
+<li><a href="#11-0-sm-engram-with-rdma">0 SM Engram (with RDMA)</a></li>
+<li><a href="#12-0-sm-pp-with-rdma">0 SM PP (with RDMA)</a></li>
+<li><a href="#13-0-sm-copy-engine">0 SM CP (with Copy Engine)</a></li>
+</ol>
+<hr />
+<h2 id="1-fully-jit">1. Fully JIT（全即时编译）</h2>
+<h3 id="11">1.1 设计哲学</h3>
+<p>DeepEP V2 将 <strong>kernel 的生成、编译、缓存、加载、launch</strong> 全链路都 JIT 化——运行时根据实际参数（rank 数、expert 数、topk、SM 数、QP 数等）动态生成 CUDA 源码，编译为 CUBIN，然后加载执行。</p>
+<h3 id="12-jit">1.2 JIT 流水线源码实证</h3>
+<h4 id="1code-generationlaunch_runtimehpp">阶段 1：Code Generation（<code>launch_runtime.hpp</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit/launch_runtime.hpp:32-46</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Derived</span><span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">LaunchRuntime</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Args</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span>generate(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Args<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>args)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>code<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Derived<span style="color: #666">::</span>generate_impl(args);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 静态缓存 include hash（只计算一次）</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span>include_hash;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(include_hash.empty())
+<span style="color: #BBB">            </span>include_hash<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>include_parser<span style="color: #666">-&gt;</span>get_hash_value(code);
+<span style="color: #BBB">        </span>code<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;// Includes&#39; hash value: {}</span><span style="color: #AA5D1F; font-weight: bold">\n</span><span style="color: #BA2121">{}&quot;</span>,<span style="color: #BBB"> </span>include_hash,<span style="color: #BBB"> </span>code);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>code;
+<span style="color: #BBB">    </span>}
+</code></pre></div>
+
+<p>每个具体的 Runtime（<code>DispatchRuntime</code>、<code>CombineRuntime</code>、<code>EngramFetchRuntime</code> 等）通过 <code>generate_impl</code> 生成完整 CUDA 源码。</p>
+<h4 id="2dispatchhpp51-88">阶段 2：参数化模板实例化（<code>dispatch.hpp:51-88</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span><span style="color: #00F">generate_impl</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Args<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>args)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...选择 header 和函数名</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">R&quot;(</span>
+<span style="color: #BA2121">#include &lt;deep_ep/impls/{}.cuh&gt;</span>
+<span style="color: #BA2121">using namespace deep_ep::elastic;</span>
+<span style="color: #BA2121">static void __instantiate_kernel() {{</span>
+<span style="color: #BA2121">    auto ptr = reinterpret_cast&lt;void*&gt;(&amp;{});</span>
+<span style="color: #BA2121">}}</span>
+<span style="color: #BA2121">)&quot;</span>,<span style="color: #BBB"> </span>header_name,<span style="color: #BBB"> </span>func_name);
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：template 参数完全由运行时决定——<code>kNumSMs</code>、<code>kNumQPs</code>、<code>kNumRanks</code>、<code>kNumTopk</code> 等全部是 <strong>运行时变量提升到编译期常量</strong>，NVCC 可对每种参数组合做针对性优化。</p>
+<h4 id="3compilerhpp111-160">阶段 3：编译缓存（<code>compiler.hpp:111-160</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>std<span style="color: #666">::</span>shared_ptr<span style="color: #666">&lt;</span>KernelRuntime<span style="color: #666">&gt;</span><span style="color: #BBB"> </span>build(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>name,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>code)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 签名 = name + compiler_signature + flags + code</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>kernel_signature<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;{}$${}$${}$${}&quot;</span>,<span style="color: #BBB"> </span>name,<span style="color: #BBB"> </span>signature,<span style="color: #BBB"> </span>flags,<span style="color: #BBB"> </span>code);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dir_path<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cache_dir_path<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;cache&quot;</span><span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;kernel.{}.{}&quot;</span>,<span style="color: #BBB"> </span>name,<span style="color: #BBB"> </span>get_hex_digest(kernel_signature));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 命中缓存</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>runtime<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kernel_runtime_cache<span style="color: #666">-&gt;</span>get(dir_path);<span style="color: #BBB"> </span>runtime<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>runtime;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 编译到临时目录后原子 rename</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tmp_dir_path<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>make_tmp_dir()<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>get_uuid();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... compile ...</span>
+<span style="color: #BBB">    </span>std<span style="color: #666">::</span>filesystem<span style="color: #666">::</span>rename(tmp_dir_path,<span style="color: #BBB"> </span>dir_path);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 原子操作</span>
+}
+</code></pre></div>
+
+<p><strong>设计亮点</strong>：<br />
+- <strong>缓存 key 包含完整签名</strong>：NVCC 版本、flags、include hash、kernel code 全部编码进 SHA256<br />
+- <strong>原子 rename 避免竞态</strong>：多进程并发编译同一 kernel 时，只有一个成功，其余复用<br />
+- <strong>双层缓存</strong>：内存 <code>KernelRuntimeCache</code> + 磁盘 <code>~/.deep_ep/cache/</code></p>
+<h4 id="4kernel-launchhandlehpp">阶段 4：Kernel 加载与 Launch（<code>handle.hpp</code>）</h4>
+<p>支持 <strong>CUDA Runtime API</strong>（≥12.8）和 <strong>CUDA Driver API</strong> 两种路径：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/jit/handle.hpp:23-81</span>
+<span style="color: #9C6500">#if CUDART_VERSION &gt;= 12080 and defined(EP_JIT_USE_RUNTIME_API)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>LibraryHandle<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cudaLibrary_t;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>KernelHandle<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cudaKernel_t;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 使用 cudaLibraryLoadFromFile / cudaLibraryGetKernel</span>
+<span style="color: #9C6500">#else</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>LibraryHandle<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>CUmodule;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">using</span><span style="color: #BBB"> </span>KernelHandle<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>CUfunction;
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 使用 cuModuleLoad / cuModuleGetFunction</span>
+<span style="color: #9C6500">#endif</span>
+</code></pre></div>
+
+<p>Launch 支持 <strong>cooperative launch</strong>（跨 SM 同步）、<strong>cluster launch</strong>（H100+ cluster 支持）、<strong>PDL</strong>（Programmatic Dependent Launch）。</p>
+<h3 id="13-includeparser-hashinclude_parserhpp">1.3 IncludeParser 递归 Hash（<code>include_parser.hpp</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span><span style="color: #00F">get_hash_value</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>code,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>exclude_code<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>std<span style="color: #666">::</span>stringstream<span style="color: #BBB"> </span>ss;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>i<span style="color: #666">:</span><span style="color: #BBB"> </span>get_includes(code))
+<span style="color: #BBB">        </span>ss<span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>get_hash_value_by_path(library_include_path<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;$&quot;</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>exclude_code)
+<span style="color: #BBB">        </span>ss<span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;#&quot;</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>get_hex_digest(code);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_hex_digest(ss.str());
+}
+</code></pre></div>
+
+<p><strong>作用</strong>：当任何被包含的 <code>.cuh</code> 文件发生变更时，自动失效缓存重新编译。</p>
+<h3 id="14-jit">1.4 JIT 环境变量控制</h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EP_JIT_CACHE_DIR</code></td>
+<td>自定义缓存目录</td>
+</tr>
+<tr>
+<td><code>EP_JIT_PRINT_COMPILER_COMMAND</code></td>
+<td>打印 NVCC 命令</td>
+</tr>
+<tr>
+<td><code>EP_JIT_DEBUG</code></td>
+<td>调试模式（打印 kernel 源码、launch 参数）</td>
+</tr>
+<tr>
+<td><code>EP_JIT_DUMP_ASM/PTX/SASS</code></td>
+<td>反汇编输出</td>
+</tr>
+<tr>
+<td><code>EP_JIT_CPP_STANDARD</code></td>
+<td>C++ 标准（默认 20）</td>
+</tr>
+<tr>
+<td><code>EP_JIT_NVCC_COMPILER</code></td>
+<td>自定义 NVCC 路径</td>
+</tr>
+<tr>
+<td><code>EP_NUM_TOPK_IDX_BITS</code></td>
+<td>topk_idx 位宽参数化</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-nccl-gin-backend">2. NCCL Gin Backend</h2>
+<h3 id="21-gingpu-initiated-networking">2.1 Gin（GPU-Initiated Networking）架构</h3>
+<p>DeepEP V2 的核心通信后端是 <strong>NCCL Gin</strong>（GPU-Initiated Networking），允许 GPU SM 直接操作 NIC QP（Queue Pair），无需 CPU 介入。</p>
+<h4 id="ncclcu">关键数据结构（<code>nccl.cu</code>）</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/backend/nccl.cu:62-108</span>
+NCCLSymmetricMemoryContext<span style="color: #666">::</span>NCCLSymmetricMemoryContext(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 查询 NCCL communicator 属性</span>
+<span style="color: #BBB">    </span>ncclCommProperties<span style="color: #BBB"> </span>props<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>NCCL_COMM_PROPERTIES_INITIALIZER;
+<span style="color: #BBB">    </span>NCCL_CHECK(ncclCommQueryProperties(comm,<span style="color: #BBB"> </span><span style="color: #666">&amp;</span>props));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 配置 Gin 设备通信器</span>
+<span style="color: #BBB">    </span>ncclDevCommRequirements_t<span style="color: #BBB"> </span>reqs<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(num_ranks<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>get_env(<span style="color: #BA2121">&quot;EP_DISABLE_GIN&quot;</span>,<span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>reqs.ginContextCount<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_allocated_qps;<span style="color: #BBB">          </span><span style="color: #3D7B7B; font-style: italic">// QP 数量</span>
+<span style="color: #BBB">        </span>reqs.ginExclusiveContexts<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">                   </span><span style="color: #3D7B7B; font-style: italic">// 独占 QP</span>
+<span style="color: #BBB">        </span>reqs.ginQueueDepth<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kGinQPDepth;<span style="color: #BBB">                  </span><span style="color: #3D7B7B; font-style: italic">// QP 深度</span>
+<span style="color: #BBB">        </span>reqs.ginTrafficClass<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sl_idx;<span style="color: #BBB">                      </span><span style="color: #3D7B7B; font-style: italic">// RDMA 服务等级</span>
+<span style="color: #BBB">        </span>reqs.ginSignalCount<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;<span style="color: #BBB">           </span><span style="color: #3D7B7B; font-style: italic">// 信号量数</span>
+<span style="color: #BBB">        </span>reqs.ginConnectionType<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>allow_hybrid_mode<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>
+<span style="color: #BBB">            </span><span style="color: #767600">NCCL_GIN_CONNECTION_RAIL</span><span style="color: #BBB"> </span>:<span style="color: #BBB"> </span>NCCL_GIN_CONNECTION_FULL;
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 创建 NCCL 设备通信器</span>
+<span style="color: #BBB">    </span>NCCL_CHECK(ncclDevCommCreate(comm,<span style="color: #BBB"> </span><span style="color: #666">&amp;</span>reqs,<span style="color: #BBB"> </span>dev_comm.ptr));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 注册对称内存窗口</span>
+<span style="color: #BBB">    </span>NCCL_CHECK(ncclCommWindowRegister(comm,<span style="color: #BBB"> </span>raw_window_ptr,<span style="color: #BBB"> </span>num_bytes,<span style="color: #BBB"> </span><span style="color: #666">&amp;</span>window,<span style="color: #BBB"> </span>NCCL_WIN_STRICT_ORDERING));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 获取 LSA（Link-Symmetric Access）指针</span>
+<span style="color: #BBB">    </span>NCCL_CHECK(ncclGetLsaDevicePointer(window,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>nvl_rank_idx,<span style="color: #BBB"> </span><span style="color: #666">&amp;</span>mapped_window_ptr));
+}
+</code></pre></div>
+
+<h3 id="22-ncclgin-handle-handlecuh">2.2 NCCLGin Handle 封装（<code>handle.cuh</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/elastic/handle.cuh — 实际在 deep_ep/include/deep_ep/common/handle.cuh</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">NCCLGin</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ncclDevComm_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>nccl_dev_comm;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ncclWindow_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>nccl_window;
+<span style="color: #BBB">    </span>ncclGin<span style="color: #BBB"> </span>gin;
+<span style="color: #BBB">    </span>ncclTeam<span style="color: #BBB"> </span>team_world,<span style="color: #BBB"> </span>team_lsa,<span style="color: #BBB"> </span>team_rail;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 支持三种 team 模式：</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// - ncclTeamTagWorld: 全局所有 rank</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// - ncclTeamTagLsa: NVLink 域内 rank</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// - ncclTeamTagRail: 同 rail 的 rank</span>
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>get(<span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>dst_ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_bytes,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>src_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>gin.get(TEAM_WORLD_RAIL(),<span style="color: #BBB"> </span>src_rank_idx,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                </span>nccl_window,<span style="color: #BBB"> </span>offset(src_ptr),<span style="color: #BBB"> </span>nccl_window,<span style="color: #BBB"> </span>offset(dst_ptr),<span style="color: #BBB"> </span>num_bytes,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>put(<span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>recv_sym_ptr,<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>send_sym_ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_bytes,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>gin.put(TEAM_WORLD_RAIL(),<span style="color: #BBB"> </span>dst_rank_idx,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<h3 id="23-qp-commcuh56-86">2.3 QP 映射策略（<code>comm.cuh:56-86</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumChannelsPerSM,<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithNotifyWarps<span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__<span style="color: #BBB"> </span>std<span style="color: #666">::</span>pair<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span>ncclGinResourceSharingMode<span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_qp_mode(
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>channel_in_sm_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_notify_warp)<span style="color: #BBB"> </span>{
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Notify warp 独占 QP 0</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(is_notify_warp)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{<span style="color: #666">0</span>,<span style="color: #BBB"> </span>kSharingCTA};
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>kNumAvailableQPs)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// SM 数 ≤ QP 数：每个 SM 至少一个独占 QP</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// e.g., 3 SMs, 10 QPs:</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// SM 0: 0 3 6 9</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// SM 1: 1 4 7</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// SM 2: 2 5 8</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{kQPStartIdx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(channel_in_sm_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_qps_in_sm)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span>kSharingCTA};
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// SM 数 &gt; QP 数：所有 SM 共享所有 QP</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>global_channel_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>channel_in_sm_idx;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{kQPStartIdx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(global_channel_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumAvailableQPs),<span style="color: #BBB"> </span>kSharingGrid};
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键设计</strong>：<br />
+- <strong>Notify warp 独占 QP 0</strong>：避免数据 warp 竞争<br />
+- <strong>QP  Sharing 模式</strong>：<code>CTA</code>（SM 内共享）vs <code>GPU</code>（全 GPU 共享）<br />
+- <strong>运行时参数化</strong>：QP 数量、SM 数、channel 数全部由 JIT 模板参数决定</p>
+<h3 id="24-symmetric-memory-symmetrichpp">2.4 Symmetric Memory 三层架构（<code>symmetric.hpp</code>）</h3>
+<p>DeepEP V2 提供三种 symmetric memory 分配策略：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>类</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU-only</td>
+<td><code>GPUSymmetricMemory</code></td>
+<td>纯 GPU 通信（<code>ncclMemAlloc</code>）</td>
+</tr>
+<tr>
+<td>Elastic GPU+CPU</td>
+<td><code>ElasticSymmetricMemory</code></td>
+<td>GPU VRAM + 本地 NUMA CPU RAM</td>
+</tr>
+<tr>
+<td>Hybrid Elastic</td>
+<td><code>HybridElasticSymmetricMemory</code></td>
+<td>GPU VRAM + 跨 rank CPU RAM 拼接</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hybrid Elastic 内存布局</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>[ GPU VRAM | CPU rank0 | CPU rank1 | ... | CPU rank(N-1) ]
+</code></pre></div>
+
+<p>每个 rank 创建本地 NUMA-local CPU segment，通过 <strong>POSIX FD</strong>（<code>pidfd_open</code> + <code>pidfd_getfd</code>）跨进程共享，其他 rank 用 <code>cuMemImportFromShareableHandle</code> 导入。</p>
+<p><strong>关键常量</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumAlignmentBytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2097152</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 2 MB 对齐</span>
+</code></pre></div>
+
+<h3 id="25-gin-barrier-commcuh131-181">2.5 Gin Barrier 实现（<code>comm.cuh:131-181</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumThreads,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>kNumTimeoutCycles,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span><span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>gin_barrier_wo_local_sync(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 所有 SM 刷新所有 QPs（保证 store 可见性）</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>global_warp_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_qps;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumWarps)
+<span style="color: #BBB">        </span>ncclGin(nccl_dev_comm,<span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>NCCL_GIN_RESOURCE_SHARING_CTA).flush(ncclCoopWarp());
+<span style="color: #BBB">    </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. SM 0 执行 barrier（只用 QP 0）</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumThreads)
+<span style="color: #BBB">            </span>gin.signal(team,<span style="color: #BBB"> </span>i,<span style="color: #BBB"> </span>ncclGin_SignalInc{rank_idx});
+
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>timeout_while<span style="color: #666">&lt;</span>kNumTimeoutCycles<span style="color: #666">&gt;</span>([<span style="color: #666">=</span>](<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>is_last_check)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acquire_sys<span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(signal_ptr);
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(signal<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">// ... timeout 处理</span>
+<span style="color: #BBB">            </span>});
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：<br />
+- 使用 <strong>Gin Signal</strong> 实现跨 rank barrier<br />
+- <strong>Shadow pointer</strong> 跟踪信号值<br />
+- <strong>Timeout 保护</strong>：防止网络故障导致死锁</p>
+<hr />
+<h2 id="3-header-only-lightweight">3. Header-only &amp; Lightweight</h2>
+<h3 id="31-header-only">3.1 Header-only 设计</h3>
+<p>所有 kernel 实现都是 <strong>header-only</strong>（<code>.cuh</code> 文件），无需单独编译：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>deep_ep/include/deep_ep/
+├── common/           # 基础工具（header-only）
+│   ├── comm.cuh      # Gin 通信原语
+│   ├── handle.cuh    # NCCLGin handle 封装
+│   ├── layout.cuh    # Token/Buffer/Workspace 布局
+│   ├── math.cuh      # 数学工具
+│   ├── ptx.cuh       # PTX 内联汇编
+│   ├── compiled.cuh  # 编译期开关
+│   └── exception.cuh # 异常处理
+└── impls/            # Kernel 实现（header-only）
+    ├── dispatch.cuh
+    ├── dispatch_copy_epilogue.cuh
+    ├── combine.cuh
+    ├── combine_reduce_epilogue.cuh
+    ├── hybrid_dispatch.cuh
+    ├── hybrid_combine.cuh
+    ├── engram_fetch.cuh
+    ├── engram_fetch_wait.cuh
+    ├── pp_send_recv.cuh
+    └── barrier.cuh
+</code></pre></div>
+
+<p><strong>总代码量</strong>：~4500 行 header-only 代码，覆盖所有 kernel 逻辑。</p>
+<h3 id="32-compiledcuh">3.2 编译期开关（<code>compiled.cuh</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 通过 DISABLE_SM90_FEATURES 控制 FP8/TMA 支持</span>
+<span style="color: #9C6500">#ifndef DISABLE_SM90_FEATURES</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kEnableSM90Features<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;
+<span style="color: #9C6500">#else</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kEnableSM90Features<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>;
+<span style="color: #9C6500">#endif</span>
+</code></pre></div>
+
+<h3 id="33-c">3.3 轻量级 C++ 层</h3>
+<p>C++ 层极其精简：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>python_api.cpp</code></td>
+<td>39</td>
+<td>pybind11 模块注册</td>
+</tr>
+<tr>
+<td><code>jit/</code> 全文件</td>
+<td>~800</td>
+<td>JIT 编译系统</td>
+</tr>
+<tr>
+<td><code>elastic/buffer.hpp</code></td>
+<td>1382</td>
+<td>ElasticBuffer 核心</td>
+</tr>
+<tr>
+<td><code>legacy/buffer.hpp</code></td>
+<td>1794</td>
+<td>LegacyBuffer（兼容）</td>
+</tr>
+<tr>
+<td><code>kernels/backend/</code></td>
+<td>~750</td>
+<td>NCCL Gin 后端</td>
+</tr>
+</tbody>
+</table>
+<p><strong>整个 C++ 扩展编译后</strong>：单个 <code>_C.so</code>，无外部依赖（除 NCCL 和 CUDA）。</p>
+<h3 id="34-python-binding">3.4 零拷贝 Python Binding</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/python_api.cpp:22-39</span>
+PYBIND11_MODULE(TORCH_EXTENSION_NAME,<span style="color: #BBB"> </span>m)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>m.def(<span style="color: #BA2121">&quot;is_sm90_compiled&quot;</span>,<span style="color: #BBB"> </span>[]()<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>deep_ep<span style="color: #666">::</span>kEnableSM90Features;<span style="color: #BBB"> </span>});
+<span style="color: #BBB">    </span>m.attr(<span style="color: #BA2121">&quot;topk_idx_t&quot;</span>)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>py<span style="color: #666">::</span>cast(c10<span style="color: #666">::</span>CppTypeToScalarType<span style="color: #666">&lt;</span>deep_ep<span style="color: #666">::</span>topk_idx_t<span style="color: #666">&gt;::</span>value);
+<span style="color: #BBB">    </span>deep_ep<span style="color: #666">::</span>jit<span style="color: #666">::</span>register_apis(m);<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// JIT</span>
+<span style="color: #BBB">    </span>deep_ep<span style="color: #666">::</span>legacy<span style="color: #666">::</span>register_apis(m);<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// Legacy</span>
+<span style="color: #BBB">    </span>deep_ep<span style="color: #666">::</span>elastic<span style="color: #666">::</span>register_apis(m);<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Elastic V2</span>
+}
+</code></pre></div>
+
+<hr />
+<h2 id="4-nccl-communicator">4. 复用已有 NCCL Communicator</h2>
+<h3 id="41-python-elasticpy301">4.1 Python 层（<code>elastic.py:301</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_ep/buffers/elastic.py:301</span>
+<span style="color: #008000">self</span><span style="color: #666">.</span>nccl_comm_handle <span style="color: #666">=</span> get_nccl_comm_handle(group, force_new_comm<span style="color: #666">=</span>num_cpu_bytes <span style="color: #666">&gt;</span> <span style="color: #666">0</span>)
+</code></pre></div>
+
+<p><strong>关键</strong>：默认直接复用 PyTorch 已有 NCCL communicator，仅在需要 CPU buffer（Engram）时才创建新 comm。</p>
+<h3 id="42-c-ncclcu76">4.2 C++ 层（<code>nccl.cu:76</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/backend/nccl.cu:76</span>
+comm<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ncclComm_t<span style="color: #666">&gt;</span>(nccl_comm_comm);
+</code></pre></div>
+
+<p><strong>直接 reinterpret_cast</strong> Python 传入的 <code>ncclComm_t</code> 指针，无需创建新 communicator。</p>
+<h3 id="43-domain-size">4.3 Domain Size 查询</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/backend/nccl.cu:49-54</span>
+std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_physical_domain_size(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>nccl_comm)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ncclTeamWorld(comm).nRanks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ncclTeamLsa(comm).nRanks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{num_ranks<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>num_nvl_ranks,<span style="color: #BBB"> </span>num_nvl_ranks};
+}
+
+std<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span><span style="color: #B00040">int</span>,<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_logical_domain_size(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>nccl_comm,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>allow_hybrid_mode)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>[num_rdma_ranks,<span style="color: #BBB"> </span>num_nvl_ranks]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_physical_domain_size(nccl_comm);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{allow_hybrid_mode<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>num_rdma_ranks<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,
+<span style="color: #BBB">            </span>allow_hybrid_mode<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>num_nvl_ranks<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>num_rdma_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_nvl_ranks};
+}
+</code></pre></div>
+
+<p><strong>自动从 NCCL communicator 推断拓扑</strong>：<br />
+- <code>ncclTeamWorld</code> → 全局 rank 数<br />
+- <code>ncclTeamLsa</code> → NVLink domain 内 rank 数<br />
+- <code>ncclTeamRail</code> → 同一 rail 的 rank 数（multi-plane）</p>
+<hr />
+<h2 id="5-epv2">5. EPv2 架构总览</h2>
+<h3 id="51-elasticbuffer">5.1 统一 ElasticBuffer 类</h3>
+<p>ElasticBuffer 是 EPv2 的核心，统一了以下所有通信模式：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>API</th>
+<th>底层实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EP Dispatch</td>
+<td><code>dispatch()</code></td>
+<td>NVLink + RDMA all-to-all</td>
+</tr>
+<tr>
+<td>EP Combine</td>
+<td><code>combine()</code></td>
+<td>NVLink + RDMA reduce</td>
+</tr>
+<tr>
+<td>Engram Fetch</td>
+<td><code>engram_fetch()</code></td>
+<td>RDMA one-sided get</td>
+</tr>
+<tr>
+<td>PP Send/Recv</td>
+<td><code>pp_send()</code>/<code>pp_recv()</code></td>
+<td>NVLink put</td>
+</tr>
+<tr>
+<td>AGRS</td>
+<td><code>all_gather()</code></td>
+<td>NVLink symmetric memcpy</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 内存布局</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Symmetric Memory Layout:
+[[[Workspace] GPU Buffer] CPU Buffer]
+ ↑                       ↑          ↑
+ mapped_window_ptr       workspace  cpu_segment
+                         + gpu_buf  (for Engram)
+</code></pre></div>
+
+<p><strong>Workspace</strong> 包含所有同步信号量：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// layout.cuh:43-80</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_num_bytes</span>()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 16 bytes NVLink barrier counter</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// (1024 + 2048) * 8 bytes notify reduction workspace</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1024 * 8 * 2 scaleup rank count (send/recv)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2048 * 8 * 2 scaleup expert count (send/recv)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1024 * 4 scaleup atomic sender counter</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1024 * 4 * 2 scaleout rank count (send/recv)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2048 * 4 * 2 scaleout expert count (send/recv)</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1024 * 256 * 8 scaleout channel metadata</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1024 * 256 * 4 channel scaleup tail</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2 * 2 * 8 PP send/recv count</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// (32 + 1) * 1024 * 4 AGRS signals</span>
+}
+</code></pre></div>
+
+<p><strong>Workspace 大小固定</strong>（约 1 MB），不随配置变化，支持最多 <strong>1024 ranks</strong>、<strong>2048 experts</strong>。</p>
+<h3 id="53-token-layoutlayoutcuh179-249">5.3 Token Layout（<code>layout.cuh:179-249</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">TokenLayout</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_hidden_bytes,<span style="color: #BBB"> </span>num_sf_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_topk,<span style="color: #BBB"> </span>num_metadata_bytes;
+<span style="color: #BBB">    </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>with_metadata;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 每个 token 的内存布局:</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// [hidden (TMA-aligned)] [sf (TMA-aligned)] [metadata (TMA-aligned)] [mbarrier (optional)]</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// metadata = topk_idx (num_topk * 4) + topk_weights (num_topk * 4) + src_token_global_idx (4) + linked_list_idx (num_topk * 4)</span>
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithMBarrier,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>dtype_t<span style="color: #BBB"> </span>get_num_bytes()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>align(num_hidden_bytes,<span style="color: #BBB"> </span><span style="color: #666">128</span>)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>align(num_sf_bytes,<span style="color: #BBB"> </span><span style="color: #666">128</span>)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>
+<span style="color: #BBB">               </span>align(num_metadata_bytes,<span style="color: #BBB"> </span><span style="color: #666">128</span>)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>align(kWithMBarrier<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(mbarrier)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span><span style="color: #666">128</span>);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong>TMA 对齐要求</strong>：所有 segment 必须 128 字节对齐（TMA 硬件要求）。</p>
+<hr />
+<h2 id="6-elasticbuffer-gemm-layout">6. 统一 ElasticBuffer 接口 + 新 GEMM Layout</h2>
+<h3 id="61-apielasticpy">6.1 统一 API（<code>elastic.py</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ElasticBuffer</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">dispatch</span>(<span style="color: #008000">self</span>, x, topk_idx, topk_weights, <span style="color: #666">...</span>) <span style="color: #666">-&gt;</span> (recv_x, recv_topk_idx, recv_topk_weights, handle, event)
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">combine</span>(<span style="color: #008000">self</span>, x, handle, topk_weights, <span style="color: #666">...</span>) <span style="color: #666">-&gt;</span> (combined_x, combined_topk_weights, event)
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">engram_write</span>(<span style="color: #008000">self</span>, storage, sf) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">engram_fetch</span>(<span style="color: #008000">self</span>, indices, num_qps, use_tma_aligned_col_major_sf) <span style="color: #666">-&gt;</span> Callable
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">pp_send</span>(<span style="color: #008000">self</span>, x, dst_rank_idx, num_sms) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">pp_recv</span>(<span style="color: #008000">self</span>, x, src_rank_idx, num_sms) <span style="color: #666">-&gt;</span> <span style="color: #008000; font-weight: bold">None</span>
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">all_gather</span>(<span style="color: #008000">self</span>, tensors) <span style="color: #666">-&gt;</span> (gathered_tensors, handle)
+</code></pre></div>
+
+<p><strong>所有 API 共享同一个 buffer</strong>，无需为不同通信模式创建独立 buffer。</p>
+<h3 id="62-gemm-layout-tma-aligned-column-major-sf">6.2 新 GEMM Layout — TMA-aligned Column-major SF</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:271-277</span>
+<span style="color: #008000; font-weight: bold">if</span> use_tma_aligned_col_major_sf:
+    <span style="color: #666">//</span> TMA<span style="color: #666">-</span>aligned column<span style="color: #666">-</span>major layout <span style="color: #008000; font-weight: bold">for</span> the <span style="color: #008000">next</span> GEMM <span style="color: #008000">input</span>
+    sf_token_stride <span style="color: #666">=</span> <span style="color: #666">1</span>
+    sf_hidden_stride <span style="color: #666">=</span> math<span style="color: #666">.</span>align(num_tokens, kNumAlignedSFPacks)
+</code></pre></div>
+
+<p><strong>目的</strong>：Dispatch 输出的 FP8 scale factors 直接以 <strong>TMA-aligned column-major</strong> 布局，使得下一次 GEMM 可以直接消费，无需额外转置。</p>
+<h3 id="63-buffer-size-bufferhpp652-686">6.3 Buffer Size 自动计算（<code>buffer.hpp:652-686</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">calculate_buffer_size</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>nccl_comm,
+<span style="color: #BBB">                                     </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>hidden,
+<span style="color: #BBB">                                     </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_topk,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>use_fp8_dispatch,
+<span style="color: #BBB">                                     </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>allow_hybrid_mode,
+<span style="color: #BBB">                                     </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>allow_multiple_reduction)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 自动推断 topology</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>[num_rdma_ranks,<span style="color: #BBB"> </span>num_nvl_ranks]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>nccl<span style="color: #666">::</span>get_physical_domain_size(nccl_comm);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>[num_scaleout_ranks,<span style="color: #BBB"> </span>num_scaleup_ranks]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>nccl<span style="color: #666">::</span>get_logical_domain_size(nccl_comm,<span style="color: #BBB"> </span>allow_hybrid_mode);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 计算 dispatch 和 combine 各自需要的 buffer size</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_dispatch_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_dispatch_buffer_size(...);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_combine_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_combine_buffer_size(...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 取最大值，对齐到 2 MB</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(std<span style="color: #666">::</span>max(num_dispatch_bytes,<span style="color: #BBB"> </span>num_combine_bytes),<span style="color: #BBB"> </span>symmetric<span style="color: #666">::</span>kNumAlignmentBytes);
+}
+</code></pre></div>
+
+<hr />
+<h2 id="7-ep2048">7. 大规模 EP2048 支持</h2>
+<h3 id="71-layoutcuh">7.1 编译期常量（<code>layout.cuh</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1024</span>;<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// 最大 rank 数</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxExperts<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">2048</span>;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// 最大 expert 数</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxExpertsPerRank<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">256</span>;<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// 每个 rank 最大 expert 数</span>
+</code></pre></div>
+
+<p><strong>EP2048 = 1024 ranks × 2 experts_per_rank</strong> 或 <strong>256 ranks × 8 experts_per_rank</strong>。</p>
+<h3 id="72-ep">7.2 运行时 EP 数无限制</h3>
+<p>编译期常量仅影响 workspace 大小（固定 ~1MB），运行时 rank 数和 expert 数由 JIT 模板参数决定，<strong>无硬性上限</strong>。</p>
+<h3 id="73-multi-plane-elasticpy279-282">7.3 Multi-plane 支持（<code>elastic.py:279-282</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span> os<span style="color: #666">.</span>environ<span style="color: #666">.</span>get(<span style="color: #BA2121">&#39;NCCL_GIN_CROSS_NIC&#39;</span>) <span style="color: #666">==</span> <span style="color: #BA2121">&#39;0&#39;</span>:
+    <span style="color: #3D7B7B; font-style: italic"># Multi-plane: all ranks share CPU segments, skip proxy re-export</span>
+    os<span style="color: #666">.</span>environ<span style="color: #666">.</span>setdefault(<span style="color: #BA2121">&#39;NCCL_SYM_REUSE_SYSMEM_HANDLES&#39;</span>, <span style="color: #BA2121">&#39;1&#39;</span>)
+</code></pre></div>
+
+<h3 id="74-large-buffer-va-space-elasticpy284-298">7.4 Large Buffer VA Space 扩展（<code>elastic.py:284-298</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span> num_cpu_bytes <span style="color: #666">&gt;</span> <span style="color: #666">0</span>:
+    num_gpu_bytes <span style="color: #666">=</span> num_bytes <span style="color: #666">-</span> num_cpu_bytes
+    num_max_local_ranks <span style="color: #666">=</span> <span style="color: #008000">int</span>(os<span style="color: #666">.</span>getenv(<span style="color: #BA2121">&#39;EP_NUM_MAX_LOCAL_RANKS&#39;</span>, <span style="color: #666">16</span>)) <span style="color: #008000; font-weight: bold">if</span> allow_hybrid_mode <span style="color: #008000; font-weight: bold">else</span> <span style="color: #666">1</span>
+
+    num_registered_bytes <span style="color: #666">=</span> num_gpu_bytes <span style="color: #666">+</span> num_cpu_bytes <span style="color: #666">*</span> num_max_local_ranks <span style="color: #666">+</span> (<span style="color: #666">1</span> <span style="color: #666">&lt;&lt;</span> <span style="color: #666">32</span>)
+    num_total_gpu_bytes <span style="color: #666">=</span> torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>get_device_properties(<span style="color: #BA2121">&#39;cuda&#39;</span>)<span style="color: #666">.</span>total_memory
+    <span style="color: #008000; font-weight: bold">if</span> num_registered_bytes <span style="color: #666">&gt;</span> num_total_gpu_bytes:
+        win_stride <span style="color: #666">=</span> align(num_registered_bytes, <span style="color: #666">1</span> <span style="color: #666">&lt;&lt;</span> <span style="color: #666">32</span>)
+        os<span style="color: #666">.</span>environ[<span style="color: #BA2121">&#39;NCCL_WIN_STRIDE&#39;</span>] <span style="color: #666">=</span> <span style="color: #008000">str</span>(win_stride)
+</code></pre></div>
+
+<hr />
+<h2 id="8-smqp-auto-tuning">8. 解析式 SM/QP 计算（告别 Auto-tuning）</h2>
+<h3 id="81-sm-elasticpy728-834">8.1 SM 数计算（<code>elastic.py:728-834</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #A2F">@weak_lru</span>(maxsize<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">None</span>)
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_theoretical_num_sms</span>(<span style="color: #008000">self</span>, num_experts, num_topk, num_scaleout_topk<span style="color: #666">=0</span>,
+                            rdma_gbs<span style="color: #666">=0</span>, nvlink_gbs<span style="color: #666">=0</span>,
+                            sm_read_gbs<span style="color: #666">=200</span>, sm_write_gbs<span style="color: #666">=50</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">int</span>:
+    <span style="color: #3D7B7B; font-style: italic"># 1. 自动获取带宽</span>
+    <span style="color: #008000; font-weight: bold">if</span> rdma_gbs <span style="color: #666">==</span> <span style="color: #666">0</span> <span style="color: #A2F; font-weight: bold">and</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_rdma_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span>:
+        rdma_gbs <span style="color: #666">=</span> get_rdma_gbs()
+    <span style="color: #008000; font-weight: bold">if</span> nvlink_gbs <span style="color: #666">==</span> <span style="color: #666">0</span>:
+        nvlink_gbs <span style="color: #666">=</span> get_nvlink_gbs()
+
+    <span style="color: #3D7B7B; font-style: italic"># 2. 计算期望 topk（去重后）</span>
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_expected_topk</span>(num_groups):
+        <span style="color: #008000; font-weight: bold">return</span> num_groups <span style="color: #666">*</span> (<span style="color: #666">1</span> <span style="color: #666">-</span> math<span style="color: #666">.</span>comb(num_experts <span style="color: #666">-</span> num_experts <span style="color: #666">//</span> num_groups, num_topk) <span style="color: #666">/</span> math<span style="color: #666">.</span>comb(num_experts, num_topk))
+
+    <span style="color: #3D7B7B; font-style: italic"># 3. 计算各类型流量</span>
+    sm_read, sm_write <span style="color: #666">=</span> <span style="color: #666">0</span>, <span style="color: #666">0</span>
+    rdma_traffic, nvlink_traffic <span style="color: #666">=</span> <span style="color: #666">0</span>, <span style="color: #666">0</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># ... 详细流量建模 ...</span>
+
+    <span style="color: #3D7B7B; font-style: italic"># 4. 找到瓶颈</span>
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_scaleout_ranks <span style="color: #666">&gt;</span> <span style="color: #666">1</span> <span style="color: #A2F; font-weight: bold">and</span> (rdma_traffic <span style="color: #666">/</span> rdma_gbs) <span style="color: #666">&gt;</span> (nvlink_traffic <span style="color: #666">/</span> nvlink_gbs):
+        bounded_traffic, bounded_gbs <span style="color: #666">=</span> rdma_traffic, rdma_gbs
+    <span style="color: #008000; font-weight: bold">else</span>:
+        bounded_traffic, bounded_gbs <span style="color: #666">=</span> nvlink_traffic, nvlink_gbs
+
+    <span style="color: #3D7B7B; font-style: italic"># 5. 计算 SM 数</span>
+    num_sms <span style="color: #666">=</span> <span style="color: #008000">max</span>(
+        bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_read <span style="color: #666">/</span> sm_read_gbs,
+        bounded_gbs <span style="color: #666">/</span> bounded_traffic <span style="color: #666">*</span> sm_write <span style="color: #666">/</span> sm_write_gbs,
+    )
+    num_sms <span style="color: #666">=</span> align(<span style="color: #008000">max</span>(<span style="color: #666">4</span>, math<span style="color: #666">.</span>ceil(num_sms <span style="color: #666">*</span> <span style="color: #666">1.25</span>)), <span style="color: #666">2</span>)  <span style="color: #3D7B7B; font-style: italic"># 至少 4，向上取偶数，+25% 余量</span>
+    num_sms <span style="color: #666">=</span> num_sms <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>prefer_overlap_with_compute <span style="color: #008000; font-weight: bold">else</span> <span style="color: #008000">max</span>(num_sms, <span style="color: #666">64</span>)
+    num_sms <span style="color: #666">=</span> <span style="color: #008000">min</span>(num_sms, num_device_sms)
+</code></pre></div>
+
+<h3 id="82-qp-elasticpy836-853">8.2 QP 数计算（<code>elastic.py:836-853</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">get_theoretical_num_qps</span>(<span style="color: #008000">self</span>, num_sms: <span style="color: #008000">int</span>) <span style="color: #666">-&gt;</span> <span style="color: #008000">int</span>:
+    <span style="color: #3D7B7B; font-style: italic"># Direct mode: 鼓励较少 QPs（减少 DB ringing 开销）</span>
+    num_qps <span style="color: #666">=</span> <span style="color: #008000">min</span>(num_sms, <span style="color: #666">8</span> <span style="color: #666">+</span> <span style="color: #666">1</span>)
+
+    <span style="color: #3D7B7B; font-style: italic"># Hybrid mode: 每个 channel（和 notify）独立 QP</span>
+    <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>allow_hybrid_mode:
+        num_qps <span style="color: #666">=</span> num_sms <span style="color: #666">*</span> <span style="color: #666">16</span> <span style="color: #666">+</span> <span style="color: #666">1</span>
+
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #008000">min</span>(num_qps, <span style="color: #008000">self</span><span style="color: #666">.</span>num_allocated_qps)
+</code></pre></div>
+
+<h3 id="83-smqp-elasticpy926-929">8.3 自动 SM/QP 选择（<code>elastic.py:926-929</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># Automatic decide SM and QP count</span>
+num_topk <span style="color: #666">=</span> (handle<span style="color: #666">.</span>topk_idx <span style="color: #008000; font-weight: bold">if</span> topk_idx <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #008000; font-weight: bold">None</span> <span style="color: #008000; font-weight: bold">else</span> topk_idx)<span style="color: #666">.</span>shape[<span style="color: #666">1</span>]
+num_sms <span style="color: #666">=</span> <span style="color: #008000">self</span><span style="color: #666">.</span>get_theoretical_num_sms(num_experts, num_topk) <span style="color: #008000; font-weight: bold">if</span> num_sms <span style="color: #666">==</span> <span style="color: #666">0</span> <span style="color: #008000; font-weight: bold">else</span> num_sms
+num_qps <span style="color: #666">=</span> <span style="color: #008000">self</span><span style="color: #666">.</span>get_theoretical_num_qps(num_sms) <span style="color: #008000; font-weight: bold">if</span> num_qps <span style="color: #666">==</span> <span style="color: #666">0</span> <span style="color: #008000; font-weight: bold">else</span> num_qps
+<span style="color: #008000; font-weight: bold">assert</span> num_qps <span style="color: #666">&lt;=</span> <span style="color: #008000">self</span><span style="color: #666">.</span>num_allocated_qps
+</code></pre></div>
+
+<p><strong>用户只需传 <code>num_sms=0, num_qps=0</code></strong>，系统自动选择最优值。</p>
+<hr />
+<h2 id="9-hybrid-direct">9. Hybrid &amp; Direct 双模式并存</h2>
+<h3 id="91-ncclcu117-125">9.1 模式选择（<code>nccl.cu:117-125</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 根据 allow_hybrid_mode 决定逻辑拓扑</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(allow_hybrid_mode)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_rdma_ranks,<span style="color: #BBB"> </span>num_scaleup_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_nvl_ranks;
+<span style="color: #BBB">    </span>scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>rdma_rank_idx,<span style="color: #BBB"> </span>scaleup_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>nvl_rank_idx;
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_scaleup_ranks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span>scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>scaleup_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>rank_idx;
+}
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>scaleout</th>
+<th>scaleup</th>
+<th>通信方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Direct</td>
+<td>1</td>
+<td>num_ranks</td>
+<td>所有 rank 直连</td>
+</tr>
+<tr>
+<td>Hybrid</td>
+<td>num_rdma_ranks</td>
+<td>num_nvl_ranks</td>
+<td>域内 NVLink + 跨域 RDMA</td>
+</tr>
+</tbody>
+</table>
+<h3 id="92-kernel-dispatchhpp52-88">9.2 Kernel 分发（<code>dispatch.hpp:52-88</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>string<span style="color: #BBB"> </span><span style="color: #00F">generate_impl</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Args<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>args)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(args.num_scaleout_ranks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>header_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;dispatch&quot;</span>;
+<span style="color: #BBB">        </span>func_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;dispatch_impl&lt;...&gt;&quot;</span>,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>header_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #BA2121">&quot;hybrid_dispatch&quot;</span>;
+<span style="color: #BBB">        </span>func_name<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>fmt<span style="color: #666">::</span>format(<span style="color: #BA2121">&quot;hybrid_dispatch_impl&lt;...&gt;&quot;</span>,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>同一 API，不同参数自动选择不同 kernel</strong>。</p>
+<h3 id="93-hybrid-dispatch-hybrid_dispatchcuh">9.3 Hybrid Dispatch 架构（<code>hybrid_dispatch.cuh</code>）</h3>
+<p>Hybrid dispatch 使用 <strong>3 种 warp 角色</strong>：<br />
+- <strong>Notify warps</strong>：统计 token → expert/rank 映射，写入 workspace<br />
+- <strong>Scaleout warps</strong>：域内 NVLink 发送 + RDMA 跨域发送<br />
+- <strong>Forward warps</strong>：将 scaleup 收到的 token 转发到 scaleout 远端</p>
+<h3 id="94-hybrid-combine-hybrid_combinecuh">9.4 Hybrid Combine 架构（<code>hybrid_combine.cuh</code>）</h3>
+<p>Combine 是 dispatch 的逆操作：<br />
+- <strong>Scaleup warps</strong>：域内 NVLink reduce<br />
+- <strong>Forward warps</strong>：将 scaleup 结果转发回 scaleout</p>
+<hr />
+<h2 id="10-v3-sm-244-6">10. V3 训练 SM 数从 24→4-6</h2>
+<h3 id="101">10.1 背景</h3>
+<p>V1/V2 时代，DeepEP 使用 <strong>固定 24 SMs</strong> 进行通信，对计算 kernel 的 SM 资源抢占严重。</p>
+<h3 id="102-v3-sm">10.2 V3 的 SM 优化</h3>
+<p>通过 <strong>解析式 SM 计算</strong> + <strong>流水线优化</strong>，V3 可以将 SM 数降到 <strong>4-6</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:823</span>
+num_sms <span style="color: #666">=</span> align(<span style="color: #008000">max</span>(<span style="color: #666">4</span>, math<span style="color: #666">.</span>ceil(num_sms <span style="color: #666">*</span> <span style="color: #666">1.25</span>)), <span style="color: #666">2</span>)
+num_sms <span style="color: #666">=</span> num_sms <span style="color: #008000; font-weight: bold">if</span> <span style="color: #008000">self</span><span style="color: #666">.</span>prefer_overlap_with_compute <span style="color: #008000; font-weight: bold">else</span> <span style="color: #008000">max</span>(num_sms, <span style="color: #666">64</span>)
+</code></pre></div>
+
+<p><strong>关键参数</strong>：<br />
+- <code>prefer_overlap_with_compute=True</code>：优先使用较少 SMs，与计算 kernel 重叠<br />
+- 最少 4 SMs（满足 <strong>4 个 notify warps</strong> 的最小需求）<br />
+- 偶数对齐（cluster launch 要求）</p>
+<h3 id="103-4-6-sms">10.3 为什么可以降到 4-6 SMs</h3>
+<ol>
+<li><strong>带宽瓶颈分析</strong>：解析式计算精确知道瓶颈在 RDMA 还是 NVLink</li>
+<li><strong>流水线全覆盖</strong>：每个 SM 的 warp 角色固定，无空闲周期</li>
+<li><strong>QP 独立化</strong>：每个 channel 独占 QP，避免竞争</li>
+<li><strong>Cluster Launch</strong>：<code>cluster_dim=2</code> 与计算 kernel 的 cluster 重叠</li>
+</ol>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.hpp:226</span>
+.launch_args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>jit<span style="color: #666">::</span>LaunchArgs(num_sms,<span style="color: #BBB"> </span>num_threads,<span style="color: #BBB"> </span>num_smem_bytes,<span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(num_sms<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">2</span>),<span style="color: #BBB"> </span><span style="color: #008000">true</span>);
+<span style="color: #3D7B7B; font-style: italic">//                                                                          ^^^^^^^^^^^^^^^^</span>
+<span style="color: #3D7B7B; font-style: italic">//                                                                          cluster_dim=2（偶数 SMs）或 1（奇数 SMs）</span>
+</code></pre></div>
+
+<hr />
+<h2 id="11-0-sm-engram-with-rdma">11. 0 SM Engram (with RDMA)</h2>
+<h3 id="111-engram">11.1 Engram 概念</h3>
+<p>Engram 是 DeepEP V2 新增的 <strong>远程 KV Cache 获取</strong> 功能：将推理/解码阶段的 KV Cache 存储在 CPU memory，训练时通过 RDMA one-sided get 拉取到 GPU。</p>
+<h3 id="112-0-sm">11.2 0 SM 实现原理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/elastic/engram.hpp:98-126</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">launch_engram_fetch</span>(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumEngramFetchThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1024</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 仅 1 个 block！</span>
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>EngramFetchRuntime<span style="color: #666">::</span>Args<span style="color: #BBB"> </span>args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>.launch_args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>jit<span style="color: #666">::</span>LaunchArgs(num_qps,<span style="color: #BBB"> </span>kNumEngramFetchThreads)
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">//                                       ^^^^^^^^</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">//                                       grid_dim = num_qps（通常 1-8）</span>
+<span style="color: #BBB">    </span>};
+}
+</code></pre></div>
+
+<p><strong>关键</strong>：<br />
+- <strong>Grid = num_qps</strong>（通常 1-8），每个 block 使用 1 个 QP<br />
+- <strong>不使用 SM 进行数据搬运</strong>：完全由 RDMA one-sided get 完成<br />
+- <strong>Gin.get()</strong> 直接操作 NIC，SM 仅发起请求后退出</p>
+<h3 id="113-engram-fetch-kernelengram_fetchcuh">11.3 Engram Fetch Kernel（<code>engram_fetch.cuh</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// 伪代码</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumQPs,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>engram_fetch_impl(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>blockIdx.x;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 每个 block 对应 1 个 QP</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>gin<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>handle<span style="color: #666">::</span>NCCLGin(nccl_dev_comm,<span style="color: #BBB"> </span>nccl_window,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 每个 token 的 entry 通过 RDMA get 拉取</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_entries_per_token;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>blockDim.x)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>num_entries_per_token;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>entry_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_entries_per_token;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>storage_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>indices[token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_entries_per_token<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>entry_idx];
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// RDMA one-sided get — 不占用 SM 计算资源</span>
+<span style="color: #BBB">        </span>gin.get<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(storage_ptr,<span style="color: #BBB"> </span>fetched_ptr,<span style="color: #BBB"> </span>num_bytes,<span style="color: #BBB"> </span>src_rank_idx);
+<span style="color: #BBB">        </span>last_gin_requests[sm_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.last_request();
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="114-engram-fetch-waitengram_fetch_waitcuh">11.4 Engram Fetch Wait（<code>engram_fetch_wait.cuh</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/elastic/engram.hpp:169-189</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">launch_engram_fetch_wait</span>(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumEngramFetchWaitThreads<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">1024</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>EngramFetchWaitRuntime<span style="color: #666">::</span>Args<span style="color: #BBB"> </span>args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>.launch_args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>jit<span style="color: #666">::</span>LaunchArgs(num_qps,<span style="color: #BBB"> </span>kNumEngramFetchWaitThreads)
+<span style="color: #BBB">    </span>};
+}
+</code></pre></div>
+
+<p><strong>Wait kernel</strong> 也仅使用 num_qps 个 SMs，等待所有 RDMA get 完成。</p>
+<h3 id="115-cpu-buffer-engram-storagebufferhpp229-240">11.5 CPU Buffer 用于 Engram Storage（<code>buffer.hpp:229-240</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">engram_write</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>storage,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>optional<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sf)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 写入 CPU segment（在 symmetric memory 的后部）</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>cpu_write_offset<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>allow_hybrid_mode
+<span style="color: #BBB">        </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(nccl_context<span style="color: #666">-&gt;</span>scale_up_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_cpu_buffer_bytes<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span>CUDA_RUNTIME_CHECK(cudaMemcpyAsync(
+<span style="color: #BBB">        </span>math<span style="color: #666">::</span>advance_ptr(buffer,<span style="color: #BBB"> </span>num_gpu_buffer_bytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>cpu_write_offset),
+<span style="color: #BBB">        </span>storage.data_ptr(),<span style="color: #BBB"> </span>storage.nbytes(),
+<span style="color: #BBB">        </span>cudaMemcpyDeviceToDevice,<span style="color: #BBB"> </span>compute_stream));
+}
+</code></pre></div>
+
+<p><strong>Engram 数据在 CPU memory</strong>，通过 <code>ncclCommWindowRegister</code> 注册到 NCCL VA space，RDMA NIC 可以直接访问。</p>
+<hr />
+<h2 id="12-0-sm-pp-with-rdma">12. 0 SM PP (with RDMA)</h2>
+<h3 id="121-pp-sendrecv-api">12.1 PP Send/Recv API</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:327-375</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">pp_set_config</span>(<span style="color: #008000">self</span>, num_max_tensor_bytes, num_max_inflight_tensors):
+    <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>pp_set_config(num_max_tensor_bytes, num_max_inflight_tensors)
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">pp_send</span>(<span style="color: #008000">self</span>, x, dst_rank_idx, num_sms<span style="color: #666">=0</span>):
+    <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>pp_send(x, dst_rank_idx, 
+                         num_sms<span style="color: #666">=</span>num_sms <span style="color: #008000; font-weight: bold">if</span> num_sms <span style="color: #008000; font-weight: bold">else</span> jit<span style="color: #666">.</span>device_runtime<span style="color: #666">.</span>get_num_sms())
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">pp_recv</span>(<span style="color: #008000">self</span>, x, src_rank_idx, num_sms<span style="color: #666">=0</span>):
+    <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>pp_recv(x, src_rank_idx, 
+                         num_sms<span style="color: #666">=</span>num_sms <span style="color: #008000; font-weight: bold">if</span> num_sms <span style="color: #008000; font-weight: bold">else</span> jit<span style="color: #666">.</span>device_runtime<span style="color: #666">.</span>get_num_sms())
+</code></pre></div>
+
+<h3 id="122-pp-pp_send_recvhpp">12.2 PP 实现（<code>pp_send_recv.hpp</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/elastic/pp_send_recv.hpp:64-95</span>
+<span style="color: #008000; font-weight: bold">static</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">launch_pp_send</span>(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>PPSendRuntime<span style="color: #666">::</span>Args<span style="color: #BBB"> </span>args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>.launch_args<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>jit<span style="color: #666">::</span>LaunchArgs(num_sms,<span style="color: #BBB"> </span><span style="color: #666">32</span>,<span style="color: #BBB"> </span>num_smem_bytes,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span><span style="color: #008000">true</span>)
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">//                                       ^^^^^^^^</span>
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">//                                       默认使用所有 SMs</span>
+<span style="color: #BBB">    </span>};
+}
+</code></pre></div>
+
+<p><strong>PP 默认使用所有 SMs</strong>（因为需要高带宽），但可以通过 <code>num_sms</code> 参数限制。</p>
+<h3 id="123-0-sm">12.3 0 SM 的含义</h3>
+<p>"0 SM PP" 指的是 <strong>PP 通信不占用额外的 SMs</strong>——因为：<br />
+1. PP send/recv 使用 <strong>Gin.put()</strong>（RDMA one-sided put）<br />
+2. SM 仅发起请求，NIC 完成数据搬运<br />
+3. 计算 kernel 可以同时在其他 SMs 上运行</p>
+<h3 id="124-pp-buffer-layoutbufferhpp327-337">12.4 PP Buffer Layout（<code>buffer.hpp:327-337</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">pp_set_config</span>(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int64_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_tensor_bytes,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>num_max_inflight_tensors)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>EP_HOST_ASSERT(num_max_tensor_bytes<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_inflight_tensors<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>num_buffer_bytes);
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//                                                                          ^^^^^^^</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">//                                                                          send/recv × prev/next</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>prev_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(nccl_context<span style="color: #666">-&gt;</span>rank_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_ranks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>next_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(nccl_context<span style="color: #666">-&gt;</span>rank_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_ranks;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>num_max_pp_tensor_bytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(num_max_tensor_bytes,<span style="color: #BBB"> </span><span style="color: #666">32</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">this</span><span style="color: #666">-&gt;</span>num_max_pp_inflight_tensors<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_max_inflight_tensors;
+}
+</code></pre></div>
+
+<p><strong>Buffer 需求</strong>：<code>num_max_tensor_bytes × num_max_inflight_tensors × 2 (send/recv) × 2 (prev/next)</code></p>
+<hr />
+<h2 id="13-0-sm-cp-copy-engine">13. 0 SM CP (Copy Engine)</h2>
+<h3 id="131-agrs-all-gather-reduce-scatter">13.1 AGRS — All-Gather Reduce-Scatter</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># elastic.py:638-726</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">create_agrs_session</span>(<span style="color: #008000">self</span>):
+    <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>create_agrs_session()
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">destroy_agrs_session</span>(<span style="color: #008000">self</span>):
+    <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>destroy_agrs_session()
+
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">all_gather</span>(<span style="color: #008000">self</span>, tensors):
+    <span style="color: #008000; font-weight: bold">return</span> <span style="color: #008000">self</span><span style="color: #666">.</span>runtime<span style="color: #666">.</span>all_gather(tensors)
+</code></pre></div>
+
+<h3 id="132-copy-engine-bufferhpp438-524">13.2 Copy Engine 实现（<code>buffer.hpp:438-524</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>std<span style="color: #666">::</span>pair<span style="color: #666">&lt;</span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;</span>,<span style="color: #BBB"> </span>std<span style="color: #666">::</span>function<span style="color: #666">&lt;</span><span style="color: #B00040">void</span>()<span style="color: #666">&gt;&gt;</span>
+all_gather(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span>torch<span style="color: #666">::</span>Tensor<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>tensors)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. 计算需要多少 copies</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_copies<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_ranks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tensors;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>j)
+<span style="color: #BBB">            </span>num_copies<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>nccl_context<span style="color: #666">-&gt;</span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>is_inplace;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. 使用 cudaMemcpyBatchAsync — 完全由 Copy Engine 执行</span>
+<span style="color: #BBB">    </span>cudaMemcpyAttributes<span style="color: #BBB"> </span>attrs<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>.srcAccessOrder<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cudaMemcpySrcAccessOrderStream,
+<span style="color: #BBB">        </span>.flags<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cudaMemcpyFlagPreferOverlapWithCompute
+<span style="color: #BBB">    </span>};
+<span style="color: #BBB">    </span>CUDA_RUNTIME_CHECK(cudaMemcpyBatchAsync(dst_ptrs.data(),<span style="color: #BBB"> </span>src_ptrs.data(),<span style="color: #BBB"> </span>sizes.data(),<span style="color: #BBB"> </span>num_copies,<span style="color: #BBB"> </span>attrs,<span style="color: #BBB"> </span>comm_stream));
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. 信号通知其他 rank</span>
+<span style="color: #BBB">    </span>cuda_driver<span style="color: #666">::</span>batched_write_and_wait(comm_stream,<span style="color: #BBB"> </span>write_ptrs,<span style="color: #BBB"> </span>wait_ptrs,<span style="color: #BBB"> </span>current_session);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. 返回 gathered tensors 和 wait handle</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{out,<span style="color: #BBB"> </span>handle};
+}
+</code></pre></div>
+
+<h3 id="133-0-sm">13.3 0 SM 的含义</h3>
+<p><strong>AGRS 使用 <code>cudaMemcpyBatchAsync</code></strong>：<br />
+- <strong>不占用 SMs</strong>：由 GPU Copy Engine（DMA）执行<br />
+- <strong>Prefer overlap with compute</strong>：与计算 kernel 并行<br />
+- <strong>NVLink symmetric memory</strong>：直接访问远端 GPU 内存</p>
+<h3 id="134-batched-write-and-waitcuda_drivercu">13.4 Batched Write and Wait（<code>cuda_driver.cu</code>）</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/backend/cuda_driver.cu</span>
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span><span style="color: #00F">batched_write_and_wait</span>(CUstream<span style="color: #BBB"> </span>stream,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span><span style="color: #B00040">void</span><span style="color: #666">*&gt;&amp;</span><span style="color: #BBB"> </span>write_ptrs,<span style="color: #BBB"> </span>
+<span style="color: #BBB">                            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>vector<span style="color: #666">&lt;</span><span style="color: #B00040">void</span><span style="color: #666">*&gt;&amp;</span><span style="color: #BBB"> </span>wait_ptrs,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>value)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 批量发起 writes</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>write_ptrs)
+<span style="color: #BBB">        </span>cuStreamWriteValue32(stream,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>CUdeviceptr<span style="color: #666">&gt;</span>(ptr),<span style="color: #BBB"> </span>value,<span style="color: #BBB"> </span>CU_STREAM_WRITE_VALUE_DEFAULT);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 批量等待 waits</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>wait_ptrs)
+<span style="color: #BBB">        </span>cuStreamWaitValue32(stream,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>CUdeviceptr<span style="color: #666">&gt;</span>(ptr),<span style="color: #BBB"> </span>value,<span style="color: #BBB"> </span>CU_STREAM_WAIT_VALUE_EQ);
+}
+</code></pre></div>
+
+<p><strong>使用 CUDA Driver API 的 <code>cuStreamWriteValue32</code> 和 <code>cuStreamWaitValue32</code></strong>：<br />
+- 在 <strong>comm_stream</strong> 上发起<br />
+- 不阻塞 compute_stream<br />
+- GPU 硬件自动处理同步</p>
+<hr />
+<h2 id="deepep-v2-13">总结：DeepEP V2 架构的 13 个设计维度</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>特性</th>
+<th>实现方式</th>
+<th>关键源码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Fully JIT</td>
+<td>运行时生成 CUDA 源码 → NVCC 编译 → CUBIN 缓存 → 加载 launch</td>
+<td><code>csrc/jit/</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>NCCL Gin Backend</td>
+<td>GPU SM 直接操作 NIC QP，支持 put/get/signal/flush</td>
+<td><code>nccl.cu</code>, <code>handle.cuh</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Header-only</td>
+<td>所有 kernel 实现为 <code>.cuh</code>，无需单独编译</td>
+<td><code>deep_ep/include/</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>复用 NCCL Comm</td>
+<td><code>reinterpret_cast</code> 复用 PyTorch 已有 communicator</td>
+<td><code>nccl.cu:76</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>EPv2 统一架构</td>
+<td>单 <code>ElasticBuffer</code> 类统一所有通信模式</td>
+<td><code>buffer.hpp</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>统一接口 + 新 GEMM Layout</td>
+<td>TMA-aligned column-major SF，零拷贝给下次 GEMM</td>
+<td><code>elastic.py:271</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>EP2048 支持</td>
+<td>编译期常量 + 运行时参数化，无硬性上限</td>
+<td><code>layout.cuh:19-22</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>解析式 SM/QP</td>
+<td>带宽建模 → 最优 SM/QP 数，无需 auto-tuning</td>
+<td><code>elastic.py:728-853</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Hybrid &amp; Direct</td>
+<td>同一 API，参数自动选择 kernel</td>
+<td><code>dispatch.hpp:52-88</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td>4-6 SMs V3 训练</td>
+<td>解析式计算 + 流水线优化 + cluster launch</td>
+<td><code>elastic.py:823</code></td>
+</tr>
+<tr>
+<td>11</td>
+<td>0 SM Engram</td>
+<td>RDMA one-sided get，SM 仅发起请求</td>
+<td><code>engram.hpp:98</code></td>
+</tr>
+<tr>
+<td>12</td>
+<td>0 SM PP</td>
+<td>Gin.put() one-sided，SM 不参与数据搬运</td>
+<td><code>pp_send_recv.hpp:64</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td>0 SM CP</td>
+<td><code>cudaMemcpyBatchAsync</code>，Copy Engine 执行</td>
+<td><code>buffer.hpp:489</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_2">附录：关键源码文件索引</h2>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP/
+├── csrc/
+│   ├── jit/                         # JIT 编译系统
+│   │   ├── compiler.hpp             # NVCC 编译 + 缓存
+│   │   ├── kernel_runtime.hpp       # CUBIN 加载
+│   │   ├── launch_runtime.hpp       # Launch 配置
+│   │   ├── include_parser.hpp       # 递归 hash
+│   │   ├── handle.hpp               # Driver/Runtime API 双路径
+│   │   ├── cache.hpp                # 双层缓存
+│   │   ├── device_runtime.hpp       # GPU 属性查询
+│   │   └── api.hpp                  # pybind11 注册
+│   ├── kernels/
+│   │   ├── backend/
+│   │   │   ├── nccl.cu              # NCCL Gin 后端
+│   │   │   ├── symmetric.hpp        # 对称内存三层架构
+│   │   │   ├── nvshmem.cu           # NVSHMEM 后备
+│   │   │   ├── cuda_driver.cu       # Driver API 工具
+│   │   │   └── api.cuh              # Backend API 声明
+│   │   └── elastic/
+│   │       ├── dispatch.hpp         # Dispatch launch
+│   │       ├── combine.hpp          # Combine launch
+│   │       ├── engram.hpp           # Engram launch
+│   │       ├── pp_send_recv.hpp     # PP launch
+│   │       ├── barrier.hpp          # Barrier launch
+│   │       └── api.hpp              # Kernel API 汇聚
+│   ├── elastic/
+│   │   ├── buffer.hpp               # ElasticBuffer 核心（1382 行）
+│   │   └── utils.hpp                # Elastic 工具
+│   └── python_api.cpp               # pybind11 模块（39 行）
+├── deep_ep/
+│   ├── buffers/
+│   │   ├── elastic.py               # Python 入口（1107 行）
+│   │   └── legacy.py                # Legacy API 兼容
+│   └── include/deep_ep/
+│       ├── common/                  # Header-only 基础
+│       │   ├── comm.cuh             # Gin 通信原语
+│       │   ├── handle.cuh           # NCCLGin handle
+│       │   ├── layout.cuh           # Token/Buffer/Workspace 布局
+│       │   ├── math.cuh             # 数学工具
+│       │   ├── ptx.cuh              # PTX 内联汇编
+│       │   ├── compiled.cuh         # 编译期开关
+│       │   └── exception.cuh        # 异常处理
+│       └── impls/                   # Header-only kernel 实现
+│           ├── dispatch.cuh
+│           ├── dispatch_copy_epilogue.cuh
+│           ├── combine.cuh
+│           ├── combine_reduce_epilogue.cuh
+│           ├── hybrid_dispatch.cuh
+│           ├── hybrid_combine.cuh
+│           ├── engram_fetch.cuh
+│           ├── engram_fetch_wait.cuh
+│           ├── pp_send_recv.cuh
+│           └── barrier.cuh
+└── setup.py                         # 构建配置
+</code></pre></div>
+
+<hr />
+<blockquote>
+<p><strong>分析方法论</strong>：本报告基于源码实证，每个结论都标注了具体文件和行号。分析遵循"设计哲学 → 源码实现 → 关键代码片段 → 设计亮点"的结构，确保可追溯性。</p>
+</blockquote>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepEP Elastic AGRS 与 PP 测试源码分析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">DeepEP Elastic AGRS 与 PP 测试源码分</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#deepep-elastic-agrs-与-pp-测试源码分析" class="toc-h1">DeepEP Elastic AGRS 与 PP 测试源码分析</a></li><li><a href="#1-文件结构总览" class="toc-h2">1. 文件结构总览</a></li><li><a href="#2-agrs-测试-test_agrspy-深度分析" class="toc-h2">2. AGRS 测试 (test_agrs.py) 深度分析</a></li><li><a href="#21-函数角色" class="toc-h3">2.1 函数角色</a></li><li><a href="#22-参考实现确定性真值生成" class="toc-h3">2.2 参考实现：确定性真值生成</a></li><li><a href="#23-压力测试随机操作序列生成" class="toc-h3">2.3 压力测试：随机操作序列生成</a></li><li><a href="#24-all-gather-执行封装" class="toc-h3">2.4 All-Gather 执行封装</a></li><li><a href="#25-主测试流程" class="toc-h3">2.5 主测试流程</a></li><li><a href="#26-正确性验证" class="toc-h3">2.6 正确性验证</a></li><li><a href="#27-profiling带宽测量" class="toc-h3">2.7 Profiling：带宽测量</a></li><li><a href="#3-pp-测试-test_pppy-深度分析" class="toc-h2">3. PP 测试 (test_pp.py) 深度分析</a></li><li><a href="#31-函数角色" class="toc-h3">3.1 函数角色</a></li><li><a href="#32-压力测试基于时间戳的-pp-操作序列" class="toc-h3">3.2 压力测试：基于时间戳的 PP 操作序列</a></li><li><a href="#33-主测试流程" class="toc-h3">3.3 主测试流程</a></li><li><a href="#34-stress-test-执行与验证" class="toc-h3">3.4 Stress Test 执行与验证</a></li><li><a href="#35-profiling延迟与带宽测量" class="toc-h3">3.5 Profiling：延迟与带宽测量</a></li><li><a href="#4-api-使用模式对比" class="toc-h2">4. API 使用模式对比</a></li><li><a href="#41-agrs-api-调用链" class="toc-h3">4.1 AGRS API 调用链</a></li><li><a href="#42-pp-api-调用链" class="toc-h3">4.2 PP API 调用链</a></li><li><a href="#43-共同模式" class="toc-h3">4.3 共同模式</a></li><li><a href="#5-参数变化空间" class="toc-h2">5. 参数变化空间</a></li><li><a href="#51-agrs-测试参数" class="toc-h3">5.1 AGRS 测试参数</a></li><li><a href="#52-pp-测试参数" class="toc-h3">5.2 PP 测试参数</a></li><li><a href="#6-验证逻辑深度分析" class="toc-h2">6. 验证逻辑深度分析</a></li><li><a href="#61-agrs-正确性验证" class="toc-h3">6.1 AGRS 正确性验证</a></li><li><a href="#62-pp-正确性验证" class="toc-h3">6.2 PP 正确性验证</a></li><li><a href="#7-关键代码片段与模式" class="toc-h2">7. 关键代码片段与模式</a></li><li><a href="#71-l2-cache-flush-模式" class="toc-h3">7.1 L2 Cache Flush 模式</a></li><li><a href="#72-cuda-event-计时模式" class="toc-h3">7.2 CUDA Event 计时模式</a></li><li><a href="#73-时间戳驱动睡眠" class="toc-h3">7.3 时间戳驱动睡眠</a></li><li><a href="#8-实验性状态评估" class="toc-h2">8. 实验性状态评估</a></li><li><a href="#81-文档标注" class="toc-h3">8.1 文档标注</a></li><li><a href="#82-已知限制" class="toc-h3">8.2 已知限制</a></li><li><a href="#83-功能成熟度判断" class="toc-h3">8.3 功能成熟度判断</a></li><li><a href="#9-与核心-ep-功能的关系" class="toc-h2">9. 与核心 EP 功能的关系</a></li><li><a href="#91-elastic-buffer-的定位" class="toc-h3">9.1 Elastic Buffer 的定位</a></li><li><a href="#92-设计意图推测" class="toc-h3">9.2 设计意图推测</a></li><li><a href="#10-总结" class="toc-h2">10. 总结</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="deepep-elastic-agrs-pp">DeepEP Elastic AGRS 与 PP 测试源码分析</h1>
+<blockquote>
+<p>分析对象：<code>tests/elastic/test_agrs.py</code>（202 行）与 <code>tests/elastic/test_pp.py</code>（139 行）<br />
+定位：DeepEP 实验性 Elastic Buffer 功能的集成测试与性能基准</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 文件结构总览</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>核心函数</th>
+<th>测试目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_agrs.py</code></td>
+<td>202</td>
+<td><code>all_gather_ref</code>, <code>generate_stress_ops</code>, <code>do_all_gather</code>, <code>test</code></td>
+<td>All-Gather/Reduce-Scatter 正确性 + 带宽</td>
+</tr>
+<tr>
+<td><code>test_pp.py</code></td>
+<td>139</td>
+<td><code>generate_stress_ops</code>, <code>test</code></td>
+<td>Pipeline Parallel send/recv 正确性 + 延迟</td>
+</tr>
+</tbody>
+</table>
+<p>两个文件共享相同的测试范式：<strong>Stress Test（随机操作序列验证正确性）+ Profiling（性能基准测量）</strong>。</p>
+<hr />
+<h2 id="2-agrs-test_agrspy">2. AGRS 测试 (<code>test_agrs.py</code>) 深度分析</h2>
+<h3 id="21">2.1 函数角色</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>行号</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>all_gather_ref</code></td>
+<td>L12-17</td>
+<td>CPU 参考实现：生成各 rank 随机张量并 stack 为真值</td>
+</tr>
+<tr>
+<td><code>generate_stress_ops</code></td>
+<td>L20-54</td>
+<td>生成随机 AGRS 操作序列（create/destroy session、ag、fetch）</td>
+</tr>
+<tr>
+<td><code>do_all_gather</code></td>
+<td>L57-84：</td>
+<td>封装 buffer 的 all_gather 调用，支持 inplace/batched 模式</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td>L89-192</td>
+<td>主测试逻辑：配置 → stress → profiling → 销毁</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 参考实现：确定性真值生成</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L12-17</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">all_gather_ref</span>(shape: <span style="color: #008000">tuple</span>, rank_idx: <span style="color: #008000">int</span>, num_ranks: <span style="color: #008000">int</span>, round_idx: <span style="color: #008000">int</span> <span style="color: #666">=</span> <span style="color: #666">0</span>):
+    ref_list <span style="color: #666">=</span> []
+    <span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks):
+        torch<span style="color: #666">.</span>manual_seed(<span style="color: #666">42</span> <span style="color: #666">+</span> round_idx <span style="color: #666">*</span> <span style="color: #666">43</span> <span style="color: #666">+</span> i)  <span style="color: #3D7B7B; font-style: italic"># 确定性种子</span>
+        ref_list<span style="color: #666">.</span>append(torch<span style="color: #666">.</span>randn(shape, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>bfloat16, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>))
+    <span style="color: #008000; font-weight: bold">return</span> ref_list[rank_idx], torch<span style="color: #666">.</span>stack(ref_list, dim<span style="color: #666">=0</span>)
+</code></pre></div>
+
+<p><strong>关键设计</strong>：<br />
+- 每个 rank 使用<strong>独立但确定性</strong>的种子 <code>42 + round_idx * 43 + i</code>，确保跨 rank 可复现<br />
+- 返回 <code>(local_tensor, gathered_tensor)</code> 对，local 用于输入，gathered 用于验证</p>
+<h3 id="23">2.3 压力测试：随机操作序列生成</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L20-54</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_stress_ops</span>(num_ops, num_max_inflight_agrs, shape, rank_idx, num_ranks):
+    tensors, refs <span style="color: #666">=</span> <span style="color: #008000">zip</span>(<span style="color: #666">*</span>(all_gather_ref(<span style="color: #666">...</span>) <span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ops)))
+    unprocessed <span style="color: #666">=</span> random<span style="color: #666">.</span>sample(<span style="color: #008000">range</span>(num_ops), num_ops)
+    inflight, ops <span style="color: #666">=</span> [], [(<span style="color: #BA2121">&#39;create_session&#39;</span>, (<span style="color: #666">-1</span>,))]
+    limit <span style="color: #666">=</span> num_max_inflight_agrs
+    <span style="color: #008000; font-weight: bold">while</span> unprocessed <span style="color: #A2F; font-weight: bold">or</span> inflight:
+        <span style="color: #3D7B7B; font-style: italic"># 随机选择：ag / fetch / destroy</span>
+        op <span style="color: #666">=</span> random<span style="color: #666">.</span>choice(choices)
+        <span style="color: #008000; font-weight: bold">if</span> op <span style="color: #666">==</span> <span style="color: #BA2121">&#39;ag&#39;</span>:
+            b <span style="color: #666">=</span> <span style="color: #008000">tuple</span>(unprocessed[<span style="color: #666">-</span>random<span style="color: #666">.</span>randint(<span style="color: #666">1</span>, max_g):])  <span style="color: #3D7B7B; font-style: italic"># 随机批量</span>
+            <span style="color: #666">...</span>
+        <span style="color: #008000; font-weight: bold">elif</span> op <span style="color: #666">==</span> <span style="color: #BA2121">&#39;fetch&#39;</span>:
+            ops<span style="color: #666">.</span>append((<span style="color: #BA2121">&#39;fetch&#39;</span>, inflight<span style="color: #666">.</span>pop(random<span style="color: #666">.</span>randrange(<span style="color: #008000">len</span>(inflight)))))
+        <span style="color: #008000; font-weight: bold">else</span>:
+            ops<span style="color: #666">.</span>extend([(<span style="color: #BA2121">&#39;destroy_session&#39;</span>, (<span style="color: #666">-1</span>,)), (<span style="color: #BA2121">&#39;create_session&#39;</span>, (<span style="color: #666">-1</span>,))])
+</code></pre></div>
+
+<p><strong>测试覆盖维度</strong>：<br />
+1. <strong>Session 生命周期</strong>：随机穿插 <code>create_session</code> / <code>destroy_session</code><br />
+2. <strong>Inflight 并发</strong>：最多 <code>num_max_inflight_agrs</code> 个并发 AG 操作<br />
+3. <strong>批量大小随机</strong>：每次 AG 操作合并 1~max_g 个张量<br />
+4. <strong>Fetch 顺序随机</strong>：非 FIFO 的完成等待</p>
+<h3 id="24-all-gather">2.4 All-Gather 执行封装</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L57-84</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">do_all_gather</span>(buffer, is_inplace, is_batched, tensors, start_event<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">None</span>):
+    <span style="color: #008000; font-weight: bold">if</span> is_inplace:
+        ag_tensors <span style="color: #666">=</span> buffer<span style="color: #666">.</span>agrs_get_inplace_tensor(<span style="color: #008000">tuple</span>(t<span style="color: #666">.</span>shape <span style="color: #008000; font-weight: bold">for</span> t <span style="color: #A2F; font-weight: bold">in</span> tensors), torch<span style="color: #666">.</span>bfloat16)
+        <span style="color: #008000; font-weight: bold">for</span> x, y <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">zip</span>(ag_tensors, tensors, strict<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>):
+            x<span style="color: #666">.</span>copy_(y)  <span style="color: #3D7B7B; font-style: italic"># 拷贝到弹性缓冲区</span>
+    <span style="color: #008000; font-weight: bold">else</span>:
+        ag_tensors <span style="color: #666">=</span> tensors
+
+    <span style="color: #008000; font-weight: bold">if</span> start_event <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span>:
+        torch<span style="color: #666">.</span>zeros(<span style="color: #008000">int</span>(<span style="color: #666">256e6</span> <span style="color: #666">//</span> <span style="color: #666">4</span>), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)  <span style="color: #3D7B7B; font-style: italic"># flush L2 cache</span>
+        start_event<span style="color: #666">.</span>record()
+
+    <span style="color: #008000; font-weight: bold">if</span> is_batched:
+        <span style="color: #666">*</span>out_tensors, handle <span style="color: #666">=</span> buffer<span style="color: #666">.</span>all_gather(ag_tensors)
+        <span style="color: #008000; font-weight: bold">return</span> out_tensors, [handle]
+    <span style="color: #008000; font-weight: bold">else</span>:
+        <span style="color: #3D7B7B; font-style: italic"># 逐个调用，每个返回独立 handle</span>
+        out_tensors, handles <span style="color: #666">=</span> [], []
+        <span style="color: #008000; font-weight: bold">for</span> t <span style="color: #A2F; font-weight: bold">in</span> ag_tensors:
+            out_tensor, handle <span style="color: #666">=</span> buffer<span style="color: #666">.</span>all_gather(t)
+            <span style="color: #666">...</span>
+</code></pre></div>
+
+<p><strong>关键模式</strong>：<br />
+- <strong>Inplace 模式</strong>：通过 <code>agrs_get_inplace_tensor</code> 获取 buffer 内零拷贝槽位<br />
+- <strong>L2 Cache Flush</strong>：<code>torch.zeros(256e6 // 4)</code> 分配 256MB 冲刷 L2，确保计时准确<br />
+- <strong>Batched vs 非 Batched</strong>：batched 返回单个 handle，非 batched 返回 handle 列表</p>
+<h3 id="25">2.5 主测试流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L93-110: 配置阶段</span>
+shape <span style="color: #666">=</span> (<span style="color: #666">32</span>, <span style="color: #666">64</span>, <span style="color: #666">2048</span>)  <span style="color: #3D7B7B; font-style: italic"># 固定形状</span>
+num_max_session_bytes <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer<span style="color: #666">.</span>get_agrs_num_max_session_bytes(
+    group, [shape <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_max_inflight_agrs)], torch<span style="color: #666">.</span>bfloat16)
+num_max_session_bytes <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer<span style="color: #666">.</span>get_agrs_buffer_size_hint(
+    group, num_max_session_bytes)
+buffer <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer(group, explicitly_destroy<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, num_bytes<span style="color: #666">=</span>num_max_session_bytes)
+buffer<span style="color: #666">.</span>agrs_set_config(num_max_session_bytes, num_max_inflight_agrs)
+</code></pre></div>
+
+<p><strong>配置链</strong>：<br />
+1. <code>get_agrs_num_max_session_bytes</code> → 计算 session 所需总字节（含 32 字节对齐）<br />
+2. <code>get_agrs_buffer_size_hint</code> → 对齐到 2MB 的 buffer 大小<br />
+3. <code>ElasticBuffer</code> 构造 → 显式销毁模式<br />
+4. <code>agrs_set_config</code> → 设置运行时参数（含 barrier 刷新）</p>
+<h3 id="26">2.6 正确性验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L136-138</span>
+<span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ops):
+    <span style="color: #008000; font-weight: bold">assert</span> results[i] <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span> <span style="color: #A2F; font-weight: bold">and</span> torch<span style="color: #666">.</span>equal(results[i], refs[i]), \
+        <span style="color: #BA2121">f&#39;Rank </span><span style="color: #A45A77; font-weight: bold">{</span>rank_idx<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">: stress mismatch at seed=</span><span style="color: #A45A77; font-weight: bold">{</span>seed<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">, op=</span><span style="color: #A45A77; font-weight: bold">{</span>i<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+</code></pre></div>
+
+<p><strong>验证策略</strong>：<br />
+- <code>torch.equal</code> 精确比较（非 allclose），因为是无损 all-gather<br />
+- 每个 op 必须完成（<code>is not None</code>）<br />
+- 跨 seed 迭代（默认 4 次），每次 128 个 ops</p>
+<h3 id="27-profiling">2.7 Profiling：带宽测量</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L156-187</span>
+<span style="color: #008000; font-weight: bold">for</span> num_bytes <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">2</span> <span style="color: #666">**</span> p <span style="color: #008000; font-weight: bold">for</span> p <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(<span style="color: #666">20</span>, <span style="color: #666">27</span>)):  <span style="color: #3D7B7B; font-style: italic"># 1MB 到 64MB</span>
+    shape <span style="color: #666">=</span> (num_bytes <span style="color: #666">//</span> <span style="color: #666">2</span>, )  <span style="color: #3D7B7B; font-style: italic"># bfloat16 = 2 bytes</span>
+    <span style="color: #008000; font-weight: bold">for</span> is_inplace <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #008000; font-weight: bold">False</span>, <span style="color: #008000; font-weight: bold">True</span>):
+        <span style="color: #008000; font-weight: bold">for</span> is_batched <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #008000; font-weight: bold">False</span>, <span style="color: #008000; font-weight: bold">True</span>):
+            <span style="color: #3D7B7B; font-style: italic"># 50 次迭代，丢弃首次（warmup）</span>
+            times <span style="color: #666">=</span> np<span style="color: #666">.</span>array([s<span style="color: #666">.</span>elapsed_time(e) <span style="color: #666">/</span> <span style="color: #666">1e3</span> <span style="color: #666">...</span>])[<span style="color: #666">1</span>:]
+            bandwidth_info <span style="color: #666">=</span> <span style="color: #BA2121">f&#39;</span><span style="color: #A45A77; font-weight: bold">{</span>num_bytes<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_inflight_agrs<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>avg_t<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span><span style="color: #666">1e9</span><span style="color: #A45A77; font-weight: bold">:</span><span style="color: #BA2121">.3f</span><span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121"> GB/s&#39;</span>
+</code></pre></div>
+
+<p><strong>测量矩阵</strong>：<br />
+- 数据大小：1MB, 2MB, 4MB, 8MB, 16MB, 32MB, 64MB<br />
+- 模式组合：<code>(inplace=False/True) × (batched=False/True)</code> = 4 种<br />
+- 使用 CUDA Event 计时，丢弃首次 warmup<br />
+- 报告单位：微秒（per AG）+ 聚合带宽（GB/s）</p>
+<hr />
+<h2 id="3-pp-test_pppy">3. PP 测试 (<code>test_pp.py</code>) 深度分析</h2>
+<h3 id="31">3.1 函数角色</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>行号</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generate_stress_ops</code></td>
+<td>L13-37</td>
+<td>生成随机 send/recv 操作序列（含时间戳）</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td>L42-121</td>
+<td>主测试逻辑：配置 → stress → profiling → 销毁</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-pp">3.2 压力测试：基于时间戳的 PP 操作序列</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L13-37</span>
+<span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">generate_stress_ops</span>(rank_idx, num_ranks, num_sends, shape):
+    send_times <span style="color: #666">=</span> {(s, d): [] <span style="color: #008000; font-weight: bold">for</span> s <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks) <span style="color: #008000; font-weight: bold">for</span> d <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks) <span style="color: #008000; font-weight: bold">if</span> s <span style="color: #666">!=</span> d}
+    recv_times <span style="color: #666">=</span> {(s, d): [] <span style="color: #008000; font-weight: bold">for</span> s <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks) <span style="color: #008000; font-weight: bold">for</span> d <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_ranks) <span style="color: #008000; font-weight: bold">if</span> s <span style="color: #666">!=</span> d}
+
+    <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_sends):
+        src_rank_idx <span style="color: #666">=</span> random<span style="color: #666">.</span>randint(<span style="color: #666">0</span>, num_ranks <span style="color: #666">-</span> <span style="color: #666">1</span>)
+        dst_rank_idx <span style="color: #666">=</span> (src_rank_idx <span style="color: #666">+</span> (<span style="color: #666">1</span> <span style="color: #008000; font-weight: bold">if</span> random<span style="color: #666">.</span>randint(<span style="color: #666">0</span>, <span style="color: #666">1</span>) <span style="color: #008000; font-weight: bold">else</span> <span style="color: #666">-1</span>)) <span style="color: #666">%</span> num_ranks  <span style="color: #3D7B7B; font-style: italic"># 仅相邻 rank</span>
+        st <span style="color: #666">=</span> random<span style="color: #666">.</span>randint(<span style="color: #666">0</span>, <span style="color: #666">10</span> <span style="color: #666">**</span> <span style="color: #666">8</span>)
+        rt <span style="color: #666">=</span> st <span style="color: #666">+</span> random<span style="color: #666">.</span>randint(<span style="color: #666">1</span>, <span style="color: #666">3</span> <span style="color: #666">*</span> <span style="color: #666">10</span> <span style="color: #666">**</span> <span style="color: #666">6</span>)  <span style="color: #3D7B7B; font-style: italic"># recv 在 send 之后</span>
+        send_times[(src_rank_idx, dst_rank_idx)]<span style="color: #666">.</span>append(st)
+        recv_times[(src_rank_idx, dst_rank_idx)]<span style="color: #666">.</span>append(rt)
+</code></pre></div>
+
+<p><strong>关键约束</strong>：<br />
+- <strong>仅相邻 rank 通信</strong>：<code>(src ± 1) % num_rings</code>，符合 PP ring 拓扑<br />
+- <strong>时间戳排序</strong>：send/recv 按时间戳排序后交错执行<br />
+- <strong>Recv 滞后</strong>：<code>rt = st + random(1, 3e6)</code> 模拟真实 PP 中 recv 在 send 之后</p>
+<h3 id="33">3.3 主测试流程</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L44-59: 配置阶段</span>
+shape <span style="color: #666">=</span> (args<span style="color: #666">.</span>num_tokens, args<span style="color: #666">.</span>hidden)  <span style="color: #3D7B7B; font-style: italic"># 默认 (4096, 7168)</span>
+num_max_tensor_bytes <span style="color: #666">=</span> math<span style="color: #666">.</span>prod(shape) <span style="color: #666">*</span> <span style="color: #666">2</span>  <span style="color: #3D7B7B; font-style: italic"># bfloat16</span>
+buffer <span style="color: #666">=</span> deep_ep<span style="color: #666">.</span>ElasticBuffer(
+    group, explicitly_destroy<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, allow_hybrid_mode<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">False</span>,  <span style="color: #3D7B7B; font-style: italic"># 禁用 hybrid 模式</span>
+    num_bytes<span style="color: #666">=</span>deep_ep<span style="color: #666">.</span>ElasticBuffer<span style="color: #666">.</span>get_pp_buffer_size_hint(
+        num_max_tensor_bytes, num_max_inflight_tensors))
+buffer<span style="color: #666">.</span>pp_set_config(num_max_tensor_bytes, num_max_inflight_tensors)
+</code></pre></div>
+
+<p><strong>与 AGRS 的区别</strong>：<br />
+- <code>allow_hybrid_mode=False</code>：PP 测试禁用 hybrid 模式（纯 RDMA 路径）<br />
+- <code>get_pp_buffer_size_hint</code>：buffer 大小 = <code>num_max_tensor_bytes × num_max_inflight × 2(send/recv) × 2(prev/next)</code></p>
+<h3 id="34-stress-test">3.4 Stress Test 执行与验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L69-80</span>
+prev <span style="color: #666">=</span> <span style="color: #666">0</span>
+<span style="color: #008000; font-weight: bold">for</span> j, (op, timestamp, peer, _, tensor) <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">enumerate</span>(ops):
+    <span style="color: #008000; font-weight: bold">if</span> op <span style="color: #666">==</span> <span style="color: #BA2121">&#39;send&#39;</span>:
+        buffer<span style="color: #666">.</span>pp_send(tensor, peer)
+    <span style="color: #008000; font-weight: bold">else</span>:
+        result <span style="color: #666">=</span> torch<span style="color: #666">.</span>empty_like(tensor)
+        buffer<span style="color: #666">.</span>pp_recv(result, peer)
+        <span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(result, tensor), \  <span style="color: #3D7B7B; font-style: italic"># 逐张量精确匹配</span>
+            <span style="color: #BA2121">f&#39;Rank </span><span style="color: #A45A77; font-weight: bold">{</span>rank_idx<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">: mismatch at op </span><span style="color: #A45A77; font-weight: bold">{</span>j<span style="color: #A45A77; font-weight: bold">}</span><span style="color: #BA2121">&#39;</span>
+    <span style="color: #008000; font-weight: bold">if</span> timestamp <span style="color: #666">&gt;</span> prev:
+        torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>_sleep(<span style="color: #008000">int</span>((timestamp <span style="color: #666">-</span> prev) <span style="color: #666">/</span> <span style="color: #666">10</span> <span style="color: #666">**</span> <span style="color: #666">8</span> <span style="color: #666">*</span> args<span style="color: #666">.</span>num_sleep_cycles))
+    prev <span style="color: #666">=</span> timestamp
+</code></pre></div>
+
+<p><strong>验证策略</strong>：<br />
+- <strong>逐张量精确匹配</strong>：<code>torch.equal(result, tensor)</code> — 发送端 tensor 直接与接收端比较<br />
+- <strong>时间戳驱动睡眠</strong>：<code>torch.cuda._sleep</code> 模拟计算间隔，按时间戳差值比例睡眠<br />
+- <strong>隐式假设</strong>：send 和 recv 的 tensor 是同一个对象（生成时共享引用）</p>
+<h3 id="35-profiling">3.5 Profiling：延迟与带宽测量</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L86-116</span>
+num_approx_rdma_cycles <span style="color: #666">=</span> <span style="color: #008000">int</span>(num_max_tensor_bytes <span style="color: #666">*</span> <span style="color: #666">2</span> <span style="color: #666">/</span> get_rdma_gbs() <span style="color: #666">*</span> <span style="color: #666">1.5</span>)
+
+<span style="color: #008000; font-weight: bold">for</span> hide_rdma_latency <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #008000; font-weight: bold">True</span>, <span style="color: #008000; font-weight: bold">False</span>):
+    <span style="color: #008000; font-weight: bold">for</span> num_concurrent <span style="color: #A2F; font-weight: bold">in</span> (<span style="color: #666">1</span>, <span style="color: #666">2</span>, <span style="color: #666">3</span>):
+        <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">loop</span>(_hide_rdma_latency<span style="color: #666">=</span>hide_rdma_latency):
+            torch<span style="color: #666">.</span>zeros((<span style="color: #666">131072</span>, <span style="color: #666">32768</span>), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)  <span style="color: #3D7B7B; font-style: italic"># L2 flush</span>
+            <span style="color: #008000; font-weight: bold">for</span> t <span style="color: #A2F; font-weight: bold">in</span> send_tensors:
+                buffer<span style="color: #666">.</span>pp_send(t, (rank_idx <span style="color: #666">+</span> <span style="color: #666">1</span>) <span style="color: #666">%</span> num_ranks)
+            <span style="color: #008000; font-weight: bold">if</span> _hide_rdma_latency:
+                torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>_sleep(num_approx_rdma_cycles <span style="color: #666">*</span> num_concurrent)
+            <span style="color: #008000; font-weight: bold">for</span> t <span style="color: #A2F; font-weight: bold">in</span> recv_tensors:
+                buffer<span style="color: #666">.</span>pp_recv(t, (rank_idx <span style="color: #666">-</span> <span style="color: #666">1</span>) <span style="color: #666">%</span> num_ranks)
+
+        send_t, recv_t <span style="color: #666">=</span> bench_kineto(
+            loop, kernel_names<span style="color: #666">=</span>(<span style="color: #BA2121">&#39;send_impl&#39;</span>, <span style="color: #BA2121">&#39;recv_impl&#39;</span>),
+            barrier_comm_profiling<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>, barrier<span style="color: #666">=</span>buffer<span style="color: #666">.</span>barrier,  <span style="color: #3D7B7B; font-style: italic"># 使用 buffer 的 barrier</span>
+            trace_path<span style="color: #666">=</span>get_trace_path(<span style="color: #666">...</span>))
+</code></pre></div>
+
+<p><strong>测量矩阵</strong>：<br />
+- <code>hide_rdma_latency</code>：True（隐藏 RDMA 延迟，测量纯计算重叠）/ False（暴露延迟）<br />
+- <code>num_concurrent</code>：1, 2, 3 并发张量<br />
+- 使用 <code>bench_kineto</code> + Kineto profiler 追踪<br />
+- 报告：send/recv 延迟（μs）+ 带宽（GB/s）</p>
+<p><strong><code>hide_rdma_latency</code> 语义</strong>：<br />
+- <code>True</code>：send 后睡眠等待 RDMA 完成，recv 测量的是"数据已到达"后的纯读取延迟<br />
+- <code>False</code>：recv 测量的是包含 RDMA 传输的完整延迟</p>
+<hr />
+<h2 id="4-api">4. API 使用模式对比</h2>
+<h3 id="41-agrs-api">4.1 AGRS API 调用链</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>ElasticBuffer(group, explicitly_destroy=True, num_bytes=...)
+  ├── .agrs_set_config(num_max_session_bytes, num_max_inflight_agrs)
+  ├── .create_agrs_session() / .destroy_agrs_session()
+  ├── .agrs_new_session()  [context manager]
+  ├── .agrs_get_inplace_tensor(shapes, dtype)  [inplace 模式]
+  └── .all_gather(tensors) → (gathered_tensors, handle)
+</code></pre></div>
+
+<h3 id="42-pp-api">4.2 PP API 调用链</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>ElasticBuffer(group, explicitly_destroy=True, allow_hybrid_mode=False, num_bytes=...)
+  ├── .pp_set_config(num_max_tensor_bytes, num_max_inflight_tensors)
+  ├── .pp_send(tensor, dst_rank_idx)
+  ├── .pp_recv(tensor, src_rank_idx)
+  └── .barrier  [用于 profiling 同步]
+</code></pre></div>
+
+<h3 id="43">4.3 共同模式</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>AGRS</th>
+<th>PP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Buffer 预计算</td>
+<td><code>get_agrs_num_max_session_bytes</code> → <code>get_agrs_buffer_size_hint</code></td>
+<td><code>get_pp_buffer_size_hint</code></td>
+</tr>
+<tr>
+<td>显式配置</td>
+<td><code>agrs_set_config</code></td>
+<td><code>pp_set_config</code></td>
+</tr>
+<tr>
+<td>显式销毁</td>
+<td><code>explicitly_destroy=True</code></td>
+<td><code>explicitly_destroy=True</code></td>
+</tr>
+<tr>
+<td>多进程启动</td>
+<td><code>torch.multiprocessing.spawn</code></td>
+<td><code>torch.multiprocessing.spawn</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5">5. 参数变化空间</h2>
+<h3 id="51-agrs">5.1 AGRS 测试参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--num-processes</code></td>
+<td>8</td>
+<td>参与测试的 GPU 数</td>
+</tr>
+<tr>
+<td><code>--num-max-inflight-agrs</code></td>
+<td>4</td>
+<td>最大并发 AG 操作数</td>
+</tr>
+<tr>
+<td><code>--num-stress-iterations</code></td>
+<td>4</td>
+<td>stress 轮数（每轮 128 ops）</td>
+</tr>
+<tr>
+<td><code>shape</code></td>
+<td><code>(32, 64, 2048)</code></td>
+<td>固定张量形状（约 8MB/张量）</td>
+</tr>
+<tr>
+<td>Profiling 大小</td>
+<td><code>2^20</code> ~ <code>2^27</code> bytes</td>
+<td>1MB ~ 64MB</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-pp">5.2 PP 测试参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--num-processes</code></td>
+<td>4</td>
+<td>参与测试的 GPU 数</td>
+</tr>
+<tr>
+<td><code>--num-tokens</code></td>
+<td>4096</td>
+<td>token 数</td>
+</tr>
+<tr>
+<td><code>--hidden</code></td>
+<td>7168</td>
+<td>hidden 维度</td>
+</tr>
+<tr>
+<td><code>--num-max-inflight-tensors</code></td>
+<td>4</td>
+<td>最大并发张量数</td>
+</tr>
+<tr>
+<td><code>--num-stress-iterations</code></td>
+<td>4</td>
+<td>stress 轮数</td>
+</tr>
+<tr>
+<td><code>--num-sends</code></td>
+<td>128</td>
+<td>每轮 send 操作数</td>
+</tr>
+<tr>
+<td><code>--num-sleep-cycles</code></td>
+<td>10^7</td>
+<td>睡眠周期基数</td>
+</tr>
+<tr>
+<td><code>--dump-profile-traces</code></td>
+<td><code>''</code></td>
+<td>Kineto trace 输出目录</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6">6. 验证逻辑深度分析</h2>
+<h3 id="61-agrs">6.1 AGRS 正确性验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L136-138</span>
+<span style="color: #008000; font-weight: bold">assert</span> results[i] <span style="color: #A2F; font-weight: bold">is</span> <span style="color: #A2F; font-weight: bold">not</span> <span style="color: #008000; font-weight: bold">None</span> <span style="color: #A2F; font-weight: bold">and</span> torch<span style="color: #666">.</span>equal(results[i], refs[i])
+</code></pre></div>
+
+<p><strong>验证链</strong>：<br />
+1. <code>all_gather_ref</code> 生成确定性真值（各 rank 独立种子）<br />
+2. <code>generate_stress_ops</code> 生成随机操作序列<br />
+3. <code>do_all_gather</code> 执行实际 AG 操作<br />
+4. <code>handle()</code> 等待完成<br />
+5. <code>out.clone()</code> 保存结果<br />
+6. <code>torch.equal</code> 精确比较</p>
+<p><strong>覆盖的边界条件</strong>：<br />
+- Session 随机销毁/重建<br />
+- Inflight 达到上限后的 fetch/destroy 选择<br />
+- Batched vs 非 batched 混合<br />
+- Inplace vs 非 inplace 混合</p>
+<h3 id="62-pp">6.2 PP 正确性验证</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># L76-77</span>
+<span style="color: #008000; font-weight: bold">assert</span> torch<span style="color: #666">.</span>equal(result, tensor)
+</code></pre></div>
+
+<p><strong>关键假设</strong>：<br />
+- 发送端和接收端共享同一个 <code>tensor</code> 对象引用（L31-35 生成时）<br />
+- 这意味着验证的是"数据无损传输"，而非"数据一致性"<br />
+- 时间戳排序保证了 send 在 recv 之前执行</p>
+<hr />
+<h2 id="7">7. 关键代码片段与模式</h2>
+<h3 id="71-l2-cache-flush">7.1 L2 Cache Flush 模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># AGRS: L71</span>
+torch<span style="color: #666">.</span>zeros(<span style="color: #008000">int</span>(<span style="color: #666">256e6</span> <span style="color: #666">//</span> <span style="color: #666">4</span>), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)  <span style="color: #3D7B7B; font-style: italic"># 256MB</span>
+
+<span style="color: #3D7B7B; font-style: italic"># PP: L98</span>
+torch<span style="color: #666">.</span>zeros((<span style="color: #666">131072</span>, <span style="color: #666">32768</span>), dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)  <span style="color: #3D7B7B; font-style: italic"># 131072*32768*4 = 16GB (!)</span>
+</code></pre></div>
+
+<p><strong>注意</strong>：PP 的 flush 量是 131072 × 32768 × 4 bytes = <strong>16GB</strong>，远超典型 GPU L2 缓存（H100 为 50MB）。这可能是有意为之的"全局内存写入"模式，用于清空所有缓存层级。</p>
+<h3 id="72-cuda-event">7.2 CUDA Event 计时模式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># AGRS: L165-177</span>
+start_events <span style="color: #666">=</span> [torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>Event(enable_timing<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>) <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests)]
+end_events <span style="color: #666">=</span> [torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>Event(enable_timing<span style="color: #666">=</span><span style="color: #008000; font-weight: bold">True</span>) <span style="color: #008000; font-weight: bold">for</span> _ <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests)]
+<span style="color: #008000; font-weight: bold">for</span> i <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">range</span>(num_tests):
+    <span style="color: #008000; font-weight: bold">with</span> buffer<span style="color: #666">.</span>agrs_new_session():
+        _, wait_handles <span style="color: #666">=</span> do_all_gather(<span style="color: #666">...</span>, start_event<span style="color: #666">=</span>start_events[i])
+        <span style="color: #008000; font-weight: bold">for</span> h <span style="color: #A2F; font-weight: bold">in</span> wait_handles:
+            h()
+    end_events[i]<span style="color: #666">.</span>record()
+times <span style="color: #666">=</span> np<span style="color: #666">.</span>array([s<span style="color: #666">.</span>elapsed_time(e) <span style="color: #666">/</span> <span style="color: #666">1e3</span> <span style="color: #008000; font-weight: bold">for</span> s, e <span style="color: #A2F; font-weight: bold">in</span> <span style="color: #008000">zip</span>(start_events, end_events)])[<span style="color: #666">1</span>:]  <span style="color: #3D7B7B; font-style: italic"># 丢弃 warmup</span>
+</code></pre></div>
+
+<h3 id="73">7.3 时间戳驱动睡眠</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># PP: L78-80</span>
+<span style="color: #008000; font-weight: bold">if</span> timestamp <span style="color: #666">&gt;</span> prev:
+    torch<span style="color: #666">.</span>cuda<span style="color: #666">.</span>_sleep(<span style="color: #008000">int</span>((timestamp <span style="color: #666">-</span> prev) <span style="color: #666">/</span> <span style="color: #666">10</span> <span style="color: #666">**</span> <span style="color: #666">8</span> <span style="color: #666">*</span> args<span style="color: #666">.</span>num_sleep_cycles))
+prev <span style="color: #666">=</span> timestamp
+</code></pre></div>
+
+<p><strong>语义</strong>：将抽象时间戳映射到 GPU sleep 周期，模拟计算与通信重叠。</p>
+<hr />
+<h2 id="8">8. 实验性状态评估</h2>
+<h3 id="81">8.1 文档标注</h3>
+<p>所有相关 API 均标注为 <code>(Experimental)</code>：</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>标注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pp_set_config</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>pp_send</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>pp_recv</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>create_agrs_session</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>destroy_agrs_session</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>agrs_new_session</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>agrs_set_config</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>agrs_get_inplace_tensor</code></td>
+<td>✅ Experimental</td>
+</tr>
+<tr>
+<td><code>all_gather</code></td>
+<td>✅ Experimental</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 已知限制</h3>
+<table>
+<thead>
+<tr>
+<th>限制</th>
+<th>详情</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PP 仅相邻 rank</strong></td>
+<td><code>pp_send</code>/<code>pp_recv</code> 文档明确"prev or next rank only"</td>
+</tr>
+<tr>
+<td><strong>AGRS 固定 shape</strong></td>
+<td>stress test 使用固定 <code>(32, 64, 2048)</code>，未覆盖变长</td>
+</tr>
+<tr>
+<td><strong>PP 禁用 hybrid</strong></td>
+<td><code>allow_hybrid_mode=False</code>，不测试 NCCL 回退路径</td>
+</tr>
+<tr>
+<td><strong>无 Reduce-Scatter</strong></td>
+<td>测试只覆盖 All-Gather，未测试 Reduce-Scatter（API 名称暗示应支持）</td>
+</tr>
+<tr>
+<td><strong>无错误注入</strong></td>
+<td>测试仅覆盖 happy path，无超时/越界/并发溢出测试</td>
+</tr>
+<tr>
+<td><strong>进程数固定</strong></td>
+<td>AGRS 默认 8 卡、PP 默认 4 卡，未自动化扩展</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83">8.3 功能成熟度判断</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>评估</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>API 完整性</strong></td>
+<td>中高 — session 生命周期、配置、执行、查询齐全</td>
+</tr>
+<tr>
+<td><strong>测试覆盖</strong></td>
+<td>中 — stress + profiling 双轨，但边界条件不足</td>
+</tr>
+<tr>
+<td><strong>生产就绪</strong></td>
+<td>低 — 明确标注 Experimental，限制较多</td>
+</tr>
+<tr>
+<td><strong>性能可观测</strong></td>
+<td>高 — 集成 Kineto profiling、CUDA Event 计时、带宽计算</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-ep">9. 与核心 EP 功能的关系</h2>
+<h3 id="91-elastic-buffer">9.1 Elastic Buffer 的定位</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP Core (Production)
+├── Dispatch / Combine (MoE expert parallelism)
+├── Intra-node (NVLink)
+└── Inter-node (RDMA)
+
+Elastic Buffer (Experimental)
+├── AGRS (All-Gather / Reduce-Scatter)
+├── PP (Pipeline Parallelism send/recv)
+└── Hybrid Mode (NCCL fallback)
+</code></pre></div>
+
+<h3 id="92">9.2 设计意图推测</h3>
+<ol>
+<li><strong>AGRS</strong>：为 MoE 层的 token distribution 提供比 NCCL 更灵活的 all-gather 语义（session 化、inplace、batched）</li>
+<li><strong>PP</strong>：为 PP 通信提供与 EP 统一的 buffer 管理，可能用于 3D/4D 并行场景</li>
+<li><strong>共享 runtime</strong>：两者共用 <code>ElasticBuffer.runtime</code>，共享 symmetric memory 基础设施</li>
+</ol>
+<hr />
+<h2 id="10">10. 总结</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>AGRS 测试</th>
+<th>PP 测试</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>测试类型</strong></td>
+<td>正确性 + 带宽</td>
+<td>正确性 + 延迟</td>
+</tr>
+<tr>
+<td><strong>核心 API</strong></td>
+<td><code>all_gather</code>, <code>agrs_get_inplace_tensor</code></td>
+<td><code>pp_send</code>, <code>pp_recv</code></td>
+</tr>
+<tr>
+<td><strong>验证方式</strong></td>
+<td>与 CPU 参考实现精确比较</td>
+<td>发送/接收张量精确比较</td>
+</tr>
+<tr>
+<td><strong>压力来源</strong></td>
+<td>随机 session 生命周期 + inflight 并发</td>
+<td>时间戳排序的 send/recv 交错</td>
+</tr>
+<tr>
+<td><strong>性能度量</strong></td>
+<td>聚合带宽 (GB/s)</td>
+<td>延迟 (μs) + 带宽 (GB/s)</td>
+</tr>
+<tr>
+<td><strong>Profiler</strong></td>
+<td>CUDA Event</td>
+<td>Kineto + barrier_comm_profiling</td>
+</tr>
+<tr>
+<td><strong>成熟度</strong></td>
+<td>Experimental</td>
+<td>Experimental</td>
+</tr>
+</tbody>
+</table>
+<p>两个测试文件展示了 DeepEP 从核心 EP 功能向更通用通信原语扩展的实验方向，采用<strong>确定性随机测试 + 性能 profiling</strong>的双重验证范式，为后续生产化提供了可复现的基准。</p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

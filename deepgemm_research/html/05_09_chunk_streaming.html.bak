@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chunk Streaming 概念在 DeepGEMM Mega MoE 中的映射分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="chunk-streaming-deepgemm-mega-moe">Chunk Streaming 概念在 DeepGEMM Mega MoE 中的映射分析</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+分析目标: 对比 DeepEP 博客中描述的 "Chunk Streaming" 概念与 Mega MoE 实际实现的差异<br />
+源码版本: DeepGEMM (Blackwell SM100)</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 核心结论摘要</h2>
+<p><strong>Mega MoE 不使用 DeepEP 式的 "Chunk" 概念，而是通过 Symmetric Memory 实现了 "Token 即通信粒度" 的零拷贝直接访问。</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP (Normal Kernel)</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>调度粒度 (Scheduling Granularity)</td>
+<td>Token</td>
+<td>Token</td>
+</tr>
+<tr>
+<td>通信粒度 (Communication Granularity)</td>
+<td>Chunk (多 Token 聚合)</td>
+<td><strong>Token (单 Token 直接访问)</strong></td>
+</tr>
+<tr>
+<td>聚合机制</td>
+<td>Token Stream → Chunk → Network</td>
+<td>Symmetric Memory 直接读写</td>
+</tr>
+<tr>
+<td>流式行为</td>
+<td>Chunk Streaming (整 Chunk 流动)</td>
+<td>Token Streaming (单 Token 按需拉取)</td>
+</tr>
+<tr>
+<td>等待策略</td>
+<td>等待 Chunk 填满</td>
+<td>等待 BLOCK_M 个 Token 到达即计算</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-deepep-chunk-streaming">2. DeepEP 的 Chunk Streaming 模型回顾</h2>
+<h3 id="21">2.1 核心概念</h3>
+<p>根据博客描述，DeepEP Normal Kernel 的数据路径为：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink/RDMA Pipeline → Receive Buffer → Expert Buffer
+</code></pre></div>
+
+<p>关键定义：<br />
+- <strong>Token 是调度粒度</strong> (scheduling granularity): Router 的输出单位<br />
+- <strong>Chunk 是通信粒度</strong> (communication granularity): 网络传输的单位<br />
+- <strong>Chunk Streaming</strong>: Chunk 流过网络，无需等待整个 Batch</p>
+<h3 id="22-chunk">2.2 为什么需要 Chunk？</h3>
+<blockquote>
+<p>"The network is unsuitable for single-Token sends — produces small packets, high startup overhead, low bandwidth utilization. Tokens are aggregated: Token Stream → Chunk → Network Transfer"</p>
+</blockquote>
+<p>核心原因：<br />
+1. <strong>小包开销</strong>: 单 Token 发送产生小 packet，startup overhead 高<br />
+2. <strong>带宽利用率</strong>: 小 packet 无法充分利用网络带宽<br />
+3. <strong>聚合收益</strong>: 将多个 Token 聚合成 Chunk 后发送，摊薄 startup 开销</p>
+<hr />
+<h2 id="3-mega-moe">3. Mega MoE 的通信模型</h2>
+<h3 id="31-symmetric-memory-chunk">3.1 Symmetric Memory: 消除 Chunk 需求的基石</h3>
+<p>Mega MoE 使用 <code>torch.distributed._symmetric_memory</code> 创建跨 GPU 可直接访问的对称内存缓冲区：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic"># deep_gemm/mega/__init__.py</span>
+<span style="color: #008000; font-weight: bold">class</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymmBuffer</span>:
+    <span style="color: #008000; font-weight: bold">def</span><span style="color: #BBB"> </span><span style="color: #00F">__init__</span>(<span style="color: #008000">self</span>, group, num_experts, num_max_tokens_per_rank, <span style="color: #666">...</span>):
+        <span style="color: #008000">self</span><span style="color: #666">.</span>buffer <span style="color: #666">=</span> symm_mem<span style="color: #666">.</span>empty(num_bytes, dtype<span style="color: #666">=</span>torch<span style="color: #666">.</span>int8, device<span style="color: #666">=</span><span style="color: #BA2121">&#39;cuda&#39;</span>)
+        <span style="color: #008000">self</span><span style="color: #666">.</span>handle <span style="color: #666">=</span> symm_mem<span style="color: #666">.</span>rendezvous(<span style="color: #008000">self</span><span style="color: #666">.</span>buffer, group<span style="color: #666">=</span>group)
+</code></pre></div>
+
+<p><strong>Symmetric Memory 的本质</strong>: 它不是传统的 "发送-接收" 模型，而是让所有 GPU 通过 NVLink 直接读写同一块逻辑内存。这意味着：<br />
+- <strong>无需 packet 聚合</strong>: 每次读写可以直接以 Token 为单位<br />
+- <strong>无 startup overhead</strong>: NVLink 直接内存访问没有 per-packet 启动开销<br />
+- <strong>带宽由 TMA 硬件保证</strong>: Tensor Memory Access 硬件控制器处理数据传输</p>
+<h3 id="32-token-token-level-pull">3.2 Token 级直接拉取 (Token-Level Pull)</h3>
+<p>Mega MoE 的 dispatch 阶段以 <strong>单个 Token</strong> 为粒度从远端拉取数据：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh - Dispatch Warp 主循环</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumGlobalWarps<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>warp_idx;<span style="color: #BBB"> </span>
+<span style="color: #BBB">     </span>;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumGlobalWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... 确定当前 token 属于哪个 expert、来自哪个 rank ...</span>
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// TMA load token from remote rank into shared memory</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">            </span>pull_buffer.get_base_ptr(),
+<span style="color: #BBB">            </span>sym_buffer.map(input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">                           </span>current_rank_in_expert_idx),
+<span style="color: #BBB">            </span>pull_mbarrier,<span style="color: #BBB"> </span>kHidden);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 一次拉取一个 Token (kHidden bytes)</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Store token to local L1 buffer via TMA</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">        </span>l1_token_buffer.get_data_buffer(pool_token_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>pull_buffer.get_base_ptr(),<span style="color: #BBB"> </span>pull_buffer.get_num_bytes());
+}
+</code></pre></div>
+
+<p><strong>关键发现</strong>: 循环变量 <code>token_idx</code> 每次递增 1，每次 TMA 操作传输 <code>kHidden</code> 字节（一个 Token）。这是 <strong>Token 级通信粒度</strong>。</p>
+<hr />
+<h2 id="4-vs">4. 调度粒度 vs 通信粒度</h2>
+<h3 id="41-deepep">4.1 DeepEP 的分离模型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│ DeepEP Normal Kernel                                        │
+│                                                             │
+│  Token Stream ──[聚合]──&gt; Chunk ──[网络]──&gt; Chunk Buffer    │
+│  (调度粒度)      聚合      (通信粒度)    传输                │
+│                                                             │
+│  • Token: 调度器决策单位                                    │
+│  • Chunk: 网络传输单位 (多 Token 打包)                      │
+│  • 需要 Chunk Buffer 做聚合/解聚                            │
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="42-mega-moe">4.2 Mega MoE 的统一模型</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│ Mega MoE                                                    │
+│                                                             │
+│  Token ──[Symmetric Memory 直接读写]──&gt; Local Pool Buffer   │
+│  (调度粒度 = 通信粒度)                                      │
+│                                                             │
+│  • Token: 既是调度单位，也是通信单位                        │
+│  • 无需聚合/解聚缓冲区                                      │
+│  • TMA 硬件保证传输效率                                     │
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>核心差异</strong>: Symmetric Memory 消除了 "聚合" 的必要性。NVLink 的 TMA 引擎可以高效处理小至 128B (一个 FP8 Token) 的传输，因为：<br />
+- NVLink 的 burst 传输效率不依赖 packet 大小<br />
+- TMA 硬件自动处理地址计算和传输调度<br />
+- 多个 TMA 请求可以流水线化执行</p>
+<hr />
+<h2 id="5-token">5. 可变 Token 数处理</h2>
+<h3 id="51-expert-token">5.1 每个 Expert 的 Token 数动态变化</h3>
+<p>Mega MoE 通过 <code>Workspace</code> 和 <code>MegaMoEScheduler</code> 处理每个 Expert 接收到的可变 Token 数：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// scheduler/mega_moe.cuh - 等待所有 Expert 计数器就绪</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>fetch_expert_recv_count()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>get_lane_idx();
+<span style="color: #BBB">        </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(expert_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumExpertsPerRank)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_volatile(workspace.get_expert_recv_count_sum_ptr(expert_idx));
+<span style="color: #BBB">            </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(value<span style="color: #BBB"> </span><span style="color: #666">&gt;&gt;</span><span style="color: #BBB"> </span><span style="color: #666">32</span>)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumRanks);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>stored_num_tokens_per_expert[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(value);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<h3 id="52-expert-block">5.2 调度器按 Expert 分配 Block</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// scheduler/mega_moe.cuh - 核心调度逻辑</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_current_num_m_blocks()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>ceil_div(current_num_tokens,<span style="color: #BBB"> </span>BLOCK_M);
+}
+
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>fetch_next_l1_block()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(current_local_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>wave_end_expert_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_m_blocks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_current_num_m_blocks();
+<span style="color: #BBB">        </span>m_block_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumL1BlockNs;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(m_block_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_m_blocks)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 当前 Expert 已分配完，移动到下一个 Expert</span>
+<span style="color: #BBB">        </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">-=</span><span style="color: #BBB"> </span>num_m_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumL1BlockNs;
+<span style="color: #BBB">        </span>advance_expert_idx();
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">false</span>;
+}
+</code></pre></div>
+
+<p><strong>关键机制</strong>:<br />
+- <code>stored_num_tokens_per_expert[i]</code>: 缓存每个 Expert 的 Token 数<br />
+- <code>get_current_num_m_blocks()</code>: 计算当前 Expert 需要多少个 M 方向 Block<br />
+- <code>advance_expert_idx()</code>: 当一个 Expert 处理完毕，移动到下一个 Expert</p>
+<h3 id="53-m-token">5.3 有效 M 维度处理 (非对齐 Token 数)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// scheduler/mega_moe.cuh</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kDoUMMAAligned<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>get_valid_m()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>m<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>min(current_num_tokens<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>m_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>BLOCK_M,<span style="color: #BBB"> </span>BLOCK_M);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>kDoUMMAAligned<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>align(m,<span style="color: #BBB"> </span><span style="color: #666">16u</span>)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>m;
+}
+</code></pre></div>
+
+<p>当最后一个 Block 的 Token 数不足 <code>BLOCK_M</code> 时，<code>get_valid_m()</code> 返回实际的有效 Token 数，MMA 指令会据此调整。</p>
+<hr />
+<h2 id="6-scheduling-unit">6. 调度单元 (Scheduling Unit)</h2>
+<h3 id="61-mega-moe">6.1 Mega MoE 的三级调度</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌──────────────────────────────────────────────────────────────────┐
+│                    Mega MoE 调度层次                             │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Level 1: Expert 级 (Wave)                                       │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Wave = kNumExpertsPerWave 个 Expert 一组               │    │
+│  │  先执行 Wave 内所有 Expert 的 L1，再执行 L2             │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Level 2: Block 级 (CTA)                                         │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  每个 CTA 处理一个 (expert, m_block, n_block) 组合      │    │
+│  │  block_idx 以 kNumSMs 步长在 Block 间跳跃               │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Level 3: Token 级 (Dispatch)                                    │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Dispatch Warp 以 Token 为单位轮询各 Rank 的数据         │    │
+│  │  token_idx += kNumGlobalWarps (跨 SM 协作)              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="62">6.2 调度器状态机</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// scheduler/mega_moe.cuh - 核心状态机</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span>cute<span style="color: #666">::</span>tuple<span style="color: #666">&lt;</span>BlockPhase,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span>,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span>,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span>get_next_block()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(current_local_expert_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>kNumExpertsPerRank)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">break</span>;
+
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(next_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(fetch_next_l1_block())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>n_block_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>m_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumL1BlockNs;
+<span style="color: #BBB">                </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 步长为 SM 数量</span>
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{BlockPhase<span style="color: #666">::</span>Linear1,<span style="color: #BBB"> </span>current_local_expert_idx,<span style="color: #BBB"> </span>m_block_idx,<span style="color: #BBB"> </span>n_block_idx};
+<span style="color: #BBB">            </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">// L1 完成，切换到 L2</span>
+<span style="color: #BBB">                </span>next_phase<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>BlockPhase<span style="color: #666">::</span>Linear2;
+<span style="color: #BBB">                </span>set_expert_idx(math<span style="color: #666">::</span>align<span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span>,<span style="color: #BBB"> </span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(current_local_expert_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumExpertsPerWave));
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(fetch_next_l2_block())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>n_block_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>m_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumL2BlockNs;
+<span style="color: #BBB">                </span>block_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs;
+<span style="color: #BBB">                </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{BlockPhase<span style="color: #666">::</span>Linear2,<span style="color: #BBB"> </span>current_local_expert_idx,<span style="color: #BBB"> </span>m_block_idx,<span style="color: #BBB"> </span>n_block_idx};
+<span style="color: #BBB">            </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">// L2 完成，切换到下一 Wave 的 L1</span>
+<span style="color: #BBB">                </span>next_phase<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>BlockPhase<span style="color: #666">::</span>Linear1;
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>{BlockPhase<span style="color: #666">::</span>None,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span><span style="color: #666">0</span>};
+}
+</code></pre></div>
+
+<p><strong>调度单元总结</strong>:<br />
+- <strong>Dispatch 阶段</strong>: Token 是基本单位 (每个 Warp 处理若干 Token)<br />
+- <strong>Compute 阶段</strong>: (Expert, M_Block, N_Block) 是基本单位 (每个 CTA 处理一个 Block)<br />
+- <strong>Combine 阶段</strong>: Token 是基本单位 (每个 Warp 处理若干 Token 的 top-k reduce)</p>
+<hr />
+<h2 id="7-flow-through-without-waiting">7. "Flow Through Without Waiting" 流式行为</h2>
+<h3 id="71-deepep-fifo">7.1 DeepEP 的 FIFO 流式</h3>
+<p>博客描述 DeepEP 通过 FIFO 实现流式：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Without FIFO: Send → Barrier → Forward → Barrier → Receive
+With FIFO:    Send → FIFO → Forward → FIFO → Receive
+</code></pre></div>
+
+<h3 id="72-mega-moe-arrival-counter">7.2 Mega MoE 的 Arrival Counter 流式</h3>
+<p>Mega MoE 使用 <strong>arrival counter</strong> 机制实现类似的流式行为：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh - Dispatch 阶段写入后通知</span>
+ptx<span style="color: #666">::</span>red_add_rel(
+<span style="color: #BBB">    </span>workspace.get_l1_arrival_count_ptr(expert_pool_block_offset<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>token_idx_in_expert<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>BLOCK_M),<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// GEMM TMA Load Warp - 等待 Token 到达后立即计算</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear1)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_arrival_count_ptr(pool_block_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>expected<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>scheduler.<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span>get_valid_m<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>expected);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 自旋等待 BLOCK_M 个 Token 到达</span>
+}
+</code></pre></div>
+
+<p><strong>流式行为对比</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>等待单位</td>
+<td>Chunk</td>
+<td>BLOCK_M 个 Token</td>
+</tr>
+<tr>
+<td>通知机制</td>
+<td>FIFO 信号</td>
+<td>Arrival Counter</td>
+</tr>
+<tr>
+<td>触发条件</td>
+<td>Chunk 填满</td>
+<td>BLOCK_M 个 Token 到达</td>
+</tr>
+<tr>
+<td>计算启动</td>
+<td>收到完整 Chunk</td>
+<td>收到 BLOCK_M 个 Token</td>
+</tr>
+</tbody>
+</table>
+<h3 id="73-l1-l2">7.3 L1 → L2 的流式衔接</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// L1 Epilogue 完成后通知 L2 可以开始</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(epilogue_warp_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>red_or_rel_gpu(
+<span style="color: #BBB">        </span>workspace.get_l2_arrival_mask_ptr(pool_block_idx),
+<span style="color: #BBB">        </span><span style="color: #666">1ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>n_block_idx<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 标记该 N block 的数据已就绪</span>
+<span style="color: #BBB">    </span>);
+}
+
+<span style="color: #3D7B7B; font-style: italic">// L2 等待 L1 输出就绪</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(block_phase<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sched<span style="color: #666">::</span>BlockPhase<span style="color: #666">::</span>Linear2)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint64_t</span><span style="color: #BBB"> </span>needed<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3ull</span><span style="color: #BBB"> </span><span style="color: #666">&lt;&lt;</span><span style="color: #BBB"> </span>(k_block_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l2_arrival_mask_ptr(pool_block_idx);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acq_gpu(ptr);
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>((cached_l2_arrival_mask<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>needed)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>needed);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键设计</strong>: L2 不是等待整个 Expert 的所有 L1 输出，而是等待 <strong>当前 K block 所需的 2 个 L1 输出 Block</strong> (因为 SwiGLU 后 N 维度减半)。</p>
+<hr />
+<h2 id="8-combine-chunk">8. Combine 阶段的 Chunk 概念</h2>
+<h3 id="81-mega-moe-chunk">8.1 Mega MoE 中唯一的 "Chunk"</h3>
+<p>Mega MoE 代码中确实存在 <code>chunk</code> 概念，但仅用于 <strong>Combine 阶段的 Hidden 维度分块</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh - Combine 阶段</span>
+<span style="color: #3D7B7B; font-style: italic">// 3 slots of chunk is needed: 2 load stages and 1 store</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunkSlots<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">3</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// NOTES: either 1 or 2 chunks for simplicity</span>
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunks<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">    </span>kNumChunkSlots<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>SMEM_BEFORE_BARRIER_SIZE<span style="color: #BBB"> </span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>kHidden<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumMaxRegistersForBuffer<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">2</span>;
+<span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumChunkBytes<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumChunks;
+</code></pre></div>
+
+<h3 id="82-combine-token">8.2 Combine 的 Token 级处理</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Combine: 每个 Warp 处理一个 Token 的 top-k reduce</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>epilogue_warp_idx;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps)<span style="color: #BBB"> </span>{
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 遍历所有 chunk (Hidden 维度分块)</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>chunk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 遍历 top-k，加载并累加</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(do_reduce)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>do_reduce<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>move_mask_and_load(load_stage_idx<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 预取下一个</span>
+<span style="color: #BBB">            </span>combine_load_barriers[load_stage_idx]<span style="color: #666">-&gt;</span>wait(combine_phase);
+<span style="color: #BBB">            </span><span style="color: #3D7B7B; font-style: italic">// 累加到寄存器</span>
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumUint4PerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>j)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">                </span>ptx<span style="color: #666">::</span>accumulate(reduced[j<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumElemsPerUint4<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>l],<span style="color: #BBB"> </span>bf16_values[l]);
+<span style="color: #BBB">            </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 写回</span>
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_1d(
+<span style="color: #BBB">            </span>math<span style="color: #666">::</span>advance_ptr(y,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(token_idx)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>chunk_byte_offset),
+<span style="color: #BBB">            </span>combine_store_buffer,<span style="color: #BBB"> </span>kNumChunkBytes);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>这里的 Chunk 含义</strong>: 将 Hidden 维度分成 1~2 块，以解决 Shared Memory 和 Register 的容量限制。这与 DeepEP 的 "通信 Chunk" 完全不同。</p>
+<hr />
+<h2 id="9">9. 架构对比图</h2>
+<h3 id="91-deepep-chunk-streaming">9.1 DeepEP Chunk Streaming 架构</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────┐
+│                    DeepEP Normal Kernel                                │
+│                                                                         │
+│  GPU 0                    GPU 1                    GPU 2                │
+│  ┌─────────┐              ┌─────────┐              ┌─────────┐         │
+│  │Token Buf│              │Token Buf│              │Token Buf│         │
+│  │ T0 T1 T2│              │ T3 T4 T5│              │ T6 T7 T8│         │
+│  └────┬────┘              └────┬────┘              └────┬────┘         │
+│       │                        │                        │              │
+│       ▼                        ▼                        ▼              │
+│  ┌─────────┐              ┌─────────┐              ┌─────────┐         │
+│  │Dispatch │              │Dispatch │              │Dispatch │         │
+│  │  Buffer │              │  Buffer │              │  Buffer │         │
+│  └────┬────┘              └────┬────┘              └────┬────┘         │
+│       │                        │                        │              │
+│       ▼                        ▼                        ▼              │
+│  ╔═════════╗              ╔═════════╗              ╔═════════╗         │
+│  ║ Chunk   ║              ║ Chunk   ║              ║ Chunk   ║         │
+│  ║ Buffer  ║              ║ Buffer  ║              ║ Buffer  ║         │
+│  ║(聚合N个 ║              ║(聚合N个 ║              ║(聚合N个 ║         │
+│  ║ Token)  ║              ║ Token)  ║              ║ Token)  ║         │
+│  ╚════╤════╝              ╚════╤════╝              ╚════╤════╝         │
+│       │                        │                        │              │
+│       ▼                        ▼                        ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐       │
+│  │              NVLink / RDMA Network Fabric                   │       │
+│  │              (Chunk 级传输)                                  │       │
+│  └─────────────────────────────────────────────────────────────┘       │
+│       │                        │                        │              │
+│       ▼                        ▼                        ▼              │
+│  ┌─────────┐              ┌─────────┐              ┌─────────┐         │
+│  │Receive  │              │Receive  │              │Receive  │         │
+│  │ Buffer  │              │ Buffer  ║              │ Buffer  ║         │
+│  └────┬────┘              └────┬────┘              └────┬────┘         │
+│       ▼                        ▼                        ▼              │
+│  ┌─────────┐              ┌─────────┐              ┌─────────┐         │
+│  │Expert   │              │Expert   │              │Expert   │         │
+│  │ Buffer  │              │ Buffer  │              │ Buffer  │         │
+│  └─────────┘              └─────────┘              └─────────┘         │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="92-mega-moe-symmetric-memory">9.2 Mega MoE Symmetric Memory 架构</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>┌─────────────────────────────────────────────────────────────────────────┐
+│                    Mega MoE (Blackwell SM100)                          │
+│                                                                         │
+│  GPU 0                    GPU 1                    GPU 2                │
+│  ┌─────────┐              ┌─────────┐              ┌─────────┐         │
+│  │Input    │              │Input    │              │Input    │         │
+│  │Token Buf│              │Token Buf│              │Token Buf│         │
+│  │ T0 T1 T2│              │ T3 T4 T5│              │ T6 T7 T8│         │
+│  └────┬────┘              └────┬────┘              └────┬────┘         │
+│       │                        │                        │              │
+│       │    ┌───────────────────┴───────────────────┐    │              │
+│       │    │                                       │    │              │
+│       │    │     Symmetric Memory (NVLink)         │    │              │
+│       │    │     Token 级直接访问                   │    │              │
+│       │    │                                       │    │              │
+│       │    │  ┌─────────────────────────────────┐  │    │              │
+│       │    │  │  SymBuffer (All-Gather 视图)    │  │    │              │
+│       │    │  │  Rank0 │ Rank1 │ Rank2 │ ...    │  │    │              │
+│       │    │  └─────────────────────────────────┘  │    │              │
+│       │    │                                       │    │              │
+│       │    └───────────────────┬───────────────────┘    │              │
+│       │                        │                        │              │
+│       ▼                        ▼                        ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐       │
+│  │                    SM 0 (Compute)                           │       │
+│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐              │       │
+│  │  │Dispatch   │  │ GEMM      │  │ Combine   │              │       │
+│  │  │Warp Group │  │ Warp Group│  │ Warp Group│              │       │
+│  │  │           │  │           │  │           │              │       │
+│  │  │Token级    │  │Block级    │  │Token级    │              │       │
+│  │  │TMA Pull   │  │MMA Compute│  │TMA Store  │              │       │
+│  │  └───────────┘  └───────────┘  └───────────┘              │       │
+│  └─────────────────────────────────────────────────────────────┘       │
+│                                                                         │
+│  调度粒度 = 通信粒度 = Token                                            │
+│  (Symmetric Memory 消除了聚合需求)                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<hr />
+<h2 id="10">10. 关键问题回答</h2>
+<h3 id="q1-mega-moe-chunking-chunk">Q1: Mega MoE 是否使用 Chunking？代码中是否有 "chunk" 概念？</h3>
+<p><strong>答案</strong>: <br />
+- <strong>通信阶段</strong>: 不使用。Mega MoE 的 dispatch/combine 以 Token 为单位通过 Symmetric Memory 直接访问。<br />
+- <strong>Combine 阶段</strong>: 有 <code>kNumChunks</code> 概念，但这是将 Hidden 维度分块以适应 Shared Memory 容量限制，与 DeepEP 的通信 Chunk 完全不同。</p>
+<h3 id="q2-expert-token">Q2: 内核如何处理每个 Expert 的可变 Token 数？</h3>
+<p><strong>答案</strong>: 通过以下机制：<br />
+1. <code>fetch_expert_recv_count()</code>: 等待所有 Rank 的 Expert 计数器就绪<br />
+2. <code>stored_num_tokens_per_expert[]</code>: 缓存每个 Expert 的 Token 数<br />
+3. <code>get_current_num_m_blocks()</code>: 动态计算每个 Expert 需要的 M Block 数<br />
+4. <code>get_valid_m()</code>: 处理最后一个 Block 的非对齐 Token 数</p>
+<h3 id="q3-vs">Q3: 是否存在 "调度粒度" vs "通信粒度" 的区分？</h3>
+<p><strong>答案</strong>: <strong>不存在</strong>。这是 Mega MoE 与 DeepEP 的核心差异：<br />
+- DeepEP: Token (调度) ≠ Chunk (通信)，需要聚合<br />
+- Mega MoE: Token (调度) = Token (通信)，Symmetric Memory 允许 Token 级直接访问</p>
+<h3 id="q4-token">Q4: 内核如何处理 Token — 逐个还是分批/分块？</h3>
+<p><strong>答案</strong>: 分阶段不同：<br />
+- <strong>Dispatch</strong>: 逐个 Token 处理 (token_idx 递增 1)<br />
+- <strong>Compute</strong>: 按 Block 处理 (BLOCK_M 个 Token 一组)<br />
+- <strong>Combine</strong>: 逐个 Token 处理 (token_idx 递增 1)</p>
+<h3 id="q5-symmetric-memory-chunking">Q5: Symmetric Memory 是否消除了对 Chunking 的需求？</h3>
+<p><strong>答案</strong>: <strong>是的</strong>。这是核心洞察：<br />
+- DeepEP 需要 Chunk 是因为传统 RDMA/NVLink 网络的小包传输效率低<br />
+- Mega MoE 的 Symmetric Memory 通过 NVLink 直接内存访问，TMA 硬件可以高效处理任意大小的传输<br />
+- 因此 "Token 即通信粒度" 成为可能，无需聚合</p>
+<h3 id="q6-mega-moe">Q6: Mega MoE 的 "调度单元" 是什么？</h3>
+<p><strong>答案</strong>: 三级调度单元：<br />
+1. <strong>Expert Wave</strong>: 宏观调度，决定哪些 Expert 一起处理<br />
+2. <strong>CTA Block</strong>: 中观调度，每个 CTA 处理一个 (expert, m_block, n_block)<br />
+3. <strong>Token</strong>: 微观调度，Dispatch/Combine Warp 以 Token 为单位工作</p>
+<h3 id="q7-flow-through-without-waiting">Q7: 内核如何处理 "flow through without waiting" 流式行为？</h3>
+<p><strong>答案</strong>: 通过 Arrival Counter 机制：<br />
+1. Dispatch Warp 每写入一个 Token 到 Local Pool，执行 <code>red_add_rel</code> 增加 arrival count<br />
+2. GEMM Warp 自旋等待 <code>arrival_count == BLOCK_M</code> (即一个 M Block 的 Token 全部到达)<br />
+3. L1 Epilogue 完成后通过 <code>red_or_rel_gpu</code> 设置 L2 arrival mask<br />
+4. L2 GEMM 等待所需的 L1 输出 Block 就绪后立即开始</p>
+<p><strong>与 DeepEP 的区别</strong>:<br />
+- DeepEP: 等待 Chunk 填满 → 转发 → 接收<br />
+- Mega MoE: 等待 BLOCK_M 个 Token 到达 → 开始 GEMM</p>
+<hr />
+<h2 id="11">11. 设计哲学对比</h2>
+<h3 id="111-deepep">11.1 DeepEP: 通信优化范式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>问题: 网络不适合小 packet 传输
+方案: 聚合 Token → Chunk → 传输
+本质: 适配网络硬件特性
+</code></pre></div>
+
+<h3 id="112-mega-moe-">11.2 Mega MoE: 计算-通信融合范式</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>问题: 如何最大化计算效率
+方案: Symmetric Memory 直接访问，Token 按需拉取
+本质: 让通信适配计算需求 (而非让计算适配通信)
+</code></pre></div>
+
+<h3 id="113">11.3 演进路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP:         Token → Chunk → Network → Chunk → Token → Compute
+                (通信约束了数据流)
+
+Mega MoE:       Token → Symmetric Memory → Token → Compute
+                (通信不再约束数据流)
+
+理想状态:       Token → Compute (通信完全透明)
+</code></pre></div>
+
+<hr />
+<h2 id="12">12. 代码引用索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>16-48</td>
+<td>SymmBuffer 定义与分配</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>58-74</td>
+<td>Token 对齐到 block_m</td>
+</tr>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>14-122</td>
+<td>Buffer 布局计算</td>
+</tr>
+<tr>
+<td><code>csrc/apis/mega.hpp</code></td>
+<td>124-206</td>
+<td>C++ API 入口</td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>30-219</td>
+<td>MegaMoEScheduler 完整实现</td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>183-197</td>
+<td>fetch_expert_recv_count</td>
+</tr>
+<tr>
+<td><code>scheduler/mega_moe.cuh</code></td>
+<td>199-218</td>
+<td>for_each_block 主循环</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>356-600</td>
+<td>Dispatch Warp (Token 级拉取)</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>650-719</td>
+<td>GEMM TMA Load Warp</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>763-872</td>
+<td>MMA Issue Warp</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>877-1357</td>
+<td>Epilogue &amp; Combine Warp</td>
+</tr>
+<tr>
+<td><code>impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1232-1247</td>
+<td>Combine 阶段的 Chunk 定义</td>
+</tr>
+<tr>
+<td><code>tests/test_mega_moe.py</code></td>
+<td>40-46</td>
+<td>Token count 处理测试</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13">13. 总结</h2>
+<p><strong>Mega MoE 对 Chunk Streaming 概念的映射不是 "继承" 而是 "超越"</strong>:</p>
+<ol>
+<li>
+<p><strong>Chunk 作为通信粒度</strong>: 被 Symmetric Memory 消除。NVLink 直接内存访问使 Token 级通信成为可能。</p>
+</li>
+<li>
+<p><strong>Chunk 作为调度粒度</strong>: 演变为 BLOCK_M Token 的 "计算 Block"。GEMM 以 BLOCK_M 个 Token 为一组进行计算。</p>
+</li>
+<li>
+<p><strong>Chunk Streaming 流式行为</strong>: 被 Arrival Counter 机制继承。等待 BLOCK_M 个 Token 到达即开始计算，无需等待整个 Expert 或整个 Batch。</p>
+</li>
+<li>
+<p><strong>Chunk 作为 Hidden 维度分块</strong>: Combine 阶段的 <code>kNumChunks</code> 是唯一保留的 Chunk 概念，但这是资源约束下的工程优化，非通信需求。</p>
+</li>
+</ol>
+<p><strong>核心洞察</strong>: Mega MoE 的设计哲学是 <strong>"让通信适配计算"</strong> 而非 <strong>"让计算适配通信"</strong>。Symmetric Memory 是这一哲学的硬件基础，它使通信粒度可以细化为 Token 级，从而消除了 DeepEP 中 Chunk 聚合的必要性。</p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

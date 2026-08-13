@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepEP 5-Layer Buffer ↔ DeepEP 源码 ↔ DeepGEMM SymmBuffer 三方映射分析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../index.html">DeepEP 5-Layer Buffer ↔ DeepEP</a></div>
+  </div>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar"><div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#deepep-5-layer-buffer--deepep-源码--deepgemm-symmbuf" class="toc-h1">DeepEP 5-Layer Buffer ↔ DeepEP 源码 ↔ DeepGEMM SymmBuffer 三方映射分析</a></li><li><a href="#1-blog-原文5-layer-buffer-模型" class="toc-h2">1. Blog 原文：5-Layer Buffer 模型</a></li><li><a href="#21-normal-kernel-throughput-optimized-complete-pip" class="toc-h3">2.1 Normal Kernel: Throughput-Optimized Complete Pipeline</a></li><li><a href="#22-low-latency-kernel-decode-oriented-short-path" class="toc-h3">2.2 Low-Latency Kernel: Decode-Oriented Short Path</a></li><li><a href="#23-核心概念token-vs-chunk-双粒度" class="toc-h3">2.3 核心概念：Token vs Chunk 双粒度</a></li><li><a href="#2-deepep-源码实现5-layer-buffer-的精确映射" class="toc-h2">2. DeepEP 源码实现：5-Layer Buffer 的精确映射</a></li><li><a href="#21-legacy-buffer-系统最贴近博客描述" class="toc-h3">2.1 Legacy Buffer 系统（最贴近博客描述）</a></li><li><a href="#22-elastic-buffer-系统当前主力" class="toc-h3">2.2 Elastic Buffer 系统（当前主力）</a></li><li><a href="#23-low-latency-kernel-的-buffer-路径" class="toc-h3">2.3 Low-Latency Kernel 的 Buffer 路径</a></li><li><a href="#3-deepgemm-mega-moesymmbuffer-的实现" class="toc-h2">3. DeepGEMM Mega MoE：SymmBuffer 的实现</a></li><li><a href="#31-symmbuffer-整体布局" class="toc-h3">3.1 SymmBuffer 整体布局</a></li><li><a href="#32-dispatch-阶段的-buffer-使用" class="toc-h3">3.2 Dispatch 阶段的 Buffer 使用</a></li><li><a href="#33-combine-阶段的-buffer-使用" class="toc-h3">3.3 Combine 阶段的 Buffer 使用</a></li><li><a href="#34-symmbuffer-的-5-layer-映射" class="toc-h3">3.4 SymmBuffer 的 5-Layer 映射</a></li><li><a href="#4-三方对比表" class="toc-h2">4. 三方对比表</a></li><li><a href="#41-buffer-层级对比" class="toc-h3">4.1 Buffer 层级对比</a></li><li><a href="#42-通信范式对比" class="toc-h3">4.2 通信范式对比</a></li><li><a href="#43-关键差异总结" class="toc-h3">4.3 关键差异总结</a></li><li><a href="#5-buffer-与其他子系统的交叉引用" class="toc-h2">5. Buffer 与其他子系统的交叉引用</a></li><li><a href="#51-buffer--dispatchcombine-agent-1" class="toc-h3">5.1 Buffer ↔ Dispatch/Combine (Agent 1)</a></li><li><a href="#52-buffer--chunk-streaming-agent-9" class="toc-h3">5.2 Buffer ↔ Chunk Streaming (Agent 9)</a></li><li><a href="#53-buffer--fifo-agent-4" class="toc-h3">5.3 Buffer ↔ FIFO (Agent 4)</a></li><li><a href="#6-buffer-层级-mermaid-图" class="toc-h2">6. Buffer 层级 Mermaid 图</a></li><li><a href="#61-deepep-legacy-5-layer-buffer-mermaid" class="toc-h3">6.1 DeepEP Legacy 5-Layer Buffer (Mermaid)</a></li><li><a href="#62-deepep-elastic-buffer-mermaid" class="toc-h3">6.2 DeepEP Elastic Buffer (Mermaid)</a></li><li><a href="#63-deepgemm-symmbuffer-mermaid" class="toc-h3">6.3 DeepGEMM SymmBuffer (Mermaid)</a></li><li><a href="#64-三方对比-mermaid-mermaid" class="toc-h3">6.4 三方对比 Mermaid (Mermaid)</a></li><li><a href="#7-核心洞察" class="toc-h2">7. 核心洞察</a></li><li><a href="#71-buffer-演化的主线" class="toc-h3">7.1 Buffer 演化的主线</a></li><li><a href="#72-为什么-mega-moe-可以消除-dispatchchunk-buffer" class="toc-h3">7.2 为什么 Mega MoE 可以消除 Dispatch/Chunk Buffer</a></li><li><a href="#73-pull-vs-push-的范式转变" class="toc-h3">7.3 Pull vs Push 的范式转变</a></li><li><a href="#74-ring-buffer-vs-fifo" class="toc-h3">7.4 Ring Buffer vs FIFO</a></li><li><a href="#8-代码索引" class="toc-h2">8. 代码索引</a></li><li><a href="#9-参考源码片段" class="toc-h2">9. 参考源码片段</a></li><li><a href="#91-legacy-5-layer-完整数据流" class="toc-h3">9.1 Legacy 5-Layer 完整数据流</a></li><li><a href="#92-elastic-buffer-分配" class="toc-h3">9.2 Elastic Buffer 分配</a></li><li><a href="#93-mega-moe-symmbuffer-分配" class="toc-h3">9.3 Mega MoE SymmBuffer 分配</a></li><li><a href="#94-mega-moe-dispatch-pull" class="toc-h3">9.4 Mega MoE Dispatch Pull</a></li><li><a href="#95-mega-moe-combine-write-back" class="toc-h3">9.5 Mega MoE Combine Write-back</a></li></ul></div></aside>
+  <article class="article-body">
+    <h1 id="deepep-5-layer-buffer-deepep-deepgemm-symmbuffer">DeepEP 5-Layer Buffer ↔ DeepEP 源码 ↔ DeepGEMM SymmBuffer 三方映射分析</h1>
+<blockquote>
+<p>分析日期: 2026-07-30<br />
+目标: 将博客描述的 5-Layer Buffer 模型精确映射到 DeepEP 实际源码和 DeepGEMM Mega MoE 实现<br />
+关联文档: <a href="05_02_buffer_symmbuffer.md">05_02_buffer_symmbuffer.md</a></p>
+</blockquote>
+<hr />
+<h2 id="1-blog-5-layer-buffer">1. Blog 原文：5-Layer Buffer 模型</h2>
+<p>博客第 2 节 "DeepEP Buffer System: Data Flow Organization Under Different Kernels" 原文描述：</p>
+<h3 id="21-normal-kernel-throughput-optimized-complete-pipeline">2.1 Normal Kernel: Throughput-Optimized Complete Pipeline</h3>
+<blockquote>
+<p><strong>Data path</strong>: <code>Token Buffer → Dispatch Buffer → Chunk Buffer → NVLink / RDMA Pipeline → Receive Buffer → Expert Buffer</code></p>
+</blockquote>
+<p>逐层原文定义：</p>
+<ol>
+<li><strong>Token Buffer</strong>: "Stores Router output. Layout: Token-major."</li>
+<li><strong>Dispatch Buffer</strong>: "First layout transformation: Token-major → Destination-major."</li>
+<li><strong>Chunk Buffer</strong>: "Critically important. The network is unsuitable for single-Token sends — produces small packets, high startup overhead, low bandwidth utilization. Tokens are aggregated: <code>Token Stream → Chunk → Network Transfer</code>. Token is the <strong>scheduling granularity</strong>; Chunk is the <strong>communication granularity</strong>."</li>
+<li><strong>Receive Buffer</strong>: "Destination GPU receives Chunks from multiple GPUs."</li>
+<li><strong>Expert Buffer</strong>: "Final transformation: Destination-major → Expert-major, forming Expert GEMM input."</li>
+</ol>
+<h3 id="22-low-latency-kernel-decode-oriented-short-path">2.2 Low-Latency Kernel: Decode-Oriented Short Path</h3>
+<blockquote>
+<p>Decode: small batch, few Tokens, single-Token latency sensitive. Waiting for Chunk aggregation increases latency.<br />
+Low-Latency Kernel reduces intermediate layers:<br />
+<code>Token Buffer → Direct RDMA → Receive Buffer → Expert Buffer</code><br />
+Goal: minimize end-to-end Token latency.</p>
+</blockquote>
+<h3 id="23-token-vs-chunk">2.3 核心概念：Token vs Chunk 双粒度</h3>
+<table>
+<thead>
+<tr>
+<th>粒度</th>
+<th>角色</th>
+<th>操作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token</strong></td>
+<td>scheduling granularity</td>
+<td>Router 输出、GEMM 计算</td>
+</tr>
+<tr>
+<td><strong>Chunk</strong></td>
+<td>communication granularity</td>
+<td>网络传输（NVLink/RDMA）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-deepep-5-layer-buffer">2. DeepEP 源码实现：5-Layer Buffer 的精确映射</h2>
+<h3 id="21-legacy-buffer">2.1 Legacy Buffer 系统（最贴近博客描述）</h3>
+<p>Legacy 系统（<code>csrc/kernels/legacy/</code>）是博客描述的最直接对应。从 <code>internode.cu</code> 可以看到完整的 buffer 分配：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu: 526-530</span>
+<span style="color: #3D7B7B; font-style: italic">// RDMA symmetric layout: 每个 channel 有 send/recv 两套 buffer</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_channel_data<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>SymBuffer<span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>rdma_buffer_ptr,<span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token,
+<span style="color: #BBB">    </span>kNumRDMARanks,<span style="color: #BBB"> </span>channel_id,<span style="color: #BBB"> </span>num_channels);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_channel_meta<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>SymBuffer<span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>rdma_buffer_ptr,<span style="color: #BBB"> </span>LEGACY_NUM_MAX_NVL_PEERS<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">2</span>,
+<span style="color: #BBB">    </span>kNumRDMARanks,<span style="color: #BBB"> </span>channel_id,<span style="color: #BBB"> </span>num_channels);
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu: 545-560</span>
+<span style="color: #3D7B7B; font-style: italic">// NVL buffer layouts: 每个 channel 也有 send/recv</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>nvl_channel_x<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>AsymBuffer<span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">&gt;</span>(ws_rr_buffer_ptr,
+<span style="color: #BBB">    </span>num_max_nvl_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token,
+<span style="color: #BBB">    </span>LEGACY_NUM_MAX_NVL_PEERS,<span style="color: #BBB"> </span>channel_id,<span style="color: #BBB"> </span>num_channels,<span style="color: #BBB"> </span>rs_wr_rank)
+<span style="color: #BBB">    </span>.advance_also(rs_wr_buffer_ptr);
+</code></pre></div>
+
+<h4 id="legacy-5-layer">Legacy 的 5-Layer 对应关系</h4>
+<table>
+<thead>
+<tr>
+<th>Blog Buffer 层</th>
+<th>Legacy 源码对应</th>
+<th>代码位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>x</code> (输入 tensor, <code>[num_tokens, hidden]</code>)</td>
+<td><code>internode.cu:458</code></td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td><code>rdma_channel_data.send_buffer(rdma_rank)</code> / <code>nvl_channel_x</code></td>
+<td><code>internode.cu:631, 545</code></td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td><code>num_max_rdma_chunked_send_tokens</code> 控制的 FIFO 窗口</td>
+<td><code>internode.cu:480, 527</code></td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>rdma_channel_data.recv_buffer(rdma_rank)</code> / <code>nvl_channel_x</code> (recv 侧)</td>
+<td><code>internode.cu:527, 545</code></td>
+</tr>
+<tr>
+<td><strong>Expert Buffer</strong></td>
+<td><code>recv_x</code> (输出 tensor, 按 expert 重排)</td>
+<td><code>internode.cu:453</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="chunk">Chunk 机制的核心代码</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode.cu: 647-648</span>
+<span style="color: #3D7B7B; font-style: italic">// Wait the remote buffer to be released</span>
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(is_token_in_rank_uint64<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span>
+<span style="color: #BBB">       </span>rdma_tail_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>cached_rdma_channel_head<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 等待 chunk 窗口释放</span>
+}
+</code></pre></div>
+
+<p><strong>关键洞察</strong>: Legacy 的 Chunk 是一个 <strong>FIFO 滑动窗口</strong>（<code>head</code>/<code>tail</code> 控制），Token 累积到一定数量后作为一个 Chunk 发送。<code>num_max_rdma_chunked_recv_tokens</code> 定义了接收端 Chunk 缓冲区容量。</p>
+<h3 id="22-elastic-buffer">2.2 Elastic Buffer 系统（当前主力）</h3>
+<p>Elastic 系统（<code>deep_ep/buffers/elastic.py</code> + <code>csrc/kernels/elastic/</code>）是 DeepEP 的演进版本，核心变化是用 NCCL Symmetric Window 替代 NVSHMEM，用 TMA 替代手动 copy。</p>
+<h4 id="buffer">Buffer 布局定义</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/common/layout.cuh: 251-311</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kWithMBarrier<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">BufferLayout</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>TokenLayout<span style="color: #BBB"> </span>token_layout;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_tokens_per_rank;
+<span style="color: #BBB">    </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>base;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 每个 rank 的 buffer 大小</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_num_bytes_per_rank</span>()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>num_max_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>get_num_bytes_per_token();
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 总 buffer 大小 = per_rank * num_ranks</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span><span style="color: #00F">get_num_bytes</span>()<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>get_num_bytes_per_rank()<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks;
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<h4 id="dispatch-kernel-buffer">Dispatch Kernel 中的 Buffer 使用</h4>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/dispatch.cuh: 263-268</span>
+<span style="color: #3D7B7B; font-style: italic">// Buffer layouts</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>TokenLayout(kNumHiddenBytes,<span style="color: #BBB"> </span>...);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tma_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumDispatchWarps,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>...);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>buffer);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,
+<span style="color: #BBB">                                               </span>recv_buffer.get_buffer_end_ptr());
+</code></pre></div>
+
+<p><strong>Elastic 的内存布局</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>buffer (全局)
+├─ recv_buffer: [kNumRanks, kNumMaxTokensPerRank]  ← 所有 rank 的接收 buffer
+└─ send_buffer: [1, kNumMaxTokensPerRank]          ← RDMA 发送 buffer（仅 scale-out）
+</code></pre></div>
+
+<h4 id="elastic-5-layer">Elastic 的 5-Layer 映射</h4>
+<table>
+<thead>
+<tr>
+<th>Blog Buffer 层</th>
+<th>Elastic 源码对应</th>
+<th>代码证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>x</code> (输入 tensor)</td>
+<td><code>dispatch.cuh:33</code> — kernel 参数</td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td><code>send_buffer</code> (RDMA 发送侧) / <code>tma_buffer</code> (smem 中转)</td>
+<td><code>dispatch.cuh:267</code> — <code>send_buffer</code> 用于 RDMA put</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td>❌ <strong>无显式 Chunk Buffer</strong></td>
+<td>Elastic 用 <code>kNumDispatchWarps</code> 并行 + TMA 直接传输</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>recv_buffer.get_rank_buffer(rank_idx)</code></td>
+<td><code>dispatch.cuh:268</code> — 每个 rank 的接收区</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer</strong></td>
+<td><code>recv_x</code> (copy epilogue 输出)</td>
+<td><code>dispatch_copy_epilogue.cuh:139</code> — TMA store 到 <code>recv_x</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="elastic-chunk">Elastic 消除 Chunk 的关键机制</h4>
+<p>Elastic 通过以下方式消除了显式 Chunk Buffer：</p>
+<ol>
+<li><strong>Warp-level 并行</strong>: 每个 dispatch warp 独立处理一个 token，无需等待 Chunk 聚合</li>
+<li><strong>TMA 硬件加速</strong>: 单 token 即可发起 TMA store，硬件处理小数据包</li>
+<li><strong>NCCL Symmetric Window</strong>: <code>gin.put&lt;team_t&gt;()</code> 直接写入远端 <code>recv_buffer</code>，无需中间暂存</li>
+</ol>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_ep/include/deep_ep/impls/dispatch.cuh: 373-378</span>
+<span style="color: #3D7B7B; font-style: italic">// Issue TMA NVLink stores: 单 token 直接发送到远端</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">    </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">                           </span>stored_dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+</code></pre></div>
+
+<h3 id="23-low-latency-kernel-buffer">2.3 Low-Latency Kernel 的 Buffer 路径</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu: 260-262</span>
+<span style="color: #3D7B7B; font-style: italic">// 直接 RDMA put 到远端 rdma_recv_x，无中间 buffer</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(rdma_recv_x)<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">    </span>dst_expert_local_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_ranks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_dispatch_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">    </span>rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_max_dispatch_tokens_per_rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_msg;
+nvshmemi_ibgda_put_nbi_warp(dst_ptr,<span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span>num_bytes_per_msg,<span style="color: #BBB"> </span>dst_rank,<span style="color: #BBB"> </span>...);
+</code></pre></div>
+
+<p><strong>Low-Latency 路径映射</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Blog Buffer 层</th>
+<th>Low-Latency 源码对应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>x</code> (输入 tensor)</td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td>❌ 无（直接 cast + send）</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td>❌ 无（单 token 直接发送）</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>rdma_recv_x[expert][rank][slot]</code></td>
+</tr>
+<tr>
+<td><strong>Expert Buffer</strong></td>
+<td><code>packed_recv_x</code> (按 expert 组织)</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// csrc/kernels/legacy/internode_ll.cu: 129-136</span>
+<span style="color: #3D7B7B; font-style: italic">// 接收端 buffer 结构: [num_local_experts, num_ranks, num_max_tokens_per_rank]</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>dispatch(<span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>packed_recv_x,
+<span style="color: #BBB">                         </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>packed_recv_x_scales,
+<span style="color: #BBB">                         </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>packed_recv_src_info,
+<span style="color: #BBB">                         </span><span style="color: #B00040">int64_t</span><span style="color: #666">*</span><span style="color: #BBB"> </span>packed_recv_layout_range,
+<span style="color: #BBB">                         </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>packed_recv_count,
+<span style="color: #BBB">                         </span>...
+<span style="color: #BBB">                         </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>rdma_recv_x,<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← Receive Buffer</span>
+<span style="color: #BBB">                         </span><span style="color: #B00040">int</span><span style="color: #666">*</span><span style="color: #BBB"> </span>rdma_recv_count,
+<span style="color: #BBB">                         </span><span style="color: #B00040">void</span><span style="color: #666">*</span><span style="color: #BBB"> </span>rdma_x,<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// ← Token Buffer (send 侧)</span>
+<span style="color: #BBB">                         </span>...);
+</code></pre></div>
+
+<hr />
+<h2 id="3-deepgemm-mega-moesymmbuffer">3. DeepGEMM Mega MoE：SymmBuffer 的实现</h2>
+<h3 id="31-symmbuffer">3.1 SymmBuffer 整体布局</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_gemm/include/deep_gemm/layout/mega_moe.cuh: 331-443</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">MegaMoEBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>Workspace<span style="color: #BBB"> </span>workspace;
+<span style="color: #BBB">    </span>Buffer<span style="color: #BBB"> </span>input_token_buffer,<span style="color: #BBB"> </span>input_sf_buffer,<span style="color: #BBB"> </span>input_topk_idx_buffer,<span style="color: #BBB"> </span>input_topk_weights_buffer;
+<span style="color: #BBB">    </span>Buffer<span style="color: #BBB"> </span>shared_l1_token_buffer,<span style="color: #BBB"> </span>shared_l1_sf_buffer,<span style="color: #BBB"> </span>shared_l2_token_buffer,<span style="color: #BBB"> </span>shared_l2_sf_buffer;
+<span style="color: #BBB">    </span>Buffer<span style="color: #BBB"> </span>l1_token_buffer,<span style="color: #BBB"> </span>l1_sf_buffer,<span style="color: #BBB"> </span>l1_topk_weights_buffer;
+<span style="color: #BBB">    </span>Buffer<span style="color: #BBB"> </span>l2_token_buffer,<span style="color: #BBB"> </span>l2_sf_buffer;
+<span style="color: #BBB">    </span>Buffer<span style="color: #BBB"> </span>combine_token_buffer;
+};
+</code></pre></div>
+
+<p><strong>内存布局（从低到高）</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>SymmBuffer (单一大块对称内存)
+┌─────────────────────────────────────────────────────────────┐
+│  Workspace                                                   │
+│  ├─ Grid Sync Counters (128 bytes)                           │
+│  ├─ Expert Send Count (num_experts × 8)                      │
+│  ├─ Expert Recv Count (num_ranks × num_experts_per_rank × 8) │
+│  ├─ Expert Recv Count Sum                                     │
+│  ├─ L1/L2 Full/Empty Ring Counts                             │
+│  ├─ Src Token-Topk Idx (dispatch pulling 用)                  │
+│  └─ Token Src Metadata (combine write-back 用)                │
+├─────────────────────────────────────────────────────────────┤
+│  Input Token Buffer (FP8, [num_max_tokens_per_rank, hidden])  │
+├─────────────────────────────────────────────────────────────┤
+│  Input SF Buffer (per-32 UE8M0)                               │
+├─────────────────────────────────────────────────────────────┤
+│  Input TopK Idx Buffer (int64)                                │
+├─────────────────────────────────────────────────────────────┤
+│  Input TopK Weights Buffer (float32)                          │
+├─────────────────────────────────────────────────────────────┤
+│  Shared Expert Buffers (L1/L2)                                │
+├─────────────────────────────────────────────────────────────┤
+│  L1 Token Buffer (FP8, ring, [num_ring_tokens, hidden])       │
+├─────────────────────────────────────────────────────────────┤
+│  L1 SF Buffer (M-major, UTCCP 128-aligned)                    │
+├─────────────────────────────────────────────────────────────┤
+│  L1 TopK Weights Buffer (per-pool-token)                      │
+├─────────────────────────────────────────────────────────────┤
+│  L2 Token Buffer (FP8, ring)                                  │
+├─────────────────────────────────────────────────────────────┤
+│  L2 SF Buffer (M-major)                                       │
+├─────────────────────────────────────────────────────────────┤
+│  Combine Token Buffer (BF16, [num_topk, num_max_tokens, hidden])│
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="32-dispatch-buffer">3.2 Dispatch 阶段的 Buffer 使用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 533-555</span>
+<span style="color: #3D7B7B; font-style: italic">// Dispatch warp 从 remote rank 的 input_token_buffer 直接拉取</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 映射到 remote rank 地址空间</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.l1_token_buffer.get_data_buffer(pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingTokens).get_base_ptr();
+
+<span style="color: #3D7B7B; font-style: italic">// TMA load from remote, store to local L1 ring buffer</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(pull_buffer.get_base_ptr(),
+<span style="color: #BBB">                     </span>math<span style="color: #666">::</span>advance_ptr(src_base_ptr,<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumBytesPerPull),
+<span style="color: #BBB">                     </span>pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull);
+<span style="color: #BBB">    </span>issue_and_wait_pull_store(i);
+}
+</code></pre></div>
+
+<h3 id="33-combine-buffer">3.3 Combine 阶段的 Buffer 使用</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 1294-1299</span>
+<span style="color: #3D7B7B; font-style: italic">// Epilogue warp 将 L2 输出写回 remote rank 的 combine buffer</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.combine_token_buffer
+<span style="color: #BBB">    </span>.get_rank_buffer(dst_topk_idx)
+<span style="color: #BBB">    </span>.get_data_buffer(dst_token_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>dst_token.get_base_ptr(),
+<span style="color: #BBB">    </span>n_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(nv_bfloat16)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">16</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(float4));
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← NVLink write-back</span>
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 1386-1449</span>
+<span style="color: #3D7B7B; font-style: italic">// Combine: 从 combine_token_buffer 读取 top-k 结果，reduce 后写回 y</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>epilogue_warp_idx;
+<span style="color: #BBB">     </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumEpilogueWarps)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 读取 top-k slot indices</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>stored_topk_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(__ldg(buffer.input_topk_idx_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 对每个 chunk: 加载 top-k → accumulate → cast → store</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>chunk<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>chunk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 加载所有 top-k 贡献</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(move_mask_and_load(load_stage_idx))<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>combine_load_barriers[load_stage_idx]<span style="color: #666">-&gt;</span>wait(combine_phase);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumUint4PerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>j)
+<span style="color: #BBB">                </span>ptx<span style="color: #666">::</span>accumulate(reduced[j<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumElemsPerUint4<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>l],<span style="color: #BBB"> </span>bf16_values[l]);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Cast + TMA store 到输出 y</span>
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_1d(math<span style="color: #666">::</span>advance_ptr(y,<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumHiddenBytes<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>chunk_byte_offset),
+<span style="color: #BBB">                         </span>combine_store_buffer,<span style="color: #BBB"> </span>kNumChunkBytes);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="34-symmbuffer-5-layer">3.4 SymmBuffer 的 5-Layer 映射</h3>
+<table>
+<thead>
+<tr>
+<th>Blog Buffer 层</th>
+<th>SymmBuffer 对应段</th>
+<th>代码证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>input_token_buffer</code> + <code>input_sf_buffer</code> + <code>input_topk_idx_buffer</code> + <code>input_topk_weights_buffer</code></td>
+<td><code>mega_moe.cuh:387-398</code></td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td>❌ <strong>无独立对应</strong></td>
+<td>dispatch warps 直接 NVLink pull</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td>❌ <strong>无独立对应</strong></td>
+<td>token 级直接传输，无聚合</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>l1_token_buffer</code> (ring pool)</td>
+<td><code>mega_moe.cuh:413-414</code> — 接收目标</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer (L1)</strong></td>
+<td><code>l1_token_buffer</code> + <code>l1_sf_buffer</code> + <code>l1_topk_weights_buffer</code></td>
+<td><code>mega_moe.cuh:413-424</code></td>
+</tr>
+<tr>
+<td><strong>Expert Buffer (L2)</strong></td>
+<td><code>l2_token_buffer</code> + <code>l2_sf_buffer</code></td>
+<td><code>mega_moe.cuh:426-431</code></td>
+</tr>
+<tr>
+<td><strong>Combine Buffer</strong></td>
+<td><code>combine_token_buffer</code> (BF16)</td>
+<td><code>mega_moe.cuh:433-435</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4">4. 三方对比表</h2>
+<h3 id="41-buffer">4.1 Buffer 层级对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP Legacy</th>
+<th>DeepEP Elastic</th>
+<th>DeepGEMM Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer 层级</strong></td>
+<td>5 层 (Token→Dispatch→Chunk→Receive→Expert)</td>
+<td>4 层 (无显式 Chunk)</td>
+<td>3 层 (Input→Pool→Combine)</td>
+</tr>
+<tr>
+<td><strong>Token Buffer</strong></td>
+<td><code>x</code> (输入 tensor)</td>
+<td><code>x</code> (输入 tensor)</td>
+<td><code>input_token_buffer</code></td>
+</tr>
+<tr>
+<td><strong>Dispatch Buffer</strong></td>
+<td><code>rdma_channel_data.send_buffer</code></td>
+<td><code>send_buffer</code> (仅 RDMA)</td>
+<td>❌ 无</td>
+</tr>
+<tr>
+<td><strong>Chunk Buffer</strong></td>
+<td><code>num_max_rdma_chunked_recv_tokens</code> FIFO</td>
+<td>❌ 无</td>
+<td>❌ 无</td>
+</tr>
+<tr>
+<td><strong>Receive Buffer</strong></td>
+<td><code>rdma_channel_data.recv_buffer</code></td>
+<td><code>recv_buffer[rank]</code></td>
+<td><code>l1_token_buffer</code> (ring pool)</td>
+</tr>
+<tr>
+<td><strong>Expert Buffer</strong></td>
+<td><code>recv_x</code> (按 expert 重排)</td>
+<td><code>recv_x</code> (copy epilogue)</td>
+<td><code>l1/l2_token_buffer</code></td>
+</tr>
+<tr>
+<td><strong>Combine Buffer</strong></td>
+<td><code>recv_x</code> (combine 输出)</td>
+<td><code>recv_x</code> (combine 输出)</td>
+<td><code>combine_token_buffer</code> (BF16)</td>
+</tr>
+<tr>
+<td><strong>Normal/LL 分离</strong></td>
+<td>两套 kernel + buffer</td>
+<td>两套 kernel + buffer</td>
+<td>单一套 buffer</td>
+</tr>
+<tr>
+<td><strong>通信模型</strong></td>
+<td>Push (source 主动发送)</td>
+<td>Push (source 主动发送)</td>
+<td><strong>Pull</strong> (dest 主动拉取)</td>
+</tr>
+<tr>
+<td><strong>内存模型</strong></td>
+<td>NVSHMEM symmetric</td>
+<td>NCCL Symmetric Window</td>
+<td>Symmetric Memory + 地址映射</td>
+</tr>
+<tr>
+<td><strong>Chunk 聚合</strong></td>
+<td>有 (FIFO 滑动窗口)</td>
+<td>无 (warp 并行 + TMA)</td>
+<td>无 (token 级 pull)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42">4.2 通信范式对比</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>DeepEP Legacy (Push):
+  Source GPU: &quot;我要发 token X 给 Dest GPU&quot;
+    → 写入本地 send_buffer
+    → RDMA/NVLink put 到 Dest 的 recv_buffer
+    → Dest 从 recv_buffer 读取
+
+DeepEP Elastic (Push + TMA):
+  Source GPU: &quot;我要发 token X 给 Dest GPU&quot;
+    → TMA store 直接写入 Dest 的 recv_buffer (NVLink)
+    → 或写入本地 send_buffer + RDMA put (scale-out)
+
+DeepGEMM Mega MoE (Pull):
+  Dest GPU: &quot;我需要 token X 从 Source GPU&quot;
+    → TMA load 从 Source 的 input_token_buffer 直接拉取
+    → 写入本地 l1_token_buffer (ring pool)
+</code></pre></div>
+
+<h3 id="43">4.3 关键差异总结</h3>
+<table>
+<thead>
+<tr>
+<th>差异点</th>
+<th>DeepEP</th>
+<th>Mega MoE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dispatch 方式</strong></td>
+<td>显式 Dispatch Kernel + 中间 buffer</td>
+<td>Warp 直接 NVLink pull，无中间 buffer</td>
+</tr>
+<tr>
+<td><strong>Chunk 聚合</strong></td>
+<td>Legacy 有（Normal Kernel）</td>
+<td>无（token 级）</td>
+</tr>
+<tr>
+<td><strong>Receive/Expert 分离</strong></td>
+<td>两个独立 buffer</td>
+<td>融合为 ring pool</td>
+</tr>
+<tr>
+<td><strong>Normal/LL 分离</strong></td>
+<td>两套 kernel + buffer</td>
+<td>单一套 buffer</td>
+</tr>
+<tr>
+<td><strong>通信方向</strong></td>
+<td>Push</td>
+<td>Pull</td>
+</tr>
+<tr>
+<td><strong>地址映射</strong></td>
+<td>NVSHMEM 物理地址</td>
+<td>SymBuffer.map() 逻辑映射</td>
+</tr>
+<tr>
+<td><strong>同步粒度</strong></td>
+<td>Chunk 级 (FIFO)</td>
+<td>Token 级 (arrival count)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-buffer">5. Buffer 与其他子系统的交叉引用</h2>
+<h3 id="51-buffer-dispatchcombine-agent-1">5.1 Buffer ↔ Dispatch/Combine (Agent 1)</h3>
+<p><strong>Dispatch 是 Buffer 的写入者</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh: 362-378</span>
+<span style="color: #3D7B7B; font-style: italic">// Dispatch warp 将 token 写入 send_buffer 或远端 recv_buffer</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>send_buffer.get_token_buffer(token_idx).get_base_ptr();
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kIsScaleupNVLink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// → send_buffer</span>
+}
+<span style="color: #3D7B7B; font-style: italic">// NVLink: 直接写入远端 recv_buffer</span>
+ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>...);
+</code></pre></div>
+
+<p><strong>Combine 是 Buffer 的读取者</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// combine.cuh: 96-106</span>
+<span style="color: #3D7B7B; font-style: italic">// Combine warp 从 recv_buffer 读取 token，写回 send_buffer 或远端</span>
+layout<span style="color: #666">::</span>TokenLayout<span style="color: #BBB"> </span>master_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">=</span>]()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(nvlink_bypass)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_rank_buffer(...).get_token_buffer(src_token_idx);
+<span style="color: #BBB">        </span>token_buffer.set_base_ptr(gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(token_buffer.get_base_ptr(),<span style="color: #BBB"> </span>src_rank_idx));
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>token_buffer;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>send_buffer.get_rank_buffer(src_rank_idx).get_token_buffer(src_token_idx);
+}();
+</code></pre></div>
+
+<p><strong>Mega MoE 的融合</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 533-598</span>
+<span style="color: #3D7B7B; font-style: italic">// Dispatch pull + L1 buffer 写入 在同一 kernel 内完成</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.l1_token_buffer.get_data_buffer(pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingTokens).get_base_ptr();
+<span style="color: #3D7B7B; font-style: italic">// TMA load from remote → TMA store to local L1</span>
+</code></pre></div>
+
+<h3 id="52-buffer-chunk-streaming-agent-9">5.2 Buffer ↔ Chunk Streaming (Agent 9)</h3>
+<p><strong>Legacy 的 Chunk Streaming</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// internode.cu: 526-530</span>
+<span style="color: #3D7B7B; font-style: italic">// Chunk 是一个 FIFO 滑动窗口</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>rdma_channel_data<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>SymBuffer<span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>rdma_buffer_ptr,<span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_bytes_per_token,<span style="color: #BBB"> </span>...);
+<span style="color: #3D7B7B; font-style: italic">// head/tail 控制 chunk 的发送和释放</span>
+</code></pre></div>
+
+<p><strong>Elastic 的替代</strong>：</p>
+<p>Elastic 用 <strong>warp 并行 + TMA</strong> 替代 Chunk Streaming：<br />
+- 每个 warp 独立处理 token，无需等待 Chunk 聚合<br />
+- TMA store 直接发起，硬件处理流水线</p>
+<p><strong>Mega MoE 的替代</strong>：</p>
+<p>Mega MoE 用 <strong>token 级 pull + ring buffer</strong> 替代 Chunk Streaming：<br />
+- Dispatch warps 按全局 token 索引轮转处理<br />
+- 每个 token 独立通过 NVLink pull<br />
+- Ring buffer 的 full/empty count 控制流式传输</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 526-531</span>
+<span style="color: #3D7B7B; font-style: italic">// Ring buffer 空位检查 (替代 Chunk FIFO)</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>l1_empty_count_target<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(pool_block_idx<span style="color: #BBB"> </span><span style="color: #666">/</span><span style="color: #BBB"> </span>kNumRingBlocks)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumL1BlockNs;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(l1_empty_count_target<span style="color: #BBB"> </span><span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>empty_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_l1_empty_count_ptr(pool_block_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingBlocks);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq(empty_ptr)<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>l1_empty_count_target);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 等待空位</span>
+}
+</code></pre></div>
+
+<h3 id="53-buffer-fifo-agent-4">5.3 Buffer ↔ FIFO (Agent 4)</h3>
+<p><strong>Legacy FIFO 机制</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// internode.cu: 565-567</span>
+__shared__<span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>rdma_send_channel_tail[kNumRDMARanks];
+__shared__<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rdma_send_channel_window[kNumRDMARanks];
+<span style="color: #3D7B7B; font-style: italic">// FIFO head/tail 控制 chunk 发送窗口</span>
+</code></pre></div>
+
+<p><strong>Elastic 的替代</strong>：</p>
+<p>Elastic 用 <strong>NCCL Symmetric Window + GPU Barrier</strong> 替代 FIFO：<br />
+- <code>comm::gpu_barrier&lt;kIsScaleupNVLink, ...&gt;()</code> 提供全局同步<br />
+- 无需显式 FIFO，依赖 NCCL 的流控</p>
+<p><strong>Mega MoE 的 Ring Buffer</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// mega_moe.cuh: 98-111</span>
+<span style="color: #3D7B7B; font-style: italic">// L1/L2 ring buffer 的 full/empty count</span>
+num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_ring_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">uint32_t</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// L1 full count</span>
+num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_ring_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">uint32_t</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// L1 empty count</span>
+num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_ring_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">uint32_t</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// L2 full count</span>
+num_bytes<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>num_ring_blocks<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(<span style="color: #B00040">uint32_t</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// L2 empty count</span>
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 593-596</span>
+<span style="color: #3D7B7B; font-style: italic">// 写入完成后增加 full count</span>
+ptx<span style="color: #666">::</span>red_add_rel(workspace.get_l1_full_count_ptr(pool_block_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingBlocks),
+<span style="color: #BBB">                 </span>is_last_token<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>BLOCK_M<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(token_idx_in_expert<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>BLOCK_M)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1u</span>);
+</code></pre></div>
+
+<hr />
+<h2 id="6-buffer-mermaid">6. Buffer 层级 Mermaid 图</h2>
+<h3 id="61-deepep-legacy-5-layer-buffer-mermaid">6.1 DeepEP Legacy 5-Layer Buffer (Mermaid)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph Legacy_Normal[&quot;Legacy Normal Kernel (Throughput)&quot;]
+        direction TB
+        TB[&quot;Token Buffer&lt;br/&gt;x [num_tokens, hidden]&lt;br/&gt;Token-major&quot;]
+        DB[&quot;Dispatch Buffer&lt;br/&gt;rdma_channel_data.send_buffer&lt;br/&gt;Token-major → Dest-major&quot;]
+        CB[&quot;Chunk Buffer&lt;br/&gt;FIFO sliding window&lt;br/&gt;num_max_rdma_chunked_recv_tokens&lt;br/&gt;Token=scheduling, Chunk=communication&quot;]
+        NB[&quot;Network&lt;br/&gt;NVLink + RDMA&quot;]
+        RB[&quot;Receive Buffer&lt;br/&gt;rdma_channel_data.recv_buffer&lt;br/&gt;Dest GPU receives chunks&quot;]
+        EB[&quot;Expert Buffer&lt;br/&gt;recv_x [num_recv_tokens, hidden]&lt;br/&gt;Dest-major → Expert-major&quot;]
+        TB --&gt; DB --&gt; CB --&gt; NB --&gt; RB --&gt; EB
+    end
+
+    subgraph Legacy_LL[&quot;Legacy Low-Latency Kernel (Decode)&quot;]
+        direction TB
+        TB2[&quot;Token Buffer&lt;br/&gt;x [num_tokens, hidden]&quot;]
+        NB2[&quot;Direct RDMA&lt;br/&gt;IBGDA put&quot;]
+        RB2[&quot;Receive Buffer&lt;br/&gt;rdma_recv_x&lt;br/&gt;[expert, rank, slot]&quot;]
+        EB2[&quot;Expert Buffer&lt;br/&gt;packed_recv_x&lt;br/&gt;[expert, num_ranks, num_max_tokens]&quot;]
+        TB2 --&gt; NB2 --&gt; RB2 --&gt; EB2
+    end
+</code></pre></div>
+
+<h3 id="62-deepep-elastic-buffer-mermaid">6.2 DeepEP Elastic Buffer (Mermaid)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph Elastic_Dispatch[&quot;Elastic Dispatch Phase&quot;]
+        direction TB
+        X[&quot;x (输入 tensor)&lt;br/&gt;Token-major&quot;]
+        TMA[&quot;tma_buffer (smem)&lt;br/&gt;TMA load from x&quot;]
+        SB[&quot;send_buffer&lt;br/&gt;RDMA 发送侧&lt;br/&gt;[1, kNumMaxTokensPerRank]&quot;]
+        NB[&quot;NCCL Symmetric Window&lt;br/&gt;NVLink / RDMA&quot;]
+        RB[&quot;recv_buffer&lt;br/&gt;[kNumRanks, kNumMaxTokensPerRank]&lt;br/&gt;每个 rank 的接收区&quot;]
+        X --&gt; TMA
+        TMA --&gt;|NVLink TMA store| RB
+        TMA --&gt;|RDMA put| SB --&gt; NB --&gt; RB
+    end
+
+    subgraph Elastic_Epilogue[&quot;Elastic Copy Epilogue&quot;]
+        direction TB
+        RB2[&quot;recv_buffer[rank_idx]&lt;br/&gt;Dest-major&quot;]
+        TMA2[&quot;tma_buffer (smem)&lt;br/&gt;TMA load from recv_buffer&quot;]
+        RX[&quot;recv_x&lt;br/&gt;Dest-major → Expert-major&lt;br/&gt;(或 Expand 模式)&quot;]
+        RB2 --&gt; TMA2 --&gt; RX
+    end
+</code></pre></div>
+
+<h3 id="63-deepgemm-symmbuffer-mermaid">6.3 DeepGEMM SymmBuffer (Mermaid)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph Input_Phase[&quot;Input Phase (每个 rank 本地)&quot;]
+        X[&quot;x (FP8 tokens) + x_sf&lt;br/&gt;+ topk_idx + topk_weights&lt;br/&gt;→ input_token_buffer&quot;]
+    end
+
+    subgraph Dispatch_Phase[&quot;Dispatch Phase (跨 rank)&quot;]
+        PULL[&quot;Dispatch Warps&lt;br/&gt;NVLink TMA Load&lt;br/&gt;从 remote rank 拉取 token&lt;br/&gt;sym_buffer.map(input_token_buffer, dst_rank)&quot;]
+        META[&quot;Metadata 交换&lt;br/&gt;expert_send_count&lt;br/&gt;src_token_topk_idx&quot;]
+    end
+
+    subgraph L1_Pool[&quot;L1 Expert Ring Pool&quot;]
+        L1T[&quot;l1_token_buffer&lt;br/&gt;FP8, ring&lt;br/&gt;[num_ring_tokens, hidden]&quot;]
+        L1SF[&quot;l1_sf_buffer&lt;br/&gt;M-major, UTCCP 128-aligned&quot;]
+        L1W[&quot;l1_topk_weights&quot;]
+    end
+
+    subgraph L1_GEMM[&quot;L1 GEMM + SwiGLU&quot;]
+        GEMM1[&quot;FP8×FP4 GEMM&lt;br/&gt;block-scaled MMA&quot;]
+        SWIGLU[&quot;SwiGLU + topk_weight&lt;br/&gt;in epilogue&quot;]
+    end
+
+    subgraph L2_Pool[&quot;L2 Expert Ring Pool&quot;]
+        L2T[&quot;l2_token_buffer&lt;br/&gt;FP8, ring&quot;]
+        L2SF[&quot;l2_sf_buffer&lt;br/&gt;M-major&quot;]
+    end
+
+    subgraph L2_GEMM[&quot;L2 GEMM&quot;]
+        GEMM2[&quot;FP8×FP4 GEMM&lt;br/&gt;输出 BF16&quot;]
+    end
+
+    subgraph Combine_Phase[&quot;Combine Phase&quot;]
+        CB[&quot;combine_token_buffer&lt;br/&gt;BF16, [num_topk, num_max_tokens, hidden]&lt;br/&gt;per-topk-slot&quot;]
+        REDUCE[&quot;Top-K Reduce&lt;br/&gt;累加 + TMA store 到 y&quot;]
+    end
+
+    X --&gt; PULL --&gt; L1T
+    META --&gt; PULL
+    L1T &amp; L1SF &amp; L1W --&gt; GEMM1 --&gt; SWIGLU --&gt; L2T
+    L2T &amp; L2SF --&gt; GEMM2 --&gt; CB --&gt; REDUCE
+</code></pre></div>
+
+<h3 id="64-mermaid-mermaid">6.4 三方对比 Mermaid (Mermaid)</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph EP_Legacy[&quot;DeepEP Legacy 5-Layer&quot;]
+        direction TB
+        A1[&quot;Token Buffer&lt;br/&gt;x&quot;] --&gt; A2[&quot;Dispatch Buffer&lt;br/&gt;send_buffer&quot;] --&gt; A3[&quot;Chunk Buffer&lt;br/&gt;FIFO window&quot;]
+        A3 --&gt; A4[&quot;Network&quot;] --&gt; A5[&quot;Receive Buffer&lt;br/&gt;recv_buffer&quot;] --&gt; A6[&quot;Expert Buffer&lt;br/&gt;recv_x&quot;]
+    end
+
+    subgraph EP_Elastic[&quot;DeepEP Elastic 4-Layer&quot;]
+        direction TB
+        B1[&quot;Token Buffer&lt;br/&gt;x&quot;] --&gt; B2[&quot;tma_buffer (smem)&quot;]
+        B2 --&gt;|NVLink| B3[&quot;Receive Buffer&lt;br/&gt;recv_buffer[rank]&quot;]
+        B2 --&gt;|RDMA| B2a[&quot;send_buffer&quot;] --&gt; B3
+        B3 --&gt; B4[&quot;Expert Buffer&lt;br/&gt;recv_x (copy epilogue)&quot;]
+    end
+
+    subgraph MM[&quot;DeepGEMM Mega MoE 3-Layer&quot;]
+        direction TB
+        C1[&quot;Token Buffer&lt;br/&gt;input_token_buffer&quot;] --&gt;|NVLink pull| C2[&quot;L1 Ring Pool&lt;br/&gt;l1_token_buffer&lt;br/&gt;(Receive + Expert 融合)&quot;]
+        C2 --&gt; C3[&quot;L2 Ring Pool&lt;br/&gt;l2_token_buffer&quot;]
+        C3 --&gt; C4[&quot;Combine Buffer&lt;br/&gt;combine_token_buffer&quot;]
+    end
+
+    A1 -.-&gt; B1
+    A5 -.-&gt; B3
+    A6 -.-&gt; B4
+    B1 -.-&gt; C1
+    B3 -.-&gt; C2
+    B4 -.-&gt; C3
+</code></pre></div>
+
+<hr />
+<h2 id="7">7. 核心洞察</h2>
+<h3 id="71-buffer">7.1 Buffer 演化的主线</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>Legacy (5 层)  →  Elastic (4 层)  →  Mega MoE (3 层)
+   ↓                 ↓                  ↓
+Chunk 有            Chunk 无            Chunk 无
+Dispatch 有         Dispatch 弱          Dispatch 无
+Receive/Expert 分离  Receive/Expert 分离   Receive/Expert 融合
+Push 模型           Push 模型            Pull 模型
+</code></pre></div>
+
+<h3 id="72-mega-moe-dispatchchunk-buffer">7.2 为什么 Mega MoE 可以消除 Dispatch/Chunk Buffer</h3>
+<ol>
+<li><strong>Symmetric Memory 的地址对称性</strong>: 任何 rank 可以直接访问任何其他 rank 的 buffer，无需 "打包-发送-解包"</li>
+<li><strong>Persistent Kernel + Warp Specialization</strong>: dispatch warps 和 GEMM warps 同时运行，dispatch 可以按需实时 pull</li>
+<li><strong>NVLink 的全连接拓扑</strong>: 节点内所有 GPU 两两直连，pull 和 send 的延迟差异不大</li>
+<li><strong>Decode 场景为主</strong>: 小 batch 下 chunk 聚合无收益，直接 token 级传输更优</li>
+</ol>
+<h3 id="73-pull-vs-push">7.3 Pull vs Push 的范式转变</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Push (DeepEP)</th>
+<th>Pull (Mega MoE)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>控制权</strong></td>
+<td>Source 决定何时发送</td>
+<td>Dest 决定何时拉取</td>
+</tr>
+<tr>
+<td><strong>速率控制</strong></td>
+<td>发送方可能溢出接收方</td>
+<td>接收方天然控制速率</td>
+</tr>
+<tr>
+<td><strong>负载均衡</strong></td>
+<td>需要额外机制</td>
+<td>天然均衡（处理快的 rank 多 pull）</td>
+</tr>
+<tr>
+<td><strong>同步</strong></td>
+<td>全局 "发送完毕" 信号</td>
+<td>per-block arrival count</td>
+</tr>
+<tr>
+<td><strong>Buffer 层级</strong></td>
+<td>需要 Dispatch Buffer 暂存</td>
+<td>无需中间 buffer</td>
+</tr>
+</tbody>
+</table>
+<h3 id="74-ring-buffer-vs-fifo">7.4 Ring Buffer vs FIFO</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Legacy FIFO</th>
+<th>Mega MoE Ring Buffer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>粒度</strong></td>
+<td>Chunk 级</td>
+<td>Token 级</td>
+</tr>
+<tr>
+<td><strong>同步</strong></td>
+<td>head/tail 原子操作</td>
+<td>full/empty count</td>
+</tr>
+<tr>
+<td><strong>容量</strong></td>
+<td><code>num_max_rdma_chunked_recv_tokens</code></td>
+<td><code>num_ring_tokens</code> (per expert)</td>
+</tr>
+<tr>
+<td><strong>复用</strong></td>
+<td>单次使用</td>
+<td>环形复用</td>
+</tr>
+<tr>
+<td><strong>与 GEMM 集成</strong></td>
+<td>分离</td>
+<td>紧密集成 (full count 触发 GEMM)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8">8. 代码索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>关键内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>ElasticBuffer Python 类</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td>Legacy Buffer Python 类</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/layout.cuh</code></td>
+<td>TokenLayout, BufferLayout, WorkspaceLayout</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/buffer.cuh</code></td>
+<td>Legacy SymBuffer / AsymBuffer</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>Legacy internode dispatch (5-Layer 完整实现)</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode_ll.cu</code></td>
+<td>Legacy low-latency dispatch</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>Elastic dispatch 启动逻辑</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>Elastic dispatch kernel (buffer 使用)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch_copy_epilogue.cuh</code></td>
+<td>Elastic copy epilogue (Expert Buffer 生成)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>Elastic combine kernel (buffer 使用)</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td>SymBuffer 地址映射</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td>MegaMoEBuffer 完整布局</td>
+</tr>
+<tr>
+<td><code>deep_gemm/mega/__init__.py</code></td>
+<td>SymmBuffer Python 类</td>
+</tr>
+<tr>
+<td><code>deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>Mega MoE kernel (dispatch/GEMM/combine)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9">9. 参考源码片段</h2>
+<h3 id="91-legacy-5-layer">9.1 Legacy 5-Layer 完整数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// internode.cu: 631-632</span>
+<span style="color: #3D7B7B; font-style: italic">// Token → Dispatch Buffer (send_buffer)</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>lane_id<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>rdma_rank<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">    </span>rdma_channel_data.recv_buffer(lane_id)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 本地: recv_buffer 复用</span>
+<span style="color: #BBB">    </span>rdma_channel_data.send_buffer(lane_id);<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// 远端: send_buffer</span>
+
+<span style="color: #3D7B7B; font-style: italic">// internode.cu: 647-648</span>
+<span style="color: #3D7B7B; font-style: italic">// Chunk: FIFO 滑动窗口控制</span>
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(rdma_tail_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>cached_rdma_channel_head<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens);
+
+<span style="color: #3D7B7B; font-style: italic">// internode.cu: 617-624</span>
+<span style="color: #3D7B7B; font-style: italic">// Network: RDMA put 到远端 recv_buffer</span>
+nvshmemi_ibgda_put_nbi_warp<span style="color: #666">&lt;</span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(...,<span style="color: #BBB"> </span>rdma_channel_meta.recv_buffer(rdma_rank),<span style="color: #BBB"> </span>...);
+
+<span style="color: #3D7B7B; font-style: italic">// internode.cu: 453</span>
+<span style="color: #3D7B7B; font-style: italic">// Expert Buffer: recv_x (输出 tensor)</span>
+__global__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>dispatch(int4<span style="color: #666">*</span><span style="color: #BBB"> </span>recv_x,<span style="color: #BBB"> </span><span style="color: #B00040">float</span><span style="color: #666">*</span><span style="color: #BBB"> </span>recv_x_scales,<span style="color: #BBB"> </span>...);
+</code></pre></div>
+
+<h3 id="92-elastic-buffer">9.2 Elastic Buffer 分配</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh: 263-268</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_layout<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>TokenLayout(kNumHiddenBytes,<span style="color: #BBB"> </span>...);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>tma_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumDispatchWarps,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>...);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>recv_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,<span style="color: #BBB"> </span>buffer);
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>send_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>BufferLayout<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>kNumMaxTokensPerRank,
+<span style="color: #BBB">                                               </span>recv_buffer.get_buffer_end_ptr());
+</code></pre></div>
+
+<h3 id="93-mega-moe-symmbuffer">9.3 Mega MoE SymmBuffer 分配</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// mega_moe.cuh: 387-435</span>
+input_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span>workspace.get_end_ptr());
+input_sf_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_sf_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span>input_token_buffer.get_end_ptr());
+input_topk_idx_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_topk_idx_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span>...);
+input_topk_weights_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_topk_weights_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span>...);
+l1_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_ring_tokens,<span style="color: #BBB"> </span>...);
+l1_sf_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(input_sf_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_sf_ring_tokens,<span style="color: #BBB"> </span>...);
+l2_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(intermediate_token_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_ring_tokens,<span style="color: #BBB"> </span>...);
+l2_sf_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(intermediate_sf_layout,<span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>num_sf_ring_tokens,<span style="color: #BBB"> </span>...);
+combine_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>Buffer(bf16_token_layout,<span style="color: #BBB"> </span>num_topk,<span style="color: #BBB"> </span>num_max_tokens_per_rank,<span style="color: #BBB"> </span>...);
+</code></pre></div>
+
+<h3 id="94-mega-moe-dispatch-pull">9.4 Mega MoE Dispatch Pull</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 533-555</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.l1_token_buffer.get_data_buffer(pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingTokens).get_base_ptr();
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_load_1d(pull_buffer.get_base_ptr(),
+<span style="color: #BBB">                     </span>math<span style="color: #666">::</span>advance_ptr(src_base_ptr,<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumBytesPerPull),
+<span style="color: #BBB">                     </span>pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull);
+<span style="color: #BBB">    </span>issue_and_wait_pull_store(i);
+}
+</code></pre></div>
+
+<h3 id="95-mega-moe-combine-write-back">9.5 Mega MoE Combine Write-back</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh: 1294-1299</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.combine_token_buffer
+<span style="color: #BBB">    </span>.get_rank_buffer(dst_topk_idx)
+<span style="color: #BBB">    </span>.get_data_buffer(dst_token_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>dst_token.get_base_ptr(),
+<span style="color: #BBB">    </span>n_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(nv_bfloat16)<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">16</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">sizeof</span>(float4));
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;
+</code></pre></div>
+
+<hr />
+<p><em>分析基于 DeepEP 源码 (legacy + elastic) 与 DeepGEMM Mega MoE 源码，对照博客文本 Section 2</em></p>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+  </article>
+</div>
+</div>
+</body>
+</html>

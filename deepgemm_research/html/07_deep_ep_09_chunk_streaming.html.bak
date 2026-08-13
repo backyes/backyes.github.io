@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepEP Chunk Streaming 机制深度分析：博客第一性原理 vs 源码实现</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="deepep-chunk-streaming-vs">DeepEP Chunk Streaming 机制深度分析：博客第一性原理 vs 源码实现</h1>
+<blockquote>
+<p>分析日期：2026-07-30<br />
+代码版本：DeepEP main 分支<br />
+博客来源：<code>/tmp/deep_ep_blog_text.txt</code>（Understanding GPU Microarchitecture from a Workload Perspective (3): DeepEP's First Principles）</p>
+</blockquote>
+<hr />
+<h2 id="1-token-chunk-network">1. 博客核心主张：Token → Chunk → Network</h2>
+<p>博客在 Section 2.1 中对 Chunk Streaming 给出了高度凝练的描述：</p>
+<blockquote>
+<p><strong>Chunk Buffer</strong>: Critically important. The network is unsuitable for single-Token sends — produces small packets, high startup overhead, low bandwidth utilization. Tokens are aggregated:</p>
+<p><strong>Token Stream → Chunk → Network Transfer</strong></p>
+<p><strong>Token is the scheduling granularity; Chunk is the communication granularity.</strong></p>
+</blockquote>
+<p>并在 Section 3 的对比表中强调：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Normal Kernel</th>
+<th>Low-Latency Kernel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chunk</td>
+<td>Critical</td>
+<td>Reduced</td>
+</tr>
+</tbody>
+</table>
+<p><strong>博客的论断总结</strong>：<br />
+1. Token 是调度粒度（scheduling granularity），Chunk 是通信粒度（communication granularity）<br />
+2. Token 必须聚合成 Chunk 才能网络传输，否则小包开销大<br />
+3. Normal Kernel 依赖 Chunk，Low-Latency Kernel 弱化 Chunk</p>
+<hr />
+<h2 id="2-legacyv1-chunk-chunk">2. Legacy（V1）的 Chunk 机制：显式固定大小 Chunk</h2>
+<h3 id="21-config-chunk">2.1 Config 结构定义 Chunk 大小</h3>
+<p><strong>文件</strong>: <code>csrc/legacy/config.hpp:24-51</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Config</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_sms;
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_nvl_chunked_send_tokens;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// NVL 发送 chunk 大小</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens;<span style="color: #BBB">      </span><span style="color: #3D7B7B; font-style: italic">// NVL 接收 chunk 大小</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_rdma_chunked_send_tokens;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// RDMA 发送 chunk 大小</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens;<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// RDMA 接收 chunk 大小</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+};
+</code></pre></div>
+
+<p><strong>关键约束</strong>：<br />
+- <code>num_max_rdma_chunked_recv_tokens</code> 向上对齐到 <code>num_max_rdma_chunked_send_tokens</code><br />
+- <code>num_max_rdma_chunked_send_tokens &lt;= num_max_rdma_chunked_recv_tokens / 2</code>（防止溢出）</p>
+<h3 id="22-chunk">2.2 推荐的 Chunk 配置</h3>
+<p><strong>文件</strong>: <code>deep_ep/buffers/legacy.py:245-258</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>config_map <span style="color: #666">=</span> {
+    <span style="color: #666">2</span>:   Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">24</span>, <span style="color: #666">256</span>, <span style="color: #666">6</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">4</span>:   Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">6</span>, <span style="color: #666">256</span>, <span style="color: #666">6</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">8</span>:   Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">6</span>, <span style="color: #666">256</span>, <span style="color: #666">6</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">16</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">36</span>, <span style="color: #666">288</span>, <span style="color: #666">20</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">24</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">32</span>, <span style="color: #666">288</span>, <span style="color: #666">8</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">32</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">32</span>, <span style="color: #666">288</span>, <span style="color: #666">8</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">48</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">32</span>, <span style="color: #666">288</span>, <span style="color: #666">8</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">64</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">32</span>, <span style="color: #666">288</span>, <span style="color: #666">8</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">96</span>:  Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">20</span>, <span style="color: #666">480</span>, <span style="color: #666">12</span>, <span style="color: #666">128</span>),
+    <span style="color: #666">128</span>: Config(Buffer<span style="color: #666">.</span>num_sms, <span style="color: #666">20</span>, <span style="color: #666">560</span>, <span style="color: #666">12</span>, <span style="color: #666">128</span>),
+    <span style="color: #3D7B7B; font-style: italic"># Config 参数顺序：num_sms, nvl_chunked_send, nvl_chunked_recv, rdma_chunked_send, rdma_chunked_recv</span>
+}
+</code></pre></div>
+
+<p><strong>规律</strong>：RDMA chunk send 大小通常在 6-32 之间，NV chunk send 在 1-36 之间，远小于 buffer 总容量。</p>
+<h3 id="23-internodecu-chunk">2.3 internode.cu 中的 Chunk 发送逻辑</h3>
+<p><strong>文件</strong>: <code>csrc/kernels/legacy/internode.cu:808-817</code>（RDMA Sender Coordinator）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Issue RDMA send</span>
+<span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>min(num_tokens_processed,<span style="color: #BBB"> </span>num_max_rdma_chunked_send_tokens);
+EP_DEVICE_ASSERT(num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>synced_num_tokens_to_send);
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_rdma_rank<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>rdma_rank)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>synced_last_issued_tail<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens;
+<span style="color: #BBB">    </span>EP_DEVICE_ASSERT(dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>num_tokens_to_issue<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>num_max_rdma_chunked_recv_tokens);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">size_t</span><span style="color: #BBB"> </span>num_bytes_per_msg<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>num_bytes_per_token<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>num_tokens_to_issue;
+<span style="color: #BBB">    </span>nvshmemi_ibgda_put_nbi_warp<span style="color: #666">&lt;</span><span style="color: #008000">true</span><span style="color: #666">&gt;</span>(dst_ptr,<span style="color: #BBB"> </span>src_ptr,<span style="color: #BBB"> </span>num_bytes_per_msg,<span style="color: #BBB"> </span>...);
+}
+</code></pre></div>
+
+<p><strong>核心逻辑</strong>：<br />
+- 当 <code>num_tokens_processed &gt;= num_max_rdma_chunked_send_tokens</code> 时，触发一次 RDMA send<br />
+- 每次 send 的 token 数 = <code>min(已处理 token 数, chunk 大小)</code><br />
+- 多个 chunk 可流水线化（<code>last_issued_tail</code> 滑动）</p>
+<p><strong>文件</strong>: <code>csrc/kernels/legacy/internode.cu:1833-1884</code>（NVL Combine Sender）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Iterate over all tokens and send by chunks</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>current_rdma_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>channel_id<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRDMARanks;
+<span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(<span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>num_tokens_in_chunk<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">        </span>__shfl_sync(<span style="color: #666">0xffffffff</span>,<span style="color: #BBB"> </span>min(num_max_nvl_chunked_send_tokens,<span style="color: #BBB"> </span>token_end_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>token_start_idx),<span style="color: #BBB"> </span>current_rdma_idx);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Send by chunk</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>chunk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>chunk_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens_in_chunk;<span style="color: #BBB"> </span><span style="color: #666">++</span>chunk_idx,<span style="color: #BBB"> </span><span style="color: #666">++</span>token_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(cached_channel_tail_idx<span style="color: #666">++</span>)<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>num_max_nvl_chunked_recv_tokens_per_rdma;
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// ... TMA store</span>
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="24-legacy-chunk">2.4 Legacy Chunk 的数据流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    TokenStream[&quot;Token Stream&lt;br/&gt;调度粒度&quot;] --&gt;|&quot;token 逐个处理&quot;| Accumulate[&quot;Accumulate&lt;br/&gt;计数达到 chunk 大小&quot;]
+    Accumulate --&gt;|&quot;num_tokens_processed&lt;br/&gt;≥ chunk_size&quot;| Chunk[&quot;Chunk&lt;br/&gt;通信粒度&quot;]
+    Chunk --&gt;|&quot;nvshmemi_ibgda_put_nbi&lt;br/&gt;一次性发送&quot;| RDMA[&quot;RDMA Network&quot;]
+    Chunk --&gt;|&quot;tma_store_1d&lt;br/&gt;一次性发送&quot;| NVL[&quot;NVLink&quot;]
+</code></pre></div>
+
+<p><strong>Legacy 总结</strong>：Chunk 是 <strong>显式的、固定大小的</strong>，在 kernel 内部通过计数器阈值触发 flush。一次 RDMA/NVL 操作发送一个 Chunk 的全部 token。</p>
+<hr />
+<h2 id="3-elasticv2-chunk-token-nccl">3. Elastic（V2）的 Chunk 机制：Token 级流式 + NCCL 聚合</h2>
+<h3 id="31-v2-direct-dispatchscaleout1-chunk">3.1 V2 Direct Dispatch（scaleout=1）：无显式 Chunk</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/dispatch.cuh:280-394</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Iterate all tokens</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_start<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>dispatch_warp_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sm_idx;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_stride<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumDispatchWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs;
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_start;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>num_tokens;<span style="color: #BBB"> </span>token_idx<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>token_stride)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... TMA load hidden + SF + topk_idx + topk_weights</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... TMA store to send buffer</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ... TMA NVLink store</span>
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Issue RDMA put</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kIsScaleupNVLink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_wait<span style="color: #666">&lt;1&gt;</span>();
+<span style="color: #BBB">        </span>__syncwarp();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">                            </span>send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),<span style="color: #BBB"> </span>stored_dst_rank_idx);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">        </span>__syncwarp();
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>关键发现</strong>：V2 Direct Dispatch 中 <strong>没有显式 Chunk 概念</strong>！<br />
+- 每个 token 独立执行 TMA load → shared memory → TMA store → RDMA put<br />
+- 没有计数器累积到某个 chunk_size 再触发发送<br />
+- Token 是流式逐个处理的（Token Streaming）</p>
+<h3 id="32-notify-warp">3.2 Notify Warp 中的聚合标记</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/dispatch.cuh:152-158</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Issue scaleup rank count writes to peers</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>thread_idx;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">+=</span><span style="color: #BBB"> </span>kNumNotifyThreads)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_rank_counter<span style="color: #BBB"> </span><span style="color: #666">=</span>
+<span style="color: #BBB">        </span>workspace_layout.get_scaleup_rank_count_ptr<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>rank_idx;
+<span style="color: #BBB">    </span>gin.put_value<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(dst_rank_counter,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(rank_count[i]),<span style="color: #BBB"> </span>i,
+<span style="color: #BBB">                          </span>ncclGinOptFlagsAggregateRequests);
+}
+</code></pre></div>
+
+<p>这里使用了 <code>ncclGinOptFlagsAggregateRequests</code>，这是 <strong>NCCL 层面的请求聚合</strong>，不是 token 层面的 chunk 聚合。</p>
+<h3 id="33-ncclginoptflagsaggregaterequests">3.3 <code>ncclGinOptFlagsAggregateRequests</code> 的含义</h3>
+<p><code>ncclGinOptFlagsAggregateRequests</code> 是 NCCL Gin (GPU Initiated) 的一个 flag，其语义是：</p>
+<blockquote>
+<p><strong>告诉 NCCL：这个 put 请求可以延迟发送，等待后续请求聚合后再统一发出</strong>。</p>
+</blockquote>
+<p>当使用该 flag 时，NCCL 内部会：<br />
+1. 将请求放入 QP (Queue Pair) 的 pending queue<br />
+2. 与后续请求合并（ Doorbell batching / request coalescing ）<br />
+3. 在实际 flush 时（调用 <code>gin.flush()</code> 或遇到不带 aggregate flag 的请求）统一 doorbell 写入</p>
+<p><strong>这不是 DeepEP 源码层面的 Chunk，而是 NCCL 运行时层面的聚合优化</strong>。</p>
+<hr />
+<h2 id="4-v2-hybrid-dispatch-chunk">4. V2 Hybrid Dispatch：显式 Chunk 回归</h2>
+<h3 id="41-forward-warp-chunk">4.1 Forward Warp 的 Chunk 处理</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:26-27</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">6</span>,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumSlotsPerForwardChunk<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kScaleoutUpdateInterval,
+</code></pre></div>
+
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:528-535</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Process one chunk from the current rank</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>start_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>exchange(stored_scaleout_old_tail_idx,<span style="color: #BBB"> </span>recv_scaleout_rank_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>end_slot_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>std<span style="color: #666">::</span>min(
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>exchange(stored_scaleout_tail_idx,<span style="color: #BBB"> </span>recv_scaleout_rank_idx),
+<span style="color: #BBB">    </span>start_slot_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>kNumSlotsPerForwardChunk
+);
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>recv_scaleout_rank_idx)
+<span style="color: #BBB">    </span>stored_scaleout_old_tail_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>end_slot_idx;
+</code></pre></div>
+
+<p><strong>Hybrid Dispatch 中 Chunk 是显式的</strong>：<br />
+- 每次最多处理 <code>kNumSlotsPerForwardChunk = 6</code> 个 token<br />
+- 处理完后记录 metadata（包括 <code>is_token_last_in_chunk</code>）</p>
+<h3 id="42-is_token_last_in_chunk">4.2 <code>is_token_last_in_chunk</code> 记录</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:618-622</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Record metadata at forward</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kReuseSlotIndices)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>metadata_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_metadata_at_forward<span style="color: #BBB"> </span><span style="color: #666">+</span>
+<span style="color: #BBB">        </span>num_tokens_processed<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumForwardMetadataDims;
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Source token index and last token index flag</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>metadata_ptr[<span style="color: #666">0</span>]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>tma_buffer.get_src_token_global_idx_ptr()[<span style="color: #666">0</span>];
+<span style="color: #BBB">        </span>metadata_ptr[<span style="color: #666">1</span>]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>slot_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>(end_slot_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← is_token_last_in_chunk</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// ...</span>
+}
+</code></pre></div>
+
+<p><strong><code>is_token_last_in_chunk = (slot_idx == end_slot_idx - 1)</code></strong> 标记一个 Chunk 的最后一个 token。</p>
+<h3 id="43-hybrid-combineis_token_last_in_chunk-rdma-flush">4.3 Hybrid Combine：<code>is_token_last_in_chunk</code> 触发 RDMA flush</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh:371-387</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>flush_last_tma_and_issue_rdma<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">&amp;</span>]()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(last_src_scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_wait();
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Issue only if not local rank</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(last_src_scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>scaleout_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">                </span>last_recv_token_buffer_ptr,
+<span style="color: #BBB">                </span>last_send_token_buffer_ptr,
+<span style="color: #BBB">                </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">                </span>last_src_scaleout_rank_idx,
+<span style="color: #BBB">                </span>last_is_token_last_in_chunk<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>ncclGinOptFlagsAggregateRequests
+<span style="color: #BBB">                </span><span style="color: #3D7B7B; font-style: italic">//  ↑↑↑ 关键逻辑 ↑↑↑</span>
+<span style="color: #BBB">            </span>);
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+};
+</code></pre></div>
+
+<p><strong>核心决策逻辑</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>if is_token_last_in_chunk:
+    flags = 0              → 立即 flush，不聚合
+else:
+    flags = ncclGinOptFlagsAggregateRequests  → 聚合等待
+</code></pre></div>
+
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh:482-491</code>（非 multiple reduction 模式）</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>recv_buffer_ptr,
+<span style="color: #BBB">    </span>send_buffer_ptr,
+<span style="color: #BBB">    </span>token_layout.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">    </span>src_scaleout_rank_idx,
+<span style="color: #BBB">    </span>topk_valid_mask<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>is_token_last_in_chunk<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>ncclGinOptFlagsAggregateRequests
+);
+</code></pre></div>
+
+<hr />
+<h2 id="5-channel-linked-listelastic-token">5. Channel + Linked List：Elastic 的 Token 流组织</h2>
+<h3 id="51-channel">5.1 Channel 架构</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:23-24</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumChannelsPerSM<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumChannels<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumScaleoutWarps<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSMs,
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>kNumMaxTokensPerChannel<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>constexpr_ceil_div(kNumMaxTokensPerRank,<span style="color: #BBB"> </span>kNumChannels),
+</code></pre></div>
+
+<ul>
+<li>每个 SM 内有 <code>kNumChannelsPerSM</code> 个 channel（通常等于 scaleout warps 数）</li>
+<li>每个 channel 是一个 warp，独立处理一组 token</li>
+<li>Token 按 <code>token_idx % kNumChannels</code> 分发到不同 channel</li>
+</ul>
+<h3 id="52-linked-list">5.2 Linked List 机制</h3>
+<p><strong>文件</strong>: <code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh:562-575</code></p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// Write the per-scaleup channel index for this token</span>
+<span style="color: #B00040">int</span><span style="color: #BBB"> </span>linked_list_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">-1</span>;
+<span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">int</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumScaleupRanksPerLane;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>j)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_lane_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_scaleup_rank_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>valid<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>src_lane_idx<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>src_lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span><span style="color: #666">32</span>;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>exchanged<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>exchange(
+<span style="color: #BBB">        </span>stored_scaleup_send_counters[j],<span style="color: #BBB"> </span>valid<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>src_lane_idx<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>);
+<span style="color: #BBB">    </span>linked_list_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>valid<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>exchanged<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span>linked_list_idx;
+}
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kReuseSlotIndices<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>lane_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumTopk)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>tma_buffer.get_linked_list_idx_ptr()[lane_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>transform_linked_list_idx(linked_list_idx);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_fence();
+}
+</code></pre></div>
+
+<p><strong>Linked List 的作用</strong>：<br />
+- 每个 channel 为每个 scale-up peer 维护一个链表<br />
+- 链表索引 = token 在 scale-up 接收 buffer 中的位置<br />
+- Combine 时通过重放链表恢复 token 顺序</p>
+<h3 id="53-token">5.3 完整 Token 流</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph Scaleout[&quot;Scale-Out Dispatch&quot;]
+        SOT[&quot;Scaleout Warp&lt;br/&gt;Channel c&quot;] --&gt;|&quot;token_idx = c + k&quot;| LOAD[&quot;TMA Load Token&quot;]
+        LOAD --&gt; DEDUP[&quot;Deduplicate&lt;br/&gt;scaleout ranks&quot;]
+        LOAD --&gt; META[&quot;Record Metadata&lt;br/&gt;src_token_global_idx&lt;br/&gt;is_token_last_in_chunk&quot;]
+        DEDUP --&gt; SEND[&quot;Send Buffer&lt;br/&gt;scaleout_send_buffer&quot;]
+        SEND --&gt;|&quot;ncclGinOptFlagsAggregateRequests&quot;| IBGDA[&quot;IBGDA Put&lt;br/&gt;RDMA Scale-Out&quot;]
+    end
+
+    subgraph Forward[&quot;Forward Warp&quot;]
+        FWD[&quot;Forward Warp&lt;br/&gt;Channel c&quot;] --&gt;|&quot;wait signaled_tail&quot;| FR[&quot;Forward from&lt;br/&gt;scaleout_recv_buffer&quot;]
+        FR --&gt; CHUNK[&quot;Process Chunk&lt;br/&gt;≤ kNumSlotsPerForwardChunk=6&quot;]
+        CHUNK --&gt; NVL[&quot;TMA Store →&lt;br/&gt;scaleup_buffer NVLink&quot;]
+        CHUNK --&gt; LNK[&quot;Linked List&lt;br/&gt;per scaleup rank&quot;]
+        CHUNK --&gt; META2[&quot;metadata_at_forward&lt;br/&gt;[src_global_idx, is_last_in_chunk, dst_rank, dst_slot]&quot;]
+    end
+
+    subgraph Combine[&quot;Combine&quot;]
+        CU[&quot;Scaleup Combine Warp&quot;] --&gt;|&quot;replay linked_list&quot;| RDX[&quot;Reduce from&lt;br/&gt;scaleup_buffer&quot;]
+        RDX --&gt;|&quot;is_token_last_in_chunk?&lt;br/&gt;flush : aggregate&quot;| RDMA2[&quot;RDMA Put →&lt;br/&gt;scaleout_recv_buffer&quot;]
+    end
+
+    IBGDA --&gt; FWD
+    LNK --&gt; CU
+    META2 --&gt; CU
+</code></pre></div>
+
+<hr />
+<h2 id="6">6. 代码证据汇总</h2>
+<h3 id="61-legacy-chunk">6.1 Legacy Chunk 发送触发</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>代码/逻辑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>24-51</td>
+<td><code>Config</code> 定义 <code>num_max_*_chunked_send/recv_tokens</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>809</td>
+<td><code>if (num_tokens_processed != synced_num_tokens_to_send and num_tokens_processed &lt; num_max_rdma_chunked_send_tokens) continue;</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>813</td>
+<td><code>auto num_tokens_to_issue = min(num_tokens_processed, num_max_rdma_chunked_send_tokens);</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>1880-1881</td>
+<td><code>int num_tokens_in_chunk = __shfl_sync(0xffffffff, min(num_max_nvl_chunked_send_tokens, token_end_idx - token_start_idx), current_rdma_idx);</code></td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>2014</td>
+<td><code>for (int token_start_idx = 0; token_start_idx &lt; num_tokens_to_combine; token_start_idx += num_max_rdma_chunked_send_tokens)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-elastic-v2">6.2 Elastic V2 聚合触发</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行号</th>
+<th>代码/逻辑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>157</td>
+<td><code>gin.put_value&lt;team_t&gt;(..., ncclGinOptFlagsAggregateRequests);</code> (notify)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>183</td>
+<td><code>gin.put&lt;ncclTeamTagRail&gt;(..., ncclGinOptFlagsAggregateRequests);</code> (notify)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>454</td>
+<td><code>gin.put&lt;ncclTeamTagRail&gt;(..., ncclGinOptFlagsAggregateRequests);</code> (scaleout send)</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>27</td>
+<td><code>kNumSlotsPerForwardChunk = kScaleoutUpdateInterval = 6</code></td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>621</td>
+<td><code>metadata_ptr[1] = slot_idx == (end_slot_idx - 1)</code> — is_token_last_in_chunk</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>382</td>
+<td><code>last_is_token_last_in_chunk ? 0 : ncclGinOptFlagsAggregateRequests</code></td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>489</td>
+<td><code>topk_valid_mask == 0 and is_token_last_in_chunk ? 0 : ncclGinOptFlagsAggregateRequests</code></td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/engram_fetch.cuh</code></td>
+<td>73</td>
+<td><code>(request_idx % kGinQPFlushDepth == (kGinQPFlushDepth - 1)) ? 0 : ncclGinOptFlagsAggregateRequests</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7">7. 准确性评估</h2>
+<h3 id="71-legacy-v1">7.1 博客描述对 Legacy V1 的准确性：<strong>准确</strong></h3>
+<table>
+<thead>
+<tr>
+<th>博客主张</th>
+<th>Legacy 代码证据</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Token is the scheduling granularity"</td>
+<td>Token 是 kernel 循环的基本单位，每个 token 独立 TMA load/store</td>
+<td>✅ 准确</td>
+</tr>
+<tr>
+<td>"Chunk is the communication granularity"</td>
+<td><code>num_max_rdma_chunked_send_tokens</code> / <code>num_max_nvl_chunked_send_tokens</code> 定义通信粒度</td>
+<td>✅ 准确</td>
+</tr>
+<tr>
+<td>"Tokens are aggregated: Token Stream → Chunk → Network Transfer"</td>
+<td>代码明确累积 token 直到 chunk_size 再触发 <code>ibgda_put_nbi</code> / <code>tma_store</code></td>
+<td>✅ 准确</td>
+</tr>
+<tr>
+<td>"Normal Kernel: Chunk Critical"</td>
+<td>Normal Kernel 完全依赖 chunk 化发送</td>
+<td>✅ 准确</td>
+</tr>
+<tr>
+<td>"Low-Latency Kernel: Reduced Chunk"</td>
+<td>Low-Latency kernel 走 <code>low_latency_dispatch</code>，单 token RDMA，无 chunk 聚合</td>
+<td>✅ 准确</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72-elastic-v2">7.2 博客描述对 Elastic V2 的准确性：<strong>部分准确，需要细化</strong></h3>
+<table>
+<thead>
+<tr>
+<th>博客主张</th>
+<th>Elastic 代码证据</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Token is the scheduling granularity"</td>
+<td>V2 Direct: token 逐个循环；V2 Hybrid: token 按 channel 分发</td>
+<td>✅ 准确</td>
+</tr>
+<tr>
+<td>"Chunk is the communication granularity"</td>
+<td>V2 Direct: <strong>无显式 chunk</strong>，token 级流式；V2 Hybrid: forward chunk=6</td>
+<td>⚠️ 有条件成立</td>
+</tr>
+<tr>
+<td>"Tokens are aggregated: Token Stream → Chunk → Network"</td>
+<td>V2 Direct: Token Stream → <strong>NCCL 聚合</strong> → Network（非显式 chunk）</td>
+<td>⚠️ 需修正</td>
+</tr>
+<tr>
+<td>"Normal Kernel: Chunk Critical"</td>
+<td>V2 Normal 用 NCCL <code>AggregateRequests</code> 替代显式 chunk</td>
+<td>⚠️ 机制不同但效果类似</td>
+</tr>
+</tbody>
+</table>
+<h3 id="73">7.3 关键差异总结</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Legacy V1</th>
+<th>Elastic V2 Direct</th>
+<th>Elastic V2 Hybrid</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chunk 定义</td>
+<td>显式，Config 固定大小</td>
+<td>无显式 chunk</td>
+<td>Forward chunk = 6 slots</td>
+</tr>
+<tr>
+<td>聚合位置</td>
+<td>kernel 内部计数器</td>
+<td>NCCL Gin 运行时</td>
+<td>NCCL Gin + metadata</td>
+</tr>
+<tr>
+<td>触发条件</td>
+<td><code>num_processed ≥ chunk_size</code></td>
+<td>每个 token 发 put</td>
+<td><code>is_token_last_in_chunk</code> 触发 flush</td>
+</tr>
+<tr>
+<td>通信粒度</td>
+<td>chunk（6-32 tokens）</td>
+<td>单 token</td>
+<td>单 token（聚合由 NCCL 完成）</td>
+</tr>
+<tr>
+<td>博客吻合度</td>
+<td>高</td>
+<td>中（博客需补充说明）</td>
+<td>高</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-v2-chunk">8. 深度分析：为什么 V2 要"去 Chunk 化"？</h2>
+<h3 id="81-legacy-chunk">8.1 Legacy Chunk 的问题</h3>
+<p>Legacy 的固定 chunk 大小存在固有缺陷：<br />
+1. <strong>延迟与吞吐的权衡</strong>：chunk 越大，带宽利用率越高，但首 token 延迟越大<br />
+2. <strong>Buffer 浪费</strong>：recv buffer 必须按 <code>chunk_recv_size</code> 对齐，且 <code>recv ≥ 2 × send</code><br />
+3. <strong>静态配置</strong>：chunk size 是离线调优的，无法适应动态 token 分布</p>
+<h3 id="82-v2-nccl-token-streaming">8.2 V2 的解决方案：NCCL 聚合 + Token Streaming</h3>
+<p>V2 的哲学转变：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>V1: 应用层 Chunk → 固定阈值 flush → RDMA
+V2: Token 流式 → NCCL AggregateRequests → NCCL 运行时决定 flush 时机
+</code></pre></div>
+
+<p><strong>优势</strong>：<br />
+1. <strong>更低延迟</strong>：首 token 无需等待 chunk 填满即可发出<br />
+2. <strong>硬件利用</strong>：NCCL 内部可以 doorbell batching、自适应 coalescing<br />
+3. <strong>弹性</strong>：不依赖固定 chunk size 调优</p>
+<h3 id="83-ncclginoptflagsaggregaterequests">8.3 <code>ncclGinOptFlagsAggregateRequests</code> 的实际效果</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph V1[&quot;Legacy: 应用层 Chunk&quot;]
+        T1[&quot;Token 1&quot;] --&gt;|等待| C1[&quot;Chunk 1&lt;br/&gt;6 tokens&quot;]
+        T2[&quot;Token 2&quot;] --&gt;|等待| C1
+        T3[&quot;Token 3&quot;] --&gt;|等待| C1
+        T4[&quot;Token 4&quot;] --&gt;|等待| C1
+        T5[&quot;Token 5&quot;] --&gt;|等待| C1
+        T6[&quot;Token 6&quot;] --&gt;|等待| C1
+        C1 --&gt;|一次性发送| R1[&quot;RDMA PUT&quot;]
+    end
+
+    subgraph V2[&quot;Elastic: NCCL 聚合&quot;]
+        TT1[&quot;Token 1&quot;] --&gt;|&quot;put(aggregate)&quot;| Q[&quot;NCCL QP&lt;br/&gt;Pending Queue&quot;]
+        TT2[&quot;Token 2&quot;] --&gt;|&quot;put(aggregate)&quot;| Q
+        TT3[&quot;Token 3&quot;] --&gt;|&quot;put(aggregate)&quot;| Q
+        TT4[&quot;Token 4&quot;] --&gt;|&quot;put(aggregate)&quot;| Q
+        TT5[&quot;Token 5&quot;] --&gt;|&quot;put(aggregate)&quot;| Q
+        TT6[&quot;Token 6&quot;] --&gt;|&quot;put(flush)&quot;| Q
+        Q --&gt;|doorbell batch| R2[&quot;RDMA PUT&quot;]
+    end
+</code></pre></div>
+
+<p><strong>本质相同，但决策者不同</strong>：<br />
+- V1：应用代码决定何时 flush（chunk_size 阈值）<br />
+- V2：NCCL 运行时决定何时 flush（QP 压力、doorbell 时机）</p>
+<hr />
+<h2 id="9">9. 结论</h2>
+<h3 id="91">9.1 博客第一性原理的评价</h3>
+<p>博客的 <strong>"Token → Chunk → Network Transfer"</strong> 描述：</p>
+<ol>
+<li><strong>对 Legacy V1</strong>：<strong>完全准确</strong>，Chunk 是显式的、应用层控制的通信粒度</li>
+<li><strong>对 Elastic V2 Direct</strong>：<strong>需要修正</strong>，实际是 <strong>"Token → NCCL AggregateRequests → Network"</strong>，chunk 被 NCCL 运行时的请求聚合替代</li>
+<li><strong>对 Elastic V2 Hybrid</strong>：<strong>准确</strong>，forward warp 仍有显式 chunk（6 slots），combine 通过 <code>is_token_last_in_chunk</code> 触发 flush</li>
+</ol>
+<h3 id="92">9.2 更深层的洞察</h3>
+<blockquote>
+<p><strong>从 V1 到 V2 的演进，是"通信粒度决策权从应用层下沉到通信运行时层"的体现。</strong></p>
+</blockquote>
+<ul>
+<li>V1 假设：应用最了解何时聚合 → 固定 chunk size</li>
+<li>V2 假设：NCCL 运行时能更好地自适应聚合 → <code>AggregateRequests</code> flag</li>
+</ul>
+<p>这与 NCCL 整体演进方向一致：<strong>把更多的通信调度决策交给网络层</strong>，应用层只提供 hints（aggregate or flush），而不是硬性规定。</p>
+<h3 id="93">9.3 建议修正</h3>
+<p>博客若要更精确描述 V2，可将：</p>
+<blockquote>
+<p>"Token is the scheduling granularity; Chunk is the communication granularity."</p>
+</blockquote>
+<p>修正为：</p>
+<blockquote>
+<p>"Token is the scheduling granularity; in Legacy, Chunk is the communication granularity; in Elastic, the communication granularity is managed by NCCL's request aggregation (<code>ncclGinOptFlagsAggregateRequests</code>), with explicit chunking only in the Hybrid forward path."</p>
+</blockquote>
+<hr />
+<h2 id="_1">附录：关键文件路径索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrc/legacy/config.hpp</code></td>
+<td>Legacy Config（含 chunk 大小）</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/legacy/internode.cu</code></td>
+<td>Legacy internode dispatch/combine kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/legacy.py</code></td>
+<td>Legacy Python buffer 接口</td>
+</tr>
+<tr>
+<td><code>deep_ep/buffers/elastic.py</code></td>
+<td>Elastic Python buffer 接口</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>Elastic Direct dispatch kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>Elastic Hybrid dispatch kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>Elastic Direct combine kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/impls/hybrid_combine.cuh</code></td>
+<td>Elastic Hybrid combine kernel</td>
+</tr>
+<tr>
+<td><code>deep_ep/include/deep_ep/common/layout.cuh</code></td>
+<td>Buffer/Token/Workspace 布局</td>
+</tr>
+<tr>
+<td><code>csrc/elastic/buffer.hpp</code></td>
+<td>Elastic C++ buffer 实现</td>
+</tr>
+<tr>
+<td><code>csrc/kernels/elastic/dispatch.hpp</code></td>
+<td>Elastic JIT dispatch runtime</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>

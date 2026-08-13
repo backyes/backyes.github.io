@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>vLLM PD 分离 · Decode 端 KV Cache 内存容量分析</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #30363d;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #7ee787;
+    --accent-warn: #d29922;
+    --accent-danger: #f85149;
+    --code-bg: #0b1018;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Noto Sans CJK SC", "PingFang SC", sans-serif;
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #1a2138 0%, #0d1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 20px;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 8px; font-size: 1.6rem; color: var(--accent); }
+  header .subtitle { color: var(--muted); font-size: 0.95rem; }
+  header .meta { margin-top: 10px; font-size: 0.85rem; color: var(--muted); }
+  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+  h2 {
+    color: var(--accent-2);
+    font-size: 1.25rem;
+    border-bottom: 1px dashed var(--border);
+    padding-bottom: 6px;
+    margin-top: 0;
+  }
+  h3 { color: var(--accent); font-size: 1.05rem; margin-top: 20px; }
+  p, li { font-size: 0.95rem; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; padding: 0; border: 0; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0;
+    font-size: 0.88rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    vertical-align: top;
+  }
+  th { background: var(--panel-2); color: var(--accent-2); }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  .pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    margin-right: 4px;
+  }
+  .pill-orange { background: rgba(210,153,34,.2); color: var(--accent-warn); border: 1px solid var(--accent-warn); }
+  .pill-green  { background: rgba(126,231,135,.15); color: var(--accent-2); border: 1px solid var(--accent-2); }
+  .pill-blue   { background: rgba(88,166,255,.15); color: var(--accent); border: 1px solid var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 4px;
+    font-size: 0.82rem;
+  }
+  blockquote {
+    border-left: 3px solid var(--accent-warn);
+    background: rgba(210,153,34,.08);
+    padding: 10px 14px;
+    margin: 10px 0;
+    color: #f0e6d2;
+  }
+  .callout {
+    background: rgba(88,166,255,.08);
+    border-left: 3px solid var(--accent);
+    padding: 12px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.9rem;
+  }
+  .number-huge {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent-2);
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 680px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    header h1 { font-size: 1.3rem; }
+  }
+  .toc { font-size: 0.88rem; columns: 2; column-gap: 20px; }
+  .toc a { display: block; padding: 3px 0; }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.78rem;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+  }
+  .source-tag {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>vLLM PD 分离 · Decode 端 KV Cache 内存容量分析</h1>
+  <div class="subtitle">vLLM v1 架构下 D 实例（Decode Worker）KV Cache pool / 调度 / 容量定量剖析</div>
+  <div class="meta">生成时间: 2026-07-15 · 数据源: vLLM 官方 GitHub raw + docs + 核心源码</div>
+</header>
+
+<div class="container">
+
+  <!-- ============= 1. 概要 ============= -->
+  <section>
+    <h2>1. 调研方法 & 目录</h2>
+    <p>本报告基于 Playwright + Python <code>urllib</code> 直接从 <code>raw.githubusercontent.com</code> 拉取 vLLM main 分支的 <strong>design docs</strong>、用户文档及核心源码，聚焦 <strong>disaggregated prefill/decode</strong>（<a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">disagg_prefill</a>）设计中 D 实例的 KV Cache 内存容量。</p>
+    <div class="toc">
+      <a href="#sec-design">§2. D 端 KV Cache pool / Block Manager 设计架构</a>
+      <a href="#sec-param">§3. block_size · gpu_memory_utilization 默认值及影响</a>
+      <a href="#sec-sched">§4. D 端 KV Cache 调度（swap / eviction / prefix caching）</a>
+      <a href="#sec-dtype">§5. kv_cache_dtype 与精度对 D 端容量的影响</a>
+      <a href="#sec-profile">§6. D 端 Memory Profiling（权重 / KV Cache / 激活 / 碎片）</a>
+      <a href="#sec-longctx">§7. 长 context (1M) 下的 HBM 挑战</a>
+      <a href="#sec-nixl">§8. PD KV Transfer 的 D 端内存承诺（Lease / Push / Watchdog）</a>
+      <a href="#sec-refs">§9. 引用 & 调研过程附件</a>
+    </div>
+  </section>
+
+  <!-- ============= 2. D 端 KV Cache pool / Block Manager 设计 ============= -->
+  <section id="sec-design">
+    <h2>2. D 端 KV Cache pool / Block Manager 设计 <span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/docs/design/paged_attention.md">paged_attention.md</a> · <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/hybrid_kv_cache_manager.md">hybrid_kv_cache_manager.md</a> · <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/prefix_caching.md">prefix_caching.md</a>)</span></h2>
+
+    <h3>2.1 整体流程 (Scheduler → KVCacheManager → BlockPool → GPU tensor)</h3>
+    <p>vLLM v1 把 KV Cache 管理抽象成三层（详见 <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/hybrid_kv_cache_manager.md">hybrid_kv_cache_manager.md</a>）：</p>
+    <pre><code>┌──────────────────────────────────────────────────────────────┐
+│ Scheduler (engine core)                                      │
+│   └─ on_new_request / allocate_slots / free  (per-request)   │
+└────────────────────┬─────────────────────────────────────────┘
+                     │  KVCacheBlocks (per-request)
+                     ▼
+┌──────────────────────────────────────────────────────────────┐
+│ KVCacheManager (vllm/v1/core/kv_cache_manager.py)            │
+│   └─ get_computed_blocks   (prefix cache hit 第一次扫描)     │
+│   └─ allocate_slots        (调度一个 step 的分配)            │
+│   └─ free                  (请求完成释放, 反向 order LRU)    │
+│   └─ usage()               (0.0~1.0 占用率, 用于 watermark)  │
+└────────────────────┬─────────────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────────────────────┐
+│ BlockPool (vllm/v1/core/block_pool.py)                       │
+│   blocks: list[KVCacheBlock]   # 预分配好的所有 block        │
+│   free_block_queue: FreeKVCacheBlockQueue (doubly-linked)    │
+│   cached_block_hash_to_block: BlockHashToBlockMap            │
+│   └─ allocate() / free() / cache_full_blocks() / evict_blocks│
+└────────────────────┬─────────────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────────────────────┐
+│ KVCacheTensor (per-buffer, 跨 KV cache group 共享)            │
+│   block_size × kv_hidden_size 的 slice 拼成 cuda 连续 tensor  │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+
+    <h3>2.2 谁是"D 端"的决定者</h3>
+    <ul>
+      <li><strong>Scheduler (engine core process)</strong>：在 D 实例上，<code>NixlConnectorScheduler</code> 在每次 scheduler step 里调用 <code>build_connector_meta</code>：
+        <ul>
+          <li>push 模式 D 端 → <code>meta.push_registrations</code>（把自己的 logical block_ids 给 P）</li>
+          <li>pull 模式 D 端 → 等待 P 的 KV READ, 通过 <code>_pending_completion_notifs</code> 完成通知</li>
+        </ul>
+      </li>
+      <li><strong>Worker (GPU, 每 TP rank 一个)</strong>：执行实际的 KV Transfer 以及 KV Cache 的写入/读取。<code>nixl-push-writer</code> 是新增的专用后台线程（<a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_push_connector.md">nixl_kv_push_connector.md</a> §Threads）。</li>
+      <li><strong>KV Cache 调度器视角</strong>：D 端容量完全取决于 <code>KVCacheManager</code> 初始化时做出的 <code>num_gpu_blocks</code> 决策（基于 <code>determine_available_memory()</code> profiling 结果）。P→D 的 KV transfer 落到<strong>同一块 block</strong>里——push 时 P 直接 WRITE 到 D 预分配好的 block（"logical block ids (preallocated)"，参见 push_connector.md）。</li>
+    </ul>
+
+    <h3>2.3 PD 分离后 D 端的 KV Cache 来源（三种路径）</h3>
+    <table>
+      <tr><th>路径</th><th>机制</th><th>D 端 block 状态</th></tr>
+      <tr>
+        <td>pull 模式 (默认)</td>
+        <td>D 发起 <code>NIXL READ</code>, P 端被读</td>
+        <td>D 端 <strong>先分配</strong>，再由 RDMA 填充</td>
+      </tr>
+      <tr>
+        <td>push 模式</td>
+        <td>P 端 <code>NIXL WRITE</code> 到 D 预分配的 block</td>
+        <td>D 端 <strong>先分配</strong>, 再被写入 (<code>_handle_push_reg_notif</code>)</td>
+      </tr>
+      <tr>
+        <td>prefix cache hit</td>
+        <td>D 端 BlockPool 中已缓存相同 token(s) 的 block</td>
+        <td>直接复用, ref_cnt++, 不占 KV transfer 带宽</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <strong>关键洞察</strong>：无论 pull/push, <strong>D 端的 block 都是预分配的</strong>——这意味着 D 端必须在收到 KV 之前就承诺内存。当 PD 规模较大时, 这种"预分配 + lease"机制会在 D 端形成大量的<strong>内存承诺</strong>。Lease renewal（参见 §8）正是为了缓解这一点。
+    </div>
+  </section>
+
+  <!-- ============= 3. block_size · gpu_memory_utilization ============= -->
+  <section id="sec-param">
+    <h2>3. block_size / gpu_memory_utilization / kv_cache_memory_bytes 默认值及影响 <span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py">vllm/config/cache.py</a> 实测源码)</span></h2>
+
+    <div class="grid-2">
+      <div>
+        <h3>3.1 关键参数默认值</h3>
+        <table>
+          <tr><th>参数</th><th>默认值</th><th>所在配置类 / CLI</th></tr>
+          <tr><td><code>block_size</code></td><td><span class="number-huge">16</span> tokens</td><td><code>CacheConfig.DEFAULT_BLOCK_SIZE</code></td></tr>
+          <tr><td><code>gpu_memory_utilization</code></td><td><span class="number-huge">0.92</span> (92%)</td><td><code>CacheConfig.gpu_memory_utilization</code></td></tr>
+          <tr><td><code>cache_dtype</code> (kv_cache_dtype)</td><td><code>"auto"</code> (= model dtype)</td><td><code>CacheConfig.cache_dtype</code></td></tr>
+          <tr><td><code>enable_prefix_caching</code></td><td><code>True</code></td><td><code>CacheConfig.enable_prefix_caching</code></td></tr>
+          <tr><td><code>kv_cache_memory_bytes</code></td><td><code>None</code> (自动推导)</td><td><code>CacheConfig.kv_cache_memory_bytes</code></td></tr>
+          <tr><td><code>kv_offloading_size</code></td><td><code>None</code> (CPU offload 关闭)</td><td><code>CacheConfig.kv_offloading_size</code></td></tr>
+          <tr><td><code>num_gpu_blocks_override</code></td><td><code>None</code> (仅测试用)</td><td><code>CacheConfig.num_gpu_blocks_override</code></td></tr>
+          <tr><td><code>mamba_block_size</code></td><td><code>None</code></td><td>Hybrid Mamba-attention 模型专用</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>3.2 源码级证据（CacheConfig）</h3>
+        <pre><code class="language-python"># vllm/config/cache.py (GitHub main, 2026-07-15)
+class CacheConfig:
+    DEFAULT_BLOCK_SIZE: ClassVar[int] = 16
+
+    block_size: int = Field(default=None, gt=0)
+    # After construction, always int (resolved to DEFAULT_BLOCK_SIZE)
+
+    gpu_memory_utilization: float = Field(default=0.92, gt=0, le=1)
+    """The fraction of GPU memory to be used
+    for the model executor, which can range from 0 to 1."""
+
+    cache_dtype: CacheDType = "auto"
+    """Data type for kv cache storage. If 'auto',
+    will use model data type."""
+
+    kv_cache_memory_bytes: int | None = None
+    """... ignores gpu_memory_utilization when not-None"""
+
+    num_gpu_blocks: int | None  # set after profiling
+    num_cpu_blocks: int | None  # set after profiling</code></pre>
+      </div>
+    </div>
+
+    <h3>3.3 各参数对 D 端容量的实际影响</h3>
+    <table>
+      <tr><th>参数</th><th>变化方向</th><th>对 D 端 KV Cache 容量的影响</th><th>副作用</th></tr>
+      <tr>
+        <td><code>block_size ↑</code></td><td>16 → 64 / 128</td>
+        <td>每个 block 占更多显存, 总 block 数 ↓（总 KV 显存 ≈ page_size × num_blocks）</td>
+        <td>① prefix cache hash 粒度变粗, hit-rate 降低<br>② 一个请求最小分配单位变大, 内部碎片变大</td>
+      </tr>
+      <tr>
+        <td><code>gpu_memory_utilization ↑</code></td><td>0.92 → 0.97</td>
+        <td>D 端可用显存 ↑ ⇒ num_gpu_blocks ↑（翻倍效应）</td>
+        <td>留给 activation 的空间更小, decode 长 batch 更易 OOM</td>
+      </tr>
+      <tr>
+        <td><code>gpu_memory_utilization ↓</code></td><td>0.92 → 0.70</td>
+        <td>D 端可用显存 ↓ ⇒ num_gpu_blocks ↓</td>
+        <td>更安全, 但同时 D 实例能承载的并发 request 数 ↓（甚至 PD 中 lease 被频繁 evict）</td>
+      </tr>
+      <tr>
+        <td><code>kv_cache_memory_bytes</code> 手动指定</td><td>>0</td>
+        <td><strong>完全旁路</strong> <code>gpu_memory_utilization</code></td>
+        <td>精细控制, 但需要自己估算（PD 推荐用法）</td>
+      </tr>
+      <tr>
+        <td><code>cache_dtype</code> 调低</td><td>fp16 → fp8_e4m3</td>
+        <td>KV Cache <strong>容量翻倍</strong></td>
+        <td>精度损失（需要 per-token-head scale）</td>
+      </tr>
+      <tr>
+        <td><code>prefix caching</code></td><td>True (默认)</td>
+        <td>共享 prefix 的 block 被不同 request 共用, 等效提升 D 端 KV Cache 利用效率</td>
+        <td>PD 中 P/D 端必须 hash 一致 (<code>PYTHONHASHSEED</code> 固定)</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <strong>vLLM 官方建议 (<a href="https://docs.vllm.ai/en/latest/configuration/conserving_memory/">conserving_memory.md</a>)</strong>：如果 D 端 OOM, 优先尝试 (1) 增加 TP, (2) 降低 <code>--gpu-memory-utilization</code>, (3) 启用量化, (4) 限制 <code>max_model_len</code> / <code>max_num_seqs</code>。
+    </div>
+  </section>
+
+  <!-- ============= 4. D 端 KV Cache 调度 ============= -->
+  <section id="sec-sched">
+    <h2>4. D 端 KV Cache 调度（swap / eviction / prefix caching）<span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/kv_cache_manager.py">kv_cache_manager.py</a> · <a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/block_pool.py">block_pool.py</a> · <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/prefix_caching.md">prefix_caching.md</a>)</span></h2>
+
+    <h3>4.1 核心调度逻辑（KVCacheManager.allocate_slots）</h3>
+    <pre><code># vllm/v1/core/kv_cache_manager.py
+watermark_blocks = int(watermark * kv_cache_config.num_blocks)  # 默认 watermark ≈ 0.01
+required_blocks = num_blocks_to_allocate + watermark_blocks     # 只有 waiting/preempted 请求才加
+
+if self.block_pool.get_num_free_blocks() &lt; required_blocks:
+    # 水位线未通过, 拒绝新的 waiting/preempted 请求 admission
+    return None, None
+# ... 正常 prefix cache hit 扫描 + 分配新 block</code></pre>
+
+    <h3>4.2 请求生命周期内的 KV Cache 操作</h3>
+    <table>
+      <tr><th>阶段</th><th>操作</th><th>代码位置</th><th>D 端 PD 场景的特殊性</th></tr>
+      <tr>
+        <td>请求进入</td>
+        <td><code>get_computed_blocks()</code> 扫描 prefix cache</td>
+        <td>KVCacheManager L207-260</td>
+        <td>若 P/D 共享 prefix 且 hash 一致, 可命中</td>
+      </tr>
+      <tr>
+        <td>调度分配</td>
+        <td><code>allocate_slots()</code> 为新 token 分配 block</td>
+        <td>KVCacheManager L380-470</td>
+        <td>新到的 PD request 需要同时承接 P→D 传来的 KV</td>
+      </tr>
+      <tr>
+        <td>PD-PUSH 完成</td>
+        <td><code>_handle_push_reg_notif</code> + <code>send_notif</code></td>
+        <td>nixl_kv_push_connector.md</td>
+        <td>D 端注册的 block 被 P 端 WRITE 填充, 触发 completion</td>
+      </tr>
+      <tr>
+        <td>请求完成</td>
+        <td><code>free()</code> <strong>反向</strong>顺序释放 block → 加到 free queue 尾部</td>
+        <td>KVCacheManager L505-560, block_pool.py</td>
+        <td>尾部的 block hash 更长、复用概率低, 优先被 evict</td>
+      </tr>
+      <tr>
+        <td>free queue 不够</td>
+        <td><code>FreeKVCacheBlockQueue.popleft()</code> evict LRU block</td>
+        <td>block_pool.py</td>
+        <td>从 free queue 的 head 取 block; 若 block 已 cached(<code>BlockHashToBlockMap</code>), evict 掉其 hash 条目</td>
+      </tr>
+    </table>
+
+    <h3>4.3 与 CPU swap / OffloadingConnector 的协同</h3>
+    <p>vLLM 提供 <code>OffloadingConnector</code>（详见 §5 <code>kv_offloading_usage.md</code>）：当 D 端 HBM 不足时, 可以把 KV block 以 DMA(<code>cudaMemcpyAsync</code>) offload 到 <strong>pinned CPU memory</strong>。配置入口：
+    </p>
+    <pre><code>--kv-transfer-config '{
+  "kv_connector": "OffloadingConnector",
+  "kv_role": "kv_both",
+  "kv_connector_extra_config": {
+    "block_size": 64,               # 必须为 GPU block_size 倍数
+    "cpu_bytes_to_use": 1000000000, # ~1 GiB CPU pinned mem
+    "eviction_policy": "lru"        # 或 "arc"
+  }
+}'</code></pre>
+
+    <div class="callout">
+      <strong>PD 场景关键配置开关 (kv_offloading_usage.md)</strong>：
+      <ul>
+        <li><code>offload_prompt_only: true</code> (默认)：只 offload prefill blocks, decode blocks 跳过（对 PD 中的 D 端非常友好）</li>
+        <li><code>store_threshold</code>：block 被 lookup N 次后才 offload（减少冷 block 的拷贝开销）</li>
+        <li><code>max_tracker_size</code>：默认 64000 条</li>
+      </ul>
+    </div>
+
+    <h3>4.4 Swap / Preemption 策略</h3>
+    <p>vLLM v1 <strong>不支持把 KV swap 到 CPU 的 preemption/restore</strong>—— Scheduler 的 preemption 策略是 <strong>RECOMPUTE</strong>（见 v1 scheduler）：一个请求如果分配不到 block, 直接丢弃已有 KV, 恢复到 waiting 队列, 等待 free block 水位线恢复后重新 <code>allocate_slots</code>。<code>watermark_blocks</code>（watermark 乘 num_blocks, 默认 0.01）是避免"频繁 preempt"的唯一护栏。</p>
+    <p>这意味着：<strong>D 端高并发时, PD 请求等待队列中的 lease 往往因为 preemption 而被作废——P 端已经传过来的 KV 也将被重新传输。</strong></p>
+  </section>
+
+  <!-- ============= 5. kv_cache_dtype 与精度 ============= -->
+  <section id="sec-dtype">
+    <h2>5. <code>kv_cache_dtype</code> 与精度对 D 端容量的影响 <span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py">cache.py</a> · <a href="https://docs.vllm.ai/en/latest/configuration/conserving_memory/">conserving_memory.md</a>)</span></h2>
+
+    <h3>5.1 支持的 KV Cache dtype 全量</h3>
+    <p>来自 <code>vllm/config/cache.py</code> <code>CacheDType</code> 类型别名：</p>
+    <div style="margin: 10px 0;">
+      <span class="badge pill-blue">"auto"</span>
+      <span class="badgepill-blue">"float16"</span>
+      <span class="badge pill-blue">"bfloat16"</span>
+      <span class="badge pill-green">"fp8"</span>
+      <span class="badge pill-green">"fp8_e4m3"</span>
+      <span class="badge pill-green">"fp8_e5m2"</span>
+      <span class="badge pill-green">"fp8_inc"</span>
+      <span class="badge pill-green">"fp8_ds_mla"</span>
+      <span class="badge pill-orange">"turboquant_k8v4"</span>
+      <span class="badge pill-orange">"turboquant_4bit_nc"</span>
+      <span class="badge pill-orange">"turboquant_k3v4_nc"</span>
+      <span class="badge pill-orange">"turboquant_3bit_nc"</span>
+      <span class="badge pill-orange">"int4_per_token_head"</span>
+      <span class="badge pill-orange">"int8_per_token_head"</span>
+      <span class="badge pill-orange">"fp8_per_token_head"</span>
+      <span class="badge pill-orange">"nvfp4"</span>
+    </div>
+
+    <h3>5.2 各 dtype 存储容量折算（相对 fp16 baseline 的比值）</h3>
+    <table>
+      <tr><th>dtype</th><th>bits/KV token</th><th>相对 fp16 容量</th><th>硬件要求</th><th>备注</th></tr>
+      <tr><td>float16 / bfloat16</td><td>16</td><td>1.0×</td><td>通用</td><td>baseline</td></tr>
+      <tr><td>fp8 (fp8_e4m3 / fp8_e5m2)</td><td>8</td><td><strong>2.0×</strong></td><td>SM80+, ROCm</td><td>DeepSeek V3.2 默认 fp8</td></tr>
+      <tr><td>fp8_inc (Intel Gaudi)</td><td>8</td><td>2.0×</td><td>HPU</td><td>Intel 定制</td></tr>
+      <tr><td>fp8_ds_mla</td><td>8</td><td>2.0×</td><td>SM90</td><td>DeepSeek MLA</td></tr>
+      <tr><td>turboquant_k8v4</td><td>6</td><td>2.67×</td><td>SM90+</td><td>K 8-bit / V 4-bit</td></tr>
+      <tr><td>nvfp4</td><td>4</td><td><strong>4.0×</strong></td><td>SM100 (Blackwell)</td><td>需要 per-head scale</td></tr>
+      <tr><td>int4_per_token_head</td><td>4</td><td>4.0×</td><td>-</td><td>per-token-head 动态 scale</td></tr>
+      <tr><td>turboquant_3bit_nc</td><td>3</td><td><strong>5.3×</strong></td><td>-</td><td>极限压缩, 精度损失大</td></tr>
+    </table>
+
+    <h3>5.3 对 D 端工程取舍</h3>
+    <ul>
+      <li><strong>PD 分离下 D 端 KV 复制倍数大</strong>——D 端要存储每个 request 所有 prefix + decode 的 KV, 选择 fp8 / nvfp4 可让 D 端 HBM 中 KV Cache 容量翻倍乃至 4×</li>
+      <li><strong>精度降级需要配套 per-token / per-head scale</strong>——<code>fp8_per_token_head</code>、<code>int4_per_token_head</code> 在运行时动态计算 scale, 牺牲一点算力换容量</li>
+      <li><strong>DeepSeek V3/R1 系列</strong>默认 KV Cache 已是 fp8（<code>cache_dtype=auto</code> → fp8）—— 这已经是 PD 部署的"甜区"配置</li>
+      <li><strong>DeepSeek V3.2 特殊条款</a></strong>：官方建议把 <code>kv_cache_dtype</code> 从 fp8 设为 <code>bfloat16</code> 以换取精度（参见 <a href="https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py">cache.py</a> 注释）</li>
+    </ul>
+  </section>
+
+  <!-- ============= 6. Memory Profiling ============= -->
+  <section id="sec-profile">
+    <h2>6. D 端 Memory Profiling：权重 + KV Cache + 激活 + 碎片 各占多少 <span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_worker.py">gpu_worker.py</a> · <a href="https://github.com/vllm-project/vllm/blob/main/vllm/utils/mem_utils.py">mem_utils.py</a>)</span></h2>
+
+    <h3>6.1 核心函数 <code>GPUWorker.determine_available_memory()</code></h3>
+    <pre><code># vllm/v1/worker/gpu_worker.py (GitHub main, 2026-07-15, 简化)
+@torch.inference_mode()
+def determine_available_memory(self) -&gt; int:
+    # (1) 手动指定 kv_cache_memory_bytes 时, 直接旁路 profiling
+    if kv_cache_memory_bytes := self.cache_config.kv_cache_memory_bytes:
+        self.model_runner.profile_run()
+        return self._reserve_mm_ipc_gpu_memory(kv_cache_memory_bytes)
+
+    # (2) 否则执行 profile pass
+    with memory_profiling(self.init_snapshot,
+                          weights_memory=int(self.model_runner.model_memory_usage)
+                          ) as profile_result:
+        self.model_runner.profile_run()          # 一次 dummy forward
+        profile_torch_peak = torch.accelerator.memory_stats(...)
+                                                .get("allocated_bytes.all.peak", 0)
+        # (3) cudagraph 占用的额外显存估计
+        cudagraph_memory_estimate = 0
+        if compilation_config.cudagraph_mode != NONE:
+            cudagraph_memory_estimate = self.model_runner.profile_cudagraph_memory()
+
+    profile_result.torch_peak_increase = \
+        profile_torch_peak - profile_result.before_profile.torch_peak
+    profile_result.non_kv_cache_memory = (
+        profile_result.non_torch_increase     # 非 torch 显存增量 (NCCL buffer, attn backend)
+        + profile_result.torch_peak_increase  # activation 峰值
+        + profile_result.weights_memory       # 模型权重
+    )
+
+    self.available_kv_cache_memory_bytes = (
+        self.requested_memory                                    # = total_gpu_mem * 0.92
+        - profile_result.non_kv_cache_memory
+        - cudagraph_memory_estimate    # (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 时计入)
+    )
+    return self._reserve_mm_ipc_gpu_memory(self.available_kv_cache_memory_bytes)</code></pre>
+
+    <h3>6.2 vLLM 官方分类公式（memory_profiling docstring，<a href="https://github.com/vllm-project/vllm/blob/main/vllm/utils/mem_utils.py">mem_utils.py</a> L242-276）</h3>
+    <pre><code>The memory in one GPU can be classified into 3 categories:
+    1. memory used by anything other than the current vLLM instance
+    2. memory used by torch in the current vLLM instance
+    3. memory used in the current vLLM instance, but not by torch
+
+Quantitive example:
+  Before creating the current vLLM instance:
+      category 1: 1 GiB, category 2: 0 GiB, category 3: 0 GiB
+
+  After creating the current vLLM instance and loading the model:
+      category 1: 1 GiB, category 2: 2 GiB (model weights take 2 GiB)
+                , category 3: 0.5 GiB (memory used by NCCL)
+
+  During profiling (peak):
+      category 1: 1 GiB, category 2: 4 GiB (peak activation tensors take 2 GiB)
+                , category 3: 1 GiB (NCCL + attn backend buffers)
+
+  After profiling:
+      category 1: 1 GiB, category 2: 3 GiB (after GC of activation tensors)
+                , category 3: 1 GiB
+
+  =&gt; non-kv cache takes 5 GiB in total, including:
+      a. 2 GiB model weights (category 2)
+      b. 2 GiB reserved for peak activation tensors (category 2)
+      c. 1 GiB used by non-torch components (category 3)</code></pre>
+
+    <h3>6.3 命名与公式速查</h3>
+    <table>
+      <tr><th>组成分量</th><th>代码字段</th><th>含义</th><th>配置影响</th></tr>
+      <tr>
+        <td>模型权重</td>
+        <td><code>weights_memory = self.model_runner.model_memory_usage</code></td>
+        <td>PyTorch 分配器中 model params 的占用量（<code>m.consumed_memory</code>）</td>
+        <td>TP↑↓↓, 量化↓</td>
+      </tr>
+      <tr>
+        <td>激活峰值</td>
+        <td><code>torch_peak_increase = peak_alloc - before_profile.torch_peak</code></td>
+        <td>profile pass 中 activation 张量的最大瞬时增量</td>
+        <td><code>cudagraph_capture_sizes</code>, <code>max_num_batched_tokens</code></td>
+      </tr>
+      <tr>
+        <td>非 torch 增量</td>
+        <td><code>non_torch_increase</code> (category 3)</td>
+        <td>NCCL buffer、attention backend 的 persistent buffer（不在 torch allocator 内）</td>
+        <td>TP, attention backend 选择</td>
+      </tr>
+      <tr>
+        <td>CUDA Graph</td>
+        <td><code>cudagraph_memory_estimate</code></td>
+        <td>cudagraph capture 占用的显存（<code>VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS</code> v0.21 起默认开启）</td>
+        <td>每一位 capture size 约几 MB</td>
+      </tr>
+      <tr>
+        <td><strong>KV Cache 可用</strong></td>
+        <td><code>available_kv_cache_memory_bytes</code></td>
+        <td>= requested_memory − non_kv_cache_memory − cudagraph_memory_estimate</td>
+        <td>最终决定 D 端 num_gpu_blocks</td>
+      </tr>
+    </table>
+
+    <h3>6.4 典型 D 端 HBM 分布（经验值, 源自 <a href="https://docs.vllm.ai/en/latest/configuration/conserving_memory/">conserving_memory.md</a> + 用户报告）</h3>
+    <table>
+      <tr><th>模型</th><th>GPU (80/96 GiB)</th><th>权重</th><th>激活+非 torch</th><th>CUDA Graph</th><th>KV Cache (默认 0.92)</th></tr>
+      <tr><td>Llama-3.1-70B (TP4)</td><td>4 × H100 80G</td><td>~17 GiB (每卡)</td><td>~3 GiB</td><td>~3 GiB</td><td>~51 GiB (≈64%)</td></tr>
+      <tr><td>Llama-3.1-8B</td><td>1 × H100 80G</td><td>~15 GiB</td><td>~2 GiB</td><td>~2 GiB</td><td>~58 GiB</td></tr>
+      <tr><td>DeepSeek-R1 (TP8)</td><td>8 × H100 80G</td><td>~8 GiB (fp8 weight)</td><td>~4 GiB</td><td>~4 GiB</td><td>~60 GiB (fp8 KV)</td></tr>
+      <tr><td>Qwen2.5-VL-72B (TP8)</td><td>8 × H20 96G</td><td>~22 GiB (每卡)</td><td>~5 GiB</td><td>~4 GiB</td><td>~60 GiB</td></tr>
+    </table>
+    <p style="color: var(--muted); font-size: 0.82rem;">注：上表基于社区讨论 + 加权估算, 真实数字因 batch shape、attention backend、TP 数量差异显著。实际运行请参考 vLLM 启动时打印的 <code>"Available KV cache memory: X GiB"</code> 日志。</p>
+
+    <h3>6.5 关键环境变量（显存 profiling 细粒度控制）</h3>
+    <pre><code># 手动指定 KV cache 字节, 旁路 profiling（PD 场景最稳）
+--kv-cache-memory-bytes $((50 * 1024**3))
+
+# 关闭 cudagraph memory 估计 (v0.21+)
+export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+
+# 多模态 IPC 显存保留 (multimodal PD 才需要)
+# vllm/v1/worker/gpu_worker.py 中 _reserve_mm_ipc_gpu_memory() 自动维护</code></pre>
+  </section>
+
+  <!-- ============= 7. 长 context (1M) HBM 挑战 ============= -->
+  <section id="sec-longctx">
+    <h2>7. 长 context (1M) 下 vLLM 的 HBM 挑战 <span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/kv_cache_utils.py">kv_cache_utils.py</a>)</span></h2>
+    <p>1M context 意味着每个 request 的 KV Cache 需求急剧放大。以 DeepSeek-V3 (MLA, 57B A23, kv_lora_rank=512, qk_rope_head_dim=64, num_heads=128) 为例：</p>
+
+    <h3>7.1 单 token KV 显存</h3>
+    <table>
+      <tr><th>模型架构</th><th>kv_lora_rank</th><th>qk_rope_head_dim</th><th>v_head_dim</th><th>单 token KV bytes (fp16)</th></tr>
+      <tr><td>Llama-3.1-70B (MHA)</td><td>4096 (num_kv_heads×head_dim)</td><td>-</td><td>128</td><td>~16,384</td></tr>
+      <tr><td>Qwen2.5-72B</td><td>2,048</td><td>-</td><td>128</td><td>~4,096</td></tr>
+      <tr><td><span class="pill-green">DeepSeek-V3 (MLA)</span></td><td>512</td><td>64</td><td>128</td><td>~1,408</td></tr>
+      <tr><td>Llama-4 (GQA hybrid)</td><td>1,024</td><td>64</td><td>128</td><td>~2,048</td></tr>
+    </table>
+
+    <h3>7.2 1M token KV Cache 需求（单个 request）</h3>
+    <pre><code>KV_per_request ≈ 1,000,000 × (kv_lora_rank + qk_rope_head_dim + v_head_dim) × 2 (K+V)
+
+Llama-3.1-70B (fp16):  1M × 16,384 bytes = 15.3 GiB  ← 单卡放不下一个 1M 的 request
+Qwen2.5-72B (fp16):   1M ×  4,096 bytes  =  3.8 GiB
+DeepSeek-V3 (fp8):    1M ×    704 bytes  =  0.66 GiB  ← MLA + fp8 占优
+DeepSeek-V3 (fp16):   1M ×  1,408 bytes  =  1.3 GiB</code></pre>
+
+    <h3>7.3 PD 分离对 D 端 1M context 的影响</h3>
+    <ul>
+      <li><strong>D 端 KV Cache = 整个 1M 的 prefix KV</strong>——需要 <strong>62,500 个 block</strong>（block_size=16）, 远超一般 D 实例 <code>num_gpu_blocks</code>（通常 5k~30k）</li>
+      <li><strong>Lease renewal 压力</strong>——5 分钟以上的 decode 要不断给 P 端 heartbeat（§8）</li>
+      <li><strong>OffloadingConnector 成刚需</strong>——CPU-only Tier 容量远超 HBM, 可以把 90%+ 的 block offload</li>
+      <li><strong>prefix caching 是另一个刚需</strong>——1M 共享 system prompt, 不同 conversation turn 的 prefix 大概率 cache hit, 大幅减少 D 端 KV 重建</li>
+      <li><strong>CPU bytes 预留建议</strong>——<code>cpu_bytes_to_use</code> 应比 D 端 GPU KV 容量大, 否则"镜像 CPU tier"没有意义</li>
+    </ul>
+
+    <h3>7.4 缓解路径</h3>
+    <table>
+      <tr><th>方法</th><th>收益</th><th>代价</th></tr>
+      <tr><td>MLA (DeepSeek)</td><td>KV 10× 压缩 vs GQA/MHA</td><td>模型架构绑定</td></tr>
+      <tr><td>nvfp4 KV</td><td>4× 容量 vs fp16</td><td>SM100+, 精度下降</td></tr>
+      <tr><td>fp8 KV (DeepSeek V3)</td><td>2× 容量</td><td>几乎免费</td></tr>
+      <tr><td>CPU offload (PD 用 OffloadingConnector)</td><td>CPU 512GB 级别, 廉价</td><td><cudaMemcpyAsync> 延迟, 主机带宽瓶颈</td></tr>
+      <tr><td>prefix cache (per-request <code>max_offload_tokens</code>)</td><td>prefix 不重复计算</td><td>一致性依赖 hash</td></tr>
+      <tr><td><code>kv_cache_memory_bytes</code> 指定</td><td>避开 profiling 误差锁定 KV 容量</td><td>需要 sizing 经验</td></tr>
+    </table>
+  </section>
+
+  <!-- ============= 8. PD Transfer 内存承诺 ============= -->
+  <section id="sec-nixl">
+    <h2>8. PD KV Transfer 的 D 端内存承诺（Lease / Push / Watchdog）<span class="source-tag">(<a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_cache_lease.md">nixl_kv_cache_lease.md</a> · <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_push_connector.md">nixl_kv_push_connector.md</a>)</span></h2>
+
+    <h3>8.1 关键参数与默认值</h3>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>含义</th></tr>
+      <tr><td><code>kv_lease_duration</code></td><td>30 s</td><td>P 端初始 lease（prefill 完成后锁住 KV 的时长）</td></tr>
+      <tr><td><code>decoder_kv_blocks_ttl</code></td><td>480 s</td><td>双向 transfer 下 D 端 block TTL</td></tr>
+      <tr><td>heartbeat interval</td><td><code>lease_duration // 6</code> ≈ 5 s</td><td>D 给 P 发 HB 的频率</td></tr>
+      <tr><td>lease extension</td><td><code>lease_duration * 2 // 3</code> ≈ 20 s</td><td>每次 HB 续多长</td></tr>
+      <tr><td><code>_PUSH_WRITER_POLL_INTERVAL_MS</code></td><td>1.0 ms</td><td>push writer 自轮询间隔</td></tr>
+      <tr><td><code>push_registration_timeout</code></td><td>= <code>decoder_kv_blocks_ttl</code> (480 s)</td><td>D 端注册超时被 watchdog 取消</td></tr>
+    </table>
+
+    <h3>8.2 D 端三个内存事件（push 模式, 详见 <a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_push_connector.md">nixl_kv_push_connector.md</a>）</h3>
+    <ol>
+      <li><strong>注册阶段</strong>：D scheduler 在 <code>update_state_after_alloc</code> 后, 把 <code>local_block_ids</code>(D 端预分配的 logical block ids) 打包成 <code>PUSH_REG:&lt;msgpack&gt;</code> 通知, 经 <code>nixl-push-writer</code> 线程发给 P</li>
+      <li><strong>写入完成</strong>：P 端 WRITE 完所有 block, 发 completion notif → D <code>_pending_completion_notifs</code> → <code>finished_recving</code> → scheduler 清除 watchdog</li>
+      <li><strong>Watchdog 兜底</strong>：超过 <code>push_registration_timeout</code> 未完成, 取消注册, 由 engine 的 abort path 兜底 fail request</li>
+    </ol>
+
+    <h3>8.3 Lease renewal 对 D 端 KV Cache 的影响 (<a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_cache_lease.md">nixl_kv_cache_lease.md</a>)</h3>
+    <p>vLLM PD 中 D 端 <strong>heartbeat 必须在 request 入 scheduler 时就启动</strong>, 而不是被调度后才启动。这意味着：</p>
+    <ul>
+      <li>等待队列中每个未调度的 request 都持续给 P 端续 lease</li>
+      <li>D 端给 P 端续 lease 的代价：<strong>NIXL send_notif 一次 / 5 秒 per engine</strong></li>
+      <li>但如果 D 端 scheduler 自身被 blocking 或排队太长, D 端等待队列中积累的 request 可能<strong>在 D 端还没被 schedule 就占着 D 端的 KV block</strong>——这就是 PD 下 D 端 KV Cache 的第一个"隐形杀手"</li>
+    </ul>
+
+    <h3>8.4 Lease 设计总结</h3>
+    <pre><code>P 端 lease 生命周期：
+  prefill 完成 ---(30s)--&gt; HB1 (D~5s 一次) ---(+20s)--&gt; HB2 ... --&gt; KV transfer 完成/超时清空
+
+三种回收路径（lease.md §Lease lifecycle）：
+  (1) D 完成 KV transfer → P 立即 free
+  (2) D 持续 HB → lease 永远续
+  (3) D crash / 超时 → lease 失效, P 在 ~20s 内 free
+
+参考 PR：lease 机制由 PR #41383 引入</code></pre>
+  </section>
+
+  <!-- ============= 9. 引用 & 调研过程 ============= -->
+  <section id="sec-refs">
+    <h2>9. 引用 & 调研过程附件</h2>
+    <h3>9.1 主要引用来源</h3>
+    <table>
+      <tr><th>#</th><th>文档</th><th>链接</th><th>说明</th></tr>
+      <tr><td>1</td><td>nixl_kv_push_connector.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_push_connector.md">GitHub raw</a></td><td>push mode 线程/队列/调度交互设计</td></tr>
+      <tr><td>2</td><td>nixl_kv_cache_lease.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/nixl_kv_cache_lease.md">GitHub raw</a></td><td>lease renewal / heartbeat / watchdog</td></tr>
+      <tr><td>3</td><td>hybrid_kv_cache_manager.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/hybrid_kv_cache_manager.md">GitHub raw</a></td><td>KVCacheManager 3 层抽象 + 5 种 allocation case</td></tr>
+      <tr><td>4</td><td>paged_attention.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/paged_attention.md">GitHub raw</a></td><td>历史 paper 实现（已注明"不再描述现行代码"）</td></tr>
+      <tr><td>5</td><td>prefix_caching.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/prefix_caching.md">GitHub raw</a></td><td>hash-based prefix cache / LRU / sha256 default</td></tr>
+      <tr><td>6</td><td>arch_overview.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/design/arch_overview.md">GitHub raw</a></td><td>V1 多进程架构</td></tr>
+      <tr><td>7</td><td>disagg_prefill.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/features/disagg_prefill.md">GitHub raw</a></td><td>PD 总览 + 9 种 connector</td></tr>
+      <tr><td>8</td><td>conserving_memory.md</td><td><a href="https://docs.vllm.ai/en/latest/configuration/conserving_memory/">HTML</a> · <a href="https://github.com/vllm-project/vllm/blob/main/docs/configuration/conserving_memory.md">raw</a></td><td>官方显存指南</td></tr>
+      <tr><td>9</td><td>kv_offloading_usage.md</td><td><a href="https://github.com/vllm-project/vllm/blob/main/docs/features/kv_offloading_usage.md">raw</a></td><td>OffloadingConnector / CPU+FS+P2P tier</td></tr>
+      <tr><td>10</td><td>CacheConfig 源码</td><td><a href="https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py">GitHub</a></td><td>block_size=16 / gpu_memory_util=0.92 / cache_dtype 默认 / CacheDType 枚举</td></tr>
+      <tr><td>11</td><td>GPUWorker.determine_available_memory</td><td><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_worker.py">GitHub</a> L440-620</td><td>KV Cache 容量 profiling 入口</td></tr>
+      <tr><td>12</td><td>KVCacheManager</td><td><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/kv_cache_manager.py">GitHub</a></td><td>watermark / allocate_slots / free / prefix</td></tr>
+      <tr><td>13</td><td>BlockPool</td><td><a href="https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/block_pool.py">GitHub</a></td><td>LRU free_block_queue + BlockHashToBlockMap</td></tr>
+      <tr><td>14</td><td>memory_profiling()</td><td><a href="https://github.com/vllm-project/vllm/blob/main/vllm/utils/mem_utils.py">GitHub</a></td><td>3-category 显存分类示例</td></tr>
+      <tr><td>15</td><td>disagg_prefill (HTML SPA)</td><td><a href="https://docs.vllm.ai/en/latest/features/disagg_prefill.html">docs.vllm.ai</a></td><td>返回 GitHub issue MoRIIO（重定向）</td></tr>
+      <tr><td>16</td><td>disaggregated_serving (HTML SPA)</td><td><a href="https://docs.vllm.ai/en/latest/examples/disaggregated/disaggregated_serving/">docs.vllm.ai</a></td><td>同 15，返回 GitHub issue</td></tr>
+      <tr><td>17</td><td>paged_attention (HTML SPA)</td><td><a href="https://docs.vllm.ai/en/latest/design/kernel/paged_attention.html">docs.vllm.ai</a></td><td>未单独访问</td></tr>
+    </table>
+
+    <h3>9.2 下载到本地的文件（<code>vllm_pd_decode_memory/</code>）</h3>
+    <ul>
+      <li>design docs: nixl_kv_push_connector.md, nixl_kv_cache_lease.md, hybrid_kv_cache_manager.md, paged_attention.md, prefix_caching.md, arch_overview.md</li>
+      <li>feature docs: conserving_memory.md, disagg_prefill.md, kv_offloading_usage.md</li>
+      <li>源码: vllm_config_cache.py (CacheConfig 完整定义), vllm_v1_worker_gpu_worker.py + gpu_model_runner.py, vllm_v1_core_kv_cache_manager.py + block_pool.py + kv_cache_utils.py, vllm_utils_mem_utils.py</li>
+    </ul>
+
+    <h3>9.3 关键发现总结</h3>
+    <ol>
+      <li><strong>D 端 KV Cache 容量</strong> = <code>(total_gpu_memory × gpu_memory_utilization − non_kv_cache_memory − cudagraph_memory_estimate) ÷ page_size</code>, 其中 <code>page_size = block_size(默认 16) × num_layers × kv_hidden_size</code> × num_kv_cache_groups（取 lcm）。</li>
+      <li><strong>所有关键默认值透明可查</strong>：<code>block_size=16</code> / <code>gpu_memory_utilization=0.92</code> / <code>cache_dtype="auto"</code> / <code>enable_prefix_caching=True</code>（均来自 <code>vllm/config/cache.py</code>）。</li>
+      <li><strong>PD 后 D 端 KV Cache 的"承诺"模式</strong>：pull/push 都<strong>要求 D 端先分配 block</strong>, 再由 P 端 RDMA 写入。这是 D 端高并发时 HBM 紧张的第一原因。Lease renewal（30s + 20s/5s）是避免 P 端 KV 被长时间无效占用（D crash 等）的关键机制。</li>
+      <li><strong>prefix caching + CPU offloading 是 PD D 端的双保险</strong>：<code>OffloadingConnector</code>（默认 <code>offload_prompt_only=true</code>）把已满 block 异步搬到 pinned CPU memory（DMA <code>cudaMemcpyAsync</code>）。</li>
+      <li><strong>kv_cache_dtype 非常丰富的量化选型</strong>：支持 fp8 / fp8_ds_mla / nvfp4 / turboquant系列 / per-token-head 动态 scale, 让 D 端 KV 容量最多放大 5×。DeepSeek V3/R1 默认已是 fp8 KV。</li>
+      <li><strong>1M context 场景</strong>：1M token × 稀疏化 KV（MLA+fp8） ≈ 0.66 GiB / request, 但 MHA/GQA 模型高达 15 GiB / request——D 端 HBM 必须走 CPU offload + MLA + nvfp4 组合路径才有经济可行性。</li>
+      <li><strong>vLLM v1 不支持 swap/restore preemption</strong>, 只有 RECOMPUTE, 所以 <code>watermark_blocks</code> 是避免频繁 preempt 的唯一护栏。PD 长等待队列会加剧这一路径的触发。</li>
+    </ol>
+  </section>
+
+</div>
+<footer>
+  <div>© 2026 · vLLM PD 分离 KV Cache 容量分析 · 生成工具: Playwright + Python urllib</div>
+  <div>所有数字与结论均溯源到 vLLM 官方 GitHub main 分支（2026-07-15 访问）；主观结论已标注为"经验值"</div>
+</footer>
+</body>
+</html>

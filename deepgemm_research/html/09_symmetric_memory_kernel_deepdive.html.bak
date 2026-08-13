@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对称内存访问模式内核级深度分析</title>
+<style>
+
+:root {
+  --bg: #ffffff; --bg-secondary: #f7f6f3; --bg-hover: #efefef;
+  --text: #37352f; --text-secondary: #6b7280; --text-muted: #9b9a97;
+  --border: #e9e9e7; --accent: #2383e2; --accent-bg: #e8f0fe;
+  --code-bg: #f7f6f3; --code-text: #eb5757;
+  --blockquote-border: #e9e9e7; --table-border: #e9e9e7; --table-header-bg: #f7f6f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --bg-secondary: #202020; --bg-hover: #2f2f2f;
+    --text: #e8e8e5; --text-secondary: #9b9a97; --text-muted: #6b7280;
+    --border: #373737; --accent: #529cca; --accent-bg: #252525;
+    --code-bg: #2f2f2f; --code-text: #ff7b72;
+    --blockquote-border: #373737; --table-border: #373737; --table-header-bg: #252525;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 40px 100px; }
+h1 { font-size: 2.2em; font-weight: 700; line-height: 1.2; margin: 1.5em 0 0.5em; letter-spacing: -0.02em; }
+h2 { font-size: 1.6em; font-weight: 600; line-height: 1.3; margin: 1.8em 0 0.4em; }
+h3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; margin: 1.5em 0 0.3em; }
+p { margin: 0.5em 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5em 0; padding-left: 1.6em; }
+li { margin: 0.25em 0; }
+blockquote { border-left: 3px solid var(--blockquote-border); padding: 0.5em 1em; margin: 0.8em 0; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 0 4px 4px 0; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); color: var(--code-text); padding: 0.15em 0.4em; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 16px 20px; margin: 1em 0; overflow-x: auto; font-size: 0.85em; line-height: 1.6; border: 1px solid var(--border); }
+pre code { background: none; color: var(--text); padding: 0; font-size: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; border: 1px solid var(--table-border); border-radius: 4px; overflow: hidden; }
+th { background: var(--table-header-bg); font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--table-border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+strong { font-weight: 600; }
+.mermaid { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin: 1.2em 0; overflow-x: auto; text-align: center; }
+.toc { background: var(--bg-secondary); border-radius: 6px; padding: 16px 20px; margin: 1.5em 0; }
+.toc summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.toc ul { margin: 0; padding-left: 1.2em; }
+.toc li { margin: 0.15em 0; }
+.toc a { color: var(--text-secondary); }
+.nav { display: flex; justify-content: space-between; margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); font-size: 0.9em; }
+.nav a { color: var(--text-secondary); }
+@media (max-width: 768px) { .container { padding: 30px 20px 60px; } h1 { font-size: 1.8em; } pre { padding: 12px 14px; font-size: 0.8em; } th, td { padding: 8px 10px; } }
+
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="_1">对称内存访问模式内核级深度分析</h1>
+<blockquote>
+<p><strong>分析范围</strong>: DeepEP (NCCL Gin + IBGDA + TMA) vs DeepGEMM (纯 TMA + NVLink) 的 symmetric memory 访问模式</p>
+<p><strong>代码版本</strong>: DeepEP main 分支, DeepGEMM main 分支</p>
+<p><strong>分析日期</strong>: 2026-07-30</p>
+</blockquote>
+<hr />
+<h2 id="_2">目录</h2>
+<ol>
+<li><a href="#1-核心概念与术语">核心概念与术语</a></li>
+<li><a href="#2-deepep-内核对称内存访问模式">DeepEP 内核对称内存访问模式</a></li>
+<li><a href="#3-deepgemm-内核对称内存访问模式">DeepGEMM 内核对称内存访问模式</a></li>
+<li><a href="#4-tma-vs-ibgda-对比分析">TMA vs IBGDA 对比分析</a></li>
+<li><a href="#5-指针映射机制深度对比">指针映射机制深度对比</a></li>
+<li><a href="#6-同步原语对比分析">同步原语对比分析</a></li>
+<li><a href="#7-总结对比表">总结对比表</a></li>
+</ol>
+<hr />
+<h2 id="1">1. 核心概念与术语</h2>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>全称</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Symmetric Memory</strong></td>
+<td>对称内存</td>
+<td>多 rank 间通过 CUDA VMM 映射到同一 VA 范围的内存，任何 rank 可直接访问</td>
+</tr>
+<tr>
+<td><strong>NVLink</strong></td>
+<td>NVIDIA Link</td>
+<td>GPU 间高带宽直连，latency ~1-2 us</td>
+</tr>
+<tr>
+<td><strong>RDMA</strong></td>
+<td>Remote Direct Memory Access</td>
+<td>通过 NIC (IB/Gin) 远程访问，latency ~5-10 us</td>
+</tr>
+<tr>
+<td><strong>IBGDA</strong></td>
+<td>InfiniBand GPU Direct Async</td>
+<td>GPU 直接发起 IB RDMA 操作，无需 CPU 介入</td>
+</tr>
+<tr>
+<td><strong>Gin</strong></td>
+<td>NCCL Generic Interface</td>
+<td>NCCL 的 GPU 端通信接口抽象层</td>
+</tr>
+<tr>
+<td><strong>TMA</strong></td>
+<td>Tensor Memory Accelerator</td>
+<td>Hopper+ 硬件单元，异步 bulk copy</td>
+</tr>
+<tr>
+<td><strong>mbarrier</strong></td>
+<td>Memory Barrier</td>
+<td>Hopper+ 硬件同步原语，与 TMA 配合</td>
+</tr>
+<tr>
+<td><strong>LSA</strong></td>
+<td>Local Scale-up All</td>
+<td>NCCL team 类型，表示 NVLink 域内</td>
+</tr>
+<tr>
+<td><strong>get_sym_ptr</strong></td>
+<td>Get Symmetric Pointer</td>
+<td>DeepEP 中将本地指针翻译为远端对称指针</td>
+</tr>
+<tr>
+<td><strong>sym_buffer.map</strong></td>
+<td>Symmetric Buffer Map</td>
+<td>DeepGEMM 中将本地指针翻译为远端对称指针</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-deepep">2. DeepEP 内核对称内存访问模式</h2>
+<h3 id="21-get_sym_ptr">2.1 <code>get_sym_ptr()</code> — 对称指针翻译的核心</h3>
+<p>DeepEP 的对称指针翻译封装在 <code>handle::NCCLGin</code> 类中，定义于 <code>deep_ep/include/deep_ep/common/handle.cuh</code>。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh:63-92</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span>,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #666">*&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__
+dtype_t<span style="color: #666">*</span><span style="color: #BBB"> </span>get_sym_ptr(dtype_t<span style="color: #666">*</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>IS_TEAM_RAIL({
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>team_rail.rank<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>ptr<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;
+<span style="color: #BBB">    </span>})
+
+<span style="color: #BBB">    </span>IS_TEAM_WORLD_LSA({
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsTeamLSA<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(std<span style="color: #666">::</span>is_same_v<span style="color: #666">&lt;</span>team_t,<span style="color: #BBB"> </span>ncclTeamTagLsa<span style="color: #666">&gt;</span>);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Team world and not accessible by symmetric pointers</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>is_nvlink_accessible<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(dst_rank_idx))
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 无法 NVLink 访问，返回 nullptr → 走 RDMA</span>
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Translate into NVLink rank index</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_nvl_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kIsTeamLSA<span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">            </span><span style="color: #767600">dst_rank_idx</span><span style="color: #BBB"> </span>:<span style="color: #BBB"> </span>(dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>team_rail.rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>team_lsa.nRanks);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Local rank bypass</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_nvl_rank_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>team_lsa.rank)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>ptr;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 本地 rank，直接返回原指针</span>
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Get base ptr</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ncclGetLsaPointer(
+<span style="color: #BBB">            </span>nccl_window,<span style="color: #BBB"> </span>get_sym_offset(ptr),<span style="color: #BBB"> </span>dst_nvl_rank_idx);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span>dtype_t<span style="color: #666">*&gt;</span>(dst_ptr);
+<span style="color: #BBB">    </span>});
+}
+</code></pre></div>
+
+<p><strong>关键机制</strong>：</p>
+<ol>
+<li>
+<p><strong><code>get_sym_offset(ptr)</code></strong>（line 58-61）：计算指针相对于 <code>lsa_base_ptr</code> 的偏移：<br />
+<code>cpp
+   uint64_t get_sym_offset(dtype_t* ptr) const {
+       return reinterpret_cast&lt;uint64_t&gt;(ptr) - lsa_base_ptr;
+   }</code></p>
+</li>
+<li>
+<p><strong><code>ncclGetLsaPointer</code></strong>：NCCL 提供的 API，将 <code>(window, offset, dst_nvl_rank)</code> 翻译为远端 NVLink 可访问的指针。</p>
+</li>
+<li>
+<p><strong>返回值语义</strong>：<br />
+   - <code>nullptr</code> → 该 rank 无法通过 NVLink symmetric pointer 访问，必须走 RDMA<br />
+   - 非空 → 可直接通过 TMA/NVLink 写入远端</p>
+</li>
+</ol>
+<h3 id="22-is_nvlink_accessible">2.2 <code>is_nvlink_accessible()</code> — 路径选择的关键</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh:37-54</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span><span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__<span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>is_nvlink_accessible(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>IS_TEAM_LSA({
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// LSA team 内全部 NVLink 可达</span>
+<span style="color: #BBB">    </span>})
+
+<span style="color: #BBB">    </span>IS_TEAM_WORLD({
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 检查 dst_rank_idx 是否在当前 rail group 内</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>team_rail.rank<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>team_lsa.nRanks<span style="color: #BBB"> </span><span style="color: #666">&lt;=</span><span style="color: #BBB"> </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span>
+<span style="color: #BBB">               </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>(team_rail.rank<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>team_lsa.nRanks;
+<span style="color: #BBB">    </span>})
+
+<span style="color: #BBB">    </span>IS_TEAM_RAIL({
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>team_rail.rank<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>dst_rank_idx;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 仅同 rail</span>
+<span style="color: #BBB">    </span>})
+}
+</code></pre></div>
+
+<p><strong>三种 team 模式总结</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>team_t</th>
+<th>NVLink 范围</th>
+<th>使用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ncclTeamTagLsa</code></td>
+<td>整个 LSA 域（同节点）</td>
+<td>Scale-up 模式</td>
+</tr>
+<tr>
+<td><code>ncclTeamTagWorld</code></td>
+<td>当前 rail group 内</td>
+<td>跨节点 World 模式</td>
+</tr>
+<tr>
+<td><code>ncclTeamTagRail</code></td>
+<td>仅同 rail</td>
+<td>Scale-out 模式</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-dispatchcuh-dispatch-warps">2.3 <code>dispatch.cuh</code> — Dispatch Warps 的远端写入</h3>
+<p>Dispatch kernel (<code>dispatch_impl</code>) 的核心数据流：本地 TMA load → smem → <strong>TMA store 到远端 NVLink</strong> 或 <strong>RDMA put 到远端</strong>。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:370-393 — 核心对称内存写入逻辑</span>
+<span style="color: #3D7B7B; font-style: italic">// Issue TMA NVLink stores</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span>
+<span style="color: #BBB">    </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>stored_dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">:</span>
+<span style="color: #BBB">    </span><span style="color: #008000">nullptr</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// 路径 A: NVLink symmetric pointer → TMA store 直写远端</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+ptx<span style="color: #666">::</span>tma_store_commit();
+__syncwarp();
+
+<span style="color: #3D7B7B; font-style: italic">// Issue RDMA put</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kIsScaleupNVLink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Wait the send buffer store to arrive</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait<span style="color: #666">&lt;1&gt;</span>();
+<span style="color: #BBB">    </span>__syncwarp();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 路径 B: 无法 NVLink 访问 → RDMA put</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">                        </span>send_buffer_ptr,<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),<span style="color: #BBB"> </span>stored_dst_rank_idx);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<p><strong>Dispatch 数据流图</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;Dispatch Warp (per token)&quot;
+        A[&quot;TMA load: gmem → smem&lt;br/&gt;x[token_idx] → tma_buffer&quot;] --&gt; B[&quot;加载 topk_idx + topk_weights&quot;]
+        B --&gt; C[&quot;deduplicate ranks + assign slots&quot;]
+        C --&gt; D[&quot;mbarrier_wait: 数据到达&quot;]
+        D --&gt; E{&quot;get_sym_ptr == nullptr?&quot;}
+        E --&gt;|&quot;Yes (远端 rank)&quot;| F[&quot;RDMA put:&lt;br/&gt;send_buffer → remote recv_buffer&quot;]
+        E --&gt;|&quot;No (NVLink 可达)&quot;| G[&quot;TMA store 1d:&lt;br/&gt;smem → remote recv_buffer&quot;]
+        F --&gt; H[&quot;gpu_barrier: 确保数据到达&quot;]
+        G --&gt; H
+    end
+</code></pre></div>
+
+<p><strong>关键细节</strong>：</p>
+<ol>
+<li>
+<p><strong>send_buffer 的中间角色</strong>：RDMA 路径需要先 TMA store 到本地 <code>send_buffer</code>，再通过 <code>gin.put</code> 发起 RDMA。NVLink 路径直接 TMA store 到远端 <code>recv_buffer</code>，<strong>消除了中间拷贝</strong>。</p>
+</li>
+<li>
+<p><strong><code>tma_store_wait&lt;1&gt;</code></strong>（line 384）：等待 send_buffer 的 TMA store 完成，确保 RDMA 读取的数据是完整的。</p>
+</li>
+<li>
+<p><strong><code>ncclGinOptFlagsAggregateRequests</code></strong>：在 <code>gin.put_value</code> 中使用，聚合多个小请求为一个大 RDMA 操作。</p>
+</li>
+</ol>
+<h3 id="24-combinecuh-combine-warps">2.4 <code>combine.cuh</code> — Combine Warps 的远端回写</h3>
+<p>Combine kernel 的数据流方向与 Dispatch 相反：本地计算结果 → <strong>TMA store 到远端</strong> 或 <strong>RDMA put 到远端</strong>。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// combine.cuh:94-106 — 路径选择</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>nvlink_bypass<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.is_nvlink_accessible<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(src_rank_idx);
+layout<span style="color: #666">::</span>TokenLayout<span style="color: #BBB"> </span>master_token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>[<span style="color: #666">=</span>]()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink bypass: 直接写到远端对称指针</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(nvlink_bypass)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>token_buffer<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_rank_buffer(...).get_token_buffer(src_token_idx);
+<span style="color: #BBB">        </span>token_buffer.set_base_ptr(
+<span style="color: #BBB">            </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(token_buffer.get_base_ptr(),<span style="color: #BBB"> </span>src_rank_idx));
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>token_buffer;
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Use RDMA: 写到本地 send buffer</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>send_buffer.get_rank_buffer(src_rank_idx).get_token_buffer(src_token_idx);
+}();
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// combine.cuh:133-143 — 无 reduce 场景的写入</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(no_local_reduce)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>load_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr(x,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_wait();
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>load_ptr,<span style="color: #BBB"> </span>mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(mbarrier_ptr,<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_wait_and_flip_phase(mbarrier_ptr,<span style="color: #BBB"> </span>phase);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 写入远端（NVLink 或 send_buffer）</span>
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_1d(master_token_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>kNumHiddenBytes);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_store_commit();
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>__syncwarp();
+}
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// combine.cuh:228-236 — RDMA 路径的延迟发送</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kDoExpandedSend<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>nvlink_bypass<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>recv_buffer.get_rank_buffer(...)
+<span style="color: #BBB">        </span>.get_token_buffer(src_token_idx).get_base_ptr();
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// RDMA put: send_buffer → remote recv_buffer</span>
+<span style="color: #BBB">    </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(dst_ptr,<span style="color: #BBB"> </span>master_token_buffer.get_base_ptr(),
+<span style="color: #BBB">                    </span>master_token_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),<span style="color: #BBB"> </span>src_rank_idx);
+}
+</code></pre></div>
+
+<p><strong>Combine 数据流图</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;Combine Warp (per token)&quot;
+        A[&quot;加载 src_metadata&lt;br/&gt;得到 src_rank_idx, src_token_idx&quot;] --&gt; B{&quot;is_nvlink_accessible?&quot;}
+        B --&gt;|Yes| C[&quot;get_sym_ptr → 远端 recv_buffer 指针&quot;]
+        B --&gt;|No| D[&quot;本地 send_buffer&quot;]
+        C --&gt; E[&quot;TMA load: gmem → smem&lt;br/&gt;计算结果&quot;]
+        D --&gt; E
+        E --&gt; F[&quot;TMA store: smem → master_token_buffer&quot;]
+        F --&gt; G{&quot;nvlink_bypass?&quot;}
+        G --&gt;|Yes| H[&quot;完成：已在远端&quot;]
+        G --&gt;|No| I[&quot;gin.put: send_buffer → remote recv_buffer&quot;]
+        H --&gt; J[&quot;gpu_barrier&quot;]
+        I --&gt; J
+    end
+</code></pre></div>
+
+<h3 id="25-hybrid_dispatchcuh">2.5 <code>hybrid_dispatch.cuh</code> — 三阶段流水线的对称内存访问</h3>
+<p>Hybrid dispatch 引入 <strong>Scale-out Warps</strong> 和 <strong>Forward Warps</strong> 两种角色：</p>
+<p><strong>Scale-out Warps</strong>（跨节点 RDMA）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:448-455 — IBGDA RDMA put</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>stored_dst_scaleout_rank_idx<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>scaleout_rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">            </span>scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">            </span>scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+<span style="color: #BBB">            </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">            </span>stored_dst_scaleout_rank_idx,
+<span style="color: #BBB">            </span>ncclGinOptFlagsAggregateRequests);
+}
+</code></pre></div>
+
+<p><strong>Forward Warps</strong>（节点内 NVLink TMA store）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:593-598 — NVLink symmetric pointer TMA store</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>scaleup_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">        </span>stored_dst_scaleup_rank_idx);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>tma_buffer.get_base_ptr(),<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_commit();
+}
+</code></pre></div>
+
+<p><strong>Forward Warps 的计数器直写</strong>（通过 symmetric pointer 的原子操作）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:647-649 — 通过 symmetric pointer 写入远端 linked list tail</span>
+ptx<span style="color: #666">::</span>st_relaxed_sys(
+<span style="color: #BBB">    </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(tail_ptr,<span style="color: #BBB"> </span>j),
+<span style="color: #BBB">    </span>transform_linked_list_idx(stored_scaleup_send_counters[i]));
+</code></pre></div>
+
+<h3 id="26-put_value">2.6 <code>put_value</code> — 远端对称指针的原子写</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh:200-220</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span>,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>put_value(dtype_t<span style="color: #666">*</span><span style="color: #BBB"> </span>sym_ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>dtype_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>value,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx,
+<span style="color: #BBB">               </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>extra_options<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(sym_ptr,<span style="color: #BBB"> </span>dst_rank_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// NVLink 路径: 直接 store 到远端</span>
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>st_relaxed_sys(dst_ptr,<span style="color: #BBB"> </span>value);
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// RDMA 路径: Gin putValue</span>
+<span style="color: #BBB">        </span>gin.putValue(TEAM_WORLD_RAIL(),
+<span style="color: #BBB">                     </span>dst_rank_idx,
+<span style="color: #BBB">                     </span>nccl_window,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(sym_ptr)<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>lsa_base_ptr,
+<span style="color: #BBB">                     </span>value,<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<h3 id="27-red_add_rel">2.7 <code>red_add_rel</code> — 远端对称指针的归约加</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh:96-120</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">team_t</span>,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">dtype_t</span><span style="color: #666">&gt;</span>
+__device__<span style="color: #BBB"> </span>__forceinline__
+<span style="color: #B00040">void</span><span style="color: #BBB"> </span>red_add_rel(dtype_t<span style="color: #666">*</span><span style="color: #BBB"> </span>sym_ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>dtype_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>value,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx,
+<span style="color: #BBB">                 </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>extra_options<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>get_sym_ptr<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(sym_ptr,<span style="color: #BBB"> </span>dst_rank_idx);
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(std<span style="color: #666">::</span>is_same_v<span style="color: #666">&lt;</span>team_t,<span style="color: #BBB"> </span>ncclTeamTagRail<span style="color: #666">&gt;</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">or</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span>sym_ptr)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add_rel_gpu(dst_ptr,<span style="color: #BBB"> </span>value);<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 本地或 rail: GPU scope</span>
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add_rel_sys(dst_ptr,<span style="color: #BBB"> </span>value);<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// NVLink 远端: SYS scope</span>
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// RDMA 路径: Gin signal</span>
+<span style="color: #BBB">        </span>gin.signal(TEAM_WORLD_RAIL(),<span style="color: #BBB"> </span>dst_rank_idx,
+<span style="color: #BBB">                   </span>ncclGin_VASignalAdd(nccl_window,<span style="color: #BBB"> </span>...,<span style="color: #BBB"> </span>value),<span style="color: #BBB"> </span>...);
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<hr />
+<h2 id="3-deepgemm">3. DeepGEMM 内核对称内存访问模式</h2>
+<h3 id="31-sym_buffermap">3.1 <code>sym_buffer.map()</code> — 极简的偏移映射</h3>
+<p>DeepGEMM 的对称指针翻译极其简洁，定义于 <code>deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sym_buffer.cuh:9-41</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumMaxRanks<span style="color: #666">&gt;</span>
+<span style="color: #008000; font-weight: bold">struct</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">SymBuffer</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>base;<span style="color: #BBB">                        </span><span style="color: #3D7B7B; font-style: italic">// 本地基地址</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>offsets[kNumMaxRanks];<span style="color: #BBB">       </span><span style="color: #3D7B7B; font-style: italic">// 每个 rank 相对于 base 的偏移</span>
+<span style="color: #BBB">    </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>rank_idx;<span style="color: #BBB">                   </span><span style="color: #3D7B7B; font-style: italic">// 当前 rank 索引</span>
+
+<span style="color: #BBB">    </span>SymBuffer()<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">default</span>;
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">Container</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">explicit</span><span style="color: #BBB"> </span>SymBuffer(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Container<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>c,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx)<span style="color: #666">:</span><span style="color: #BBB"> </span>rank_idx(rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>size<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(c.size());
+<span style="color: #BBB">        </span>base<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>c[rank_idx];<span style="color: #BBB">                          </span><span style="color: #3D7B7B; font-style: italic">// 本地 base</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumMaxRanks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)
+<span style="color: #BBB">            </span>offsets[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>size<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(c[i]<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>base)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 预计算偏移</span>
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">ptr_t</span><span style="color: #666">&gt;</span>
+<span style="color: #BBB">    </span>CUTLASS_DEVICE<span style="color: #BBB"> </span>ptr_t<span style="color: #BBB"> </span>map(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>ptr_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>ptr,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(kNumRanks<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span>ptr;
+
+<span style="color: #BBB">        </span><span style="color: #B00040">int64_t</span><span style="color: #BBB"> </span>mapped_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>offsets[dst_rank_idx]<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int64_t</span><span style="color: #666">&gt;</span>(ptr);
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">return</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>ptr_t<span style="color: #666">*&gt;</span>(<span style="color: #666">&amp;</span>mapped_ptr);
+<span style="color: #BBB">    </span>}
+};
+</code></pre></div>
+
+<p><strong>核心公式</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>remote_ptr = local_ptr + (base[dst_rank] - base[src_rank])
+</code></pre></div>
+
+<p><strong>对比 DeepEP 的 <code>get_sym_ptr</code></strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP <code>get_sym_ptr</code></th>
+<th>DeepGEMM <code>sym_buffer.map</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>计算方式</td>
+<td><code>ncclGetLsaPointer(window, offset, dst_rank)</code></td>
+<td><code>ptr + offsets[dst_rank]</code></td>
+</tr>
+<tr>
+<td>返回值</td>
+<td><code>nullptr</code> 表示不可达</td>
+<td>始终返回有效指针（假设全 NVLink）</td>
+</tr>
+<tr>
+<td>运行时开销</td>
+<td>NCCL API 调用（较重）</td>
+<td>一次加法（极轻）</td>
+</tr>
+<tr>
+<td>硬件依赖</td>
+<td>NCCL Gin + LSA</td>
+<td>纯地址偏移</td>
+</tr>
+<tr>
+<td>安全性</td>
+<td>编译期 + 运行时检查</td>
+<td>仅编译期</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-dispatch-warps-token">3.2 Dispatch Warps — 从远端拉取 token 数据</h3>
+<p>Dispatch warps 的核心任务：从远端 rank 的 <code>input_token_buffer</code> 拉取 token 数据到本地 <code>l1_token_buffer</code>。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:533-555 — TMA load from remote rank</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_token_buffer.get_data_buffer(src_token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// ← 远端 rank 指针</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.l1_token_buffer.get_data_buffer(
+<span style="color: #BBB">    </span>pool_token_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumRingTokens).get_base_ptr();<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 本地 l1 buffer</span>
+
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(cute<span style="color: #666">::</span>elect_one_sync())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #9C6500">#pragma unroll</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumChunks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">            </span>pull_buffer.get_base_ptr(),<span style="color: #BBB">                           </span><span style="color: #3D7B7B; font-style: italic">// smem 目标</span>
+<span style="color: #BBB">            </span>math<span style="color: #666">::</span>advance_ptr(src_base_ptr,<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumBytesPerPull),<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">// 远端源</span>
+<span style="color: #BBB">            </span>pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull
+<span style="color: #BBB">        </span>);
+<span style="color: #BBB">        </span>ptx<span style="color: #666">::</span>mbarrier_arrive_and_set_tx(pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull);
+<span style="color: #BBB">        </span>i<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>(kNumChunks<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>issue_and_wait_pull_store(i)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #B00040">void</span>();
+<span style="color: #BBB">    </span>}
+}
+</code></pre></div>
+
+<p><strong>SF (Scaling Factor) 的远端读取</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:562-575</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>remote_sf_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_sf_buffer.get_data_buffer(src_token_idx).get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>local_sf_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.l1_sf_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>();
+<span style="color: #3D7B7B; font-style: italic">// 逐元素 copy SF（非 TMA，因为 layout 不同）</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>constexpr_ceil_div(kNumSFUint32,<span style="color: #BBB"> </span><span style="color: #666">32u</span>);<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>j<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">32</span><span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>lane_idx;
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(j<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumSFUint32)
+<span style="color: #BBB">        </span>local_sf_ptr[j<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumSFRingTokens<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>sf_ring_token_idx]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>remote_sf_ptr[j];
+}
+</code></pre></div>
+
+<p><strong>topk_weights 的远端读取</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:581-583</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>weight<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>sym_buffer.map(
+<span style="color: #BBB">    </span>buffer.input_topk_weights_buffer.get_base_ptr<span style="color: #666">&lt;</span><span style="color: #B00040">float</span><span style="color: #666">&gt;</span>()<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>src_token_topk_idx,
+<span style="color: #BBB">    </span>current_rank_in_expert_idx);
+</code></pre></div>
+
+<p><strong>Dispatch 写回元数据到远端</strong>（symmetric pointer store）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:376 — 写 src_token_topk_idx 到远端</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_src_token_topk_idx_ptr(
+<span style="color: #BBB">    </span>expert_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span>kNumExpertsPerRank,<span style="color: #BBB"> </span>sym_buffer.rank_idx,<span style="color: #BBB"> </span>dst_slot_idx);
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>token_topk_idx;
+
+<span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:392-394 — 写 expert_recv_count 到远端</span>
+<span style="color: #666">*</span>sym_buffer.map(
+<span style="color: #BBB">    </span>workspace.get_expert_recv_count_ptr(sym_buffer.rank_idx,<span style="color: #BBB"> </span>dst_local_expert_idx),
+<span style="color: #BBB">    </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>expert_status<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">0xffffffff</span>;
+
+<span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:395-397 — 原子加到远端 sum 计数器</span>
+ptx<span style="color: #666">::</span>atomic_add_sys(
+<span style="color: #BBB">    </span>sym_buffer.map(workspace.get_expert_recv_count_sum_ptr(dst_local_expert_idx),<span style="color: #BBB"> </span>dst_rank_idx),
+<span style="color: #BBB">    </span>expert_status);
+</code></pre></div>
+
+<h3 id="33-epilogue-warps">3.3 Epilogue Warps — 计算结果回写到远端</h3>
+<p>Epilogue warps 将 GEMM 计算结果（BF16）写回到远端 rank 的 <code>combine_token_buffer</code>。</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1274-1299 — 写回远端</span>
+<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>dst_rank_idx,<span style="color: #BBB"> </span>dst_token_idx,<span style="color: #BBB"> </span>dst_topk_idx;
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(task_info.is_shared())<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>sym_buffer.rank_idx;
+<span style="color: #BBB">    </span>dst_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>pool_m_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>m_idx_in_block;
+<span style="color: #BBB">    </span>dst_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>kNumTopk;
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>src_metadata<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">*</span>workspace.get_token_src_metadata_ptr(pool_m_idx<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>m_idx_in_block);
+<span style="color: #BBB">    </span>dst_rank_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.rank_idx;
+<span style="color: #BBB">    </span>dst_token_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.token_idx;
+<span style="color: #BBB">    </span>dst_topk_idx<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>src_metadata.topk_idx;
+}
+
+<span style="color: #3D7B7B; font-style: italic">// 从 smem 读取计算结果</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>smem_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint8_t</span><span style="color: #666">*&gt;</span>(shared_storage.smem_d.l2[epilogue_wg_idx])<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>...;
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>packed<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_shared(<span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span>float4<span style="color: #666">*&gt;</span>(smem_ptr));
+
+<span style="color: #3D7B7B; font-style: italic">// 写回远端 combine buffer</span>
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_token<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>buffer.combine_token_buffer.get_rank_buffer(dst_topk_idx)
+<span style="color: #BBB">                           </span>.get_data_buffer(dst_token_idx);
+<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>math<span style="color: #666">::</span>advance_ptr<span style="color: #666">&lt;</span>float4<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>dst_token.get_base_ptr(),
+<span style="color: #BBB">    </span>n_idx<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(<span style="color: #008000; font-weight: bold">sizeof</span>(nv_bfloat16))<span style="color: #BBB"> </span><span style="color: #666">+</span><span style="color: #BBB"> </span>(lane_idx<span style="color: #BBB"> </span><span style="color: #666">%</span><span style="color: #BBB"> </span><span style="color: #666">16</span>)<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #666">&gt;</span>(<span style="color: #008000; font-weight: bold">sizeof</span>(float4)));
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 远端写入</span>
+</code></pre></div>
+
+<h3 id="34-nvlink_barrier-rank">3.4 <code>nvlink_barrier</code> — 跨 rank 同步屏障</h3>
+<p>DeepGEMM 的 NVLink barrier 是保证对称内存一致性的核心同步原语：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// deep_gemm/include/deep_gemm/comm/barrier.cuh:46-89</span>
+<span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumRanks,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumThreads,
+<span style="color: #BBB">          </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kGridSyncIndex,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kTag,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">sync_scope_t</span><span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>nvlink_barrier(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>Workspace<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>workspace,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>layout<span style="color: #666">::</span>SymBuffer<span style="color: #666">&lt;</span>kNumRanks<span style="color: #666">&gt;&amp;</span><span style="color: #BBB"> </span>sym_buffer,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>thread_idx,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>sync_scope_t<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sync_scope,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sync_prologue<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>,
+<span style="color: #BBB">                                   </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">bool</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>sync_epilogue<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000">true</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Grid sync before NVLink signaling</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_prologue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(workspace,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>sync_scope);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// NVLink cross-rank barrier, only SM 0 participates</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">*</span><span style="color: #BBB"> </span>counter_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_nvl_barrier_counter_ptr();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>(<span style="color: #666">*</span>counter_ptr)<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">3</span>;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>signal_phase<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>,<span style="color: #BBB"> </span>signal_sign<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>status<span style="color: #BBB"> </span><span style="color: #666">&gt;&gt;</span><span style="color: #BBB"> </span><span style="color: #666">1</span>;
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #666">*</span><span style="color: #BBB"> </span>signal_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_nvl_barrier_signal_ptr(signal_phase);
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Send signals to remote ranks</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add_rel_sys(sym_buffer.map(signal_ptr,<span style="color: #BBB"> </span>thread_idx),<span style="color: #BBB"> </span>sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">-1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span>sync_scope();
+
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// Update status and wait arrival</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>ptx<span style="color: #666">::</span>red_add(counter_ptr,<span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">int</span><span style="color: #BBB"> </span>target<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>signal_sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">static_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">int</span><span style="color: #666">&gt;</span>(kNumRanks);
+<span style="color: #BBB">            </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(ptx<span style="color: #666">::</span>ld_acq_sys(signal_ptr)<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span>target)<span style="color: #BBB"> </span>{<span style="color: #BBB"> </span><span style="color: #3D7B7B; font-style: italic">/* timeout check */</span><span style="color: #BBB"> </span>}
+<span style="color: #BBB">        </span>}
+<span style="color: #BBB">    </span>}
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Grid sync after NVLink completion</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(sync_epilogue)
+<span style="color: #BBB">        </span>grid_sync<span style="color: #666">&lt;</span>kNumSMs,<span style="color: #BBB"> </span>kGridSyncIndex<span style="color: #666">&gt;</span>(workspace,<span style="color: #BBB"> </span>sm_idx,<span style="color: #BBB"> </span>thread_idx,<span style="color: #BBB"> </span>sync_scope);
+}
+</code></pre></div>
+
+<p><strong>NVLink barrier 的工作流程</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>sequenceDiagram
+    participant SM0 as SM 0 (本地)
+    participant NVL as NVLink Fabric
+    participant R1 as Remote Rank 1
+    participant R2 as Remote Rank 2
+
+    SM0-&gt;&gt;SM0: grid_sync (等待所有本地 SM)
+    SM0-&gt;&gt;NVL: red_add_rel_sys(signal_ptr@R1, +1)
+    SM0-&gt;&gt;NVL: red_add_rel_sys(signal_ptr@R2, +1)
+    NVL-&gt;&gt;R1: 信号到达
+    NVL-&gt;&gt;R2: 信号到达
+    R1-&gt;&gt;NVL: red_add_rel_sys(signal_ptr@self, +1)
+    R2-&gt;&gt;NVL: red_add_rel_sys(signal_ptr@self, +1)
+    NVL-&gt;&gt;SM0: signal_ptr == kNumRanks
+    SM0-&gt;&gt;SM0: grid_sync (释放所有本地 SM)
+</code></pre></div>
+
+<h3 id="35-full_barriers-empty_barriers-">3.5 <code>full_barriers</code> / <code>empty_barriers</code> — 生产者-消费者协议</h3>
+<p>DeepGEMM 使用经典的 full/empty barrier 协议实现流水线同步：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:248-251 — 初始化</span>
+<span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumStages;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// Arrive at 2 CTAs, A + B (TMA load warps 各一个)</span>
+<span style="color: #BBB">    </span>shared_storage.full_barriers[i].init(<span style="color: #666">2</span><span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span><span style="color: #666">2</span>);
+<span style="color: #BBB">    </span>shared_storage.empty_barriers[i].init(<span style="color: #666">1</span>);
+}
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:708 — 消费者等待数据</span>
+shared_storage.empty_barriers[stage_idx].wait(phase<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #3D7B7B; font-style: italic">// ... TMA copy ...</span>
+<span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:727-730 — 生产者通知</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(is_leader_cta)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>shared_storage.full_barriers[stage_idx].arrive_and_expect_tx(...);
+}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">else</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>shared_storage.full_barriers[stage_idx].arrive(<span style="color: #666">0u</span>);
+}
+</code></pre></div>
+
+<p><strong>Full/Empty 协议语义</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Barrier</th>
+<th>生产者 (arrive)</th>
+<th>消费者 (wait)</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>full_barriers[i]</code></td>
+<td>TMA load warp 数据加载完成</td>
+<td>MMA warp 数据可用</td>
+<td>"数据满了"</td>
+</tr>
+<tr>
+<td><code>empty_barriers[i]</code></td>
+<td>MMA warp 消费完成</td>
+<td>TMA load warp 可重用</td>
+<td>"数据空了"</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart LR
+    subgraph &quot;Pipeline Stage i&quot;
+        A[&quot;TMA Load Warp&quot;] --&gt;|arrive: full_barriers[i]| B[&quot;smem_a + smem_b&quot;]
+        B --&gt;|wait: full_barriers[i]| C[&quot;MMA Warp&quot;]
+        C --&gt;|arrive: empty_barriers[i]| D[&quot;stage 可重用&quot;]
+        D --&gt;|wait: empty_barriers[i]| A
+    end
+</code></pre></div>
+
+<hr />
+<h2 id="4-tma-vs-ibgda">4. TMA vs IBGDA 对比分析</h2>
+<h3 id="41-deepep">4.1 DeepEP 的双路径设计</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// dispatch.cuh:376-391 — 双路径写入</span>
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(dst_ptr<span style="color: #BBB"> </span><span style="color: #666">!=</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_1d(dst_ptr,<span style="color: #BBB"> </span>...,<span style="color: #BBB"> </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>());<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 路径 A: TMA</span>
+ptx<span style="color: #666">::</span>tma_store_commit();
+
+<span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">constexpr</span><span style="color: #BBB"> </span>(<span style="color: #008000; font-weight: bold">not</span><span style="color: #BBB"> </span>kIsScaleupNVLink)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait<span style="color: #666">&lt;1&gt;</span>();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(stored_dst_slot_idx<span style="color: #BBB"> </span><span style="color: #666">&gt;=</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">and</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #008000">nullptr</span>)
+<span style="color: #BBB">        </span>gin.put<span style="color: #666">&lt;</span>team_t<span style="color: #666">&gt;</span>(recv_buffer...,<span style="color: #BBB"> </span>send_buffer_ptr,<span style="color: #BBB"> </span>...,<span style="color: #BBB"> </span>stored_dst_rank_idx);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 路径 B: IBGDA</span>
+}
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// hybrid_dispatch.cuh:448-455 — Scale-out 纯 IBGDA</span>
+gin.put<span style="color: #666">&lt;</span>ncclTeamTagRail<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">    </span>scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+<span style="color: #BBB">    </span>tma_buffer.get_num_bytes<span style="color: #666">&lt;</span><span style="color: #008000">false</span><span style="color: #666">&gt;</span>(),
+<span style="color: #BBB">    </span>stored_dst_scaleout_rank_idx,
+<span style="color: #BBB">    </span>ncclGinOptFlagsAggregateRequests);
+</code></pre></div>
+
+<h3 id="42-deepgemm-tma">4.2 DeepGEMM 的纯 TMA 设计</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:548-552 — 远端 TMA load</span>
+ptx<span style="color: #666">::</span>tma_load_1d(
+<span style="color: #BBB">    </span>pull_buffer.get_base_ptr(),<span style="color: #BBB">                              </span><span style="color: #3D7B7B; font-style: italic">// 本地 smem</span>
+<span style="color: #BBB">    </span>math<span style="color: #666">::</span>advance_ptr(src_base_ptr,<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">*</span><span style="color: #BBB"> </span>kNumBytesPerPull),<span style="color: #BBB">   </span><span style="color: #3D7B7B; font-style: italic">// 远端 gmem (NVLink)</span>
+<span style="color: #BBB">    </span>pull_mbarrier,<span style="color: #BBB"> </span>kNumBytesPerPull
+);
+</code></pre></div>
+
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sm100_fp8_fp4_mega_moe.cuh:1299 — 远端 TMA store (通过 sym_buffer.map)</span>
+<span style="color: #666">*</span>sym_buffer.map(dst_ptr,<span style="color: #BBB"> </span>dst_rank_idx)<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>packed;
+</code></pre></div>
+
+<h3 id="43">4.3 核心对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP (NVLink 路径)</th>
+<th>DeepEP (RDMA 路径)</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>硬件机制</strong></td>
+<td>TMA <code>cp.async.bulk.global</code></td>
+<td>IBGDA <code>gin.put</code></td>
+<td>TMA <code>cp.async.bulk</code></td>
+</tr>
+<tr>
+<td><strong>发起者</strong></td>
+<td>GPU (SM)</td>
+<td>GPU (通过 NCCL Gin QP)</td>
+<td>GPU (SM)</td>
+</tr>
+<tr>
+<td><strong>中间缓冲</strong></td>
+<td>无（直写远端）</td>
+<td>需要 send_buffer</td>
+<td>无（直写远端）</td>
+</tr>
+<tr>
+<td><strong>地址翻译</strong></td>
+<td><code>get_sym_ptr</code> → NCCL API</td>
+<td>offset in window</td>
+<td><code>sym_buffer.map</code> → 加法</td>
+</tr>
+<tr>
+<td><strong>适用场景</strong></td>
+<td>同节点 NVLink</td>
+<td>跨节点 RDMA</td>
+<td>全 NVLink (SM100)</td>
+</tr>
+<tr>
+<td><strong>延迟</strong></td>
+<td>~1-2 us</td>
+<td>~5-10 us</td>
+<td>~1-2 us</td>
+</tr>
+<tr>
+<td><strong>带宽</strong></td>
+<td>~900 GB/s (NVLink-C2C)</td>
+<td>~50 GB/s (HDR IB)</td>
+<td>~900 GB/s</td>
+</tr>
+</tbody>
+</table>
+<h3 id="44-deepgemm-tma">4.4 为什么 DeepGEMM 可以纯 TMA？</h3>
+<p>DeepGEMM 假设 <strong>SM100 (Blackwell) 架构的全 NVLink 互联</strong>：<br />
+- SM100 支持 NVLink 5.0，单 GPU 可连接最多 18 个 NVLink peer<br />
+- 不需要跨节点 RDMA，所有 rank 间都是 NVLink 可达<br />
+- 因此 <code>sym_buffer.map</code> 始终返回有效指针，无需 <code>nullptr</code> 检查</p>
+<p>DeepEP 需要支持 <strong>Hopper (SM90) + 跨节点</strong> 场景：<br />
+- SM90 NVLink 仅 18 个 peer，但跨节点需要 RDMA<br />
+- 必须区分 NVLink 可达 vs 不可达，走不同路径</p>
+<hr />
+<h2 id="5">5. 指针映射机制深度对比</h2>
+<h3 id="51-deepep-get_sym_ptr">5.1 DeepEP: <code>get_sym_ptr</code> 的地址计算</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    A[&quot;本地 ptr&quot;] --&gt; B[&quot;get_sym_offset(ptr)&lt;br/&gt;= ptr - lsa_base_ptr&quot;]
+    B --&gt; C[&quot;offset (相对偏移)&quot;]
+    C --&gt; D[&quot;ncclGetLsaPointer(window, offset, dst_nvl_rank)&quot;]
+    D --&gt; E[&quot;远端 VA = lsa_base_ptr[dst_rank] + offset&quot;]
+    E --&gt; F{&quot;结果?&quot;}
+    F --&gt;|NVLink 可达| G[&quot;返回远端指针&quot;]
+    F --&gt;|不可达| H[&quot;返回 nullptr → RDMA&quot;]
+</code></pre></div>
+
+<p><strong>lsa_base_ptr 的初始化</strong>：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// handle.cuh:34</span>
+lsa_base_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">reinterpret_cast</span><span style="color: #666">&lt;</span><span style="color: #B00040">uint64_t</span><span style="color: #666">&gt;</span>(ncclGetLsaPointer(nccl_window,<span style="color: #BBB"> </span><span style="color: #666">0</span>,<span style="color: #BBB"> </span>team_lsa.rank));
+</code></pre></div>
+
+<p><strong>关键洞察</strong>：DeepEP 的地址翻译是 <strong>NCCL 运行时 API 调用</strong>，依赖于 NCCL 内部维护的 LSA (Local Scale-up Allocation) window。每个 rank 的 buffer 在 NCCL 初始化时注册到 window 中，NCCL 维护了 rank 间的地址映射表。</p>
+<h3 id="52-deepgemm-sym_buffermap">5.2 DeepGEMM: <code>sym_buffer.map</code> 的地址计算</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    A[&quot;本地 ptr&quot;] --&gt; B[&quot;reinterpret_cast&lt;int64_t&gt;(ptr)&quot;]
+    B --&gt; C[&quot;+ offsets[dst_rank_idx]&quot;]
+    C --&gt; D[&quot;remote_ptr = ptr + (base[dst] - base[src])&quot;]
+    D --&gt; E[&quot;返回远端指针 (始终有效)&quot;]
+</code></pre></div>
+
+<p><strong>offsets 的预计算</strong>（host 端）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #3D7B7B; font-style: italic">// sym_buffer.cuh:20-25</span>
+<span style="color: #008000; font-weight: bold">explicit</span><span style="color: #BBB"> </span>SymBuffer(<span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span>Container<span style="color: #666">&amp;</span><span style="color: #BBB"> </span>c,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>rank_idx)<span style="color: #666">:</span><span style="color: #BBB"> </span>rank_idx(rank_idx)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>base<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>c[rank_idx];
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">for</span><span style="color: #BBB"> </span>(<span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;<span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumMaxRanks;<span style="color: #BBB"> </span><span style="color: #666">++</span><span style="color: #BBB"> </span>i)
+<span style="color: #BBB">        </span>offsets[i]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>i<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>size<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(c[i]<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>base)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">0</span>;
+}
+</code></pre></div>
+
+<p><strong>关键洞察</strong>：DeepGEMM 假设所有 rank 的 buffer 在 VA 空间中是 <strong>等间距映射</strong> 的。<code>base[i]</code> 是 rank i 的 buffer 基地址，<code>base[i] - base[j]</code> 就是 rank i 到 rank j 的固定偏移。这要求：<br />
+1. 所有 rank 的 buffer 大小相同<br />
+2. VA 映射在初始化时确定，运行时不改变</p>
+<h3 id="53">5.3 运行时开销对比</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>地址翻译</td>
+<td>NCCL API 调用 (~数十 cycles)</td>
+<td>一次加法 (~1 cycle)</td>
+</tr>
+<tr>
+<td>分支判断</td>
+<td><code>nullptr</code> 检查（分支预测）</td>
+<td>无分支（<code>kNumRanks == 1</code> 编译期）</td>
+</tr>
+<tr>
+<td>内存访问</td>
+<td>可能访问 NCCL 内部表</td>
+<td>访问 <code>offsets</code> 数组（register/const）</td>
+</tr>
+<tr>
+<td>灵活性</td>
+<td>支持动态拓扑</td>
+<td>静态拓扑</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6">6. 同步原语对比分析</h2>
+<h3 id="61-deepep">6.1 DeepEP 同步层次</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;DeepEP 同步层次&quot;
+        A[&quot;gpu_barrier&lt;br/&gt;(grid_sync + scaleup + scaleout)&quot;] --&gt; B[&quot;nvlink_barrier_wo_local_sync&lt;br/&gt;(SM 0 only, cross-rank)&quot;]
+        A --&gt; C[&quot;gin_barrier_wo_local_sync&lt;br/&gt;(Gin signal/wait)&quot;]
+        B --&gt; D[&quot;named_barrier&lt;br/&gt;(intra-SM warp group)&quot;]
+        C --&gt; D
+        D --&gt; E[&quot;mbarrier&lt;br/&gt;(TMA load/store sync)&quot;]
+    end
+</code></pre></div>
+
+<p><strong><code>gpu_barrier</code></strong>（comm.cuh:213-264）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">bool</span><span style="color: #BBB"> </span>kIsScaleupNVLink,<span style="color: #BBB"> </span>...<span style="color: #666">&gt;</span>
+__forceinline__<span style="color: #BBB"> </span>__device__<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>gpu_barrier(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 1. TMA store flush</span>
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_commit();
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>tma_store_wait();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 2. Grid sync (所有 SM)</span>
+<span style="color: #BBB">    </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 3. Scaleup / Scaleout barrier</span>
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(do_scaleup)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(kIsScaleupNVLink)
+<span style="color: #BBB">            </span>nvlink_barrier_wo_local_sync(...);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// NVLink 路径</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">else</span>
+<span style="color: #BBB">            </span>gin_barrier_wo_local_sync(...);<span style="color: #BBB">     </span><span style="color: #3D7B7B; font-style: italic">// RDMA 路径</span>
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(do_scaleout)
+<span style="color: #BBB">        </span>scaleout_barrier_wo_local_sync(...);
+
+<span style="color: #BBB">    </span><span style="color: #3D7B7B; font-style: italic">// 4. Final grid sync</span>
+<span style="color: #BBB">    </span>cooperative_groups<span style="color: #666">::</span>this_grid().sync();
+}
+</code></pre></div>
+
+<p><strong><code>nvlink_barrier_wo_local_sync</code></strong>（comm.cuh:88-129）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>kNumRanks)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>dst_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>gin.get_sym_ptr<span style="color: #666">&lt;</span>ncclTeamTagLsa<span style="color: #666">&gt;</span>(
+<span style="color: #BBB">        </span>workspace.get_nvl_barrier_signal_ptr(phase),<span style="color: #BBB"> </span>thread_idx);
+<span style="color: #BBB">    </span>ptx<span style="color: #666">::</span>red_add_rel_sys(dst_ptr,<span style="color: #BBB"> </span>sign<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span><span style="color: #666">-1</span><span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// ← 远端原子加</span>
+}
+</code></pre></div>
+
+<h3 id="62-deepgemm">6.2 DeepGEMM 同步层次</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>flowchart TB
+    subgraph &quot;DeepGEMM 同步层次&quot;
+        A[&quot;nvlink_barrier&lt;br/&gt;(grid_sync + cross-rank + grid_sync)&quot;] --&gt; B[&quot;grid_sync&lt;br/&gt;(atomic counter, all SMs)&quot;]
+        B --&gt; C[&quot;mbarrier&lt;br/&gt;(TMA sync per stage)&quot;]
+        C --&gt; D[&quot;full_barriers / empty_barriers&lt;br/&gt;(producer-consumer)&quot;]
+        D --&gt; E[&quot;tmem_full / tmem_empty&lt;br/&gt;(TMEM accumulator pipeline)&quot;]
+        E --&gt; F[&quot;cluster_sync&lt;br/&gt;(2-CTA coordination)&quot;]
+    end
+</code></pre></div>
+
+<p><strong><code>grid_sync</code></strong>（barrier.cuh:21-44）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code><span style="color: #008000; font-weight: bold">template</span><span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kNumSMs,<span style="color: #BBB"> </span><span style="color: #B00040">uint32_t</span><span style="color: #BBB"> </span>kGridSyncIndex,<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">typename</span><span style="color: #BBB"> </span><span style="color: #00F; font-weight: bold">sync_scope_t</span><span style="color: #666">&gt;</span>
+CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>grid_sync(...)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>sync_scope();
+<span style="color: #BBB">    </span><span style="color: #008000; font-weight: bold">if</span><span style="color: #BBB"> </span>(thread_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>count_ptr<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>workspace.get_grid_sync_count_ptr<span style="color: #666">&lt;</span>kGridSyncIndex<span style="color: #666">&gt;</span>();
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">const</span><span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">auto</span><span style="color: #BBB"> </span>old_value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>atomic_add_rel(
+<span style="color: #BBB">            </span>count_ptr,<span style="color: #BBB"> </span>sm_idx<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span><span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>(kFinishSumTag<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span>(kNumSMs<span style="color: #BBB"> </span><span style="color: #666">-</span><span style="color: #BBB"> </span><span style="color: #666">1</span>))<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #666">1</span>);
+<span style="color: #BBB">        </span><span style="color: #3D7B7B; font-style: italic">// 等待所有 SM 到达</span>
+<span style="color: #BBB">        </span><span style="color: #008000; font-weight: bold">do</span><span style="color: #BBB"> </span>{
+<span style="color: #BBB">            </span>new_value<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>ptx<span style="color: #666">::</span>ld_acq(count_ptr);
+<span style="color: #BBB">        </span>}<span style="color: #BBB"> </span><span style="color: #008000; font-weight: bold">while</span><span style="color: #BBB"> </span>(((new_value<span style="color: #BBB"> </span><span style="color: #666">^</span><span style="color: #BBB"> </span>old_value)<span style="color: #BBB"> </span><span style="color: #666">&amp;</span><span style="color: #BBB"> </span>kFinishSumTag)<span style="color: #BBB"> </span><span style="color: #666">==</span><span style="color: #BBB"> </span><span style="color: #666">0</span>);
+<span style="color: #BBB">    </span>}
+<span style="color: #BBB">    </span>sync_scope();
+}
+</code></pre></div>
+
+<p><strong><code>cluster_sync_with_relaxed_arrive</code></strong>（barrier.cuh:14-19）：</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%;"><span></span><code>CUTLASS_DEVICE<span style="color: #BBB"> </span><span style="color: #B00040">void</span><span style="color: #BBB"> </span>cluster_sync_with_relaxed_arrive()<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>cute<span style="color: #666">::</span>cluster_arrive_relaxed();<span style="color: #BBB">  </span><span style="color: #3D7B7B; font-style: italic">// 弱序 arrive</span>
+<span style="color: #BBB">    </span>cute<span style="color: #666">::</span>cluster_wait();
+}
+</code></pre></div>
+
+<h3 id="63">6.3 同步原语对照表</h3>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>跨节点</strong></td>
+<td><code>gin_barrier_wo_local_sync</code></td>
+<td>N/A</td>
+<td>Gin signal/wait</td>
+</tr>
+<tr>
+<td><strong>跨 rank (NVLink)</strong></td>
+<td><code>nvlink_barrier_wo_local_sync</code></td>
+<td><code>nvlink_barrier</code></td>
+<td>对称内存写入后的全局同步</td>
+</tr>
+<tr>
+<td><strong>全 grid</strong></td>
+<td><code>cooperative_groups::this_grid().sync()</code></td>
+<td><code>grid_sync</code></td>
+<td>所有 SM 对齐</td>
+</tr>
+<tr>
+<td><strong>SM 内 warp group</strong></td>
+<td><code>named_barrier</code></td>
+<td><code>ptx::sync_aligned</code></td>
+<td>warp 对齐</td>
+</tr>
+<tr>
+<td><strong>TMA 生产者-消费者</strong></td>
+<td><code>mbarrier</code> (via <code>ptx::</code>)</td>
+<td><code>full_barriers</code>/<code>empty_barriers</code></td>
+<td>流水线 stage 同步</td>
+</tr>
+<tr>
+<td><strong>TMEM 流水线</strong></td>
+<td>N/A</td>
+<td><code>tmem_full</code>/<code>tmem_empty</code></td>
+<td>accumulator 重用</td>
+</tr>
+<tr>
+<td><strong>Cluster (2-CTA)</strong></td>
+<td>N/A</td>
+<td><code>cluster_sync_with_relaxed_arrive</code></td>
+<td>2-CTA MMA 协调</td>
+</tr>
+</tbody>
+</table>
+<h3 id="64">6.4 关键差异</h3>
+<ol>
+<li>
+<p><strong>DeepEP 的 <code>gpu_barrier</code> 是复合操作</strong>：包含 TMA flush + grid sync + scaleup/scaleout barrier + final grid sync。这是因为 DeepEP 的通信模式需要保证跨节点的全局一致性。</p>
+</li>
+<li>
+<p><strong>DeepGEMM 的 <code>nvlink_barrier</code> 也是复合操作</strong>：grid_sync + cross-rank signal + grid_sync。但 DeepGEMM 将 grid_sync 和 NVLink barrier 解耦为独立函数，更灵活。</p>
+</li>
+<li>
+<p><strong>DeepEP 使用 NCCL 的 Gin signal/wait 做跨节点 barrier</strong>：通过 <code>gin.signal()</code> 发送递增信号，<code>gin.getSignalShadowPtr()</code> 读取并等待目标值。</p>
+</li>
+<li>
+<p><strong>DeepGEMM 使用 atomic counter 做 grid_sync</strong>：<code>kFinishSumTag</code> 技巧 — SM 0 写入 <code>tag - (N-1)</code>，其他 SM 各写入 <code>1</code>，当 counter 的 tag bit 翻转时表示所有 SM 到达。</p>
+</li>
+</ol>
+<hr />
+<h2 id="7">7. 总结对比表</h2>
+<h3 id="71">7.1 对称内存访问模式总览</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>地址翻译</strong></td>
+<td><code>get_sym_ptr</code> (NCCL API)</td>
+<td><code>sym_buffer.map</code> (偏移加法)</td>
+</tr>
+<tr>
+<td><strong>可达性检查</strong></td>
+<td><code>is_nvlink_accessible</code> → <code>nullptr</code></td>
+<td>无（假设全 NVLink）</td>
+</tr>
+<tr>
+<td><strong>NVLink 写入</strong></td>
+<td>TMA store 1d 到远端</td>
+<td>TMA store 1d 到远端</td>
+</tr>
+<tr>
+<td><strong>RDMA 写入</strong></td>
+<td><code>gin.put</code> (IBGDA)</td>
+<td>不支持</td>
+</tr>
+<tr>
+<td><strong>本地写入</strong></td>
+<td><code>red_add_rel_gpu</code> / <code>st_relaxed_sys</code></td>
+<td><code>sym_buffer.map</code> 后 store</td>
+</tr>
+<tr>
+<td><strong>远端原子操作</strong></td>
+<td><code>red_add_rel_sys</code></td>
+<td><code>ptx::atomic_add_sys</code></td>
+</tr>
+<tr>
+<td><strong>远端 load</strong></td>
+<td><code>tma_load_1d</code> from remote</td>
+<td><code>tma_load_1d</code> from remote</td>
+</tr>
+<tr>
+<td><strong>同步屏障</strong></td>
+<td><code>gpu_barrier</code> (复合)</td>
+<td><code>nvlink_barrier</code> + <code>grid_sync</code></td>
+</tr>
+<tr>
+<td><strong>流水线协议</strong></td>
+<td><code>mbarrier</code></td>
+<td><code>full_barriers</code>/<code>empty_barriers</code></td>
+</tr>
+<tr>
+<td><strong>硬件要求</strong></td>
+<td>SM90+ (Hopper)</td>
+<td>SM100 (Blackwell)</td>
+</tr>
+<tr>
+<td><strong>拓扑支持</strong></td>
+<td>NVLink + RDMA 混合</td>
+<td>纯 NVLink</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72">7.2 代码路径长度对比</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>DeepEP 代码行数</th>
+<th>DeepGEMM 代码行数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>地址翻译</td>
+<td>~30 行 (handle.cuh)</td>
+<td>~5 行 (sym_buffer.cuh)</td>
+</tr>
+<tr>
+<td>NVLink 写入</td>
+<td>~10 行 (dispatch.cuh)</td>
+<td>~5 行 (mega_moe.cuh)</td>
+</tr>
+<tr>
+<td>RDMA 写入</td>
+<td>~15 行 (gin.put)</td>
+<td>N/A</td>
+</tr>
+<tr>
+<td>跨 rank barrier</td>
+<td>~50 行 (comm.cuh)</td>
+<td>~45 行 (barrier.cuh)</td>
+</tr>
+<tr>
+<td>流水线同步</td>
+<td>~20 行 (mbarrier)</td>
+<td>~30 行 (full/empty)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="73">7.3 设计哲学差异</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DeepEP</th>
+<th>DeepGEMM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>抽象层级</strong></td>
+<td>高 (NCCL Gin 封装)</td>
+<td>低 (直接 PTX/TMA)</td>
+</tr>
+<tr>
+<td><strong>灵活性</strong></td>
+<td>高 (支持混合拓扑)</td>
+<td>低 (假设全 NVLink)</td>
+</tr>
+<tr>
+<td><strong>性能上限</strong></td>
+<td>受 NCCL 抽象层限制</td>
+<td>接近硬件极限</td>
+</tr>
+<tr>
+<td><strong>代码复杂度</strong></td>
+<td>高 (多路径分支)</td>
+<td>中 (单路径 + 流水线)</td>
+</tr>
+<tr>
+<td><strong>可移植性</strong></td>
+<td>中 (依赖 NCCL 版本)</td>
+<td>低 (SM100 only)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="74">7.4 核心洞察</h3>
+<ol>
+<li>
+<p><strong>DeepEP 的 <code>get_sym_ptr</code> 是 "安全但昂贵" 的设计</strong>：每次地址翻译都需要调用 NCCL API，运行时检查可达性。这保证了跨拓扑的正确性，但引入了开销。</p>
+</li>
+<li>
+<p><strong>DeepGEMM 的 <code>sym_buffer.map</code> 是 "极简但受限" 的设计</strong>：纯偏移加法，零开销。但假设所有 rank 的 buffer  VA 映射是等间距的，且全部 NVLink 可达。</p>
+</li>
+<li>
+<p><strong>两种设计反映了不同的硬件假设</strong>：<br />
+   - DeepEP 面向 Hopper 时代：NVLink 有限，需要 RDMA 扩展<br />
+   - DeepGEMM 面向 Blackwell 时代：NVLink 5.0 全互联，无需 RDMA</p>
+</li>
+<li>
+<p><strong>同步原语的差异反映了通信模型的不同</strong>：<br />
+   - DeepEP 需要跨节点的 <code>gin_barrier</code>，依赖 NCCL 的 signal/wait<br />
+   - DeepGEMM 只需要节点内的 <code>nvlink_barrier</code>，直接通过 <code>red_add_rel_sys</code> 实现</p>
+</li>
+<li>
+<p><strong>TMA 是两种设计的共同基础</strong>：无论是 DeepEP 还是 DeepGEMM，NVLink 路径都使用 TMA 做 bulk copy。DeepEP 的 RDMA 路径额外使用 IBGDA，而 DeepGEMM 完全不需要 IBGDA。</p>
+</li>
+</ol>
+<hr />
+<h2 id="_3">附录：关键文件索引</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>核心内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/common/handle.cuh</code></td>
+<td>230</td>
+<td><code>get_sym_ptr</code>, <code>is_nvlink_accessible</code>, <code>NCCLGin</code></td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/dispatch.cuh</code></td>
+<td>411</td>
+<td>Dispatch Warps 的 NVLink/RDMA 双路径写入</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/combine.cuh</code></td>
+<td>245</td>
+<td>Combine Warps 的远端回写</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/impls/hybrid_dispatch.cuh</code></td>
+<td>677</td>
+<td>三阶段流水线的 IBGDA + NVLink</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/common/comm.cuh</code></td>
+<td>267</td>
+<td><code>gpu_barrier</code>, <code>nvlink_barrier</code>, Gin barrier</td>
+</tr>
+<tr>
+<td><code>DeepEP/deep_ep/include/deep_ep/common/ptx.cuh</code></td>
+<td>~310</td>
+<td>TMA, mbarrier, red_add_rel_sys PTX 封装</td>
+</tr>
+<tr>
+<td><code>DeepEP/csrc/kernels/backend/symmetric.hpp</code></td>
+<td>319</td>
+<td>SymmetricMemory 分配器 (VMM)</td>
+</tr>
+<tr>
+<td><code>DeepGEMM/deep_gemm/include/deep_gemm/layout/sym_buffer.cuh</code></td>
+<td>44</td>
+<td><code>sym_buffer.map</code> 极简偏移映射</td>
+</tr>
+<tr>
+<td><code>DeepGEMM/deep_gemm/include/deep_gemm/comm/barrier.cuh</code></td>
+<td>91</td>
+<td><code>nvlink_barrier</code>, <code>grid_sync</code></td>
+</tr>
+<tr>
+<td><code>DeepGEMM/deep_gemm/include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh</code></td>
+<td>1460</td>
+<td>完整 Mega MoE kernel (Dispatch + GEMM + Epilogue + Combine)</td>
+</tr>
+<tr>
+<td><code>DeepGEMM/deep_gemm/include/deep_gemm/ptx/ld_st.cuh</code></td>
+<td>~304</td>
+<td>PTX load/store/atomics 封装</td>
+</tr>
+<tr>
+<td><code>DeepGEMM/deep_gemm/include/deep_gemm/layout/mega_moe.cuh</code></td>
+<td>~440</td>
+<td>Buffer 布局定义</td>
+</tr>
+</tbody>
+</table>
+<div class="nav"><a href="index.html">← 返回索引</a></div>
+</div>
+</body>
+</html>
