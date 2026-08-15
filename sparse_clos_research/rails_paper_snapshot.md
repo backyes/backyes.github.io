@@ -1,0 +1,5958 @@
+- generic [active] [ref=f33e1]:
+  - banner [ref=f33e2]:
+    - link "Back to arXiv" [ref=f33e4] [cursor=pointer]:
+      - /url: https://arxiv.org/
+    - banner [ref=f33e6]:
+      - paragraph [ref=f33e7]:
+        - text: This is
+        - strong [ref=f33e8]: experimental HTML
+        - text: to improve accessibility. We invite you to report rendering errors.
+        - generic [ref=f33e9]: Use Alt+Y to toggle on accessible reporting links and Alt+Shift+Y to toggle off.
+        - text: Learn more
+        - link "about this project" [ref=f33e10] [cursor=pointer]:
+          - /url: https://info.arxiv.org/about/accessible_HTML.html
+        - text: and
+        - link "help improve conversions" [ref=f33e11] [cursor=pointer]:
+          - /url: https://info.arxiv.org/help/submit_latex_best_practices.html
+        - text: .
+    - navigation [ref=f33e12]:
+      - link "Why HTML?" [ref=f33e13] [cursor=pointer]:
+        - /url: https://info.arxiv.org/about/accessible_HTML.html
+      - link "Report Issue" [ref=f33e14] [cursor=pointer]:
+        - /url: "#myForm"
+      - link "Back to Abstract" [ref=f33e15] [cursor=pointer]:
+        - /url: https://arxiv.org/abs/2510.19262v1
+      - link "Download PDF" [ref=f33e16] [cursor=pointer]:
+        - /url: https://arxiv.org/pdf/2510.19262v1
+      - 'link "Color scheme: System preference. Click to switch to light mode." [ref=f33e17] [cursor=pointer]':
+        - /url: javascript:toggleColorScheme()
+        - generic "Switch to light mode" [ref=f33e18]
+  - generic [ref=f33e21]:
+    - navigation "Table of Contents" [ref=f33e22]:
+      - list [ref=f33e24]:
+        - listitem [ref=f33e25]:
+          - link [ref=f33e26] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#abstract
+        - listitem [ref=f33e28]:
+          - link "I Introduction" [ref=f33e29] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S1
+            - generic [ref=f33e30]:
+              - generic [ref=f33e31]: I
+              - text: Introduction
+        - listitem [ref=f33e32]:
+          - link "II Background and Motivation" [ref=f33e33] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S2
+            - generic [ref=f33e34]:
+              - generic [ref=f33e35]: II
+              - text: Background and Motivation
+        - listitem [ref=f33e36]:
+          - link "III overview" [ref=f33e37] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S3
+            - generic [ref=f33e38]:
+              - generic [ref=f33e39]: III
+              - text: overview
+        - listitem [ref=f33e40]:
+          - link "IV Problem Formulation" [ref=f33e41] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S4
+            - generic [ref=f33e42]:
+              - generic [ref=f33e43]: IV
+              - text: Problem Formulation
+        - listitem [ref=f33e44]:
+          - link "V Implementation" [ref=f33e45] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S5
+            - generic [ref=f33e46]:
+              - generic [ref=f33e47]: V
+              - text: Implementation
+        - listitem [ref=f33e48]:
+          - link "VI Evaluation" [ref=f33e49] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S6
+            - generic [ref=f33e50]:
+              - generic [ref=f33e51]: VI
+              - text: Evaluation
+        - listitem [ref=f33e52]:
+          - link "VII Related Work" [ref=f33e53] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S7
+            - generic [ref=f33e54]:
+              - generic [ref=f33e55]: VII
+              - text: Related Work
+        - listitem [ref=f33e56]:
+          - link "VIII Conclusion" [ref=f33e57] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#S8
+            - generic [ref=f33e58]:
+              - generic [ref=f33e59]: VIII
+              - text: Conclusion
+        - listitem [ref=f33e60]:
+          - link [ref=f33e61] [cursor=pointer]:
+            - /url: https://arxiv.org/html/2510.19262v1#bib
+    - generic [ref=f33e63]:
+      - generic [ref=f33e64]:
+        - 'link "License: arXiv.org perpetual non-exclusive license" [ref=f33e65] [cursor=pointer]':
+          - /url: https://info.arxiv.org/help/license/index.html#licenses-available
+        - generic [ref=f33e66]: arXiv:2510.19262v1 [cs.DC] 22 Oct 2025
+      - article [ref=f33e67]:
+        - 'heading "RailS: Load Balancing for All-to-All Communication in Distributed Mixture-of-Experts Training" [level=1] [ref=f33e68]'
+        - generic [ref=f33e71]:
+          - text: Heng Xu
+          - superscript [ref=f33e72]: "1"
+          - text: ", Zhiwei Yu"
+          - superscript [ref=f33e73]: "2"
+          - text: ", Chengze Du"
+          - superscript [ref=f33e74]: "1"
+          - text: ", Ying Zhou"
+          - superscript [ref=f33e75]: "1"
+          - text: ", Letian Li"
+          - superscript [ref=f33e76]: "3"
+          - text: ", Haojie Wang"
+          - superscript [ref=f33e77]: "4"
+          - text: ", Weiqiang Cheng"
+          - superscript [ref=f33e78]: "4"
+          - text: ", Jialong Li"
+          - superscript [ref=f33e79]: "1"
+          - superscript [ref=f33e80]: 🖂
+        - generic [ref=f33e81]:
+          - heading "Abstract" [level=6] [ref=f33e82]
+          - paragraph [ref=f33e83]: Training Mixture-of-Experts (MoE) models introduces sparse and highly imbalanced all-to-all communication that dominates iteration time. Conventional load-balancing methods fail to exploit the deterministic topology of Rail architectures, leaving multi-NIC bandwidth underutilized. We present RailS, a distributed load-balancing framework that minimizes all-to-all completion time in MoE training. RailS leverages the Rail topology’s symmetry to prove that uniform sending ensures uniform receiving, transforming global coordination into local scheduling. Each node independently executes a Longest Processing Time First (LPT) spraying scheduler to proactively balance traffic using local information. RailS activates N parallel rails for fine-grained, topology-aware multipath transmission. Across synthetic and real-world MoE workloads, RailS improves bus bandwidth by 20%–78% and reduces completion time by 17%–78%. For Mixtral workloads, it shortens iteration time by 18%–40% and achieves near-optimal load balance, fully exploiting architectural parallelism in distributed training.
+        - generic [ref=f33e84]:
+          - heading "I Introduction" [level=2] [ref=f33e85]:
+            - generic [ref=f33e86]: I
+            - text: Introduction
+          - paragraph [ref=f33e88]:
+            - text: Artificial intelligence (AI) training has shifted from dense models to mixture-of-experts (MoE) models, making cross-GPU communication a critical bottleneck. While early dense models
+            - generic [ref=f33e89]:
+              - text: "["
+              - link "23" [ref=f33e90] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib23
+              - text: ","
+              - link "12" [ref=f33e91] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib12
+              - text: "]"
+            - text: used structured collective communication over millions of parameters, modern large language models (LLMs)
+            - generic [ref=f33e92]:
+              - text: "["
+              - link "10" [ref=f33e93] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib10
+              - text: ","
+              - link "54" [ref=f33e94] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib54
+              - text: ","
+              - link "59" [ref=f33e95] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib59
+              - text: "]"
+            - text: rely on multi-level parallelism and collective operations at the scale of billions of parameters. MoE models
+            - generic [ref=f33e96]:
+              - text: "["
+              - link "34" [ref=f33e97] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib34
+              - text: ","
+              - link "15" [ref=f33e98] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib15
+              - text: ","
+              - link "14" [ref=f33e99] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib14
+              - text: ","
+              - link "49" [ref=f33e100] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib49
+              - text: ","
+              - link "36" [ref=f33e101] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib36
+              - text: ","
+              - link "28" [ref=f33e102] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib28
+              - text: ","
+              - link "21" [ref=f33e103] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib21
+              - text: "]"
+            - text: introduce expert parallelism with tens of billions of parameters, where all-to-all communication generates sparse and highly imbalanced traffic across hundreds of GPUs.
+          - paragraph [ref=f33e105]:
+            - text: This all-to-all communication makes load balancing a central challenge. Studies show that such communication dominates MoE iterations, with latency limiting distributed training throughput
+            - generic [ref=f33e106]:
+              - text: "["
+              - link "35" [ref=f33e107] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib35
+              - text: "]"
+            - text: . To mitigate this, the Rail architecture
+            - generic [ref=f33e108]:
+              - text: "["
+              - link "40" [ref=f33e109] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib40
+              - text: "]"
+            - text: employs multi-NIC direct-to-leaf links to relieve bandwidth bottlenecks in conventional spine–leaf networks. Nevertheless, existing deployments remain suboptimal for MoE’s irregular traffic patterns and dynamic load-balancing needs, leaving hardware potential largely untapped.
+          - paragraph [ref=f33e111]: "Challenge 1: The inherent path selection conflicts in the Rail architecture can completely negate its hardware parallelism advantages."
+          - paragraph [ref=f33e113]:
+            - text: Path selection
+            - generic [ref=f33e114]:
+              - text: "["
+              - link "60" [ref=f33e115] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib60
+              - text: ","
+              - link "39" [ref=f33e116] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib39
+              - text: ","
+              - link "46" [ref=f33e117] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib46
+              - text: ","
+              - link "63" [ref=f33e118] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib63
+              - text: ","
+              - link "26" [ref=f33e119] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib26
+              - text: ","
+              - link "66" [ref=f33e120] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib66
+              - text: "]"
+            - text: critically affects communication efficiency. Rail offers two deterministic path options for all-to-all traffic, each with limitations. The first routes traffic through the spine layer. It works with traditional topologies but relies on hashing
+            - generic [ref=f33e121]:
+              - text: "["
+              - link "25" [ref=f33e122] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib25
+              - text: ","
+              - link "65" [ref=f33e123] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib65
+              - text: "]"
+            - text: ", which ignores MoE traffic sparsity. This causes large flows to cluster on a few links, creating congestion while other paths remain idle. The second option uses NIC-direct rails. Without advanced transport support such as multipath transmission, flow splitting, reordering, and reassembly, the bottleneck stays at a single node. Spine paths fail due to architecture limits, and direct rails are underutilized because of immature transport protocols, restricting Rail’s parallelism."
+          - paragraph [ref=f33e125]: "Challenge 2: Existing load balancing methods overlook topological characteristics, preventing their scheduling decisions from approaching the theoretical upper bound."
+          - paragraph [ref=f33e127]:
+            - text: Current load balancing approaches ignore Rail’s deterministic topology. ECMP and dynamic load balancers
+            - generic [ref=f33e128]:
+              - text: "["
+              - link "6" [ref=f33e129] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib6
+              - text: ","
+              - link "32" [ref=f33e130] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib32
+              - text: ","
+              - link "24" [ref=f33e131] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib24
+              - text: ","
+              - link "45" [ref=f33e132] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib45
+              - text: ","
+              - link "56" [ref=f33e133] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib56
+              - text: "]"
+            - text: treat multiple paths as interchangeable and select them at random. However, Rail has
+            - math [ref=f33e134]:
+              - generic [ref=f33e135]: "N"
+            - text: parallel rails with a one-to-one mapping from each source NIC to a destination NIC. This predictable and symmetric structure offers prior knowledge useful for global optimization. Existing methods overlook it, so both static hashing and dynamic probing choose paths blindly, fail to exploit the topology, and cannot achieve the theoretical optimum, limiting system throughput.
+          - 'figure "Figure 1: Hybrid parallelism for a MoE model (data parallelism, pipeline parallelism, expert parallelism, and tensor parallelism)." [ref=f33e137]':
+            - img "Refer to caption" [ref=f33e138]
+            - generic [ref=f33e139]:
+              - generic [ref=f33e140]: "Figure 1:"
+              - text: Hybrid parallelism for a MoE model (data parallelism, pipeline parallelism, expert parallelism, and tensor parallelism).
+          - paragraph [ref=f33e142]: "Challenge 3: The granularity of traffic splitting involves an inherent trade-off, creating a dilemma between load balancing and system efficiency."
+          - paragraph [ref=f33e144]:
+            - text: In load balancing, loss is inevitable due to the granularity of traffic splitting. Splitting traffic at the subflow level
+            - generic [ref=f33e145]:
+              - text: "["
+              - link "51" [ref=f33e146] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib51
+              - text: ","
+              - link "42" [ref=f33e147] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib42
+              - text: "]"
+            - text: can lead to collisions and uneven utilization across
+            - math [ref=f33e148]:
+              - generic [ref=f33e149]: "N"
+            - text: NIC paths, even when flows are further divided or recombined. Splitting traffic at the flowlet
+            - generic [ref=f33e151]:
+              - text: "["
+              - link "55" [ref=f33e152] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib55
+              - text: ","
+              - link "57" [ref=f33e153] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib57
+              - text: ","
+              - link "29" [ref=f33e154] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib29
+              - text: "]"
+            - text: or packet level
+            - generic [ref=f33e155]:
+              - text: "["
+              - link "13" [ref=f33e156] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib13
+              - text: ","
+              - link "33" [ref=f33e157] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib33
+              - text: ","
+              - link "9" [ref=f33e158] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib9
+              - text: "]"
+            - text: can cause excessive simultaneous arrivals at a shared link, overflowing buffers and resulting in packet loss throughout the network, as in all-to-all traffic patterns. Coarse splitting fails to balance load effectively, while overly fine splitting overwhelms NICs, breaks hardware offload, and increases CPU overhead, reducing communication-computation overlap in AI training. Designers must therefore navigate the trade-off between effective load balancing and hardware efficiency.
+          - paragraph [ref=f33e160]:
+            - text: To address these challenges, we propose RailS, whose primary contribution is resolving the fundamental path-selection conflicts. Our theoretical analysis leverages Theorem
+            - link "1" [ref=f33e161] [cursor=pointer]:
+              - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem1
+            - text: to show that Rail provides
+            - math [ref=f33e162]:
+              - generic [ref=f33e163]: "N"
+            - text: parallel logical channels between any pair of nodes, quantifying its maximum aggregate bandwidth. Building on this, Theorem
+            - link "2" [ref=f33e165] [cursor=pointer]:
+              - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem2
+            - text: formulates the minimization of communication time as a min-max load balancing problem and establishes a standard linear programming solution. These results indicate that fully bypassing spine-layer forwarding, which is inefficient for MoE traffic, and exclusively using the
+            - math [ref=f33e166]:
+              - generic [ref=f33e167]: "N"
+            - text: direct-connected rails constitutes the optimal strategy for all-to-all communication. RailS operationalizes this approach by activating these previously underutilized parallel paths, supporting up to 64 Queue Pairs (QPs).
+          - paragraph [ref=f33e170]:
+            - text: Secondly, RailS addresses the ”topological blindness” by exploiting the deterministic Rail topology. Theorem
+            - link "3" [ref=f33e171] [cursor=pointer]:
+              - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem3
+            - text: shows a high symmetry between sending and receiving loads, so any strategy that balances sending loads also balances receiving loads. This provides a theoretical foundation for distributed scheduling, decomposing the global coordination problem into local subproblems where each node optimizes only its own sending load, thereby reducing communication and synchronization overhead. Consequently, RailS operates fully distributed, with each node executing Longest Processing Time first (LPT) scheduling based on local information while collaboratively achieving a near-optimal global solution.
+          - paragraph [ref=f33e173]:
+            - text: Finally, RailS addresses the trade-off in splitting granularity through theory-driven traffic partitioning and scheduling. Underlying control coalescing mechanism executes low-level splitting, automatically dividing large flows into fixed-size atomic chunks. LPT approximation algorithm then performs proactive, upper-layer scheduling of them, replacing the default reactive logic. Theorem
+            - link "4" [ref=f33e174] [cursor=pointer]:
+              - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem4
+            - text: shows that the algorithm’s load imbalance is bounded by the maximum size
+            - math [ref=f33e175]:
+              - generic [ref=f33e177]:
+                - generic [ref=f33e178]: w
+                - generic [ref=f33e179]: max
+            - text: ", providing theoretical guidance for selecting an optimal granularity that balances load distribution and hardware efficiency."
+          - paragraph [ref=f33e181]: "We validate RailS in a large-scale, programmable datacenter simulator using a variety of synthetic workloads, including uniform, sparse, and skewed patterns, as well as real-world MoE traces. RailS consistently outperforms baselines: under sparse loads, bus bandwidth improves by 20%–78% across different sparsity levels and total completion time decreases by 17%–78%; in sender-skewed and receiver-skewed scenarios, it achieves the lowest mean squared error across NICs, indicating optimal load balance. For Mixtral workloads, RailS shortens iteration time by 18%–40%. In dense setups, it reduces collective completion time by 8.9%–44.3%, and in sparse setups, by 66.1%–80.4%. These results demonstrate RailS’s ability to fully exploit architectural parallelism while maintaining consistent load balance across diverse and imbalanced workloads."
+        - generic [ref=f33e182]:
+          - heading "II Background and Motivation" [level=2] [ref=f33e183]:
+            - generic [ref=f33e184]: II
+            - text: Background and Motivation
+          - 'figure "Figure 2: Actual measured overhead [ 35 ] of different modules in MoE models under expert parallelism: (a) Mixtral 8×7B, (b) LLaMA 6.7B, and (c) Qwen 14.3B. The all-to-all ratio indicates the measured proportion of iteration time spent on all-to-all communication. (d) Empirically measured traffic matrix of Mixtral 8×7B." [ref=f33e185]':
+            - generic [ref=f33e186]:
+              - figure [ref=f33e188]:
+                - img "Refer to caption" [ref=f33e189]
+              - figure "(a) Mixtral-MoE" [ref=f33e191]:
+                - img "Refer to caption" [ref=f33e192]
+                - generic [ref=f33e193]:
+                  - generic [ref=f33e194]: (a)
+                  - text: Mixtral-MoE
+              - figure "(b) LLaMA-MoE" [ref=f33e196]:
+                - img "Refer to caption" [ref=f33e197]
+                - generic [ref=f33e198]:
+                  - generic [ref=f33e199]: (b)
+                  - text: LLaMA-MoE
+              - figure "(c) Qwen-MoE" [ref=f33e201]:
+                - img "Refer to caption" [ref=f33e202]
+                - generic [ref=f33e203]:
+                  - generic [ref=f33e204]: (c)
+                  - text: Qwen-MoE
+              - figure "(d) Non-uniform all-to-all traffic" [ref=f33e206]:
+                - img "Refer to caption" [ref=f33e207]
+                - generic [ref=f33e208]:
+                  - generic [ref=f33e209]: (d)
+                  - text: Non-uniform all-to-all traffic
+            - generic [ref=f33e210]:
+              - generic [ref=f33e211]: "Figure 2:"
+              - generic [ref=f33e212]:
+                - text: Actual measured overhead
+                - generic [ref=f33e213]:
+                  - text: "["
+                  - link "35" [ref=f33e214] [cursor=pointer]:
+                    - /url: https://arxiv.org/html/2510.19262v1#bib.bib35
+                  - text: "]"
+                - text: "of different modules in MoE models under expert parallelism: (a) Mixtral 8×7B, (b) LLaMA 6.7B, and (c) Qwen 14.3B. The all-to-all ratio indicates the measured proportion of iteration time spent on all-to-all communication. (d) Empirically measured traffic matrix of Mixtral 8×7B."
+          - generic [ref=f33e215]:
+            - heading "II-A Research Background" [level=3] [ref=f33e216]:
+              - generic [ref=f33e217]: II-A
+              - text: Research Background
+            - paragraph [ref=f33e219]:
+              - text: Model Communication Challenges. AI training has evolved from deep neural networks (DNNs) with millions of parameters to LLMs with tens of billions, greatly increasing communication demands. Early data-parallel DNNs relied on allreduce for gradient synchronization with limited bandwidth pressure. In contrast, LLMs employ hybrid parallelism including data, tensor, and pipeline modes, where communication volume scales with model size and coordination complexity. In Fig.
+              - link "1" [ref=f33e220] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S1.F1
+              - text: ", MoE models further introduce sparsely activated experts, with only a subset active per sample. This produces highly sparse and dynamic all-to-all communication in Fig."
+              - link "2" [ref=f33e221] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S2.F2
+              - text: ", where all-to-all occupies 40%–60% of the iteration time, and its load imbalance confirms the impact on performance. Consequently, MoE training reveals the bottlenecks of communication-limited distributed systems."
+            - paragraph [ref=f33e223]:
+              - text: Network Architectures Evolution. To meet the growing bandwidth and latency demands of AI training, data center networks
+              - generic [ref=f33e224]:
+                - text: "["
+                - link "4" [ref=f33e225] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib4
+                - text: ","
+                - link "18" [ref=f33e226] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib18
+                - text: ","
+                - link "20" [ref=f33e227] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib20
+                - text: ","
+                - link "19" [ref=f33e228] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib19
+                - text: ","
+                - link "52" [ref=f33e229] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib52
+                - text: ","
+                - link "40" [ref=f33e230] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib40
+                - text: "]"
+              - text: have evolved from Fat-tree to Spine-leaf and Rail architectures. Three-tier designs suffer from high latency and centralized bottlenecks, while spine–leaf architectures reduce latency over three-tier designs, they fall short under GPU-scale all-to-all workloads, causing congestion and imbalance. The Rail architecture, adopted by NVIDIA, connects multiple NICs to different leaf switches for single-hop GPU paths and parallel bandwidth use. Yet in MoE training, dynamic loads and path constraints still cause NIC congestion and bandwidth underutilization.
+            - paragraph [ref=f33e232]:
+              - text: Multipath Transmission and Load Balancing. Multipath transmission and load balancing are essential for improving data center communication and supporting distributed node coordination. Early work used flowlet-based TCP splitting, while protocols such as MPTCP
+              - generic [ref=f33e233]:
+                - text: "["
+                - link "48" [ref=f33e234] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib48
+                - text: "]"
+              - text: leverage multiple paths at the connection level, though their complexity limits large-scale deployment. With widespread RDMA
+              - generic [ref=f33e235]:
+                - text: "["
+                - link "50" [ref=f33e236] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib50
+                - text: "]"
+              - text: adoption in AI clusters, communication increasingly relies on single-path low-latency transmission, which restricts subflow coordination and amplifies bursty all-to-all loads in distributed MoE training, reducing global efficiency. Recent frameworks explore multipath optimization to better utilize available network paths, alleviate hotspots, and improve overall throughput and latency in distributed training.
+          - generic [ref=f33e237]:
+            - heading "II-B Research Motivation" [level=3] [ref=f33e238]:
+              - generic [ref=f33e239]: II-B
+              - text: Research Motivation
+            - paragraph [ref=f33e241]:
+              - text: Traditional Topologies and MoE Traffic Incompatibility. In Spine-leaf networks, ECMP selects cross-leaf paths through static hashing, which performs well for uniform traffic but fails under MoE all-to-all patterns. Sparse expert activations create highly imbalanced traffic that ECMP cannot adapt to, causing NIC and uplink load disparities up to
+              - math [ref=f33e242]:
+                - generic [ref=f33e244]:
+                  - generic [ref=f33e245]: "5"
+                  - generic [ref=f33e246]: –
+                  - generic [ref=f33e247]: "10"
+                  - generic [ref=f33e248]: ×
+              - text: . This imbalance prolongs critical all-to-all stages and limits MoE training throughput. Existing mitigations, such as disabling NIC congestion control
+              - generic [ref=f33e249]:
+                - text: "["
+                - link "16" [ref=f33e250] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib16
+                - text: ","
+                - link "64" [ref=f33e251] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib64
+                - text: "]"
+              - text: or adopting dual-plane fabrics
+              - generic [ref=f33e252]:
+                - text: "["
+                - link "44" [ref=f33e253] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib44
+                - text: "]"
+              - text: ", risk deadlocks"
+              - generic [ref=f33e254]:
+                - text: "["
+                - link "27" [ref=f33e255] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib27
+                - text: ","
+                - link "38" [ref=f33e256] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib38
+                - text: "]"
+              - text: or incur high cost, without resolving the fundamental mismatch between ECMP and sparse traffic.
+            - paragraph [ref=f33e258]:
+              - text: Rail Architecture Communication Bottlenecks. The Rail architecture connects multiple NICs directly to leaf switches, enabling inherent multipath parallelism. Yet in distributed MoE all-to-all training, current implementations underutilize this potential. RoCE
+              - generic [ref=f33e259]:
+                - text: "["
+                - link "2" [ref=f33e260] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib2
+                - text: ","
+                - link "3" [ref=f33e261] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib3
+                - text: "]"
+              - text: enforces fixed NIC-level paths, preventing dynamic scheduling across NICs. NCCL
+              - generic [ref=f33e262]:
+                - text: "["
+                - link "1" [ref=f33e263] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib1
+                - text: "]"
+              - text: supports path selection but only within a single NIC, while UCCL
+              - generic [ref=f33e264]:
+                - text: "["
+                - link "66" [ref=f33e265] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib66
+                - text: "]"
+              - text: lacks topology-aware scheduling and ignores fixed NIC–leaf mappings. Consequently, cross-NIC bandwidth remains uneven and coordination efficiency constrained, leaving Rail’s architectural advantages underutilized in MoE training.
+            - paragraph [ref=f33e267]: Existing Load Balancing Limitations. Prior MoE load balancing studies focus on computation or expert placement while neglecting topological constraints and multipath characteristics. Some assume ECMP can evenly distribute traffic but overlook fixed NIC–leaf bindings in Rail, causing subflow mismatches. Others pursue software-based subflow scheduling without considering RDMA offloading, introducing overhead and disrupting communication–computation overlap. Lacking integrated modeling of topology and hardware, these approaches fail to mitigate sparse traffic hotspots, leaving load imbalance unresolved in Rail clusters.
+        - generic [ref=f33e268]:
+          - heading "III overview" [level=2] [ref=f33e269]:
+            - generic [ref=f33e270]: III
+            - text: overview
+          - paragraph [ref=f33e272]: This chapter provides a high-level overview of the proposed traffic scheduling system. First, we describe the core design premises and problem boundaries of the system. Next, we present the overall system design blueprint, including its key mechanisms and optimization objectives. Finally, this chapter summarizes the critical theoretical contributions introduced in subsequent chapters, providing readers with a clear roadmap.
+          - generic [ref=f33e273]:
+            - heading "III-A Design Premises and Problem Scope" [level=3] [ref=f33e274]:
+              - generic [ref=f33e275]: III-A
+              - text: Design Premises and Problem Scope
+            - paragraph [ref=f33e277]: Before detailing our system design, this section first clarifies the core premises, model assumptions, and problem boundaries of our work.
+            - paragraph [ref=f33e279]:
+              - text: Network Topology. In Fig.
+              - link "3" [ref=f33e280] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S3.F3
+              - text: ", this study focuses on the Rail network architecture, which equips each compute node with multiple NICs, each directly connected to a different leaf switch, providing a hardware foundation for multipath parallel communication. All subsequent theoretical analyses and system designs are built upon the intrinsic structural characteristics of this emerging topology."
+            - paragraph [ref=f33e282]:
+              - text: "Traffic Model. Our optimization target is the key performance bottleneck in current large-scale distributed training: all-to-all communication generated by MoE models. This traffic exhibits significant sparsity and imbalance, rendering traditional static load-balancing mechanisms inefficient. Our theoretical analysis and real-time scheduling are based on the known inter-GPU traffic matrix"
+              - math [ref=f33e283]:
+                - generic [ref=f33e285]:
+                  - generic [ref=f33e286]: D
+                  - generic [ref=f33e287]:
+                    - generic [ref=f33e288]: (
+                    - generic [ref=f33e289]: "1"
+                    - generic [ref=f33e290]: )
+              - text: and inter-domain traffic matrix
+              - math [ref=f33e291]:
+                - generic [ref=f33e293]:
+                  - generic [ref=f33e294]: D
+                  - generic [ref=f33e295]:
+                    - generic [ref=f33e296]: (
+                    - generic [ref=f33e297]: "2"
+                    - generic [ref=f33e298]: )
+              - text: .
+            - paragraph [ref=f33e300]: System Abstraction. At the software level, the system adopts a scalable transport-layer framework that decouples the control and data paths of RDMA NICs. This separation enables flexible, software-defined implementation of transport-layer protocols on the host CPU. The extensibility provides the technical foundation for integrating a custom LPT scheduler to enable proactive load balancing.
+            - 'figure "Figure 3: Rail-optimized network topology." [ref=f33e301]':
+              - img "Refer to caption" [ref=f33e302]
+              - generic [ref=f33e303]:
+                - generic [ref=f33e304]: "Figure 3:"
+                - text: Rail-optimized network topology.
+          - generic [ref=f33e305]:
+            - heading "III-B System Design Overview" [level=3] [ref=f33e306]:
+              - generic [ref=f33e307]: III-B
+              - text: System Design Overview
+            - paragraph [ref=f33e309]:
+              - text: We design and propose RailS, a distributed traffic load balancer specifically optimized for MoE communication under the Rail architecture. The system aims to minimize the communication completion time
+              - math [ref=f33e310]:
+                - generic [ref=f33e312]:
+                  - generic [ref=f33e313]: T
+                  - generic [ref=f33e314]: ⋆
+              - text: . Its core idea is to actively shape and schedule sparse, imbalanced flows at each sender node through a set of coordinated mechanisms, thereby approximating globally optimal load balancing.
+            - paragraph [ref=f33e316]: "The RailS’s design comprises three core mechanisms forming an efficient splitting-scheduling-spraying pipeline:"
+            - paragraph [ref=f33e318]:
+              - text: Flow Splitting. Serving as the entry point of the pipeline, this mechanism decomposes large, coarse-grained messages generated by the upper-layer applications into a series of smaller, atomic flow units. This preprocessing step is crucial for fine-grained load balancing and for reducing the maximum flow size
+              - math [ref=f33e319]:
+                - generic [ref=f33e321]:
+                  - generic [ref=f33e322]: w
+                  - generic [ref=f33e323]: max
+              - text: .
+            - paragraph [ref=f33e325]: LPT Scheduling. Acting as the brain of the system and the core of the proactive spraying, this mechanism differs from traditional strategies that rely on passive feedback such as network latency. Using an LPT-based scheduler, it deterministically assigns each flow to the optimal target track based on the sizes of all pending atomic flows and the real-time local load state of each track, thereby actively constructing a highly balanced flow allocation.
+            - paragraph [ref=f33e327]:
+              - text: Multipath Spraying. This mechanism provides the macroscopic strategy for flow distribution. It distributes the split atomic flows across all
+              - math [ref=f33e328]:
+                - generic [ref=f33e329]: "N"
+              - text: available parallel communication tracks at each node. Unlike static-hash-based ECMP, spraying mechanism is fully dynamic and policy-driven.
+            - paragraph [ref=f33e332]: Through the coordinated operation of these mechanisms, RailS effectively decomposes a complex global optimization problem into distributed local decisions that can be executed independently and efficiently at each node, ultimately translating the theoretical insights from Chapter 4 into practical system performance.
+          - generic [ref=f33e333]:
+            - heading "III-C Core Theoretical Contributions Roadmap" [level=3] [ref=f33e334]:
+              - generic [ref=f33e335]: III-C
+              - text: Core Theoretical Contributions Roadmap
+            - paragraph [ref=f33e337]:
+              - text: This section outlines how a series of interconnected theoretical analyses establish the foundation for the subsequent system design of RailS. Fig.
+              - link "4" [ref=f33e338] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S3.F4
+              - text: illustrates the workflow.
+            - paragraph [ref=f33e340]:
+              - generic [ref=f33e341]:
+                - text: Question 1 (
+                - math [ref=f33e342]:
+                  - generic [ref=f33e343]: §
+                - link "IV-B" [ref=f33e345] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#S4.SS2
+                - text: "): What is the Theoretical Communication Capacity of the Rail Architecture?"
+              - text: Our analysis begins by rigorously defining the fundamental capability of the Rail network topology. Using the max-flow min-cut method, we prove that the architecture provides
+              - math [ref=f33e346]:
+                - generic [ref=f33e347]: "N"
+              - text: parallel, equal-capacity logical channels for arbitrary inter-domain communication (Theorem
+              - link "1" [ref=f33e349] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem1
+              - text: ). This result not only quantifies the system’s bandwidth upper bound but also establishes the feasibility and necessity of multipath load balancing.
+            - paragraph [ref=f33e351]:
+              - generic [ref=f33e352]:
+                - text: Question 2 (
+                - math [ref=f33e353]:
+                  - generic [ref=f33e354]: §
+                - link "IV-C" [ref=f33e356] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#S4.SS3
+                - text: "): How to Formulate the Time Minimization Problem?"
+              - text: Having established the network capacity, we reformulate the core optimization objective of minimizing all-to-all communication time into a mathematical framework. We prove that this complex dynamic time optimization problem is equivalent to a more tractable min-max load-balancing problem (Theorem
+              - link "2" [ref=f33e357] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem2
+              - text: ). This equivalence provides a clear and actionable optimization objective for designing allocation strategies.
+            - 'figure "Figure 4: Overview of system workflow." [ref=f33e358]':
+              - img "Refer to caption" [ref=f33e359]
+              - generic [ref=f33e360]:
+                - generic [ref=f33e361]: "Figure 4:"
+                - text: Overview of system workflow.
+            - paragraph [ref=f33e363]:
+              - generic [ref=f33e364]:
+                - text: Question 3 (
+                - math [ref=f33e365]:
+                  - generic [ref=f33e366]: §
+                - link "IV-E" [ref=f33e368] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#S4.SS5
+                - text: "): What is the Optimal State for Load Balancing?"
+              - text: To define an “ideal target” for practical scheduling algorithms, we first solve the problem under the idealized assumption that flows are arbitrarily divisible. We prove that the optimal strategy admits a concise closed-form solution, namely a perfectly uniform distribution across
+              - math [ref=f33e369]:
+                - generic [ref=f33e370]: "N"
+              - text: rails (Theorem
+              - link "3" [ref=f33e372] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem3
+              - text: ). This result not only reveals the intrinsic symmetry between sending and receiving loads in the Rail architecture but also sets the theoretical performance ceiling for all practical approximation algorithms.
+            - paragraph [ref=f33e374]:
+              - generic [ref=f33e375]:
+                - text: Question 4 (
+                - math [ref=f33e376]:
+                  - generic [ref=f33e377]: §
+                - link "IV-F" [ref=f33e379] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#S4.SS6
+                - text: "): How to Approximate the Optimum with Discrete Flows?"
+              - text: Finally, we address the more realistic scenario of indivisible (atomic) flows. We propose the LPT approximation algorithm and prove that it efficiently approaches the ideal uniform state established in Step 3, with a guaranteed performance bound where the mean squared error is upper bounded by
+              - math [ref=f33e380]:
+                - generic [ref=f33e382]:
+                  - generic [ref=f33e383]: w
+                  - generic [ref=f33e384]: max
+                  - generic [ref=f33e385]: "2"
+              - text: (Theorem
+              - link "4" [ref=f33e386] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem4
+              - text: ). This provides a solid theoretical basis for implementing efficient, low-overhead local scheduling in distributed nodes.
+        - generic [ref=f33e387]:
+          - heading "IV Problem Formulation" [level=2] [ref=f33e388]:
+            - generic [ref=f33e389]: IV
+            - text: Problem Formulation
+          - paragraph [ref=f33e391]: In this chapter, we model the Rail-based network topology and reformulate the all-to-all communication optimization as an equivalent load-balancing problem. We derive closed-form optimal strategies for both continuous and atomic flow scenarios and propose an efficient approximation algorithm with proven performance guarantees, establishing a solid theoretical foundation for system design.
+          - generic [ref=f33e392]:
+            - heading "IV-A System Model" [level=3] [ref=f33e393]:
+              - generic [ref=f33e394]: IV-A
+              - text: System Model
+            - paragraph [ref=f33e396]:
+              - text: We consider a large-scale GPU cluster system composed of
+              - math [ref=f33e397]:
+                - generic [ref=f33e398]: M
+              - text: computing domains. The system is communication-constrained and supports distributed training of LLMs and MoE models. Each domain contains
+              - math [ref=f33e400]:
+                - generic [ref=f33e401]: "N"
+              - text: GPUs interconnected via intra-domain networks. Any GPU in the system can be uniquely identified by a tuple
+              - math [ref=f33e403]:
+                - generic [ref=f33e405]:
+                  - generic [ref=f33e406]: (
+                  - generic [ref=f33e407]: d
+                  - generic [ref=f33e408]: ","
+                  - generic [ref=f33e409]: "n"
+                  - generic [ref=f33e410]: )
+              - text: ", where"
+              - math [ref=f33e411]:
+                - generic [ref=f33e413]:
+                  - generic [ref=f33e414]: d
+                  - generic [ref=f33e415]: ∈
+                  - generic [ref=f33e416]:
+                    - generic [ref=f33e417]: "{"
+                    - generic [ref=f33e418]: "1"
+                    - generic [ref=f33e419]: ","
+                    - generic [ref=f33e420]: …
+                    - generic [ref=f33e421]: ","
+                    - generic [ref=f33e422]: M
+                    - generic [ref=f33e423]: "}"
+              - text: is the domain index and
+              - math [ref=f33e424]:
+                - generic [ref=f33e426]:
+                  - generic [ref=f33e427]: "n"
+                  - generic [ref=f33e428]: ∈
+                  - generic [ref=f33e429]:
+                    - generic [ref=f33e430]: "{"
+                    - generic [ref=f33e431]: "1"
+                    - generic [ref=f33e432]: ","
+                    - generic [ref=f33e433]: …
+                    - generic [ref=f33e434]: ","
+                    - generic [ref=f33e435]: "N"
+                    - generic [ref=f33e436]: "}"
+              - text: is the GPU index within that domain. Each GPU
+              - math [ref=f33e437]:
+                - generic [ref=f33e439]:
+                  - generic [ref=f33e440]: (
+                  - generic [ref=f33e441]: d
+                  - generic [ref=f33e442]: ","
+                  - generic [ref=f33e443]: "n"
+                  - generic [ref=f33e444]: )
+              - text: is connected to a dedicated network interface card, denoted as
+              - math [ref=f33e445]:
+                - generic [ref=f33e447]:
+                  - generic [ref=f33e448]: NIC
+                  - generic [ref=f33e449]:
+                    - generic [ref=f33e450]: d
+                    - generic [ref=f33e451]: ","
+                    - generic [ref=f33e452]: "n"
+              - text: .
+            - paragraph [ref=f33e454]:
+              - text: The inter-domain communication architecture follows a Rail-based design. Specifically, for any fixed intra-domain index
+              - math [ref=f33e455]:
+                - generic [ref=f33e456]: "n"
+              - text: ", the"
+              - math [ref=f33e458]:
+                - generic [ref=f33e459]: "n"
+              - text: "-th NIC of all domains (i.e.,"
+              - math [ref=f33e461]:
+                - generic [ref=f33e463]:
+                  - generic [ref=f33e464]:
+                    - generic [ref=f33e465]: NIC
+                    - generic [ref=f33e466]:
+                      - generic [ref=f33e467]: "1"
+                      - generic [ref=f33e468]: ","
+                      - generic [ref=f33e469]: "n"
+                  - generic [ref=f33e470]: ","
+                  - generic [ref=f33e471]:
+                    - generic [ref=f33e472]: NIC
+                    - generic [ref=f33e473]:
+                      - generic [ref=f33e474]: "2"
+                      - generic [ref=f33e475]: ","
+                      - generic [ref=f33e476]: "n"
+                  - generic [ref=f33e477]: ","
+                  - generic [ref=f33e478]: …
+                  - generic [ref=f33e479]: ","
+                  - generic [ref=f33e480]:
+                    - generic [ref=f33e481]: NIC
+                    - generic [ref=f33e482]:
+                      - generic [ref=f33e483]: M
+                      - generic [ref=f33e484]: ","
+                      - generic [ref=f33e485]: "n"
+              - text: ) connects to the same Leaf switch
+              - math [ref=f33e486]:
+                - generic [ref=f33e488]:
+                  - generic [ref=f33e489]: S
+                  - generic [ref=f33e490]: "n"
+              - text: . Hence, the system contains
+              - math [ref=f33e491]:
+                - generic [ref=f33e492]: "N"
+              - text: such switches, forming
+              - math [ref=f33e494]:
+                - generic [ref=f33e495]: "N"
+              - text: parallel communication “rails.” The Spine and Leaf layers remain fully connected.
+            - paragraph [ref=f33e498]: To precisely analyze this system, we define the following key concepts.
+            - paragraph [ref=f33e500]:
+              - text: Network Link Rates. Two types of link rates are considered. The intra-domain forwarding rate
+              - math [ref=f33e501]:
+                - generic [ref=f33e503]:
+                  - generic [ref=f33e504]: R
+                  - generic [ref=f33e505]: "1"
+              - text: represents the data exchange rate among GPUs within a single domain. The inter-domain forwarding rate
+              - math [ref=f33e506]:
+                - generic [ref=f33e508]:
+                  - generic [ref=f33e509]: R
+                  - generic [ref=f33e510]: "2"
+              - text: corresponds to the forwarding rate of domain NICs or switches and reflects the data processing capability of switch ports.
+            - generic [ref=f33e511]:
+              - paragraph [ref=f33e512]:
+                - text: Traffic Matrix. To quantify communication demands, we define two levels of traffic matrices. The GPU-to-GPU traffic matrix
+                - math [ref=f33e513]:
+                  - generic [ref=f33e515]:
+                    - generic [ref=f33e516]: D
+                    - generic [ref=f33e517]:
+                      - generic [ref=f33e518]: (
+                      - generic [ref=f33e519]: "1"
+                      - generic [ref=f33e520]: )
+                - text: has elements
+                - math [ref=f33e521]:
+                  - generic [ref=f33e523]:
+                    - generic [ref=f33e524]: D
+                    - generic [ref=f33e525]:
+                      - generic [ref=f33e526]:
+                        - generic [ref=f33e527]: (
+                        - generic [ref=f33e528]: d
+                        - generic [ref=f33e529]: ","
+                        - generic [ref=f33e530]: "n"
+                        - generic [ref=f33e531]: )
+                      - generic [ref=f33e532]: ","
+                      - generic [ref=f33e533]:
+                        - generic [ref=f33e534]: (
+                        - generic [ref=f33e535]: f
+                        - generic [ref=f33e536]: ","
+                        - generic [ref=f33e537]: m
+                        - generic [ref=f33e538]: )
+                    - generic [ref=f33e539]:
+                      - generic [ref=f33e540]: (
+                      - generic [ref=f33e541]: "1"
+                      - generic [ref=f33e542]: )
+                - text: representing the traffic from source GPU
+                - math [ref=f33e543]:
+                  - generic [ref=f33e545]:
+                    - generic [ref=f33e546]: (
+                    - generic [ref=f33e547]: d
+                    - generic [ref=f33e548]: ","
+                    - generic [ref=f33e549]: "n"
+                    - generic [ref=f33e550]: )
+                - text: to destination GPU
+                - math [ref=f33e551]:
+                  - generic [ref=f33e553]:
+                    - generic [ref=f33e554]: (
+                    - generic [ref=f33e555]: f
+                    - generic [ref=f33e556]: ","
+                    - generic [ref=f33e557]: m
+                    - generic [ref=f33e558]: )
+                - text: . Aggregating these yields the domain-to-domain traffic matrix
+                - math [ref=f33e559]:
+                  - generic [ref=f33e561]:
+                    - generic [ref=f33e562]: D
+                    - generic [ref=f33e563]:
+                      - generic [ref=f33e564]: (
+                      - generic [ref=f33e565]: "2"
+                      - generic [ref=f33e566]: )
+                - text: ", where each element"
+                - math [ref=f33e567]:
+                  - generic [ref=f33e569]:
+                    - generic [ref=f33e570]: D
+                    - generic [ref=f33e571]:
+                      - generic [ref=f33e572]: d
+                      - generic [ref=f33e573]: ","
+                      - generic [ref=f33e574]: f
+                    - generic [ref=f33e575]:
+                      - generic [ref=f33e576]: (
+                      - generic [ref=f33e577]: "2"
+                      - generic [ref=f33e578]: )
+                - text: denotes the total traffic from domain
+                - math [ref=f33e579]:
+                  - generic [ref=f33e580]: d
+                - text: to domain
+                - math [ref=f33e582]:
+                  - generic [ref=f33e583]: f
+                - text: ":"
+              - table [ref=f33e585]:
+                - rowgroup [ref=f33e586]:
+                  - row [ref=f33e587]:
+                    - cell [ref=f33e588]
+                    - cell [ref=f33e589]:
+                      - math [ref=f33e590]:
+                        - generic [ref=f33e592]:
+                          - generic [ref=f33e593]:
+                            - generic [ref=f33e594]: D
+                            - generic [ref=f33e595]:
+                              - generic [ref=f33e596]: d
+                              - generic [ref=f33e597]: ","
+                              - generic [ref=f33e598]: f
+                            - generic [ref=f33e599]:
+                              - generic [ref=f33e600]: (
+                              - generic [ref=f33e601]: "2"
+                              - generic [ref=f33e602]: )
+                          - generic [ref=f33e603]: =
+                          - generic [ref=f33e604]:
+                            - generic [ref=f33e605]:
+                              - generic [ref=f33e606]: ∑
+                              - generic [ref=f33e607]:
+                                - generic [ref=f33e608]: "n"
+                                - generic [ref=f33e609]: =
+                                - generic [ref=f33e610]: "1"
+                              - generic [ref=f33e611]: "N"
+                            - generic [ref=f33e612]:
+                              - generic [ref=f33e613]:
+                                - generic [ref=f33e614]: ∑
+                                - generic [ref=f33e615]:
+                                  - generic [ref=f33e616]: m
+                                  - generic [ref=f33e617]: =
+                                  - generic [ref=f33e618]: "1"
+                                - generic [ref=f33e619]: "N"
+                              - generic [ref=f33e620]:
+                                - generic [ref=f33e621]: D
+                                - generic [ref=f33e622]:
+                                  - generic [ref=f33e623]:
+                                    - generic [ref=f33e624]: (
+                                    - generic [ref=f33e625]: d
+                                    - generic [ref=f33e626]: ","
+                                    - generic [ref=f33e627]: "n"
+                                    - generic [ref=f33e628]: )
+                                  - generic [ref=f33e629]: ","
+                                  - generic [ref=f33e630]:
+                                    - generic [ref=f33e631]: (
+                                    - generic [ref=f33e632]: f
+                                    - generic [ref=f33e633]: ","
+                                    - generic [ref=f33e634]: m
+                                    - generic [ref=f33e635]: )
+                                - generic [ref=f33e636]:
+                                  - generic [ref=f33e637]: (
+                                  - generic [ref=f33e638]: "1"
+                                  - generic [ref=f33e639]: )
+                    - cell [ref=f33e640]
+                    - cell "(1)" [ref=f33e641]
+            - generic [ref=f33e643]:
+              - paragraph [ref=f33e644]:
+                - text: Allocation Matrix. The allocation matrix
+                - math [ref=f33e645]:
+                  - generic [ref=f33e646]: P
+                - text: is a three-dimensional decision variable describing the routing of traffic. Its elements
+                - math [ref=f33e648]:
+                  - generic [ref=f33e650]:
+                    - generic [ref=f33e651]: P
+                    - generic [ref=f33e652]:
+                      - generic [ref=f33e653]: k
+                      - generic [ref=f33e654]: ","
+                      - generic [ref=f33e655]: f
+                      - generic [ref=f33e656]: ","
+                      - generic [ref=f33e657]: "n"
+                - text: denote the proportion of total traffic from source domain
+                - math [ref=f33e658]:
+                  - generic [ref=f33e659]: k
+                - text: to destination domain
+                - math [ref=f33e661]:
+                  - generic [ref=f33e662]: f
+                - text: assigned to the
+                - math [ref=f33e664]:
+                  - generic [ref=f33e665]: "n"
+                - text: "-th communication rail. The matrix and constraints are given by:"
+              - table [ref=f33e667]:
+                - rowgroup [ref=f33e668]:
+                  - row [ref=f33e669]:
+                    - cell [ref=f33e670]
+                    - cell [ref=f33e671]:
+                      - math [ref=f33e672]:
+                        - generic [ref=f33e674]:
+                          - generic [ref=f33e675]: P
+                          - generic [ref=f33e676]: =
+                          - generic [ref=f33e677]:
+                            - generic [ref=f33e678]: "["
+                            - generic [ref=f33e679]:
+                              - generic [ref=f33e680]: P
+                              - generic [ref=f33e681]:
+                                - generic [ref=f33e682]: k
+                                - generic [ref=f33e683]: ","
+                                - generic [ref=f33e684]: f
+                                - generic [ref=f33e685]: ","
+                                - generic [ref=f33e686]: "n"
+                            - generic [ref=f33e687]: "]"
+                          - generic [ref=f33e688]: ∈
+                          - generic [ref=f33e689]:
+                            - generic [ref=f33e690]: ℝ
+                            - generic [ref=f33e691]:
+                              - generic [ref=f33e692]: M
+                              - generic [ref=f33e693]: ×
+                              - generic [ref=f33e694]: M
+                              - generic [ref=f33e695]: ×
+                              - generic [ref=f33e696]: "N"
+                    - cell [ref=f33e697]
+                    - cell "(2)" [ref=f33e698]
+              - table [ref=f33e700]:
+                - rowgroup [ref=f33e701]:
+                  - row [ref=f33e702]:
+                    - cell [ref=f33e703]
+                    - cell [ref=f33e704]:
+                      - math [ref=f33e705]:
+                        - generic [ref=f33e707]:
+                          - generic [ref=f33e708]:
+                            - generic [ref=f33e709]:
+                              - generic [ref=f33e710]: s.t.
+                              - generic [ref=f33e711]:
+                                - generic [ref=f33e712]:
+                                  - generic [ref=f33e713]: ∑
+                                  - generic [ref=f33e714]:
+                                    - generic [ref=f33e715]: "n"
+                                    - generic [ref=f33e716]: =
+                                    - generic [ref=f33e717]: "1"
+                                  - generic [ref=f33e718]: "N"
+                                - generic [ref=f33e719]:
+                                  - generic [ref=f33e720]: P
+                                  - generic [ref=f33e721]:
+                                    - generic [ref=f33e722]: k
+                                    - generic [ref=f33e723]: ","
+                                    - generic [ref=f33e724]: f
+                                    - generic [ref=f33e725]: ","
+                                    - generic [ref=f33e726]: "n"
+                            - generic [ref=f33e727]: =
+                            - generic [ref=f33e728]: "1"
+                          - generic [ref=f33e729]: ","
+                          - generic [ref=f33e730]:
+                            - generic [ref=f33e731]:
+                              - generic [ref=f33e732]: P
+                              - generic [ref=f33e733]:
+                                - generic [ref=f33e734]: k
+                                - generic [ref=f33e735]: ","
+                                - generic [ref=f33e736]: f
+                                - generic [ref=f33e737]: ","
+                                - generic [ref=f33e738]: "n"
+                            - generic [ref=f33e739]: ≥
+                            - generic [ref=f33e740]:
+                              - generic [ref=f33e741]: "0"
+                              - generic [ref=f33e742]: ","
+                              - generic [ref=f33e743]:
+                                - generic [ref=f33e744]: ∀
+                                - generic [ref=f33e745]: k
+                              - generic [ref=f33e746]: ","
+                              - generic [ref=f33e747]: f
+                              - generic [ref=f33e748]: ","
+                              - generic [ref=f33e749]: "n"
+                    - cell [ref=f33e750]
+                    - cell "(3)" [ref=f33e751]
+            - generic [ref=f33e753]:
+              - paragraph [ref=f33e754]:
+                - text: Load Matrix. Given an allocation matrix
+                - math [ref=f33e755]:
+                  - generic [ref=f33e756]: P
+                - text: ", the communication load on each NIC can be computed. We define the sending load matrix"
+                - math [ref=f33e758]:
+                  - generic [ref=f33e760]:
+                    - generic [ref=f33e761]: 𝐒
+                    - generic [ref=f33e762]: ∈
+                    - generic [ref=f33e763]:
+                      - generic [ref=f33e764]: ℝ
+                      - generic [ref=f33e765]:
+                        - generic [ref=f33e766]: M
+                        - generic [ref=f33e767]: ×
+                        - generic [ref=f33e768]: "N"
+                - text: and receiving load matrix
+                - math [ref=f33e769]:
+                  - generic [ref=f33e771]:
+                    - generic [ref=f33e772]: 𝐑
+                    - generic [ref=f33e773]: ∈
+                    - generic [ref=f33e774]:
+                      - generic [ref=f33e775]: ℝ
+                      - generic [ref=f33e776]:
+                        - generic [ref=f33e777]: M
+                        - generic [ref=f33e778]: ×
+                        - generic [ref=f33e779]: "N"
+                - text: ":"
+              - table [ref=f33e780]:
+                - rowgroup [ref=f33e781]:
+                  - row [ref=f33e782]:
+                    - cell [ref=f33e783]
+                    - cell [ref=f33e784]:
+                      - math [ref=f33e785]:
+                        - generic [ref=f33e787]:
+                          - generic [ref=f33e788]:
+                            - generic [ref=f33e789]: 𝐒
+                            - generic [ref=f33e790]:
+                              - generic [ref=f33e791]: k
+                              - generic [ref=f33e792]: ","
+                              - generic [ref=f33e793]: "n"
+                          - generic [ref=f33e794]: =
+                          - generic [ref=f33e795]:
+                            - generic [ref=f33e796]:
+                              - generic [ref=f33e797]: ∑
+                              - generic [ref=f33e798]:
+                                - generic [ref=f33e799]: f
+                                - generic [ref=f33e800]: =
+                                - generic [ref=f33e801]: "1"
+                              - generic [ref=f33e802]: M
+                            - generic [ref=f33e803]:
+                              - generic [ref=f33e804]:
+                                - generic [ref=f33e805]: D
+                                - generic [ref=f33e806]:
+                                  - generic [ref=f33e807]: k
+                                  - generic [ref=f33e808]: ","
+                                  - generic [ref=f33e809]: f
+                                - generic [ref=f33e810]:
+                                  - generic [ref=f33e811]: (
+                                  - generic [ref=f33e812]: "2"
+                                  - generic [ref=f33e813]: )
+                              - generic [ref=f33e814]:
+                                - generic [ref=f33e815]: P
+                                - generic [ref=f33e816]:
+                                  - generic [ref=f33e817]: k
+                                  - generic [ref=f33e818]: ","
+                                  - generic [ref=f33e819]: f
+                                  - generic [ref=f33e820]: ","
+                                  - generic [ref=f33e821]: "n"
+                    - cell [ref=f33e822]
+                    - cell "(4)" [ref=f33e823]
+              - table [ref=f33e825]:
+                - rowgroup [ref=f33e826]:
+                  - row [ref=f33e827]:
+                    - cell [ref=f33e828]
+                    - cell [ref=f33e829]:
+                      - math [ref=f33e830]:
+                        - generic [ref=f33e832]:
+                          - generic [ref=f33e833]:
+                            - generic [ref=f33e834]: 𝐑
+                            - generic [ref=f33e835]:
+                              - generic [ref=f33e836]: f
+                              - generic [ref=f33e837]: ","
+                              - generic [ref=f33e838]: "n"
+                          - generic [ref=f33e839]: =
+                          - generic [ref=f33e840]:
+                            - generic [ref=f33e841]:
+                              - generic [ref=f33e842]: ∑
+                              - generic [ref=f33e843]:
+                                - generic [ref=f33e844]: k
+                                - generic [ref=f33e845]: =
+                                - generic [ref=f33e846]: "1"
+                              - generic [ref=f33e847]: M
+                            - generic [ref=f33e848]:
+                              - generic [ref=f33e849]:
+                                - generic [ref=f33e850]: D
+                                - generic [ref=f33e851]:
+                                  - generic [ref=f33e852]: k
+                                  - generic [ref=f33e853]: ","
+                                  - generic [ref=f33e854]: f
+                                - generic [ref=f33e855]:
+                                  - generic [ref=f33e856]: (
+                                  - generic [ref=f33e857]: "2"
+                                  - generic [ref=f33e858]: )
+                              - generic [ref=f33e859]:
+                                - generic [ref=f33e860]: P
+                                - generic [ref=f33e861]:
+                                  - generic [ref=f33e862]: k
+                                  - generic [ref=f33e863]: ","
+                                  - generic [ref=f33e864]: f
+                                  - generic [ref=f33e865]: ","
+                                  - generic [ref=f33e866]: "n"
+                    - cell [ref=f33e867]
+                    - cell "(5)" [ref=f33e868]
+            - paragraph [ref=f33e871]:
+              - text: All-to-All Completion Time. In the all-to-all communication pattern, the total completion time
+              - math [ref=f33e872]:
+                - generic [ref=f33e873]: T
+              - text: is defined as the time from the start of communication until all inter-domain data transfers are finished. It is determined by the most heavily loaded NIC (either sending or receiving) and serves as the key metric of system communication performance. Minimizing the time
+              - math [ref=f33e875]:
+                - generic [ref=f33e877]:
+                  - generic [ref=f33e878]: T
+                  - generic [ref=f33e879]: ⋆
+              - text: is one of the main optimization objectives.
+            - generic [ref=f33e880]:
+              - paragraph [ref=f33e881]:
+                - text: Load Balancing Mean Squared Error. To quantify the deviation between actual NIC loads and the ideal target within a domain, we define the mean squared error (MSE). Let the ideal target load
+                - math [ref=f33e882]:
+                  - generic [ref=f33e884]:
+                    - generic [ref=f33e885]: T
+                    - generic [ref=f33e886]: opt
+                - text: be the average load of the domain, and let
+                - math [ref=f33e887]:
+                  - generic [ref=f33e889]:
+                    - generic [ref=f33e890]: L
+                    - generic [ref=f33e891]: j
+                - text: denote the load assigned to the
+                - math [ref=f33e892]:
+                  - generic [ref=f33e893]: j
+                - text: "-th NIC. The MSE is:"
+              - table [ref=f33e895]:
+                - rowgroup [ref=f33e896]:
+                  - row [ref=f33e897]:
+                    - cell [ref=f33e898]
+                    - cell [ref=f33e899]:
+                      - math [ref=f33e900]:
+                        - generic [ref=f33e902]:
+                          - generic [ref=f33e903]: MSE
+                          - generic [ref=f33e904]: =
+                          - generic [ref=f33e905]:
+                            - generic [ref=f33e906]:
+                              - generic [ref=f33e907]: "1"
+                              - generic [ref=f33e908]: "N"
+                            - generic [ref=f33e909]:
+                              - generic [ref=f33e910]:
+                                - generic [ref=f33e911]: ∑
+                                - generic [ref=f33e912]:
+                                  - generic [ref=f33e913]: j
+                                  - generic [ref=f33e914]: =
+                                  - generic [ref=f33e915]: "1"
+                                - generic [ref=f33e916]: "N"
+                              - generic [ref=f33e917]:
+                                - generic [ref=f33e918]:
+                                  - generic [ref=f33e919]: (
+                                  - generic [ref=f33e920]:
+                                    - generic [ref=f33e921]:
+                                      - generic [ref=f33e922]: L
+                                      - generic [ref=f33e923]: j
+                                    - generic [ref=f33e924]: −
+                                    - generic [ref=f33e925]:
+                                      - generic [ref=f33e926]: T
+                                      - generic [ref=f33e927]: opt
+                                  - generic [ref=f33e928]: )
+                                - generic [ref=f33e929]: "2"
+                    - cell [ref=f33e930]
+                    - cell "(6)" [ref=f33e931]
+          - generic [ref=f33e933]:
+            - heading "IV-B Inter-Domain Communication Capacity Analysis" [level=3] [ref=f33e934]:
+              - generic [ref=f33e935]: IV-B
+              - text: Inter-Domain Communication Capacity Analysis
+            - paragraph [ref=f33e937]: We now analyze the fundamental limits of inter-domain communication in the Rail-based network. This section quantifies the theoretical upper bound of cross-domain throughput and establishes its equivalence-in-use to a set of parallel logical rails, which provides the analytical foundation for subsequent flow allocation and optimization.
+            - generic [ref=f33e938]:
+              - heading "Theorem 1." [level=6] [ref=f33e939]:
+                - generic [ref=f33e940]: Theorem 1
+                - text: .
+              - generic [ref=f33e941]:
+                - paragraph [ref=f33e942]:
+                  - generic [ref=f33e943]:
+                    - text: Under the defined system model and assuming that the intra-domain forwarding rate is higher than the inter-domain forwarding rate (
+                    - math [ref=f33e944]:
+                      - generic [ref=f33e946]:
+                        - generic [ref=f33e947]:
+                          - generic [ref=f33e948]: R
+                          - generic [ref=f33e949]: "1"
+                        - generic [ref=f33e950]: ">"
+                        - generic [ref=f33e951]:
+                          - generic [ref=f33e952]: R
+                          - generic [ref=f33e953]: "2"
+                    - text: ), the maximum achievable unidirectional throughput between any two distinct domains
+                    - math [ref=f33e954]:
+                      - generic [ref=f33e955]: k
+                    - text: and
+                    - math [ref=f33e957]:
+                      - generic [ref=f33e958]: f
+                    - text: "is:"
+                - table [ref=f33e960]:
+                  - rowgroup [ref=f33e961]:
+                    - row [ref=f33e962]:
+                      - cell [ref=f33e963]
+                      - cell [ref=f33e964]:
+                        - math [ref=f33e965]:
+                          - generic [ref=f33e967]:
+                            - generic [ref=f33e968]:
+                              - generic [ref=f33e969]: C
+                              - generic [ref=f33e970]: a
+                              - generic [ref=f33e971]:
+                                - generic [ref=f33e972]: p
+                                - generic [ref=f33e973]:
+                                  - generic [ref=f33e974]: k
+                                  - generic [ref=f33e975]: →
+                                  - generic [ref=f33e976]: f
+                            - generic [ref=f33e977]: =
+                            - generic [ref=f33e978]:
+                              - generic [ref=f33e979]: "N"
+                              - generic [ref=f33e980]: ⋅
+                              - generic [ref=f33e981]:
+                                - generic [ref=f33e982]: R
+                                - generic [ref=f33e983]: "2"
+                      - cell [ref=f33e984]
+                      - cell "(7)" [ref=f33e985]
+            - generic [ref=f33e987]:
+              - heading "Proof." [level=6] [ref=f33e988]
+              - generic [ref=f33e989]:
+                - paragraph [ref=f33e990]:
+                  - text: We represent the Rail-based interconnect as a directed capacitated graph
+                  - math [ref=f33e991]:
+                    - generic [ref=f33e993]:
+                      - generic [ref=f33e994]: G
+                      - generic [ref=f33e995]: =
+                      - generic [ref=f33e996]:
+                        - generic [ref=f33e997]: (
+                        - generic [ref=f33e998]: V
+                        - generic [ref=f33e999]: ","
+                        - generic [ref=f33e1000]: E
+                        - generic [ref=f33e1001]: )
+                  - text: . Each node corresponds to either a GPU, a NIC, or a switch, and each directed edge
+                  - math [ref=f33e1002]:
+                    - generic [ref=f33e1004]:
+                      - generic [ref=f33e1005]: e
+                      - generic [ref=f33e1006]: ∈
+                      - generic [ref=f33e1007]: E
+                  - text: has transmission capacity
+                  - math [ref=f33e1008]:
+                    - generic [ref=f33e1010]:
+                      - generic [ref=f33e1011]: c
+                      - generic [ref=f33e1012]: e
+                  - text: . Let
+                  - math [ref=f33e1013]:
+                    - generic [ref=f33e1015]:
+                      - generic [ref=f33e1016]: 𝐜
+                      - generic [ref=f33e1017]: =
+                      - generic [ref=f33e1018]:
+                        - generic [ref=f33e1019]:
+                          - generic [ref=f33e1020]: (
+                          - generic [ref=f33e1021]:
+                            - generic [ref=f33e1022]: c
+                            - generic [ref=f33e1023]: e
+                          - generic [ref=f33e1024]: )
+                        - generic [ref=f33e1025]:
+                          - generic [ref=f33e1026]: e
+                          - generic [ref=f33e1027]: ∈
+                          - generic [ref=f33e1028]: E
+                  - text: and
+                  - math [ref=f33e1029]:
+                    - generic [ref=f33e1031]:
+                      - generic [ref=f33e1032]: 𝐟
+                      - generic [ref=f33e1033]: =
+                      - generic [ref=f33e1034]:
+                        - generic [ref=f33e1035]:
+                          - generic [ref=f33e1036]: (
+                          - generic [ref=f33e1037]:
+                            - generic [ref=f33e1038]: f
+                            - generic [ref=f33e1039]: e
+                          - generic [ref=f33e1040]: )
+                        - generic [ref=f33e1041]:
+                          - generic [ref=f33e1042]: e
+                          - generic [ref=f33e1043]: ∈
+                          - generic [ref=f33e1044]: E
+                  - text: "satisfy:"
+                - table [ref=f33e1045]:
+                  - rowgroup [ref=f33e1046]:
+                    - row [ref=f33e1047]:
+                      - cell [ref=f33e1048]
+                      - cell [ref=f33e1049]:
+                        - math [ref=f33e1050]:
+                          - generic [ref=f33e1052]:
+                            - generic [ref=f33e1053]:
+                              - generic [ref=f33e1054]: "0"
+                              - generic [ref=f33e1055]: ≤
+                              - generic [ref=f33e1056]:
+                                - generic [ref=f33e1057]: f
+                                - generic [ref=f33e1058]: e
+                              - generic [ref=f33e1059]: ≤
+                              - generic [ref=f33e1060]:
+                                - generic [ref=f33e1061]: c
+                                - generic [ref=f33e1062]: e
+                            - generic [ref=f33e1063]: ","
+                            - generic [ref=f33e1064]:
+                              - generic [ref=f33e1065]:
+                                - generic [ref=f33e1066]: ∀
+                                - generic [ref=f33e1067]: e
+                              - generic [ref=f33e1068]: ∈
+                              - generic [ref=f33e1069]: E
+                      - cell [ref=f33e1070]
+                      - cell "(8)" [ref=f33e1071]
+              - generic [ref=f33e1073]:
+                - paragraph [ref=f33e1074]:
+                  - text: For inter-domain analysis, each domain
+                  - math [ref=f33e1075]:
+                    - generic [ref=f33e1076]: d
+                  - text: is modeled as a cluster of
+                  - math [ref=f33e1078]:
+                    - generic [ref=f33e1079]: "N"
+                  - text: GPUs with dedicated NICs
+                  - math [ref=f33e1081]:
+                    - generic [ref=f33e1083]:
+                      - generic [ref=f33e1084]: (
+                      - generic [ref=f33e1085]:
+                        - generic [ref=f33e1086]: NIC
+                        - generic [ref=f33e1087]:
+                          - generic [ref=f33e1088]: d
+                          - generic [ref=f33e1089]: ","
+                          - generic [ref=f33e1090]: "1"
+                      - generic [ref=f33e1091]: ","
+                      - generic [ref=f33e1092]: …
+                      - generic [ref=f33e1093]: ","
+                      - generic [ref=f33e1094]:
+                        - generic [ref=f33e1095]: NIC
+                        - generic [ref=f33e1096]:
+                          - generic [ref=f33e1097]: d
+                          - generic [ref=f33e1098]: ","
+                          - generic [ref=f33e1099]: "N"
+                      - generic [ref=f33e1100]: )
+                  - text: . We contract the source domain
+                  - math [ref=f33e1101]:
+                    - generic [ref=f33e1102]: k
+                  - text: to a super-source
+                  - math [ref=f33e1104]:
+                    - generic [ref=f33e1105]: s
+                  - text: and the destination domain
+                  - math [ref=f33e1107]:
+                    - generic [ref=f33e1108]: f
+                  - text: to a super-sink
+                  - math [ref=f33e1110]:
+                    - generic [ref=f33e1111]: t
+                  - text: ; the validity of this contraction will be justified by a no-saturation argument under
+                  - math [ref=f33e1113]:
+                    - generic [ref=f33e1115]:
+                      - generic [ref=f33e1116]:
+                        - generic [ref=f33e1117]: R
+                        - generic [ref=f33e1118]: "1"
+                      - generic [ref=f33e1119]: ">"
+                      - generic [ref=f33e1120]:
+                        - generic [ref=f33e1121]: R
+                        - generic [ref=f33e1122]: "2"
+                  - text: below. Let
+                  - math [ref=f33e1123]:
+                    - generic [ref=f33e1125]:
+                      - generic [ref=f33e1126]: B
+                      - generic [ref=f33e1127]: ∈
+                      - generic [ref=f33e1128]:
+                        - generic [ref=f33e1129]: ℝ
+                        - generic [ref=f33e1130]:
+                          - generic [ref=f33e1131]:
+                            - generic [ref=f33e1132]: "|"
+                            - generic [ref=f33e1133]: V
+                            - generic [ref=f33e1134]: "|"
+                          - generic [ref=f33e1135]: ×
+                          - generic [ref=f33e1136]:
+                            - generic [ref=f33e1137]: "|"
+                            - generic [ref=f33e1138]: E
+                            - generic [ref=f33e1139]: "|"
+                  - text: "be the node–edge incidence matrix. Flow conservation is:"
+                - table [ref=f33e1140]:
+                  - rowgroup [ref=f33e1141]:
+                    - row [ref=f33e1142]:
+                      - cell [ref=f33e1143]
+                      - cell [ref=f33e1144]:
+                        - math [ref=f33e1145]:
+                          - generic [ref=f33e1147]:
+                            - generic [ref=f33e1148]:
+                              - generic [ref=f33e1149]:
+                                - generic [ref=f33e1150]:
+                                  - generic [ref=f33e1151]: B
+                                  - generic [ref=f33e1152]: 𝐟
+                                - generic [ref=f33e1153]: =
+                                - generic [ref=f33e1154]: 𝐛
+                              - generic [ref=f33e1155]: ","
+                              - generic [ref=f33e1156]:
+                                - generic [ref=f33e1157]: 𝐛
+                                - generic [ref=f33e1158]: =
+                                - generic [ref=f33e1159]:
+                                  - generic [ref=f33e1160]:
+                                    - generic [ref=f33e1161]: (
+                                    - generic [ref=f33e1162]: …
+                                    - generic [ref=f33e1163]: ","
+                                    - generic [ref=f33e1164]:
+                                      - generic [ref=f33e1165]:
+                                        - generic [ref=f33e1166]:
+                                          - generic [ref=f33e1167]: +
+                                          - generic [ref=f33e1168]: x
+                                        - generic [ref=f33e1169]: ⏟
+                                      - generic [ref=f33e1170]:
+                                        - generic [ref=f33e1171]: v
+                                        - generic [ref=f33e1172]: =
+                                        - generic [ref=f33e1173]: s
+                                    - generic [ref=f33e1174]: ","
+                                    - generic [ref=f33e1175]: …
+                                    - generic [ref=f33e1176]: ","
+                                    - generic [ref=f33e1177]:
+                                      - generic [ref=f33e1178]:
+                                        - generic [ref=f33e1179]:
+                                          - generic [ref=f33e1180]: −
+                                          - generic [ref=f33e1181]: x
+                                        - generic [ref=f33e1182]: ⏟
+                                      - generic [ref=f33e1183]:
+                                        - generic [ref=f33e1184]: v
+                                        - generic [ref=f33e1185]: =
+                                        - generic [ref=f33e1186]: t
+                                    - generic [ref=f33e1187]: ","
+                                    - generic [ref=f33e1188]: …
+                                    - generic [ref=f33e1189]: )
+                                  - generic [ref=f33e1190]: ⊤
+                            - generic [ref=f33e1191]: ","
+                      - cell [ref=f33e1192]
+                      - cell "(9)" [ref=f33e1193]
+                - paragraph [ref=f33e1195]:
+                  - text: where
+                  - math [ref=f33e1196]:
+                    - generic [ref=f33e1197]: x
+                  - text: denotes the unidirectional throughput from
+                  - math [ref=f33e1199]:
+                    - generic [ref=f33e1200]: k
+                  - text: to
+                  - math [ref=f33e1202]:
+                    - generic [ref=f33e1203]: f
+                  - text: ". The feasible region is:"
+                - table [ref=f33e1205]:
+                  - rowgroup [ref=f33e1206]:
+                    - row [ref=f33e1207]:
+                      - cell [ref=f33e1208]
+                      - cell [ref=f33e1209]:
+                        - math [ref=f33e1210]:
+                          - generic [ref=f33e1212]:
+                            - generic [ref=f33e1213]: ℱ
+                            - generic [ref=f33e1214]: =
+                            - generic [ref=f33e1215]:
+                              - generic [ref=f33e1216]: "{"
+                              - generic [ref=f33e1217]:
+                                - generic [ref=f33e1218]: (
+                                - generic [ref=f33e1219]: x
+                                - generic [ref=f33e1220]: ","
+                                - generic [ref=f33e1221]: 𝐟
+                                - generic [ref=f33e1222]: )
+                              - generic [ref=f33e1223]: ":"
+                              - generic [ref=f33e1224]:
+                                - generic [ref=f33e1225]:
+                                  - generic [ref=f33e1226]:
+                                    - generic [ref=f33e1227]: B
+                                    - generic [ref=f33e1228]: 𝐟
+                                  - generic [ref=f33e1229]: =
+                                  - generic [ref=f33e1230]: 𝐛
+                                - generic [ref=f33e1231]: ","
+                                - generic [ref=f33e1232]:
+                                  - generic [ref=f33e1233]: "0"
+                                  - generic [ref=f33e1234]: ≤
+                                  - generic [ref=f33e1235]: 𝐟
+                                  - generic [ref=f33e1236]: ≤
+                                  - generic [ref=f33e1237]: 𝐜
+                              - generic [ref=f33e1238]: "}"
+                      - cell [ref=f33e1239]
+                      - cell "(10)" [ref=f33e1240]
+            - generic [ref=f33e1242]:
+              - heading "Cut-Based Upper Bound" [level=4] [ref=f33e1243]
+              - generic [ref=f33e1244]:
+                - paragraph [ref=f33e1245]:
+                  - text: For any
+                  - math [ref=f33e1246]:
+                    - generic [ref=f33e1247]: s
+                  - text: –
+                  - math [ref=f33e1249]:
+                    - generic [ref=f33e1250]: t
+                  - text: cut
+                  - math [ref=f33e1252]:
+                    - generic [ref=f33e1254]:
+                      - generic [ref=f33e1255]: (
+                      - generic [ref=f33e1256]: C
+                      - generic [ref=f33e1257]: ","
+                      - generic [ref=f33e1258]:
+                        - generic [ref=f33e1259]: C
+                        - generic [ref=f33e1260]: ¯
+                      - generic [ref=f33e1261]: )
+                  - text: with
+                  - math [ref=f33e1262]:
+                    - generic [ref=f33e1264]:
+                      - generic [ref=f33e1265]: s
+                      - generic [ref=f33e1266]: ∈
+                      - generic [ref=f33e1267]: C
+                  - text: ","
+                  - math [ref=f33e1268]:
+                    - generic [ref=f33e1270]:
+                      - generic [ref=f33e1271]: t
+                      - generic [ref=f33e1272]: ∈
+                      - generic [ref=f33e1273]:
+                        - generic [ref=f33e1274]: C
+                        - generic [ref=f33e1275]: ¯
+                  - text: ", the forward cut-set is"
+                  - math [ref=f33e1276]:
+                    - generic [ref=f33e1278]:
+                      - generic [ref=f33e1279]:
+                        - generic [ref=f33e1280]: δ
+                        - generic [ref=f33e1281]: +
+                      - generic [ref=f33e1282]:
+                        - generic [ref=f33e1283]: (
+                        - generic [ref=f33e1284]: C
+                        - generic [ref=f33e1285]: )
+                  - text: ". By the Max-Flow–Min-Cut theorem, it has:"
+                - table [ref=f33e1286]:
+                  - rowgroup [ref=f33e1287]:
+                    - row [ref=f33e1288]:
+                      - cell [ref=f33e1289]
+                      - cell [ref=f33e1290]:
+                        - math [ref=f33e1291]:
+                          - generic [ref=f33e1293]:
+                            - generic [ref=f33e1294]: x
+                            - generic [ref=f33e1295]: ≤
+                            - generic [ref=f33e1296]:
+                              - generic [ref=f33e1297]: Cap
+                              - generic [ref=f33e1298]:
+                                - generic [ref=f33e1299]: (
+                                - generic [ref=f33e1300]: C
+                                - generic [ref=f33e1301]: )
+                            - generic [ref=f33e1302]: :=
+                            - generic [ref=f33e1303]:
+                              - generic [ref=f33e1304]:
+                                - generic [ref=f33e1305]: ∑
+                                - generic [ref=f33e1306]:
+                                  - generic [ref=f33e1307]: e
+                                  - generic [ref=f33e1308]: ∈
+                                  - generic [ref=f33e1309]:
+                                    - generic [ref=f33e1310]:
+                                      - generic [ref=f33e1311]: δ
+                                      - generic [ref=f33e1312]: +
+                                    - generic [ref=f33e1313]:
+                                      - generic [ref=f33e1314]: (
+                                      - generic [ref=f33e1315]: C
+                                      - generic [ref=f33e1316]: )
+                              - generic [ref=f33e1317]:
+                                - generic [ref=f33e1318]: c
+                                - generic [ref=f33e1319]: e
+                      - cell [ref=f33e1320]
+                      - cell "(11)" [ref=f33e1321]
+                - paragraph [ref=f33e1323]:
+                  - text: Choose
+                  - math [ref=f33e1324]:
+                    - generic [ref=f33e1325]: C
+                  - text: to include all nodes of domain
+                  - math [ref=f33e1327]:
+                    - generic [ref=f33e1328]: k
+                  - text: . The forward edges leaving
+                  - math [ref=f33e1330]:
+                    - generic [ref=f33e1331]: C
+                  - text: are exactly the
+                  - math [ref=f33e1333]:
+                    - generic [ref=f33e1334]: "N"
+                  - text: "inter-domain uplinks:"
+                - table [ref=f33e1336]:
+                  - rowgroup [ref=f33e1337]:
+                    - row [ref=f33e1338]:
+                      - cell [ref=f33e1339]
+                      - cell [ref=f33e1340]:
+                        - math [ref=f33e1341]:
+                          - generic [ref=f33e1343]:
+                            - generic [ref=f33e1344]:
+                              - generic [ref=f33e1345]: E
+                              - generic [ref=f33e1346]:
+                                - generic [ref=f33e1347]: k
+                                - generic [ref=f33e1348]: →
+                                - generic [ref=f33e1349]: fabric
+                            - generic [ref=f33e1350]: =
+                            - generic [ref=f33e1351]:
+                              - generic [ref=f33e1352]:
+                                - generic [ref=f33e1353]: "{"
+                                - generic [ref=f33e1354]:
+                                  - generic [ref=f33e1355]: e
+                                  - generic [ref=f33e1356]: "n"
+                                - generic [ref=f33e1357]: ":"
+                                - generic [ref=f33e1358]:
+                                  - generic [ref=f33e1359]:
+                                    - generic [ref=f33e1360]: NIC
+                                    - generic [ref=f33e1361]:
+                                      - generic [ref=f33e1362]: k
+                                      - generic [ref=f33e1363]: ","
+                                      - generic [ref=f33e1364]: "n"
+                                  - generic [ref=f33e1365]: →
+                                  - generic [ref=f33e1366]:
+                                    - generic [ref=f33e1367]: S
+                                    - generic [ref=f33e1368]: "n"
+                                - generic [ref=f33e1369]: "}"
+                              - generic [ref=f33e1370]:
+                                - generic [ref=f33e1371]: "n"
+                                - generic [ref=f33e1372]: =
+                                - generic [ref=f33e1373]: "1"
+                              - generic [ref=f33e1374]: "N"
+                      - cell [ref=f33e1375]
+                      - cell "(12)" [ref=f33e1376]
+                - paragraph [ref=f33e1378]:
+                  - text: where
+                  - math [ref=f33e1379]:
+                    - generic [ref=f33e1381]:
+                      - generic [ref=f33e1382]: S
+                      - generic [ref=f33e1383]: "n"
+                  - text: denotes the leaf switch attached to
+                  - math [ref=f33e1384]:
+                    - generic [ref=f33e1386]:
+                      - generic [ref=f33e1387]: NIC
+                      - generic [ref=f33e1388]:
+                        - generic [ref=f33e1389]: k
+                        - generic [ref=f33e1390]: ","
+                        - generic [ref=f33e1391]: "n"
+                  - text: (and symmetrically to
+                  - math [ref=f33e1392]:
+                    - generic [ref=f33e1394]:
+                      - generic [ref=f33e1395]: NIC
+                      - generic [ref=f33e1396]:
+                        - generic [ref=f33e1397]: f
+                        - generic [ref=f33e1398]: ","
+                        - generic [ref=f33e1399]: "n"
+                  - text: ). Each
+                  - math [ref=f33e1400]:
+                    - generic [ref=f33e1402]:
+                      - generic [ref=f33e1403]: e
+                      - generic [ref=f33e1404]: "n"
+                  - text: has capacity
+                  - math [ref=f33e1405]:
+                    - generic [ref=f33e1407]:
+                      - generic [ref=f33e1408]: R
+                      - generic [ref=f33e1409]: "2"
+                  - text: ", so"
+                - table [ref=f33e1410]:
+                  - rowgroup [ref=f33e1411]:
+                    - row [ref=f33e1412]:
+                      - cell [ref=f33e1413]
+                      - cell [ref=f33e1414]:
+                        - math [ref=f33e1415]:
+                          - generic [ref=f33e1417]:
+                            - generic [ref=f33e1418]:
+                              - generic [ref=f33e1419]: Cap
+                              - generic [ref=f33e1420]:
+                                - generic [ref=f33e1421]: (
+                                - generic [ref=f33e1422]: C
+                                - generic [ref=f33e1423]: )
+                            - generic [ref=f33e1424]: =
+                            - generic [ref=f33e1425]:
+                              - generic [ref=f33e1426]:
+                                - generic [ref=f33e1427]: ∑
+                                - generic [ref=f33e1428]:
+                                  - generic [ref=f33e1429]: "n"
+                                  - generic [ref=f33e1430]: =
+                                  - generic [ref=f33e1431]: "1"
+                                - generic [ref=f33e1432]: "N"
+                              - generic [ref=f33e1433]:
+                                - generic [ref=f33e1434]: c
+                                - generic [ref=f33e1435]:
+                                  - generic [ref=f33e1436]: e
+                                  - generic [ref=f33e1437]: "n"
+                            - generic [ref=f33e1438]: =
+                            - generic [ref=f33e1439]:
+                              - generic [ref=f33e1440]: "N"
+                              - generic [ref=f33e1441]: ⋅
+                              - generic [ref=f33e1442]:
+                                - generic [ref=f33e1443]: R
+                                - generic [ref=f33e1444]: "2"
+                      - cell [ref=f33e1445]
+                      - cell "(13)" [ref=f33e1446]
+                - paragraph [ref=f33e1448]: "Therefore:"
+                - table [ref=f33e1449]:
+                  - rowgroup [ref=f33e1450]:
+                    - row [ref=f33e1451]:
+                      - cell [ref=f33e1452]
+                      - cell [ref=f33e1453]:
+                        - math [ref=f33e1454]:
+                          - generic [ref=f33e1456]:
+                            - generic [ref=f33e1457]:
+                              - generic [ref=f33e1458]: C
+                              - generic [ref=f33e1459]: a
+                              - generic [ref=f33e1460]:
+                                - generic [ref=f33e1461]: p
+                                - generic [ref=f33e1462]:
+                                  - generic [ref=f33e1463]: k
+                                  - generic [ref=f33e1464]: →
+                                  - generic [ref=f33e1465]: f
+                            - generic [ref=f33e1466]: ≤
+                            - generic [ref=f33e1467]:
+                              - generic [ref=f33e1468]: "N"
+                              - generic [ref=f33e1469]: ⋅
+                              - generic [ref=f33e1470]:
+                                - generic [ref=f33e1471]: R
+                                - generic [ref=f33e1472]: "2"
+                      - cell [ref=f33e1473]
+                      - cell "(14)" [ref=f33e1474]
+            - generic [ref=f33e1476]:
+              - heading "Lower Bound" [level=4] [ref=f33e1477]
+              - generic [ref=f33e1478]:
+                - paragraph [ref=f33e1479]:
+                  - text: Let
+                  - math [ref=f33e1480]:
+                    - generic [ref=f33e1481]: 𝒫
+                  - text: denote the set of simple
+                  - math [ref=f33e1483]:
+                    - generic [ref=f33e1485]:
+                      - generic [ref=f33e1486]: s
+                      - generic [ref=f33e1487]: →
+                      - generic [ref=f33e1488]: t
+                  - text: paths. We explicitly construct
+                  - math [ref=f33e1489]:
+                    - generic [ref=f33e1490]: "N"
+                  - text: "rail-aligned paths:"
+                - table [ref=f33e1492]:
+                  - rowgroup [ref=f33e1493]:
+                    - row [ref=f33e1494]:
+                      - cell [ref=f33e1495]
+                      - cell [ref=f33e1496]:
+                        - math [ref=f33e1497]:
+                          - generic [ref=f33e1499]:
+                            - generic [ref=f33e1500]:
+                              - generic [ref=f33e1501]: Π
+                              - generic [ref=f33e1502]: "n"
+                            - generic [ref=f33e1503]: ":"
+                            - generic [ref=f33e1504]: s
+                            - generic [ref=f33e1505]: →
+                            - generic [ref=f33e1506]:
+                              - generic [ref=f33e1507]: NIC
+                              - generic [ref=f33e1508]:
+                                - generic [ref=f33e1509]: k
+                                - generic [ref=f33e1510]: ","
+                                - generic [ref=f33e1511]: "n"
+                            - generic [ref=f33e1512]: →
+                            - generic [ref=f33e1513]:
+                              - generic [ref=f33e1514]: S
+                              - generic [ref=f33e1515]: "n"
+                            - generic [ref=f33e1516]: →
+                            - generic [ref=f33e1517]:
+                              - generic [ref=f33e1518]: NIC
+                              - generic [ref=f33e1519]:
+                                - generic [ref=f33e1520]: f
+                                - generic [ref=f33e1521]: ","
+                                - generic [ref=f33e1522]: "n"
+                            - generic [ref=f33e1523]: →
+                            - generic [ref=f33e1524]: t
+                            - generic [ref=f33e1525]: ","
+                            - generic [ref=f33e1526]: "n"
+                            - generic [ref=f33e1527]: =
+                            - generic [ref=f33e1528]: "1"
+                            - generic [ref=f33e1529]: ","
+                            - generic [ref=f33e1530]: …
+                            - generic [ref=f33e1531]: ","
+                            - generic [ref=f33e1532]: "N"
+                      - cell [ref=f33e1533]
+                      - cell "(15)" [ref=f33e1534]
+                - paragraph [ref=f33e1536]:
+                  - text: where each path
+                  - math [ref=f33e1537]:
+                    - generic [ref=f33e1539]:
+                      - generic [ref=f33e1540]: Π
+                      - generic [ref=f33e1541]: "n"
+                  - text: uses a distinct NIC pair
+                  - math [ref=f33e1542]:
+                    - generic [ref=f33e1544]:
+                      - generic [ref=f33e1545]: (
+                      - generic [ref=f33e1546]:
+                        - generic [ref=f33e1547]: NIC
+                        - generic [ref=f33e1548]:
+                          - generic [ref=f33e1549]: k
+                          - generic [ref=f33e1550]: ","
+                          - generic [ref=f33e1551]: "n"
+                      - generic [ref=f33e1552]: ","
+                      - generic [ref=f33e1553]:
+                        - generic [ref=f33e1554]: NIC
+                        - generic [ref=f33e1555]:
+                          - generic [ref=f33e1556]: f
+                          - generic [ref=f33e1557]: ","
+                          - generic [ref=f33e1558]: "n"
+                      - generic [ref=f33e1559]: )
+                  - text: and its associated leaf
+                  - math [ref=f33e1560]:
+                    - generic [ref=f33e1562]:
+                      - generic [ref=f33e1563]: S
+                      - generic [ref=f33e1564]: "n"
+                  - text: . The NIC–leaf attachments are fixed per rail, so intra-domain edges used by different rails are edge-disjoint.
+              - generic [ref=f33e1565]:
+                - paragraph [ref=f33e1566]:
+                  - text: Assign rate
+                  - math [ref=f33e1567]:
+                    - generic [ref=f33e1569]:
+                      - generic [ref=f33e1570]:
+                        - generic [ref=f33e1571]: α
+                        - generic [ref=f33e1572]: "n"
+                      - generic [ref=f33e1573]: =
+                      - generic [ref=f33e1574]:
+                        - generic [ref=f33e1575]: R
+                        - generic [ref=f33e1576]: "2"
+                  - text: to each
+                  - math [ref=f33e1577]:
+                    - generic [ref=f33e1579]:
+                      - generic [ref=f33e1580]: Π
+                      - generic [ref=f33e1581]: "n"
+                  - text: . Define the path–edge incidence variable
+                  - math [ref=f33e1582]:
+                    - generic [ref=f33e1584]:
+                      - generic [ref=f33e1585]:
+                        - generic [ref=f33e1586]: a
+                        - generic [ref=f33e1587]:
+                          - generic [ref=f33e1588]: e
+                          - generic [ref=f33e1589]: ","
+                          - generic [ref=f33e1590]: "n"
+                      - generic [ref=f33e1591]: ∈
+                      - generic [ref=f33e1592]:
+                        - generic [ref=f33e1593]: "{"
+                        - generic [ref=f33e1594]: "0"
+                        - generic [ref=f33e1595]: ","
+                        - generic [ref=f33e1596]: "1"
+                        - generic [ref=f33e1597]: "}"
+                  - text: ", which equals"
+                  - math [ref=f33e1598]:
+                    - generic [ref=f33e1599]: "1"
+                  - text: if edge
+                  - math [ref=f33e1601]:
+                    - generic [ref=f33e1602]: e
+                  - text: lies on path
+                  - math [ref=f33e1604]:
+                    - generic [ref=f33e1606]:
+                      - generic [ref=f33e1607]: Π
+                      - generic [ref=f33e1608]: "n"
+                  - text: and
+                  - math [ref=f33e1609]:
+                    - generic [ref=f33e1610]: "0"
+                  - text: "otherwise. The induced edge load is:"
+                - table [ref=f33e1611]:
+                  - rowgroup [ref=f33e1612]:
+                    - row [ref=f33e1613]:
+                      - cell [ref=f33e1614]
+                      - cell [ref=f33e1615]:
+                        - math [ref=f33e1616]:
+                          - generic [ref=f33e1618]:
+                            - generic [ref=f33e1619]:
+                              - generic [ref=f33e1620]: f
+                              - generic [ref=f33e1621]: e
+                            - generic [ref=f33e1622]: =
+                            - generic [ref=f33e1623]:
+                              - generic [ref=f33e1624]:
+                                - generic [ref=f33e1625]: ∑
+                                - generic [ref=f33e1626]:
+                                  - generic [ref=f33e1627]: "n"
+                                  - generic [ref=f33e1628]: =
+                                  - generic [ref=f33e1629]: "1"
+                                - generic [ref=f33e1630]: "N"
+                              - generic [ref=f33e1631]:
+                                - generic [ref=f33e1632]:
+                                  - generic [ref=f33e1633]: α
+                                  - generic [ref=f33e1634]: "n"
+                                - generic [ref=f33e1635]:
+                                  - generic [ref=f33e1636]: a
+                                  - generic [ref=f33e1637]:
+                                    - generic [ref=f33e1638]: e
+                                    - generic [ref=f33e1639]: ","
+                                    - generic [ref=f33e1640]: "n"
+                            - generic [ref=f33e1641]: =
+                            - generic [ref=f33e1642]:
+                              - generic [ref=f33e1643]:
+                                - generic [ref=f33e1644]: ∑
+                                - generic [ref=f33e1645]:
+                                  - generic [ref=f33e1646]: "n"
+                                  - generic [ref=f33e1647]: =
+                                  - generic [ref=f33e1648]: "1"
+                                - generic [ref=f33e1649]: "N"
+                              - generic [ref=f33e1650]:
+                                - generic [ref=f33e1651]:
+                                  - generic [ref=f33e1652]: R
+                                  - generic [ref=f33e1653]: "2"
+                                - generic [ref=f33e1654]:
+                                  - generic [ref=f33e1655]: a
+                                  - generic [ref=f33e1656]:
+                                    - generic [ref=f33e1657]: e
+                                    - generic [ref=f33e1658]: ","
+                                    - generic [ref=f33e1659]: "n"
+                      - cell [ref=f33e1660]
+                      - cell "(16)" [ref=f33e1661]
+                - paragraph [ref=f33e1663]:
+                  - text: By construction, all inter-domain edges are edge-disjoint across
+                  - math [ref=f33e1664]:
+                    - generic [ref=f33e1666]:
+                      - generic [ref=f33e1667]:
+                        - generic [ref=f33e1668]: "{"
+                        - generic [ref=f33e1669]:
+                          - generic [ref=f33e1670]: Π
+                          - generic [ref=f33e1671]: "n"
+                        - generic [ref=f33e1672]: "}"
+                      - generic [ref=f33e1673]:
+                        - generic [ref=f33e1674]: "n"
+                        - generic [ref=f33e1675]: =
+                        - generic [ref=f33e1676]: "1"
+                      - generic [ref=f33e1677]: "N"
+                  - text: ", and each such edge has capacity"
+                  - math [ref=f33e1678]:
+                    - generic [ref=f33e1680]:
+                      - generic [ref=f33e1681]: R
+                      - generic [ref=f33e1682]: "2"
+                  - text: ", hence"
+                  - math [ref=f33e1683]:
+                    - generic [ref=f33e1685]:
+                      - generic [ref=f33e1686]:
+                        - generic [ref=f33e1687]: f
+                        - generic [ref=f33e1688]:
+                          - generic [ref=f33e1689]: e
+                          - generic [ref=f33e1690]: "n"
+                      - generic [ref=f33e1691]: =
+                      - generic [ref=f33e1692]:
+                        - generic [ref=f33e1693]: R
+                        - generic [ref=f33e1694]: "2"
+                      - generic [ref=f33e1695]: ≤
+                      - generic [ref=f33e1696]:
+                        - generic [ref=f33e1697]: c
+                        - generic [ref=f33e1698]:
+                          - generic [ref=f33e1699]: e
+                          - generic [ref=f33e1700]: "n"
+                      - generic [ref=f33e1701]: =
+                      - generic [ref=f33e1702]:
+                        - generic [ref=f33e1703]: R
+                        - generic [ref=f33e1704]: "2"
+                  - text: .
+              - generic [ref=f33e1705]:
+                - paragraph [ref=f33e1706]:
+                  - text: Let
+                  - math [ref=f33e1707]:
+                    - generic [ref=f33e1709]:
+                      - generic [ref=f33e1710]: E
+                      - generic [ref=f33e1711]: intra
+                  - text: denote the set of intra-domain edges. For intra-domain segments on
+                  - math [ref=f33e1712]:
+                    - generic [ref=f33e1714]:
+                      - generic [ref=f33e1715]: Π
+                      - generic [ref=f33e1716]: "n"
+                  - text: ", every traversed edge has capacity at least"
+                  - math [ref=f33e1717]:
+                    - generic [ref=f33e1719]:
+                      - generic [ref=f33e1720]: R
+                      - generic [ref=f33e1721]: "1"
+                  - text: and carries only the rate of its own rail
+                  - math [ref=f33e1722]:
+                    - generic [ref=f33e1724]:
+                      - generic [ref=f33e1725]:
+                        - generic [ref=f33e1726]: α
+                        - generic [ref=f33e1727]: "n"
+                      - generic [ref=f33e1728]: =
+                      - generic [ref=f33e1729]:
+                        - generic [ref=f33e1730]: R
+                        - generic [ref=f33e1731]: "2"
+                  - text: . Therefore, for each
+                  - math [ref=f33e1732]:
+                    - generic [ref=f33e1734]:
+                      - generic [ref=f33e1735]: "n"
+                      - generic [ref=f33e1736]: =
+                      - generic [ref=f33e1737]:
+                        - generic [ref=f33e1738]: "1"
+                        - generic [ref=f33e1739]: ","
+                        - generic [ref=f33e1740]: …
+                        - generic [ref=f33e1741]: ","
+                        - generic [ref=f33e1742]: "N"
+                  - text: and each intra-domain edge
+                  - math [ref=f33e1743]:
+                    - generic [ref=f33e1745]:
+                      - generic [ref=f33e1746]: e
+                      - generic [ref=f33e1747]: ∈
+                      - generic [ref=f33e1748]:
+                        - generic [ref=f33e1749]:
+                          - generic [ref=f33e1750]: Π
+                          - generic [ref=f33e1751]: "n"
+                        - generic [ref=f33e1752]: ∩
+                        - generic [ref=f33e1753]:
+                          - generic [ref=f33e1754]: E
+                          - generic [ref=f33e1755]: intra
+                  - text: ", we have:"
+                - table [ref=f33e1756]:
+                  - rowgroup [ref=f33e1757]:
+                    - row [ref=f33e1758]:
+                      - cell [ref=f33e1759]
+                      - cell [ref=f33e1760]:
+                        - math [ref=f33e1761]:
+                          - generic [ref=f33e1763]:
+                            - generic [ref=f33e1764]:
+                              - generic [ref=f33e1765]:
+                                - generic [ref=f33e1766]: f
+                                - generic [ref=f33e1767]: e
+                              - generic [ref=f33e1768]: =
+                              - generic [ref=f33e1769]:
+                                - generic [ref=f33e1770]: R
+                                - generic [ref=f33e1771]: "2"
+                            - generic [ref=f33e1772]: ","
+                            - generic [ref=f33e1773]:
+                              - generic [ref=f33e1774]:
+                                - generic [ref=f33e1775]: c
+                                - generic [ref=f33e1776]: e
+                              - generic [ref=f33e1777]: ≥
+                              - generic [ref=f33e1778]:
+                                - generic [ref=f33e1779]: R
+                                - generic [ref=f33e1780]: "1"
+                              - generic [ref=f33e1781]: ">"
+                              - generic [ref=f33e1782]:
+                                - generic [ref=f33e1783]: R
+                                - generic [ref=f33e1784]: "2"
+                              - generic [ref=f33e1785]: ⇒
+                              - generic [ref=f33e1786]:
+                                - generic [ref=f33e1787]: f
+                                - generic [ref=f33e1788]: e
+                              - generic [ref=f33e1789]: <
+                              - generic [ref=f33e1790]:
+                                - generic [ref=f33e1791]: c
+                                - generic [ref=f33e1792]: e
+                      - cell [ref=f33e1793]
+                      - cell "(17)" [ref=f33e1794]
+              - generic [ref=f33e1796]:
+                - paragraph [ref=f33e1797]:
+                  - text: No intra-domain edge saturates under
+                  - math [ref=f33e1798]:
+                    - generic [ref=f33e1800]:
+                      - generic [ref=f33e1801]:
+                        - generic [ref=f33e1802]: R
+                        - generic [ref=f33e1803]: "1"
+                      - generic [ref=f33e1804]: ">"
+                      - generic [ref=f33e1805]:
+                        - generic [ref=f33e1806]: R
+                        - generic [ref=f33e1807]: "2"
+                  - text: . Hence, contracting each domain to a super-node preserves the max-flow value. The aggregate throughput achieved by
+                  - math [ref=f33e1808]:
+                    - generic [ref=f33e1810]:
+                      - generic [ref=f33e1811]: "{"
+                      - generic [ref=f33e1812]:
+                        - generic [ref=f33e1813]: Π
+                        - generic [ref=f33e1814]: "n"
+                      - generic [ref=f33e1815]: "}"
+                  - text: "is:"
+                - table [ref=f33e1816]:
+                  - rowgroup [ref=f33e1817]:
+                    - row [ref=f33e1818]:
+                      - cell [ref=f33e1819]
+                      - cell [ref=f33e1820]:
+                        - math [ref=f33e1821]:
+                          - generic [ref=f33e1823]:
+                            - generic [ref=f33e1824]: x
+                            - generic [ref=f33e1825]: =
+                            - generic [ref=f33e1826]:
+                              - generic [ref=f33e1827]:
+                                - generic [ref=f33e1828]: ∑
+                                - generic [ref=f33e1829]:
+                                  - generic [ref=f33e1830]: "n"
+                                  - generic [ref=f33e1831]: =
+                                  - generic [ref=f33e1832]: "1"
+                                - generic [ref=f33e1833]: "N"
+                              - generic [ref=f33e1834]:
+                                - generic [ref=f33e1835]: α
+                                - generic [ref=f33e1836]: "n"
+                            - generic [ref=f33e1837]: =
+                            - generic [ref=f33e1838]:
+                              - generic [ref=f33e1839]: "N"
+                              - generic [ref=f33e1840]: ⋅
+                              - generic [ref=f33e1841]:
+                                - generic [ref=f33e1842]: R
+                                - generic [ref=f33e1843]: "2"
+                      - cell [ref=f33e1844]
+                      - cell "(18)" [ref=f33e1845]
+                - paragraph [ref=f33e1847]: "which proves:"
+                - table [ref=f33e1848]:
+                  - rowgroup [ref=f33e1849]:
+                    - row [ref=f33e1850]:
+                      - cell [ref=f33e1851]
+                      - cell [ref=f33e1852]:
+                        - math [ref=f33e1853]:
+                          - generic [ref=f33e1855]:
+                            - generic [ref=f33e1856]:
+                              - generic [ref=f33e1857]: C
+                              - generic [ref=f33e1858]: a
+                              - generic [ref=f33e1859]:
+                                - generic [ref=f33e1860]: p
+                                - generic [ref=f33e1861]:
+                                  - generic [ref=f33e1862]: k
+                                  - generic [ref=f33e1863]: →
+                                  - generic [ref=f33e1864]: f
+                            - generic [ref=f33e1865]: ≥
+                            - generic [ref=f33e1866]:
+                              - generic [ref=f33e1867]: "N"
+                              - generic [ref=f33e1868]: ⋅
+                              - generic [ref=f33e1869]:
+                                - generic [ref=f33e1870]: R
+                                - generic [ref=f33e1871]: "2"
+                      - cell [ref=f33e1872]
+                      - cell "(19)" [ref=f33e1873]
+                - paragraph [ref=f33e1875]:
+                  - text: Combining (
+                  - link "14" [ref=f33e1876] [cursor=pointer]:
+                    - /url: https://arxiv.org/html/2510.19262v1#S4.E14
+                  - text: ) and (
+                  - link "19" [ref=f33e1877] [cursor=pointer]:
+                    - /url: https://arxiv.org/html/2510.19262v1#S4.E19
+                  - text: ) yields the equality.
+            - generic [ref=f33e1878]:
+              - heading "Engineering Note" [level=4] [ref=f33e1879]
+              - paragraph [ref=f33e1881]:
+                - text: The theorem only assumes
+                - math [ref=f33e1882]:
+                  - generic [ref=f33e1884]:
+                    - generic [ref=f33e1885]:
+                      - generic [ref=f33e1886]: R
+                      - generic [ref=f33e1887]: "1"
+                    - generic [ref=f33e1888]: ">"
+                    - generic [ref=f33e1889]:
+                      - generic [ref=f33e1890]: R
+                      - generic [ref=f33e1891]: "2"
+                - text: ", whereas practical systems usually have"
+                - math [ref=f33e1892]:
+                  - generic [ref=f33e1894]:
+                    - generic [ref=f33e1895]:
+                      - generic [ref=f33e1896]: R
+                      - generic [ref=f33e1897]: "1"
+                    - generic [ref=f33e1898]: ≫
+                    - generic [ref=f33e1899]:
+                      - generic [ref=f33e1900]: R
+                      - generic [ref=f33e1901]: "2"
+                - text: because intra-domain networks (e.g., NVLink) exceed NIC-based inter-domain links by a large margin, often close to an order of magnitude. Hence, inter-domain links form the bottleneck in practice, validating our parallel-rails view. ∎
+              - paragraph [ref=f33e1903]:
+                - text: Summary. Rail-based network provides
+                - math [ref=f33e1904]:
+                  - generic [ref=f33e1905]: "N"
+                - text: independent logical rails, each with capacity
+                - math [ref=f33e1907]:
+                  - generic [ref=f33e1909]:
+                    - generic [ref=f33e1910]: R
+                    - generic [ref=f33e1911]: "2"
+                - text: ", for any domain pair"
+                - math [ref=f33e1912]:
+                  - generic [ref=f33e1914]:
+                    - generic [ref=f33e1915]: (
+                    - generic [ref=f33e1916]: k
+                    - generic [ref=f33e1917]: ","
+                    - generic [ref=f33e1918]: f
+                    - generic [ref=f33e1919]: )
+                - text: . Therefore, the overall system capacity scales linearly with
+                - math [ref=f33e1920]:
+                  - generic [ref=f33e1921]: "N"
+                - text: ", and subsequent optimization focuses on how to allocate traffic across these"
+                - math [ref=f33e1923]:
+                  - generic [ref=f33e1924]: "N"
+                - text: rails to achieve global load balance and minimize all-to-all completion time.
+          - generic [ref=f33e1926]:
+            - heading "IV-C Completion Time as a Load Balancing Problem" [level=3] [ref=f33e1927]:
+              - generic [ref=f33e1928]: IV-C
+              - text: Completion Time as a Load Balancing Problem
+            - paragraph [ref=f33e1930]:
+              - text: Building on Theorem
+              - link "1" [ref=f33e1931] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem1
+              - text: ", which establishes that inter-domain communication relies on"
+              - math [ref=f33e1932]:
+                - generic [ref=f33e1933]: "N"
+              - text: parallel rails, we now analyze the global all-to-all communication pattern. The objective is to minimize the overall completion time
+              - math [ref=f33e1935]:
+                - generic [ref=f33e1937]:
+                  - generic [ref=f33e1938]: T
+                  - generic [ref=f33e1939]: ⋆
+              - text: . Since direct optimization of
+              - math [ref=f33e1940]:
+                - generic [ref=f33e1942]:
+                  - generic [ref=f33e1943]: T
+                  - generic [ref=f33e1944]: ⋆
+              - text: is intractable, the problem is reformulated as an equivalent resource allocation problem in the form of load balancing across rails, which provides a more tractable analytical framework.
+            - paragraph [ref=f33e1946]:
+              - text: The all-to-all communication demand is described by the inter-domain traffic matrix
+              - math [ref=f33e1947]:
+                - generic [ref=f33e1949]:
+                  - generic [ref=f33e1950]: D
+                  - generic [ref=f33e1951]:
+                    - generic [ref=f33e1952]: (
+                    - generic [ref=f33e1953]: "2"
+                    - generic [ref=f33e1954]: )
+              - text: ", while a specific flow allocation is characterized by the allocation matrix"
+              - math [ref=f33e1955]:
+                - generic [ref=f33e1956]: P
+              - text: . These jointly determine the per-domain sending and receiving loads
+              - math [ref=f33e1958]:
+                - generic [ref=f33e1960]:
+                  - generic [ref=f33e1961]: 𝐒
+                  - generic [ref=f33e1962]:
+                    - generic [ref=f33e1963]: d
+                    - generic [ref=f33e1964]: ","
+                    - generic [ref=f33e1965]: "n"
+              - text: and
+              - math [ref=f33e1966]:
+                - generic [ref=f33e1968]:
+                  - generic [ref=f33e1969]: 𝐑
+                  - generic [ref=f33e1970]:
+                    - generic [ref=f33e1971]: d
+                    - generic [ref=f33e1972]: ","
+                    - generic [ref=f33e1973]: "n"
+              - text: on each rail
+              - math [ref=f33e1974]:
+                - generic [ref=f33e1975]: "n"
+              - text: . The system completion time is ultimately governed by the maximum processing time among all such loads. The following theorem formalizes this relationship between completion time and load distribution.
+            - generic [ref=f33e1977]:
+              - heading "Theorem 2." [level=6] [ref=f33e1978]:
+                - generic [ref=f33e1979]: Theorem 2
+                - text: .
+              - generic [ref=f33e1980]:
+                - paragraph [ref=f33e1981]:
+                  - generic [ref=f33e1982]:
+                    - text: Under the defined model and given the traffic matrix
+                    - math [ref=f33e1983]:
+                      - generic [ref=f33e1985]:
+                        - generic [ref=f33e1986]: D
+                        - generic [ref=f33e1987]:
+                          - generic [ref=f33e1988]: (
+                          - generic [ref=f33e1989]: "2"
+                          - generic [ref=f33e1990]: )
+                    - text: ", the minimum completion time"
+                    - math [ref=f33e1991]:
+                      - generic [ref=f33e1993]:
+                        - generic [ref=f33e1994]: T
+                        - generic [ref=f33e1995]: ⋆
+                    - text: of the all-to-all communication is equivalent to solving a min-max load balancing problem over all NICs in both sending and receiving directions. If the rate of all inter-domain links is
+                    - math [ref=f33e1996]:
+                      - generic [ref=f33e1998]:
+                        - generic [ref=f33e1999]: R
+                        - generic [ref=f33e2000]: "2"
+                    - text: ", then:"
+                - table [ref=f33e2001]:
+                  - rowgroup [ref=f33e2002]:
+                    - row [ref=f33e2003]:
+                      - cell [ref=f33e2004]
+                      - cell [ref=f33e2005]:
+                        - math [ref=f33e2006]:
+                          - generic [ref=f33e2008]:
+                            - generic [ref=f33e2009]:
+                              - generic [ref=f33e2010]: T
+                              - generic [ref=f33e2011]: ⋆
+                            - generic [ref=f33e2012]: =
+                            - generic [ref=f33e2013]:
+                              - generic [ref=f33e2014]:
+                                - generic [ref=f33e2015]: "1"
+                                - generic [ref=f33e2016]:
+                                  - generic [ref=f33e2017]: R
+                                  - generic [ref=f33e2018]: "2"
+                              - generic [ref=f33e2019]:
+                                - generic [ref=f33e2020]:
+                                  - generic [ref=f33e2021]: min
+                                  - generic [ref=f33e2022]: P
+                                - generic: ⁡
+                                - generic [ref=f33e2023]:
+                                  - generic [ref=f33e2024]: "{"
+                                  - generic [ref=f33e2025]:
+                                    - generic [ref=f33e2026]:
+                                      - generic [ref=f33e2027]: max
+                                      - generic [ref=f33e2028]:
+                                        - generic [ref=f33e2029]: k
+                                        - generic [ref=f33e2030]: ","
+                                        - generic [ref=f33e2031]: f
+                                        - generic [ref=f33e2032]: ","
+                                        - generic [ref=f33e2033]: "n"
+                                    - generic: ⁡
+                                    - generic [ref=f33e2034]:
+                                      - generic [ref=f33e2035]: (
+                                      - generic [ref=f33e2036]:
+                                        - generic [ref=f33e2037]: 𝐒
+                                        - generic [ref=f33e2038]:
+                                          - generic [ref=f33e2039]: k
+                                          - generic [ref=f33e2040]: ","
+                                          - generic [ref=f33e2041]: "n"
+                                      - generic [ref=f33e2042]: ","
+                                      - generic [ref=f33e2043]:
+                                        - generic [ref=f33e2044]: 𝐑
+                                        - generic [ref=f33e2045]:
+                                          - generic [ref=f33e2046]: f
+                                          - generic [ref=f33e2047]: ","
+                                          - generic [ref=f33e2048]: "n"
+                                      - generic [ref=f33e2049]: )
+                                  - generic [ref=f33e2050]: "}"
+                      - cell [ref=f33e2051]
+                      - cell "(20)" [ref=f33e2052]
+              - paragraph [ref=f33e2055]:
+                - generic [ref=f33e2056]:
+                  - text: where
+                  - math [ref=f33e2057]:
+                    - generic [ref=f33e2059]:
+                      - generic [ref=f33e2060]: min
+                      - generic [ref=f33e2061]: P
+                  - text: denotes the optimization over the strategy space formed by all feasible allocation matrices
+                  - math [ref=f33e2062]:
+                    - generic [ref=f33e2063]: P
+                  - text: ", and"
+                  - math [ref=f33e2065]:
+                    - generic [ref=f33e2067]:
+                      - generic [ref=f33e2068]: max
+                      - generic [ref=f33e2069]:
+                        - generic [ref=f33e2070]: k
+                        - generic [ref=f33e2071]: ","
+                        - generic [ref=f33e2072]: f
+                        - generic [ref=f33e2073]: ","
+                        - generic [ref=f33e2074]: "n"
+                  - text: indicates the maximum taken over all sending and receiving loads.
+            - 'figure "Figure 5: Illustration of symmetry mechanism. The left figure does not leverage the topology. The right figure leverages the intra-domain forwarding and topological properties, where uniform NIC sending results in uniform receiving." [ref=f33e2075]':
+              - img "Refer to caption" [ref=f33e2076]
+              - generic [ref=f33e2077]:
+                - generic [ref=f33e2078]: "Figure 5:"
+                - text: Illustration of symmetry mechanism. The left figure does not leverage the topology. The right figure leverages the intra-domain forwarding and topological properties, where uniform NIC sending results in uniform receiving.
+            - generic [ref=f33e2079]:
+              - heading "Proof." [level=6] [ref=f33e2080]
+              - paragraph [ref=f33e2082]:
+                - text: This proof aims to demonstrate that any achievable completion time
+                - math [ref=f33e2083]:
+                  - generic [ref=f33e2084]: T
+                - text: is necessarily bounded below by the maximum load across all NICs, and that this lower bound can be attained by an optimal allocation.
+              - paragraph [ref=f33e2087]:
+                - text: For any given allocation strategy
+                - math [ref=f33e2088]:
+                  - generic [ref=f33e2089]: P
+                - text: ", the corresponding load matrices"
+                - math [ref=f33e2091]:
+                  - generic [ref=f33e2092]: 𝐒
+                - text: and
+                - math [ref=f33e2094]:
+                  - generic [ref=f33e2095]: 𝐑
+                - text: are fully determined. Completion of the all-to-all communication task implies that all sending and receiving operations on every track for every domain must be finished. Therefore, the total completion time
+                - math [ref=f33e2097]:
+                  - generic [ref=f33e2098]: T
+                - text: must be at least as large as the time required for any individual NIC to complete its assigned workload.
+              - generic [ref=f33e2100]:
+                - paragraph [ref=f33e2101]:
+                  - text: For any
+                  - math [ref=f33e2102]:
+                    - generic [ref=f33e2104]:
+                      - generic [ref=f33e2105]: NIC
+                      - generic [ref=f33e2106]:
+                        - generic [ref=f33e2107]: (
+                        - generic [ref=f33e2108]: d
+                        - generic [ref=f33e2109]: ","
+                        - generic [ref=f33e2110]: "n"
+                        - generic [ref=f33e2111]: )
+                  - text: ", the time to complete its sending load"
+                  - math [ref=f33e2112]:
+                    - generic [ref=f33e2114]:
+                      - generic [ref=f33e2115]: 𝐒
+                      - generic [ref=f33e2116]:
+                        - generic [ref=f33e2117]: d
+                        - generic [ref=f33e2118]: ","
+                        - generic [ref=f33e2119]: "n"
+                  - text: is
+                  - math [ref=f33e2120]:
+                    - generic [ref=f33e2122]:
+                      - generic [ref=f33e2123]:
+                        - generic [ref=f33e2124]: 𝐒
+                        - generic [ref=f33e2125]:
+                          - generic [ref=f33e2126]: d
+                          - generic [ref=f33e2127]: ","
+                          - generic [ref=f33e2128]: "n"
+                      - generic [ref=f33e2129]: /
+                      - generic [ref=f33e2130]:
+                        - generic [ref=f33e2131]: R
+                        - generic [ref=f33e2132]: "2"
+                  - text: ", and the time to complete its receiving load"
+                  - math [ref=f33e2133]:
+                    - generic [ref=f33e2135]:
+                      - generic [ref=f33e2136]: 𝐑
+                      - generic [ref=f33e2137]:
+                        - generic [ref=f33e2138]: d
+                        - generic [ref=f33e2139]: ","
+                        - generic [ref=f33e2140]: "n"
+                  - text: is
+                  - math [ref=f33e2141]:
+                    - generic [ref=f33e2143]:
+                      - generic [ref=f33e2144]:
+                        - generic [ref=f33e2145]: 𝐑
+                        - generic [ref=f33e2146]:
+                          - generic [ref=f33e2147]: d
+                          - generic [ref=f33e2148]: ","
+                          - generic [ref=f33e2149]: "n"
+                      - generic [ref=f33e2150]: /
+                      - generic [ref=f33e2151]:
+                        - generic [ref=f33e2152]: R
+                        - generic [ref=f33e2153]: "2"
+                  - text: ". Hence, we have:"
+                - table [ref=f33e2154]:
+                  - rowgroup [ref=f33e2155]:
+                    - row [ref=f33e2156]:
+                      - cell [ref=f33e2157]
+                      - cell [ref=f33e2158]:
+                        - math [ref=f33e2159]:
+                          - generic [ref=f33e2161]:
+                            - generic [ref=f33e2162]:
+                              - generic [ref=f33e2163]: T
+                              - generic [ref=f33e2164]: ≥
+                              - generic [ref=f33e2165]:
+                                - generic [ref=f33e2166]:
+                                  - generic [ref=f33e2167]:
+                                    - generic [ref=f33e2168]: 𝐒
+                                    - generic [ref=f33e2169]:
+                                      - generic [ref=f33e2170]: d
+                                      - generic [ref=f33e2171]: ","
+                                      - generic [ref=f33e2172]: "n"
+                                  - generic [ref=f33e2173]:
+                                    - generic [ref=f33e2174]: R
+                                    - generic [ref=f33e2175]: "2"
+                                - generic [ref=f33e2176]: and
+                            - generic [ref=f33e2177]:
+                              - generic [ref=f33e2178]: T
+                              - generic [ref=f33e2179]: ≥
+                              - generic [ref=f33e2180]:
+                                - generic [ref=f33e2181]:
+                                  - generic [ref=f33e2182]: 𝐑
+                                  - generic [ref=f33e2183]:
+                                    - generic [ref=f33e2184]: d
+                                    - generic [ref=f33e2185]: ","
+                                    - generic [ref=f33e2186]: "n"
+                                - generic [ref=f33e2187]:
+                                  - generic [ref=f33e2188]: R
+                                  - generic [ref=f33e2189]: "2"
+                      - cell [ref=f33e2190]
+                      - cell "(21)" [ref=f33e2191]
+              - generic [ref=f33e2193]:
+                - paragraph [ref=f33e2194]: "Considering all NICs, the completion time under this strategy must satisfy:"
+                - table [ref=f33e2195]:
+                  - rowgroup [ref=f33e2196]:
+                    - row [ref=f33e2197]:
+                      - cell [ref=f33e2198]
+                      - cell [ref=f33e2199]:
+                        - math [ref=f33e2200]:
+                          - generic [ref=f33e2202]:
+                            - generic [ref=f33e2203]: T
+                            - generic [ref=f33e2204]: ≥
+                            - generic [ref=f33e2205]:
+                              - generic [ref=f33e2206]:
+                                - generic [ref=f33e2207]: "1"
+                                - generic [ref=f33e2208]:
+                                  - generic [ref=f33e2209]: R
+                                  - generic [ref=f33e2210]: "2"
+                              - generic [ref=f33e2211]:
+                                - generic [ref=f33e2212]:
+                                  - generic [ref=f33e2213]: max
+                                  - generic [ref=f33e2214]:
+                                    - generic [ref=f33e2215]: k
+                                    - generic [ref=f33e2216]: ","
+                                    - generic [ref=f33e2217]: f
+                                    - generic [ref=f33e2218]: ","
+                                    - generic [ref=f33e2219]: "n"
+                                - generic: ⁡
+                                - generic [ref=f33e2220]:
+                                  - generic [ref=f33e2221]: (
+                                  - generic [ref=f33e2222]:
+                                    - generic [ref=f33e2223]: 𝐒
+                                    - generic [ref=f33e2224]:
+                                      - generic [ref=f33e2225]: k
+                                      - generic [ref=f33e2226]: ","
+                                      - generic [ref=f33e2227]: "n"
+                                  - generic [ref=f33e2228]: ","
+                                  - generic [ref=f33e2229]:
+                                    - generic [ref=f33e2230]: 𝐑
+                                    - generic [ref=f33e2231]:
+                                      - generic [ref=f33e2232]: f
+                                      - generic [ref=f33e2233]: ","
+                                      - generic [ref=f33e2234]: "n"
+                                  - generic [ref=f33e2235]: )
+                      - cell [ref=f33e2236]
+                      - cell "(22)" [ref=f33e2237]
+              - generic [ref=f33e2239]:
+                - paragraph [ref=f33e2240]:
+                  - text: This inequality holds for all feasible allocation strategies
+                  - math [ref=f33e2241]:
+                    - generic [ref=f33e2242]: P
+                  - text: . Therefore, the global minimum completion time
+                  - math [ref=f33e2244]:
+                    - generic [ref=f33e2246]:
+                      - generic [ref=f33e2247]: T
+                      - generic [ref=f33e2248]: ⋆
+                  - text: "cannot be smaller than the optimal value obtained by minimizing this maximum load over all strategies:"
+                - table [ref=f33e2249]:
+                  - rowgroup [ref=f33e2250]:
+                    - row [ref=f33e2251]:
+                      - cell [ref=f33e2252]
+                      - cell [ref=f33e2253]:
+                        - math [ref=f33e2254]:
+                          - generic [ref=f33e2256]:
+                            - generic [ref=f33e2257]:
+                              - generic [ref=f33e2258]: T
+                              - generic [ref=f33e2259]: ⋆
+                            - generic [ref=f33e2260]: ≥
+                            - generic [ref=f33e2261]:
+                              - generic [ref=f33e2262]:
+                                - generic [ref=f33e2263]: "1"
+                                - generic [ref=f33e2264]:
+                                  - generic [ref=f33e2265]: R
+                                  - generic [ref=f33e2266]: "2"
+                              - generic [ref=f33e2267]:
+                                - generic [ref=f33e2268]:
+                                  - generic [ref=f33e2269]: min
+                                  - generic [ref=f33e2270]: P
+                                - generic: ⁡
+                                - generic [ref=f33e2271]:
+                                  - generic [ref=f33e2272]: "{"
+                                  - generic [ref=f33e2273]:
+                                    - generic [ref=f33e2274]:
+                                      - generic [ref=f33e2275]: max
+                                      - generic [ref=f33e2276]:
+                                        - generic [ref=f33e2277]: k
+                                        - generic [ref=f33e2278]: ","
+                                        - generic [ref=f33e2279]: f
+                                        - generic [ref=f33e2280]: ","
+                                        - generic [ref=f33e2281]: "n"
+                                    - generic: ⁡
+                                    - generic [ref=f33e2282]:
+                                      - generic [ref=f33e2283]: (
+                                      - generic [ref=f33e2284]:
+                                        - generic [ref=f33e2285]: 𝐒
+                                        - generic [ref=f33e2286]:
+                                          - generic [ref=f33e2287]: k
+                                          - generic [ref=f33e2288]: ","
+                                          - generic [ref=f33e2289]: "n"
+                                      - generic [ref=f33e2290]: ","
+                                      - generic [ref=f33e2291]:
+                                        - generic [ref=f33e2292]: 𝐑
+                                        - generic [ref=f33e2293]:
+                                          - generic [ref=f33e2294]: f
+                                          - generic [ref=f33e2295]: ","
+                                          - generic [ref=f33e2296]: "n"
+                                      - generic [ref=f33e2297]: )
+                                  - generic [ref=f33e2298]: "}"
+                      - cell [ref=f33e2299]
+                      - cell "(23)" [ref=f33e2300]
+              - paragraph [ref=f33e2303]:
+                - text: The above derivation establishes a lower bound. When traffic can be continuously divided, the search for an optimal allocation matrix
+                - math [ref=f33e2304]:
+                  - generic [ref=f33e2305]: P
+                - text: minimizing the load
+                - math [ref=f33e2307]:
+                  - generic [ref=f33e2309]:
+                    - generic [ref=f33e2310]: max
+                    - generic: ⁡
+                    - generic [ref=f33e2311]:
+                      - generic [ref=f33e2312]: (
+                      - generic [ref=f33e2313]: 𝐒
+                      - generic [ref=f33e2314]: ","
+                      - generic [ref=f33e2315]: 𝐑
+                      - generic [ref=f33e2316]: )
+                - text: reduces to a linear programming problem. Standard linear programming theory ensures the existence of an optimal allocation
+                - math [ref=f33e2317]:
+                  - generic [ref=f33e2319]:
+                    - generic [ref=f33e2320]: P
+                    - generic [ref=f33e2321]: ⋆
+                - text: whose induced maximum load attains the min–max optimum. Under this allocation, the system completion time reaches the lower bound, and the inequality becomes an equality.
+              - paragraph [ref=f33e2323]: In summary, the problem of minimizing the all-to-all time is rigorously proven to be equivalent to minimizing the maximum sending and receiving load across all NICs. ∎
+            - paragraph [ref=f33e2325]:
+              - text: Summary. This theorem transforms the dynamic performance metric into a optimizable load objective, guiding the search for an optimal traffic allocation strategy
+              - math [ref=f33e2326]:
+                - generic [ref=f33e2327]: P
+              - text: that minimizes the maximum NIC load. To solve this min-max problem systematically, it must first be formulated as a mathematical program. The next section presents the linear programming formulation that underlies the optimal allocation strategy.
+          - generic [ref=f33e2329]:
+            - heading "IV-D Objectives and Constraints" [level=3] [ref=f33e2330]:
+              - generic [ref=f33e2331]: IV-D
+              - text: Objectives and Constraints
+            - paragraph [ref=f33e2333]:
+              - text: Based on the conclusions of the previous section, we formulate the min-max problem of all-to-all minimum completion time as a standard linear programming (LP) model to facilitate formal solution. The model takes the allocation matrix
+              - math [ref=f33e2334]:
+                - generic [ref=f33e2335]: P
+              - text: as the core decision variable and introduces an auxiliary variable
+              - math [ref=f33e2337]:
+                - generic [ref=f33e2338]: t
+              - text: representing the upper bound of all loads.
+            - generic [ref=f33e2340]:
+              - paragraph [ref=f33e2341]: "The optimization problem is formulated as:"
+              - table [ref=f33e2342]:
+                - rowgroup [ref=f33e2343]:
+                  - row [ref=f33e2344]:
+                    - cell [ref=f33e2345]
+                    - cell [ref=f33e2346]:
+                      - math [ref=f33e2347]:
+                        - generic [ref=f33e2349]:
+                          - generic [ref=f33e2350]: min
+                          - generic [ref=f33e2351]:
+                            - generic [ref=f33e2352]: P
+                            - generic [ref=f33e2353]: ","
+                            - generic [ref=f33e2354]: t
+                    - cell [ref=f33e2355]:
+                      - math [ref=f33e2356]:
+                        - generic [ref=f33e2357]: t
+                    - cell [ref=f33e2359]
+                    - cell "(24)" [ref=f33e2360]
+                  - row [ref=f33e2362]:
+                    - cell [ref=f33e2363]
+                    - cell "s.t." [ref=f33e2364]
+                    - cell [ref=f33e2365]:
+                      - math [ref=f33e2366]:
+                        - generic [ref=f33e2368]:
+                          - generic [ref=f33e2369]:
+                            - generic [ref=f33e2371]:
+                              - generic [ref=f33e2372]: ∑
+                              - generic [ref=f33e2373]:
+                                - generic [ref=f33e2374]: f
+                                - generic [ref=f33e2375]: =
+                                - generic [ref=f33e2376]: "1"
+                              - generic [ref=f33e2377]: M
+                            - generic [ref=f33e2378]:
+                              - generic [ref=f33e2379]:
+                                - generic [ref=f33e2380]: D
+                                - generic [ref=f33e2381]:
+                                  - generic [ref=f33e2382]: k
+                                  - generic [ref=f33e2383]: ","
+                                  - generic [ref=f33e2384]: f
+                                - generic [ref=f33e2385]:
+                                  - generic [ref=f33e2386]: (
+                                  - generic [ref=f33e2387]: "2"
+                                  - generic [ref=f33e2388]: )
+                              - generic [ref=f33e2389]: ⋅
+                              - generic [ref=f33e2390]:
+                                - generic [ref=f33e2391]: P
+                                - generic [ref=f33e2392]:
+                                  - generic [ref=f33e2393]: k
+                                  - generic [ref=f33e2394]: ","
+                                  - generic [ref=f33e2395]: f
+                                  - generic [ref=f33e2396]: ","
+                                  - generic [ref=f33e2397]: "n"
+                          - generic [ref=f33e2398]: ≤
+                          - generic [ref=f33e2399]:
+                            - generic [ref=f33e2400]: t
+                            - generic [ref=f33e2401]: ","
+                            - generic [ref=f33e2402]:
+                              - generic [ref=f33e2403]: ∀
+                              - generic [ref=f33e2404]: k
+                            - generic [ref=f33e2405]: ","
+                            - generic [ref=f33e2406]: "n"
+                    - cell [ref=f33e2407]
+                  - row [ref=f33e2408]:
+                    - cell [ref=f33e2409]
+                    - cell [ref=f33e2410]
+                    - cell [ref=f33e2411]:
+                      - math [ref=f33e2412]:
+                        - generic [ref=f33e2414]:
+                          - generic [ref=f33e2415]:
+                            - generic [ref=f33e2417]:
+                              - generic [ref=f33e2418]: ∑
+                              - generic [ref=f33e2419]:
+                                - generic [ref=f33e2420]: k
+                                - generic [ref=f33e2421]: =
+                                - generic [ref=f33e2422]: "1"
+                              - generic [ref=f33e2423]: M
+                            - generic [ref=f33e2424]:
+                              - generic [ref=f33e2425]:
+                                - generic [ref=f33e2426]: D
+                                - generic [ref=f33e2427]:
+                                  - generic [ref=f33e2428]: k
+                                  - generic [ref=f33e2429]: ","
+                                  - generic [ref=f33e2430]: f
+                                - generic [ref=f33e2431]:
+                                  - generic [ref=f33e2432]: (
+                                  - generic [ref=f33e2433]: "2"
+                                  - generic [ref=f33e2434]: )
+                              - generic [ref=f33e2435]: ⋅
+                              - generic [ref=f33e2436]:
+                                - generic [ref=f33e2437]: P
+                                - generic [ref=f33e2438]:
+                                  - generic [ref=f33e2439]: k
+                                  - generic [ref=f33e2440]: ","
+                                  - generic [ref=f33e2441]: f
+                                  - generic [ref=f33e2442]: ","
+                                  - generic [ref=f33e2443]: "n"
+                          - generic [ref=f33e2444]: ≤
+                          - generic [ref=f33e2445]:
+                            - generic [ref=f33e2446]: t
+                            - generic [ref=f33e2447]: ","
+                            - generic [ref=f33e2448]:
+                              - generic [ref=f33e2449]: ∀
+                              - generic [ref=f33e2450]: f
+                            - generic [ref=f33e2451]: ","
+                            - generic [ref=f33e2452]: "n"
+                    - cell [ref=f33e2453]
+                  - row [ref=f33e2454]:
+                    - cell [ref=f33e2455]
+                    - cell [ref=f33e2456]
+                    - cell [ref=f33e2457]:
+                      - math [ref=f33e2458]:
+                        - generic [ref=f33e2460]:
+                          - generic [ref=f33e2461]:
+                            - generic [ref=f33e2463]:
+                              - generic [ref=f33e2464]: ∑
+                              - generic [ref=f33e2465]:
+                                - generic [ref=f33e2466]: "n"
+                                - generic [ref=f33e2467]: =
+                                - generic [ref=f33e2468]: "1"
+                              - generic [ref=f33e2469]: "N"
+                            - generic [ref=f33e2470]:
+                              - generic [ref=f33e2471]: P
+                              - generic [ref=f33e2472]:
+                                - generic [ref=f33e2473]: k
+                                - generic [ref=f33e2474]: ","
+                                - generic [ref=f33e2475]: f
+                                - generic [ref=f33e2476]: ","
+                                - generic [ref=f33e2477]: "n"
+                          - generic [ref=f33e2478]: =
+                          - generic [ref=f33e2479]:
+                            - generic [ref=f33e2480]: "1"
+                            - generic [ref=f33e2481]: ","
+                            - generic [ref=f33e2482]:
+                              - generic [ref=f33e2483]: ∀
+                              - generic [ref=f33e2484]: k
+                            - generic [ref=f33e2485]: ","
+                            - generic [ref=f33e2486]: f
+                    - cell [ref=f33e2487]
+                  - row [ref=f33e2488]:
+                    - cell [ref=f33e2489]
+                    - cell [ref=f33e2490]
+                    - cell [ref=f33e2491]:
+                      - math [ref=f33e2492]:
+                        - generic [ref=f33e2494]:
+                          - generic [ref=f33e2495]:
+                            - generic [ref=f33e2496]: P
+                            - generic [ref=f33e2497]:
+                              - generic [ref=f33e2498]: k
+                              - generic [ref=f33e2499]: ","
+                              - generic [ref=f33e2500]: f
+                              - generic [ref=f33e2501]: ","
+                              - generic [ref=f33e2502]: "n"
+                          - generic [ref=f33e2503]: ≥
+                          - generic [ref=f33e2504]:
+                            - generic [ref=f33e2505]: "0"
+                            - generic [ref=f33e2506]: ","
+                            - generic [ref=f33e2507]:
+                              - generic [ref=f33e2508]: ∀
+                              - generic [ref=f33e2509]: k
+                            - generic [ref=f33e2510]: ","
+                            - generic [ref=f33e2511]: f
+                            - generic [ref=f33e2512]: ","
+                            - generic [ref=f33e2513]: "n"
+                    - cell [ref=f33e2514]
+            - paragraph [ref=f33e2516]:
+              - text: In this LP formulation, the auxiliary variable
+              - math [ref=f33e2517]:
+                - generic [ref=f33e2518]: t
+              - text: represents the objective to be minimized and is defined as the global upper bound of all NIC sending loads
+              - math [ref=f33e2520]:
+                - generic [ref=f33e2522]:
+                  - generic [ref=f33e2523]: 𝐒
+                  - generic [ref=f33e2524]:
+                    - generic [ref=f33e2525]: k
+                    - generic [ref=f33e2526]: ","
+                    - generic [ref=f33e2527]: "n"
+              - text: and receiving loads
+              - math [ref=f33e2528]:
+                - generic [ref=f33e2530]:
+                  - generic [ref=f33e2531]: 𝐑
+                  - generic [ref=f33e2532]:
+                    - generic [ref=f33e2533]: f
+                    - generic [ref=f33e2534]: ","
+                    - generic [ref=f33e2535]: "n"
+              - text: . Minimizing
+              - math [ref=f33e2536]:
+                - generic [ref=f33e2537]: t
+              - text: therefore corresponds to minimizing the system’s bottleneck load. The remaining constraints guarantee a valid allocation matrix
+              - math [ref=f33e2539]:
+                - generic [ref=f33e2540]: P
+              - text: ", ensuring complete traffic assignment (normalization) and correct directionality (non-negativity). As both the objective and constraints are linear, the problem can be solved optimally using standard LP methods."
+            - paragraph [ref=f33e2543]: This LP formulation provides a numerical solution to the problem, while the next section will further explore and present a more insightful analytical solution.
+          - generic [ref=f33e2544]:
+            - heading "IV-E Topological Symmetry of Load" [level=3] [ref=f33e2545]:
+              - generic [ref=f33e2546]: IV-E
+              - text: Topological Symmetry of Load
+            - paragraph [ref=f33e2548]:
+              - text: The all-to-all minimum completion time problem has been formulated as a linear program. Here we derive a closed-form analytical solution and prove its optimality. The key insight is that in the Rail-based architecture, uniform sending loads inherently yield uniform receiving loads in Fig.
+              - link "5" [ref=f33e2549] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S4.F5
+              - text: .
+            - generic [ref=f33e2550]:
+              - heading "Theorem 3." [level=6] [ref=f33e2551]:
+                - generic [ref=f33e2552]: Theorem 3
+                - text: .
+              - generic [ref=f33e2553]:
+                - paragraph [ref=f33e2554]:
+                  - generic [ref=f33e2555]:
+                    - text: In the studied system, any allocation strategy that achieves uniformization of sending loads is globally optimal. Specifically, if for every source domain
+                    - math [ref=f33e2556]:
+                      - generic [ref=f33e2557]: k
+                    - text: ", the sending load is uniformly distributed as:"
+                - table [ref=f33e2559]:
+                  - rowgroup [ref=f33e2560]:
+                    - row [ref=f33e2561]:
+                      - cell [ref=f33e2562]
+                      - cell [ref=f33e2563]:
+                        - math [ref=f33e2564]:
+                          - generic [ref=f33e2566]:
+                            - generic [ref=f33e2567]:
+                              - generic [ref=f33e2568]:
+                                - generic [ref=f33e2569]: 𝐒
+                                - generic [ref=f33e2570]:
+                                  - generic [ref=f33e2571]: k
+                                  - generic [ref=f33e2572]: ","
+                                  - generic [ref=f33e2573]: "n"
+                              - generic [ref=f33e2574]: =
+                              - generic [ref=f33e2575]:
+                                - generic [ref=f33e2576]:
+                                  - generic [ref=f33e2577]: "1"
+                                  - generic [ref=f33e2578]: "N"
+                                - generic [ref=f33e2579]:
+                                  - generic [ref=f33e2580]:
+                                    - generic [ref=f33e2581]: ∑
+                                    - generic [ref=f33e2582]:
+                                      - generic [ref=f33e2583]: f
+                                      - generic [ref=f33e2584]: =
+                                      - generic [ref=f33e2585]: "1"
+                                    - generic [ref=f33e2586]: M
+                                  - generic [ref=f33e2587]:
+                                    - generic [ref=f33e2588]: D
+                                    - generic [ref=f33e2589]:
+                                      - generic [ref=f33e2590]: k
+                                      - generic [ref=f33e2591]: ","
+                                      - generic [ref=f33e2592]: f
+                                    - generic [ref=f33e2593]:
+                                      - generic [ref=f33e2594]: (
+                                      - generic [ref=f33e2595]: "2"
+                                      - generic [ref=f33e2596]: )
+                            - generic [ref=f33e2597]: ","
+                            - generic [ref=f33e2598]:
+                              - generic [ref=f33e2599]:
+                                - generic [ref=f33e2600]: ∀
+                                - generic [ref=f33e2601]: "n"
+                              - generic [ref=f33e2602]: =
+                              - generic [ref=f33e2603]:
+                                - generic [ref=f33e2604]: "1"
+                                - generic [ref=f33e2605]: ","
+                                - generic [ref=f33e2606]: …
+                                - generic [ref=f33e2607]: ","
+                                - generic [ref=f33e2608]: "N"
+                      - cell [ref=f33e2609]
+                      - cell "(25)" [ref=f33e2610]
+                - paragraph [ref=f33e2612]:
+                  - generic [ref=f33e2613]:
+                    - text: then the receiving load for any destination domain
+                    - math [ref=f33e2614]:
+                      - generic [ref=f33e2615]: f
+                    - text: "is automatically uniformized:"
+                - table [ref=f33e2617]:
+                  - rowgroup [ref=f33e2618]:
+                    - row [ref=f33e2619]:
+                      - cell [ref=f33e2620]
+                      - cell [ref=f33e2621]:
+                        - math [ref=f33e2622]:
+                          - generic [ref=f33e2624]:
+                            - generic [ref=f33e2625]:
+                              - generic [ref=f33e2626]:
+                                - generic [ref=f33e2627]: 𝐑
+                                - generic [ref=f33e2628]:
+                                  - generic [ref=f33e2629]: f
+                                  - generic [ref=f33e2630]: ","
+                                  - generic [ref=f33e2631]: "n"
+                              - generic [ref=f33e2632]: =
+                              - generic [ref=f33e2633]:
+                                - generic [ref=f33e2634]:
+                                  - generic [ref=f33e2635]: "1"
+                                  - generic [ref=f33e2636]: "N"
+                                - generic [ref=f33e2637]:
+                                  - generic [ref=f33e2638]:
+                                    - generic [ref=f33e2639]: ∑
+                                    - generic [ref=f33e2640]:
+                                      - generic [ref=f33e2641]: k
+                                      - generic [ref=f33e2642]: =
+                                      - generic [ref=f33e2643]: "1"
+                                    - generic [ref=f33e2644]: M
+                                  - generic [ref=f33e2645]:
+                                    - generic [ref=f33e2646]: D
+                                    - generic [ref=f33e2647]:
+                                      - generic [ref=f33e2648]: k
+                                      - generic [ref=f33e2649]: ","
+                                      - generic [ref=f33e2650]: f
+                                    - generic [ref=f33e2651]:
+                                      - generic [ref=f33e2652]: (
+                                      - generic [ref=f33e2653]: "2"
+                                      - generic [ref=f33e2654]: )
+                            - generic [ref=f33e2655]: ","
+                            - generic [ref=f33e2656]:
+                              - generic [ref=f33e2657]:
+                                - generic [ref=f33e2658]: ∀
+                                - generic [ref=f33e2659]: "n"
+                              - generic [ref=f33e2660]: =
+                              - generic [ref=f33e2661]:
+                                - generic [ref=f33e2662]: "1"
+                                - generic [ref=f33e2663]: ","
+                                - generic [ref=f33e2664]: …
+                                - generic [ref=f33e2665]: ","
+                                - generic [ref=f33e2666]: "N"
+                      - cell [ref=f33e2667]
+                      - cell "(26)" [ref=f33e2668]
+                - paragraph [ref=f33e2670]:
+                  - generic [ref=f33e2671]:
+                    - text: This strategy simultaneously minimizes both sending and receiving bottlenecks, thereby achieving the all-to-all minimum completion time
+                    - math [ref=f33e2672]:
+                      - generic [ref=f33e2674]:
+                        - generic [ref=f33e2675]: T
+                        - generic [ref=f33e2676]: ⋆
+                    - text: .
+            - generic [ref=f33e2677]:
+              - heading "Proof." [level=6] [ref=f33e2678]
+              - paragraph [ref=f33e2680]:
+                - text: The core of this proof relies on the system structure revealed in Theorem
+                - link "1" [ref=f33e2681] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem1
+                - text: . Communication from any source domain
+                - math [ref=f33e2682]:
+                  - generic [ref=f33e2683]: k
+                - text: to destination domain
+                - math [ref=f33e2685]:
+                  - generic [ref=f33e2686]: f
+                - text: is equivalent to
+                - math [ref=f33e2688]:
+                  - generic [ref=f33e2689]: "N"
+                - text: parallel, independent paths, with endpoints
+                - math [ref=f33e2691]:
+                  - generic [ref=f33e2693]:
+                    - generic [ref=f33e2694]: NIC
+                    - generic [ref=f33e2695]:
+                      - generic [ref=f33e2696]: k
+                      - generic [ref=f33e2697]: ","
+                      - generic [ref=f33e2698]: "n"
+                - text: and
+                - math [ref=f33e2699]:
+                  - generic [ref=f33e2701]:
+                    - generic [ref=f33e2702]: NIC
+                    - generic [ref=f33e2703]:
+                      - generic [ref=f33e2704]: f
+                      - generic [ref=f33e2705]: ","
+                      - generic [ref=f33e2706]: "n"
+                - text: for
+                - math [ref=f33e2707]:
+                  - generic [ref=f33e2709]:
+                    - generic [ref=f33e2710]: "n"
+                    - generic [ref=f33e2711]: =
+                    - generic [ref=f33e2712]:
+                      - generic [ref=f33e2713]: "1"
+                      - generic [ref=f33e2714]: ","
+                      - generic [ref=f33e2715]: …
+                      - generic [ref=f33e2716]: ","
+                      - generic [ref=f33e2717]: "N"
+                - text: . This implies that traffic sent from
+                - math [ref=f33e2718]:
+                  - generic [ref=f33e2720]:
+                    - generic [ref=f33e2721]: NIC
+                    - generic [ref=f33e2722]:
+                      - generic [ref=f33e2723]: k
+                      - generic [ref=f33e2724]: ","
+                      - generic [ref=f33e2725]: "n"
+                - text: along the
+                - math [ref=f33e2726]:
+                  - generic [ref=f33e2727]: "n"
+                - text: "-th track is uniquely directed to"
+                - math [ref=f33e2729]:
+                  - generic [ref=f33e2731]:
+                    - generic [ref=f33e2732]: NIC
+                    - generic [ref=f33e2733]:
+                      - generic [ref=f33e2734]: f
+                      - generic [ref=f33e2735]: ","
+                      - generic [ref=f33e2736]: "n"
+                - text: .
+              - generic [ref=f33e2737]:
+                - paragraph [ref=f33e2738]:
+                  - text: We first construct a sending-uniform strategy. This strategy evenly distributes the total outgoing traffic of each source domain
+                  - math [ref=f33e2739]:
+                    - generic [ref=f33e2740]: k
+                  - text: ","
+                  - math [ref=f33e2742]:
+                    - generic [ref=f33e2744]:
+                      - generic [ref=f33e2745]:
+                        - generic [ref=f33e2746]: ∑
+                        - generic [ref=f33e2747]:
+                          - generic [ref=f33e2748]: f
+                          - generic [ref=f33e2749]: =
+                          - generic [ref=f33e2750]: "1"
+                        - generic [ref=f33e2751]: M
+                      - generic [ref=f33e2752]:
+                        - generic [ref=f33e2753]: D
+                        - generic [ref=f33e2754]:
+                          - generic [ref=f33e2755]: k
+                          - generic [ref=f33e2756]: ","
+                          - generic [ref=f33e2757]: f
+                        - generic [ref=f33e2758]:
+                          - generic [ref=f33e2759]: (
+                          - generic [ref=f33e2760]: "2"
+                          - generic [ref=f33e2761]: )
+                  - text: ", across its"
+                  - math [ref=f33e2762]:
+                    - generic [ref=f33e2763]: "N"
+                  - text: NICs. Specifically, the sending load on the
+                  - math [ref=f33e2765]:
+                    - generic [ref=f33e2766]: "n"
+                  - text: "-th NIC is set equal to the average load. By adopting the allocation strategy:"
+                - table [ref=f33e2768]:
+                  - rowgroup [ref=f33e2769]:
+                    - row [ref=f33e2770]:
+                      - cell [ref=f33e2771]
+                      - cell [ref=f33e2772]:
+                        - math [ref=f33e2773]:
+                          - generic [ref=f33e2775]:
+                            - generic [ref=f33e2776]:
+                              - generic [ref=f33e2777]: P
+                              - generic [ref=f33e2778]:
+                                - generic [ref=f33e2779]: k
+                                - generic [ref=f33e2780]: ","
+                                - generic [ref=f33e2781]: f
+                                - generic [ref=f33e2782]: ","
+                                - generic [ref=f33e2783]: "n"
+                              - generic [ref=f33e2784]: ⋆
+                            - generic [ref=f33e2785]: =
+                            - generic [ref=f33e2786]:
+                              - generic [ref=f33e2787]: "1"
+                              - generic [ref=f33e2788]: "N"
+                      - cell [ref=f33e2789]
+                      - cell "(27)" [ref=f33e2790]
+                - paragraph [ref=f33e2792]: "we obtain the following equation:"
+                - table [ref=f33e2793]:
+                  - rowgroup [ref=f33e2794]:
+                    - row [ref=f33e2795]:
+                      - cell [ref=f33e2796]
+                      - cell [ref=f33e2797]:
+                        - math [ref=f33e2798]:
+                          - generic [ref=f33e2800]:
+                            - generic [ref=f33e2801]:
+                              - generic [ref=f33e2802]: 𝐒
+                              - generic [ref=f33e2803]:
+                                - generic [ref=f33e2804]: k
+                                - generic [ref=f33e2805]: ","
+                                - generic [ref=f33e2806]: "n"
+                            - generic [ref=f33e2807]: =
+                            - generic [ref=f33e2808]:
+                              - generic [ref=f33e2809]:
+                                - generic [ref=f33e2810]: ∑
+                                - generic [ref=f33e2811]:
+                                  - generic [ref=f33e2812]: f
+                                  - generic [ref=f33e2813]: =
+                                  - generic [ref=f33e2814]: "1"
+                                - generic [ref=f33e2815]: M
+                              - generic [ref=f33e2816]:
+                                - generic [ref=f33e2817]:
+                                  - generic [ref=f33e2818]: D
+                                  - generic [ref=f33e2819]:
+                                    - generic [ref=f33e2820]: k
+                                    - generic [ref=f33e2821]: ","
+                                    - generic [ref=f33e2822]: f
+                                  - generic [ref=f33e2823]:
+                                    - generic [ref=f33e2824]: (
+                                    - generic [ref=f33e2825]: "2"
+                                    - generic [ref=f33e2826]: )
+                                - generic [ref=f33e2827]:
+                                  - generic [ref=f33e2828]: P
+                                  - generic [ref=f33e2829]:
+                                    - generic [ref=f33e2830]: k
+                                    - generic [ref=f33e2831]: ","
+                                    - generic [ref=f33e2832]: f
+                                    - generic [ref=f33e2833]: ","
+                                    - generic [ref=f33e2834]: "n"
+                                  - generic [ref=f33e2835]: ⋆
+                            - generic [ref=f33e2836]: =
+                            - generic [ref=f33e2837]:
+                              - generic [ref=f33e2838]:
+                                - generic [ref=f33e2839]: "1"
+                                - generic [ref=f33e2840]: "N"
+                              - generic [ref=f33e2841]:
+                                - generic [ref=f33e2842]:
+                                  - generic [ref=f33e2843]: ∑
+                                  - generic [ref=f33e2844]:
+                                    - generic [ref=f33e2845]: f
+                                    - generic [ref=f33e2846]: =
+                                    - generic [ref=f33e2847]: "1"
+                                  - generic [ref=f33e2848]: M
+                                - generic [ref=f33e2849]:
+                                  - generic [ref=f33e2850]: D
+                                  - generic [ref=f33e2851]:
+                                    - generic [ref=f33e2852]: k
+                                    - generic [ref=f33e2853]: ","
+                                    - generic [ref=f33e2854]: f
+                                  - generic [ref=f33e2855]:
+                                    - generic [ref=f33e2856]: (
+                                    - generic [ref=f33e2857]: "2"
+                                    - generic [ref=f33e2858]: )
+                      - cell [ref=f33e2859]
+                      - cell "(28)" [ref=f33e2860]
+              - paragraph [ref=f33e2863]: This strategy successfully uniformizes the sending load, thereby minimizing the maximum processing time among all sending tasks.
+              - generic [ref=f33e2864]:
+                - paragraph [ref=f33e2865]:
+                  - text: Next, we examine the impact of this strategy on receiving loads. The receiving load
+                  - math [ref=f33e2866]:
+                    - generic [ref=f33e2868]:
+                      - generic [ref=f33e2869]: 𝐑
+                      - generic [ref=f33e2870]:
+                        - generic [ref=f33e2871]: f
+                        - generic [ref=f33e2872]: ","
+                        - generic [ref=f33e2873]: "n"
+                  - text: on the
+                  - math [ref=f33e2874]:
+                    - generic [ref=f33e2875]: "n"
+                  - text: "-th track for any destination domain"
+                  - math [ref=f33e2877]:
+                    - generic [ref=f33e2878]: f
+                  - text: is the sum of the traffic from all source domains
+                  - math [ref=f33e2880]:
+                    - generic [ref=f33e2881]: k
+                  - text: "through that track. Based on the one-to-one correspondence of paths in the Rail architecture, it has:"
+                - table [ref=f33e2883]:
+                  - rowgroup [ref=f33e2884]:
+                    - row [ref=f33e2885]:
+                      - cell [ref=f33e2886]
+                      - cell [ref=f33e2887]:
+                        - math [ref=f33e2888]:
+                          - generic [ref=f33e2890]:
+                            - generic [ref=f33e2891]:
+                              - generic [ref=f33e2892]: 𝐑
+                              - generic [ref=f33e2893]:
+                                - generic [ref=f33e2894]: f
+                                - generic [ref=f33e2895]: ","
+                                - generic [ref=f33e2896]: "n"
+                            - generic [ref=f33e2897]: =
+                            - generic [ref=f33e2898]:
+                              - generic [ref=f33e2899]:
+                                - generic [ref=f33e2900]: ∑
+                                - generic [ref=f33e2901]:
+                                  - generic [ref=f33e2902]: k
+                                  - generic [ref=f33e2903]: =
+                                  - generic [ref=f33e2904]: "1"
+                                - generic [ref=f33e2905]: M
+                              - generic [ref=f33e2906]:
+                                - generic [ref=f33e2907]:
+                                  - generic [ref=f33e2908]: D
+                                  - generic [ref=f33e2909]:
+                                    - generic [ref=f33e2910]: k
+                                    - generic [ref=f33e2911]: ","
+                                    - generic [ref=f33e2912]: f
+                                  - generic [ref=f33e2913]:
+                                    - generic [ref=f33e2914]: (
+                                    - generic [ref=f33e2915]: "2"
+                                    - generic [ref=f33e2916]: )
+                                - generic [ref=f33e2917]:
+                                  - generic [ref=f33e2918]: P
+                                  - generic [ref=f33e2919]:
+                                    - generic [ref=f33e2920]: k
+                                    - generic [ref=f33e2921]: ","
+                                    - generic [ref=f33e2922]: f
+                                    - generic [ref=f33e2923]: ","
+                                    - generic [ref=f33e2924]: "n"
+                                  - generic [ref=f33e2925]: ⋆
+                            - generic [ref=f33e2926]: =
+                            - generic [ref=f33e2927]:
+                              - generic [ref=f33e2928]:
+                                - generic [ref=f33e2929]: "1"
+                                - generic [ref=f33e2930]: "N"
+                              - generic [ref=f33e2931]:
+                                - generic [ref=f33e2932]:
+                                  - generic [ref=f33e2933]: ∑
+                                  - generic [ref=f33e2934]:
+                                    - generic [ref=f33e2935]: k
+                                    - generic [ref=f33e2936]: =
+                                    - generic [ref=f33e2937]: "1"
+                                  - generic [ref=f33e2938]: M
+                                - generic [ref=f33e2939]:
+                                  - generic [ref=f33e2940]: D
+                                  - generic [ref=f33e2941]:
+                                    - generic [ref=f33e2942]: k
+                                    - generic [ref=f33e2943]: ","
+                                    - generic [ref=f33e2944]: f
+                                  - generic [ref=f33e2945]:
+                                    - generic [ref=f33e2946]: (
+                                    - generic [ref=f33e2947]: "2"
+                                    - generic [ref=f33e2948]: )
+                      - cell [ref=f33e2949]
+                      - cell "(29)" [ref=f33e2950]
+                - paragraph [ref=f33e2952]: This shows that the receiving load is automatically uniformized, with each receiving NIC carrying exactly the average of the domain’s total incoming traffic.
+              - paragraph [ref=f33e2954]:
+                - text: Thus, a simple sending-uniform strategy, due to the intrinsic system architecture, inevitably leads to uniform receiving loads. Uniform sending minimizes the sending bottleneck, while the resulting uniform receiving minimizes the receiving bottleneck. Since this single strategy simultaneously optimizes both sending and receiving loads, it is globally optimal and achieves the all-to-all minimum completion time
+                - math [ref=f33e2955]:
+                  - generic [ref=f33e2957]:
+                    - generic [ref=f33e2958]: T
+                    - generic [ref=f33e2959]: ⋆
+                - text: .
+              - generic [ref=f33e2960]:
+                - paragraph [ref=f33e2961]: "Consequently, the optimal allocation matrix achieving this state has a simple closed-form solution:"
+                - table [ref=f33e2962]:
+                  - rowgroup [ref=f33e2963]:
+                    - row [ref=f33e2964]:
+                      - cell [ref=f33e2965]
+                      - cell [ref=f33e2966]:
+                        - math [ref=f33e2967]:
+                          - generic [ref=f33e2969]:
+                            - generic [ref=f33e2970]:
+                              - generic [ref=f33e2971]: P
+                              - generic [ref=f33e2972]:
+                                - generic [ref=f33e2973]: k
+                                - generic [ref=f33e2974]: ","
+                                - generic [ref=f33e2975]: f
+                                - generic [ref=f33e2976]: ","
+                                - generic [ref=f33e2977]: "n"
+                              - generic [ref=f33e2978]: ⋆
+                            - generic [ref=f33e2979]: =
+                            - generic [ref=f33e2980]:
+                              - generic [ref=f33e2981]:
+                                - generic [ref=f33e2982]: "1"
+                                - generic [ref=f33e2983]: "N"
+                              - generic [ref=f33e2984]: ","
+                              - generic [ref=f33e2985]:
+                                - generic [ref=f33e2986]: ∀
+                                - generic [ref=f33e2987]: k
+                              - generic [ref=f33e2988]: ","
+                              - generic [ref=f33e2989]: f
+                              - generic [ref=f33e2990]: ","
+                              - generic [ref=f33e2991]: "n"
+                      - cell [ref=f33e2992]
+                      - cell "(30)" [ref=f33e2993]
+                - paragraph [ref=f33e2995]: "which satisfies the normalization constraint:"
+                - table [ref=f33e2996]:
+                  - rowgroup [ref=f33e2997]:
+                    - row [ref=f33e2998]:
+                      - cell [ref=f33e2999]
+                      - cell [ref=f33e3000]:
+                        - math [ref=f33e3001]:
+                          - generic [ref=f33e3003]:
+                            - generic [ref=f33e3004]:
+                              - generic [ref=f33e3005]:
+                                - generic [ref=f33e3006]: ∑
+                                - generic [ref=f33e3007]:
+                                  - generic [ref=f33e3008]: "n"
+                                  - generic [ref=f33e3009]: =
+                                  - generic [ref=f33e3010]: "1"
+                                - generic [ref=f33e3011]: "N"
+                              - generic [ref=f33e3012]:
+                                - generic [ref=f33e3013]: P
+                                - generic [ref=f33e3014]:
+                                  - generic [ref=f33e3015]: k
+                                  - generic [ref=f33e3016]: ","
+                                  - generic [ref=f33e3017]: f
+                                  - generic [ref=f33e3018]: ","
+                                  - generic [ref=f33e3019]: "n"
+                                - generic [ref=f33e3020]: ⋆
+                            - generic [ref=f33e3021]: =
+                            - generic [ref=f33e3022]: "1"
+                      - cell [ref=f33e3023]
+                      - cell "(31)" [ref=f33e3024]
+              - paragraph [ref=f33e3027]: The proof is complete. ∎
+            - paragraph [ref=f33e3029]: Summary. This theorem provides the optimal allocation strategy under the ideal assumption that traffic can be arbitrarily split. However, in practical systems, traffic often exists as discrete units that cannot be fully subdivided. The next section investigates how to effectively approximate this ideal uniform allocation strategy under such discrete constraints.
+          - generic [ref=f33e3030]:
+            - heading "IV-F LPT-based Load Balancing for Atomic Flows" [level=3] [ref=f33e3031]:
+              - generic [ref=f33e3032]: IV-F
+              - text: LPT-based Load Balancing for Atomic Flows
+            - paragraph [ref=f33e3034]: The previous section derived the optimal allocation under the ideal assumption of arbitrarily divisible traffic. In practice, however, communication between GPUs is scheduled as indivisible units, making continuous allocation infeasible. Even when flows are split, they remain discrete, as large flows are only divided into several smaller ones (packets or flowlets) rather than continuous segments (bytes or bits).
+            - paragraph [ref=f33e3036]:
+              - text: This section addresses the load balancing problem under such discrete constraints. We aim to minimize the mean squared error between the actual loads and the ideal uniform loads guided by Theorem
+              - link "3" [ref=f33e3037] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem3
+              - text: . To this end, we propose an efficient approximate allocation algorithm and provide theoretical guarantees for its performance.
+            - generic [ref=f33e3038]:
+              - paragraph [ref=f33e3039]:
+                - text: We assume that each flow is indivisible or has been split into the smallest atomic units. The inter-domain total traffic matrix
+                - math [ref=f33e3040]:
+                  - generic [ref=f33e3042]:
+                    - generic [ref=f33e3043]: D
+                    - generic [ref=f33e3044]:
+                      - generic [ref=f33e3045]: (
+                      - generic [ref=f33e3046]: "2"
+                      - generic [ref=f33e3047]: )
+                - text: is known, i.e., the flow between each source domain
+                - math [ref=f33e3048]:
+                  - generic [ref=f33e3049]: k
+                - text: and destination domain
+                - math [ref=f33e3051]:
+                  - generic [ref=f33e3052]: f
+                - text: ","
+                - math [ref=f33e3054]:
+                  - generic [ref=f33e3056]:
+                    - generic [ref=f33e3057]: D
+                    - generic [ref=f33e3058]:
+                      - generic [ref=f33e3059]: k
+                      - generic [ref=f33e3060]: ","
+                      - generic [ref=f33e3061]: f
+                    - generic [ref=f33e3062]:
+                      - generic [ref=f33e3063]: (
+                      - generic [ref=f33e3064]: "2"
+                      - generic [ref=f33e3065]: )
+                - text: ", is given. Based on a fixed allocation matrix"
+                - math [ref=f33e3066]:
+                  - generic [ref=f33e3067]: P
+                - text: ", let"
+                - math [ref=f33e3069]:
+                  - generic [ref=f33e3071]:
+                    - generic [ref=f33e3072]: p
+                    - generic [ref=f33e3073]: "n"
+                - text: denote the fraction of traffic ideally assigned to the
+                - math [ref=f33e3074]:
+                  - generic [ref=f33e3075]: "n"
+                - text: "-th NIC. Then the target load for each flow on NIC"
+                - math [ref=f33e3077]:
+                  - generic [ref=f33e3078]: "n"
+                - text: "is defined as:"
+              - table [ref=f33e3080]:
+                - rowgroup [ref=f33e3081]:
+                  - row [ref=f33e3082]:
+                    - cell [ref=f33e3083]
+                    - cell [ref=f33e3084]:
+                      - math [ref=f33e3085]:
+                        - generic [ref=f33e3087]:
+                          - generic [ref=f33e3088]:
+                            - generic [ref=f33e3089]: T
+                            - generic [ref=f33e3090]:
+                              - generic [ref=f33e3091]: k
+                              - generic [ref=f33e3092]: ","
+                              - generic [ref=f33e3093]: "n"
+                          - generic [ref=f33e3094]: =
+                          - generic [ref=f33e3095]:
+                            - generic [ref=f33e3096]:
+                              - generic [ref=f33e3097]: ∑
+                              - generic [ref=f33e3098]:
+                                - generic [ref=f33e3099]: f
+                                - generic [ref=f33e3100]: =
+                                - generic [ref=f33e3101]: "1"
+                              - generic [ref=f33e3102]: M
+                            - generic [ref=f33e3103]:
+                              - generic [ref=f33e3104]:
+                                - generic [ref=f33e3105]: D
+                                - generic [ref=f33e3106]:
+                                  - generic [ref=f33e3107]: k
+                                  - generic [ref=f33e3108]: ","
+                                  - generic [ref=f33e3109]: f
+                                - generic [ref=f33e3110]:
+                                  - generic [ref=f33e3111]: (
+                                  - generic [ref=f33e3112]: "2"
+                                  - generic [ref=f33e3113]: )
+                              - generic [ref=f33e3114]:
+                                - generic [ref=f33e3115]: p
+                                - generic [ref=f33e3116]: "n"
+                    - cell [ref=f33e3117]
+                    - cell "(32)" [ref=f33e3118]
+            - generic [ref=f33e3120]:
+              - paragraph [ref=f33e3121]:
+                - text: Each GPU-to-GPU flow must be assigned entirely to a single NIC. The problem can thus be formalized as allocating a set of discrete flows with weights
+                - math [ref=f33e3122]:
+                  - generic [ref=f33e3124]:
+                    - generic [ref=f33e3125]: w
+                    - generic [ref=f33e3126]: i
+                - text: to
+                - math [ref=f33e3127]:
+                  - generic [ref=f33e3128]: "N"
+                - text: NICs, such that the actual load on each NIC
+              - table [ref=f33e3130]:
+                - rowgroup [ref=f33e3131]:
+                  - row [ref=f33e3132]:
+                    - cell [ref=f33e3133]
+                    - cell [ref=f33e3134]:
+                      - math [ref=f33e3135]:
+                        - generic [ref=f33e3137]:
+                          - generic [ref=f33e3138]:
+                            - generic [ref=f33e3139]:
+                              - generic [ref=f33e3140]: L
+                              - generic [ref=f33e3141]: j
+                            - generic [ref=f33e3142]: =
+                            - generic [ref=f33e3143]:
+                              - generic [ref=f33e3144]:
+                                - generic [ref=f33e3145]: ∑
+                                - generic [ref=f33e3146]: i
+                              - generic [ref=f33e3147]:
+                                - generic [ref=f33e3148]:
+                                  - generic [ref=f33e3149]: w
+                                  - generic [ref=f33e3150]: i
+                                - generic [ref=f33e3151]:
+                                  - generic [ref=f33e3152]: x
+                                  - generic [ref=f33e3153]:
+                                    - generic [ref=f33e3154]: i
+                                    - generic [ref=f33e3155]: ","
+                                    - generic [ref=f33e3156]: j
+                          - generic [ref=f33e3157]: ","
+                          - generic [ref=f33e3158]:
+                            - generic [ref=f33e3159]:
+                              - generic [ref=f33e3160]: x
+                              - generic [ref=f33e3161]:
+                                - generic [ref=f33e3162]: i
+                                - generic [ref=f33e3163]: ","
+                                - generic [ref=f33e3164]: j
+                            - generic [ref=f33e3165]: ∈
+                            - generic [ref=f33e3166]:
+                              - generic [ref=f33e3167]: "{"
+                              - generic [ref=f33e3168]: "0"
+                              - generic [ref=f33e3169]: ","
+                              - generic [ref=f33e3170]: "1"
+                              - generic [ref=f33e3171]: "}"
+                    - cell [ref=f33e3172]
+                    - cell "(33)" [ref=f33e3173]
+              - paragraph [ref=f33e3175]:
+                - text: is as close as possible to its target load
+                - math [ref=f33e3176]:
+                  - generic [ref=f33e3178]:
+                    - generic [ref=f33e3179]: T
+                    - generic [ref=f33e3180]: j
+                - text: . The binary assignment variables
+                - math [ref=f33e3181]:
+                  - generic [ref=f33e3183]:
+                    - generic [ref=f33e3184]: x
+                    - generic [ref=f33e3185]:
+                      - generic [ref=f33e3186]: i
+                      - generic [ref=f33e3187]: ","
+                      - generic [ref=f33e3188]: j
+                - text: "satisfy:"
+              - table [ref=f33e3189]:
+                - rowgroup [ref=f33e3190]:
+                  - row [ref=f33e3191]:
+                    - cell [ref=f33e3192]
+                    - cell [ref=f33e3193]:
+                      - math [ref=f33e3194]:
+                        - generic [ref=f33e3196]:
+                          - generic [ref=f33e3197]:
+                            - generic [ref=f33e3198]:
+                              - generic [ref=f33e3199]: x
+                              - generic [ref=f33e3200]:
+                                - generic [ref=f33e3201]: i
+                                - generic [ref=f33e3202]: ","
+                                - generic [ref=f33e3203]: j
+                            - generic [ref=f33e3204]: =
+                            - generic [ref=f33e3205]:
+                              - generic [ref=f33e3206]: "{"
+                              - generic [ref=f33e3207]:
+                                - generic [ref=f33e3210]:
+                                  - generic [ref=f33e3211]: "1"
+                                  - generic [ref=f33e3212]: ","
+                                  - generic [ref=f33e3213]:
+                                    - generic [ref=f33e3214]: flow
+                                    - generic [ref=f33e3215]: i
+                                    - generic [ref=f33e3216]: on NIC
+                                    - generic [ref=f33e3217]: j
+                                - generic [ref=f33e3221]:
+                                  - generic [ref=f33e3222]: "0"
+                                  - generic [ref=f33e3223]: ","
+                                  - generic [ref=f33e3224]: otherwise
+                          - generic [ref=f33e3226]: ","
+                          - generic [ref=f33e3227]:
+                            - generic [ref=f33e3228]:
+                              - generic [ref=f33e3229]:
+                                - generic [ref=f33e3230]: ∑
+                                - generic [ref=f33e3231]:
+                                  - generic [ref=f33e3232]: j
+                                  - generic [ref=f33e3233]: =
+                                  - generic [ref=f33e3234]: "1"
+                                - generic [ref=f33e3235]: "N"
+                              - generic [ref=f33e3236]:
+                                - generic [ref=f33e3237]: x
+                                - generic [ref=f33e3238]:
+                                  - generic [ref=f33e3239]: i
+                                  - generic [ref=f33e3240]: ","
+                                  - generic [ref=f33e3241]: j
+                            - generic [ref=f33e3242]: =
+                            - generic [ref=f33e3243]:
+                              - generic [ref=f33e3244]: "1"
+                              - generic [ref=f33e3245]: ","
+                              - generic [ref=f33e3246]:
+                                - generic [ref=f33e3247]: ∀
+                                - generic [ref=f33e3248]: i
+                    - cell [ref=f33e3249]
+                    - cell "(34)" [ref=f33e3250]
+            - generic [ref=f33e3252]:
+              - paragraph [ref=f33e3253]: "To quantify the load deviation, we introduce the MSE as the metric:"
+              - table [ref=f33e3254]:
+                - rowgroup [ref=f33e3255]:
+                  - row [ref=f33e3256]:
+                    - cell [ref=f33e3257]
+                    - cell [ref=f33e3258]:
+                      - math [ref=f33e3259]:
+                        - generic [ref=f33e3261]:
+                          - generic [ref=f33e3262]: MSE
+                          - generic [ref=f33e3263]: =
+                          - generic [ref=f33e3264]:
+                            - generic [ref=f33e3265]:
+                              - generic [ref=f33e3266]: "1"
+                              - generic [ref=f33e3267]: "N"
+                            - generic [ref=f33e3268]:
+                              - generic [ref=f33e3269]:
+                                - generic [ref=f33e3270]: ∑
+                                - generic [ref=f33e3271]:
+                                  - generic [ref=f33e3272]: j
+                                  - generic [ref=f33e3273]: =
+                                  - generic [ref=f33e3274]: "1"
+                                - generic [ref=f33e3275]: "N"
+                              - generic [ref=f33e3276]:
+                                - generic [ref=f33e3277]:
+                                  - generic [ref=f33e3278]: (
+                                  - generic [ref=f33e3279]:
+                                    - generic [ref=f33e3280]:
+                                      - generic [ref=f33e3281]: L
+                                      - generic [ref=f33e3282]: j
+                                    - generic [ref=f33e3283]: −
+                                    - generic [ref=f33e3284]:
+                                      - generic [ref=f33e3285]: T
+                                      - generic [ref=f33e3286]: j
+                                  - generic [ref=f33e3287]: )
+                                - generic [ref=f33e3288]: "2"
+                    - cell [ref=f33e3289]
+                    - cell "(35)" [ref=f33e3290]
+            - generic [ref=f33e3292]:
+              - paragraph [ref=f33e3293]:
+                - text: Under this definition, the GPU-to-GPU flow allocation problem with fixed allocation fractions
+                - math [ref=f33e3294]:
+                  - generic [ref=f33e3296]:
+                    - generic [ref=f33e3297]: p
+                    - generic [ref=f33e3298]: "n"
+                - text: "can be formalized as a combinatorial optimization problem:"
+              - table [ref=f33e3299]:
+                - rowgroup [ref=f33e3300]:
+                  - row [ref=f33e3301]:
+                    - cell [ref=f33e3302]
+                    - cell [ref=f33e3303]:
+                      - math [ref=f33e3304]:
+                        - generic [ref=f33e3306]:
+                          - generic [ref=f33e3307]: min
+                          - generic [ref=f33e3308]:
+                            - generic [ref=f33e3309]: x
+                            - generic [ref=f33e3310]:
+                              - generic [ref=f33e3311]: i
+                              - generic [ref=f33e3312]: ","
+                              - generic [ref=f33e3313]: j
+                    - cell [ref=f33e3314]:
+                      - math [ref=f33e3315]:
+                        - generic [ref=f33e3317]:
+                          - generic [ref=f33e3319]:
+                            - generic [ref=f33e3320]: "1"
+                            - generic [ref=f33e3321]: "N"
+                          - generic [ref=f33e3322]:
+                            - generic [ref=f33e3324]:
+                              - generic [ref=f33e3325]: ∑
+                              - generic [ref=f33e3326]:
+                                - generic [ref=f33e3327]: j
+                                - generic [ref=f33e3328]: =
+                                - generic [ref=f33e3329]: "1"
+                              - generic [ref=f33e3330]: "N"
+                            - generic [ref=f33e3331]:
+                              - generic [ref=f33e3332]:
+                                - generic [ref=f33e3333]: (
+                                - generic [ref=f33e3334]:
+                                  - generic [ref=f33e3335]:
+                                    - generic [ref=f33e3336]: L
+                                    - generic [ref=f33e3337]: j
+                                  - generic [ref=f33e3338]: −
+                                  - generic [ref=f33e3339]:
+                                    - generic [ref=f33e3340]: T
+                                    - generic [ref=f33e3341]: j
+                                - generic [ref=f33e3342]: )
+                              - generic [ref=f33e3343]: "2"
+                    - cell [ref=f33e3344]
+                    - cell "(36)" [ref=f33e3345]
+                  - row [ref=f33e3347]:
+                    - cell [ref=f33e3348]
+                    - cell "s.t." [ref=f33e3349]
+                    - cell [ref=f33e3350]:
+                      - math [ref=f33e3351]:
+                        - generic [ref=f33e3353]:
+                          - generic [ref=f33e3354]:
+                            - generic [ref=f33e3355]:
+                              - generic [ref=f33e3357]:
+                                - generic [ref=f33e3358]: ∑
+                                - generic [ref=f33e3359]:
+                                  - generic [ref=f33e3360]: j
+                                  - generic [ref=f33e3361]: =
+                                  - generic [ref=f33e3362]: "1"
+                                - generic [ref=f33e3363]: "N"
+                              - generic [ref=f33e3364]:
+                                - generic [ref=f33e3365]: x
+                                - generic [ref=f33e3366]:
+                                  - generic [ref=f33e3367]: i
+                                  - generic [ref=f33e3368]: ","
+                                  - generic [ref=f33e3369]: j
+                            - generic [ref=f33e3370]: =
+                            - generic [ref=f33e3371]:
+                              - generic [ref=f33e3372]: "1"
+                              - generic [ref=f33e3373]: ","
+                              - generic [ref=f33e3374]:
+                                - generic [ref=f33e3375]: ∀
+                                - generic [ref=f33e3376]: i
+                          - generic [ref=f33e3377]: ","
+                    - cell [ref=f33e3378]
+                  - row [ref=f33e3379]:
+                    - cell [ref=f33e3380]
+                    - cell [ref=f33e3381]
+                    - cell [ref=f33e3382]:
+                      - math [ref=f33e3383]:
+                        - generic [ref=f33e3385]:
+                          - generic [ref=f33e3386]:
+                            - generic [ref=f33e3387]:
+                              - generic [ref=f33e3388]: L
+                              - generic [ref=f33e3389]: j
+                            - generic [ref=f33e3390]: =
+                            - generic [ref=f33e3391]:
+                              - generic [ref=f33e3392]:
+                                - generic [ref=f33e3394]:
+                                  - generic [ref=f33e3395]: ∑
+                                  - generic [ref=f33e3396]: i
+                                - generic [ref=f33e3397]:
+                                  - generic [ref=f33e3398]:
+                                    - generic [ref=f33e3399]: w
+                                    - generic [ref=f33e3400]: i
+                                  - generic [ref=f33e3401]:
+                                    - generic [ref=f33e3402]: x
+                                    - generic [ref=f33e3403]:
+                                      - generic [ref=f33e3404]: i
+                                      - generic [ref=f33e3405]: ","
+                                      - generic [ref=f33e3406]: j
+                              - generic [ref=f33e3407]: ","
+                              - generic [ref=f33e3408]:
+                                - generic [ref=f33e3409]: ∀
+                                - generic [ref=f33e3410]: j
+                          - generic [ref=f33e3411]: ","
+                    - cell [ref=f33e3412]
+                  - row [ref=f33e3413]:
+                    - cell [ref=f33e3414]
+                    - cell [ref=f33e3415]
+                    - cell [ref=f33e3416]:
+                      - math [ref=f33e3417]:
+                        - generic [ref=f33e3419]:
+                          - generic [ref=f33e3420]:
+                            - generic [ref=f33e3421]: x
+                            - generic [ref=f33e3422]:
+                              - generic [ref=f33e3423]: i
+                              - generic [ref=f33e3424]: ","
+                              - generic [ref=f33e3425]: j
+                          - generic [ref=f33e3426]: ∈
+                          - generic [ref=f33e3427]:
+                            - generic [ref=f33e3428]:
+                              - generic [ref=f33e3429]: "{"
+                              - generic [ref=f33e3430]: "0"
+                              - generic [ref=f33e3431]: ","
+                              - generic [ref=f33e3432]: "1"
+                              - generic [ref=f33e3433]: "}"
+                            - generic [ref=f33e3434]: ","
+                            - generic [ref=f33e3435]:
+                              - generic [ref=f33e3436]: ∀
+                              - generic [ref=f33e3437]: i
+                            - generic [ref=f33e3438]: ","
+                            - generic [ref=f33e3439]: j
+                    - cell [ref=f33e3440]
+            - paragraph [ref=f33e3442]: This problem is a discrete combinatorial optimization task, aiming to minimize the mean squared deviation between the actual load and the target load on each NIC. Since each flow is assigned to exactly one NIC, directly solving this problem incurs high computational complexity in large-scale systems. To reduce computational overhead, we adopt the LPT for approximate allocation.
+            - paragraph [ref=f33e3444]:
+              - text: The LPT method first sorts all flows in descending order of weights
+              - math [ref=f33e3445]:
+                - generic [ref=f33e3447]:
+                  - generic [ref=f33e3448]: w
+                  - generic [ref=f33e3449]: i
+              - text: and then sequentially assigns each flow to the NIC with the currently smallest total load until all flows are allocated. According to Theorem
+              - link "3" [ref=f33e3450] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem3
+              - text: ", the sending-uniform strategy ensures that the target load"
+              - math [ref=f33e3451]:
+                - generic [ref=f33e3453]:
+                  - generic [ref=f33e3454]: T
+                  - generic [ref=f33e3455]: j
+              - text: already matches the ideal average load
+              - math [ref=f33e3456]:
+                - generic [ref=f33e3458]:
+                  - generic [ref=f33e3459]:
+                    - generic [ref=f33e3460]: L
+                    - generic [ref=f33e3461]: opt
+                  - generic [ref=f33e3462]: =
+                  - generic [ref=f33e3463]:
+                    - generic [ref=f33e3464]:
+                      - generic [ref=f33e3465]: ∑
+                      - generic [ref=f33e3466]: i
+                    - generic [ref=f33e3467]:
+                      - generic [ref=f33e3468]:
+                        - generic [ref=f33e3469]: w
+                        - generic [ref=f33e3470]: i
+                      - generic [ref=f33e3471]: /
+                      - generic [ref=f33e3472]: "N"
+              - text: ", so the LPT algorithm effectively performs discrete allocation while maximizing the utilization of uniformly balanced NIC loads."
+            - generic [ref=f33e3473]:
+              - heading "Theorem 4." [level=6] [ref=f33e3474]:
+                - generic [ref=f33e3475]: Theorem 4
+                - text: .
+              - generic [ref=f33e3476]:
+                - paragraph [ref=f33e3477]:
+                  - generic [ref=f33e3478]:
+                    - text: For the discrete-flow load balancing problem described above, when the LPT algorithm is employed for allocation, the MSE between the actual load and the ideal target load is upper-bounded by the square of the largest single flow weight
+                    - math [ref=f33e3479]:
+                      - generic [ref=f33e3481]:
+                        - generic [ref=f33e3482]: w
+                        - generic [ref=f33e3483]: max
+                    - text: ":"
+                - table [ref=f33e3484]:
+                  - rowgroup [ref=f33e3485]:
+                    - row [ref=f33e3486]:
+                      - cell [ref=f33e3487]
+                      - cell [ref=f33e3488]:
+                        - math [ref=f33e3489]:
+                          - generic [ref=f33e3491]:
+                            - generic [ref=f33e3492]: MSE
+                            - generic [ref=f33e3493]: ≤
+                            - generic [ref=f33e3494]:
+                              - generic [ref=f33e3495]: w
+                              - generic [ref=f33e3496]: max
+                              - generic [ref=f33e3497]: "2"
+                      - cell [ref=f33e3498]
+                      - cell "(37)" [ref=f33e3499]
+            - generic [ref=f33e3501]:
+              - heading "Proof." [level=6] [ref=f33e3502]
+              - generic [ref=f33e3503]:
+                - paragraph [ref=f33e3504]:
+                  - text: Classical LPT theory
+                  - generic [ref=f33e3505]:
+                    - text: "["
+                    - link "17" [ref=f33e3506] [cursor=pointer]:
+                      - /url: https://arxiv.org/html/2510.19262v1#bib.bib17
+                    - text: "]"
+                  - text: guarantees that, for the standard discrete load balancing problem, the maximum load
+                  - math [ref=f33e3507]:
+                    - generic [ref=f33e3509]:
+                      - generic [ref=f33e3510]: L
+                      - generic [ref=f33e3511]: max
+                  - text: "satisfies:"
+                - table [ref=f33e3512]:
+                  - rowgroup [ref=f33e3513]:
+                    - row [ref=f33e3514]:
+                      - cell [ref=f33e3515]
+                      - cell [ref=f33e3516]:
+                        - math [ref=f33e3517]:
+                          - generic [ref=f33e3519]:
+                            - generic [ref=f33e3520]:
+                              - generic [ref=f33e3521]: L
+                              - generic [ref=f33e3522]: max
+                            - generic [ref=f33e3523]: ≤
+                            - generic [ref=f33e3524]:
+                              - generic [ref=f33e3525]:
+                                - generic [ref=f33e3526]: L
+                                - generic [ref=f33e3527]: opt
+                              - generic [ref=f33e3528]: +
+                              - generic [ref=f33e3529]:
+                                - generic [ref=f33e3530]: w
+                                - generic [ref=f33e3531]: max
+                      - cell [ref=f33e3532]
+                      - cell "(38)" [ref=f33e3533]
+                - paragraph [ref=f33e3535]:
+                  - text: where
+                  - math [ref=f33e3536]:
+                    - generic [ref=f33e3538]:
+                      - generic [ref=f33e3539]:
+                        - generic [ref=f33e3540]: w
+                        - generic [ref=f33e3541]: max
+                      - generic [ref=f33e3542]: =
+                      - generic [ref=f33e3543]:
+                        - generic [ref=f33e3544]:
+                          - generic [ref=f33e3545]: max
+                          - generic [ref=f33e3546]: i
+                        - generic: ⁡
+                        - generic [ref=f33e3547]:
+                          - generic [ref=f33e3548]: w
+                          - generic [ref=f33e3549]: i
+                  - text: "denotes the weight of the largest single flow. The LPT approximation ratio is given by:"
+                - table [ref=f33e3550]:
+                  - rowgroup [ref=f33e3551]:
+                    - row [ref=f33e3552]:
+                      - cell [ref=f33e3553]
+                      - cell [ref=f33e3554]:
+                        - math [ref=f33e3555]:
+                          - generic [ref=f33e3557]:
+                            - generic [ref=f33e3558]: R
+                            - generic [ref=f33e3559]: =
+                            - generic [ref=f33e3560]:
+                              - generic [ref=f33e3561]:
+                                - generic [ref=f33e3562]: L
+                                - generic [ref=f33e3563]: max
+                              - generic [ref=f33e3564]:
+                                - generic [ref=f33e3565]: L
+                                - generic [ref=f33e3566]: opt
+                            - generic [ref=f33e3567]: ≤
+                            - generic [ref=f33e3568]:
+                              - generic [ref=f33e3569]:
+                                - generic [ref=f33e3570]: "4"
+                                - generic [ref=f33e3571]: "3"
+                              - generic [ref=f33e3572]: −
+                              - generic [ref=f33e3573]:
+                                - generic [ref=f33e3574]: "1"
+                                - generic [ref=f33e3575]:
+                                  - generic [ref=f33e3576]: "3"
+                                  - generic [ref=f33e3577]: "N"
+                      - cell [ref=f33e3578]
+                      - cell "(39)" [ref=f33e3579]
+              - generic [ref=f33e3581]:
+                - paragraph [ref=f33e3582]: "Consequently, the deviation of the actual load on each NIC from the target load is bounded by:"
+                - table [ref=f33e3583]:
+                  - rowgroup [ref=f33e3584]:
+                    - row [ref=f33e3585]:
+                      - cell [ref=f33e3586]
+                      - cell [ref=f33e3587]:
+                        - math [ref=f33e3588]:
+                          - generic [ref=f33e3590]:
+                            - generic [ref=f33e3591]:
+                              - generic [ref=f33e3592]:
+                                - generic [ref=f33e3593]:
+                                  - generic [ref=f33e3594]: "|"
+                                  - generic [ref=f33e3595]:
+                                    - generic [ref=f33e3596]:
+                                      - generic [ref=f33e3597]: L
+                                      - generic [ref=f33e3598]: j
+                                    - generic [ref=f33e3599]: −
+                                    - generic [ref=f33e3600]:
+                                      - generic [ref=f33e3601]: L
+                                      - generic [ref=f33e3602]: opt
+                                  - generic [ref=f33e3603]: "|"
+                                - generic [ref=f33e3604]: ≤
+                                - generic [ref=f33e3605]:
+                                  - generic [ref=f33e3606]:
+                                    - generic [ref=f33e3607]: L
+                                    - generic [ref=f33e3608]: max
+                                  - generic [ref=f33e3609]: −
+                                  - generic [ref=f33e3610]:
+                                    - generic [ref=f33e3611]: L
+                                    - generic [ref=f33e3612]: opt
+                                - generic [ref=f33e3613]: ≤
+                                - generic [ref=f33e3614]:
+                                  - generic [ref=f33e3615]: w
+                                  - generic [ref=f33e3616]: max
+                              - generic [ref=f33e3617]: ","
+                              - generic [ref=f33e3618]:
+                                - generic [ref=f33e3619]: ∀
+                                - generic [ref=f33e3620]: j
+                            - generic [ref=f33e3621]: .
+                      - cell [ref=f33e3622]
+                      - cell "(40)" [ref=f33e3623]
+              - generic [ref=f33e3625]:
+                - paragraph [ref=f33e3626]: "This directly leads to the following upper bound on MSE:"
+                - table [ref=f33e3627]:
+                  - rowgroup [ref=f33e3628]:
+                    - row [ref=f33e3629]:
+                      - cell [ref=f33e3630]
+                      - cell [ref=f33e3631]:
+                        - math [ref=f33e3632]:
+                          - generic [ref=f33e3634]:
+                            - generic [ref=f33e3635]: MSE
+                            - generic [ref=f33e3636]: =
+                            - generic [ref=f33e3637]:
+                              - generic [ref=f33e3638]:
+                                - generic [ref=f33e3639]: "1"
+                                - generic [ref=f33e3640]: "N"
+                              - generic [ref=f33e3641]:
+                                - generic [ref=f33e3642]:
+                                  - generic [ref=f33e3643]: ∑
+                                  - generic [ref=f33e3644]:
+                                    - generic [ref=f33e3645]: j
+                                    - generic [ref=f33e3646]: =
+                                    - generic [ref=f33e3647]: "1"
+                                  - generic [ref=f33e3648]: "N"
+                                - generic [ref=f33e3649]:
+                                  - generic [ref=f33e3650]:
+                                    - generic [ref=f33e3651]: (
+                                    - generic [ref=f33e3652]:
+                                      - generic [ref=f33e3653]:
+                                        - generic [ref=f33e3654]: L
+                                        - generic [ref=f33e3655]: j
+                                      - generic [ref=f33e3656]: −
+                                      - generic [ref=f33e3657]:
+                                        - generic [ref=f33e3658]: L
+                                        - generic [ref=f33e3659]: opt
+                                    - generic [ref=f33e3660]: )
+                                  - generic [ref=f33e3661]: "2"
+                            - generic [ref=f33e3662]: ≤
+                            - generic [ref=f33e3663]:
+                              - generic [ref=f33e3664]: w
+                              - generic [ref=f33e3665]: max
+                              - generic [ref=f33e3666]: "2"
+                      - cell [ref=f33e3667]
+                      - cell "(41)" [ref=f33e3668]
+              - paragraph [ref=f33e3671]:
+                - text: Thus, by sorting flows in descending order and greedily assigning them to the NIC with the current minimum load, LPT effectively minimizes the load deviation of each NIC and indirectly controls the MSE. The computational complexity of the algorithm is dominated by sorting and assignment operations, which are
+                - math [ref=f33e3672]:
+                  - generic [ref=f33e3674]:
+                    - generic [ref=f33e3675]: O
+                    - generic [ref=f33e3676]:
+                      - generic [ref=f33e3677]: (
+                      - generic [ref=f33e3678]:
+                        - generic [ref=f33e3679]: F
+                        - generic [ref=f33e3680]:
+                          - generic [ref=f33e3681]: log
+                          - generic: ⁡
+                          - generic [ref=f33e3682]: F
+                      - generic [ref=f33e3683]: )
+                - text: and
+                - math [ref=f33e3684]:
+                  - generic [ref=f33e3686]:
+                    - generic [ref=f33e3687]: O
+                    - generic [ref=f33e3688]:
+                      - generic [ref=f33e3689]: (
+                      - generic [ref=f33e3690]:
+                        - generic [ref=f33e3691]: F
+                        - generic [ref=f33e3692]: "N"
+                      - generic [ref=f33e3693]: )
+                - text: ", respectively, yielding an overall complexity of"
+                - math [ref=f33e3694]:
+                  - generic [ref=f33e3696]:
+                    - generic [ref=f33e3697]: O
+                    - generic [ref=f33e3698]:
+                      - generic [ref=f33e3699]: (
+                      - generic [ref=f33e3700]:
+                        - generic [ref=f33e3701]:
+                          - generic [ref=f33e3702]: F
+                          - generic [ref=f33e3703]:
+                            - generic [ref=f33e3704]: log
+                            - generic: ⁡
+                            - generic [ref=f33e3705]: F
+                        - generic [ref=f33e3706]: +
+                        - generic [ref=f33e3707]:
+                          - generic [ref=f33e3708]: F
+                          - generic [ref=f33e3709]: "N"
+                      - generic [ref=f33e3710]: )
+                - text: ", where"
+                - math [ref=f33e3711]:
+                  - generic [ref=f33e3712]: F
+                - text: denotes the number of flows. Compared to the exponential complexity of an exact ILP solution, LPT provides a significant reduction in computational overhead, making it suitable for large-scale multi-GPU systems. ∎
+            - paragraph [ref=f33e3715]: Summary. This section extends the continuous-flow theory to practical systems with indivisible flows. Through the LPT algorithm, we show that discrete allocation can still achieve predictable load balancing. The key insight is that load balancing effectiveness depends on the maximum flow granularity, motivating the next focus on designing flow-splitting and scheduling mechanisms that control granularity to approach the theoretical optimum.
+        - generic [ref=f33e3716]:
+          - heading "V Implementation" [level=2] [ref=f33e3717]:
+            - generic [ref=f33e3718]: V
+            - text: Implementation
+          - 'figure "Figure 6: System design and implementation." [ref=f33e3719]':
+            - img "Refer to caption" [ref=f33e3720]
+            - generic [ref=f33e3721]:
+              - generic [ref=f33e3722]: "Figure 6:"
+              - text: System design and implementation.
+          - paragraph [ref=f33e3724]: Building upon the theoretical framework established in the previous chapter, this section presents the concrete design and implementation of an all-to-all communication system optimized for the Rail architecture. We first introduce the overall framework adopted to achieve load balancing, encompassing multi-path transmission, flow splitting, and the spraying mechanism. Subsequently, we provide a detailed description of the design and implementation of the LPT scheduler.
+          - generic [ref=f33e3725]:
+            - heading "V-A Multi-Path spraying Framework" [level=3] [ref=f33e3726]:
+              - generic [ref=f33e3727]: V-A
+              - text: Multi-Path spraying Framework
+            - paragraph [ref=f33e3729]:
+              - text: To fully exploit the
+              - math [ref=f33e3730]:
+                - generic [ref=f33e3731]: "N"
+              - text: parallel communication lanes provided by the Rail architecture, our system employs multi-path packet spraying as the core traffic distribution mechanism in Fig.
+              - link "6" [ref=f33e3733] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S5.F6
+              - text: . Spraying is an advanced multi-path transmission technique designed to actively disperse the units of a logical data flow (e.g., packets or subflows) across multiple physical paths. For the sparse and uneven all-to-all traffic generated by MoE models, the spraying mechanism provides finer-grained and more dynamic load balancing compared to traditional ECMP static hashing, effectively alleviating link congestion caused by hash collisions on large flows.
+            - figure "Algorithm 1 MoE distributed training with DP/EP/PP and LPT-based all-to-all communication." [ref=f33e3734]:
+              - generic [ref=f33e3735]:
+                - generic [ref=f33e3736]:
+                  - generic [ref=f33e3737]: "Input:"
+                  - generic [ref=f33e3738]:
+                    - text: Local GPU
+                    - math [ref=f33e3739]:
+                      - generic [ref=f33e3740]: g
+                    - text: ; Number of rails
+                    - math [ref=f33e3742]:
+                      - generic [ref=f33e3743]: "N"
+                    - text: ; model parameters
+                    - math [ref=f33e3745]:
+                      - generic [ref=f33e3746]: Θ
+                    - text: ; Expert assignment
+                    - math [ref=f33e3748]:
+                      - generic [ref=f33e3749]: ℰ
+                - generic [ref=f33e3751]:
+                  - generic [ref=f33e3752]: "Output:"
+                  - text: Updated model parameters
+                  - math [ref=f33e3753]:
+                    - generic [ref=f33e3754]: Θ
+                  - text: after one training iteration
+                - generic [ref=f33e3756]: "1"
+                - generic [ref=f33e3758]: "// Step 0: Preprocessing / Input preparation"
+                - generic [ref=f33e3759]:
+                  - generic [ref=f33e3760]: "2"
+                  - text: Load mini-batch input data for this GPU.
+                - generic [ref=f33e3761]: "// Step 1: Attention and gating computation"
+                - generic [ref=f33e3762]:
+                  - generic [ref=f33e3763]: "3"
+                  - text: "Compute attention outputs:"
+                  - math [ref=f33e3764]:
+                    - generic [ref=f33e3766]:
+                      - generic [ref=f33e3767]:
+                        - generic [ref=f33e3768]: A
+                        - generic [ref=f33e3769]: t
+                        - generic [ref=f33e3770]: t
+                        - generic [ref=f33e3771]: "n"
+                        - generic [ref=f33e3772]: O
+                        - generic [ref=f33e3773]: u
+                        - generic [ref=f33e3774]: t
+                      - generic [ref=f33e3775]: ←
+                      - generic [ref=f33e3776]:
+                        - generic [ref=f33e3777]: A
+                        - generic [ref=f33e3778]: t
+                        - generic [ref=f33e3779]: t
+                        - generic [ref=f33e3780]: e
+                        - generic [ref=f33e3781]: "n"
+                        - generic [ref=f33e3782]: t
+                        - generic [ref=f33e3783]: i
+                        - generic [ref=f33e3784]: o
+                        - generic [ref=f33e3785]: "n"
+                        - generic [ref=f33e3786]:
+                          - generic [ref=f33e3787]: (
+                          - generic [ref=f33e3788]:
+                            - generic [ref=f33e3789]: I
+                            - generic [ref=f33e3790]: "n"
+                            - generic [ref=f33e3791]: p
+                            - generic [ref=f33e3792]: u
+                            - generic [ref=f33e3793]: t
+                            - generic [ref=f33e3794]: s
+                          - generic [ref=f33e3795]: ","
+                          - generic [ref=f33e3796]: Θ
+                          - generic [ref=f33e3797]: )
+                - generic [ref=f33e3798]:
+                  - generic [ref=f33e3799]: "4"
+                  - text: "Compute gating decisions:"
+                  - math [ref=f33e3800]:
+                    - generic [ref=f33e3802]:
+                      - generic [ref=f33e3803]:
+                        - generic [ref=f33e3804]: G
+                        - generic [ref=f33e3805]: a
+                        - generic [ref=f33e3806]: t
+                        - generic [ref=f33e3807]: e
+                      - generic [ref=f33e3808]: ←
+                      - generic [ref=f33e3809]:
+                        - generic [ref=f33e3810]: G
+                        - generic [ref=f33e3811]: a
+                        - generic [ref=f33e3812]: t
+                        - generic [ref=f33e3813]: e
+                        - generic [ref=f33e3814]:
+                          - generic [ref=f33e3815]: (
+                          - generic [ref=f33e3816]:
+                            - generic [ref=f33e3817]: A
+                            - generic [ref=f33e3818]: t
+                            - generic [ref=f33e3819]: t
+                            - generic [ref=f33e3820]: "n"
+                            - generic [ref=f33e3821]: O
+                            - generic [ref=f33e3822]: u
+                            - generic [ref=f33e3823]: t
+                          - generic [ref=f33e3824]: )
+                - generic [ref=f33e3825]: "// Step 2: First All-to-All (inputs to experts)"
+                - generic [ref=f33e3826]:
+                  - generic [ref=f33e3827]: "5"
+                  - text: Select input slices for local experts according to
+                  - math [ref=f33e3828]:
+                    - generic [ref=f33e3830]:
+                      - generic [ref=f33e3831]: G
+                      - generic [ref=f33e3832]: a
+                      - generic [ref=f33e3833]: t
+                      - generic [ref=f33e3834]: e
+                  - text: and
+                  - math [ref=f33e3835]:
+                    - generic [ref=f33e3836]: ℰ
+                - generic [ref=f33e3838]:
+                  - generic [ref=f33e3839]: "6"
+                  - text: Split inputs into atomic flows
+                  - math [ref=f33e3840]:
+                    - generic [ref=f33e3842]:
+                      - generic [ref=f33e3843]: "{"
+                      - generic [ref=f33e3844]:
+                        - generic [ref=f33e3845]: w
+                        - generic [ref=f33e3846]: i
+                      - generic [ref=f33e3847]: "}"
+                - generic [ref=f33e3848]:
+                  - generic [ref=f33e3849]: "7"
+                  - text: Call LPT Scheduler to assign flows to rails
+                - generic [ref=f33e3850]:
+                  - generic [ref=f33e3851]: "8"
+                  - text: Transmit flows via spraying
+                - generic [ref=f33e3852]: "// Step 3: Expert computation (distributed EP)"
+                - generic [ref=f33e3853]:
+                  - generic [ref=f33e3854]: "9"
+                  - text: Compute local expert outputs
+                  - math [ref=f33e3855]:
+                    - generic [ref=f33e3857]:
+                      - generic [ref=f33e3858]: E
+                      - generic [ref=f33e3859]: x
+                      - generic [ref=f33e3860]: p
+                      - generic [ref=f33e3861]: O
+                      - generic [ref=f33e3862]: u
+                      - generic [ref=f33e3863]:
+                        - generic [ref=f33e3864]: t
+                        - generic [ref=f33e3865]: e
+                - generic [ref=f33e3866]:
+                  - generic [ref=f33e3867]: "10"
+                  - text: If expert spans multiple GPUs, aggregate partial results
+                - generic [ref=f33e3868]: "// Step 4: Second All-to-All (expert outputs aggregation)"
+                - generic [ref=f33e3869]:
+                  - generic [ref=f33e3870]: "11"
+                  - text: Split expert outputs into atomic flows
+                  - math [ref=f33e3871]:
+                    - generic [ref=f33e3873]:
+                      - generic [ref=f33e3874]: "{"
+                      - generic [ref=f33e3875]:
+                        - generic [ref=f33e3876]: w
+                        - generic [ref=f33e3877]: i
+                      - generic [ref=f33e3878]: "}"
+                - generic [ref=f33e3879]:
+                  - generic [ref=f33e3880]: "12"
+                  - text: Call LPT Scheduler to assign flows to rails
+                - generic [ref=f33e3881]:
+                  - generic [ref=f33e3882]: "13"
+                  - text: Transmit flows via spraying
+                - generic [ref=f33e3883]: "// Step 5: Add & Norm computation"
+                - generic [ref=f33e3884]:
+                  - generic [ref=f33e3885]: "14"
+                  - math [ref=f33e3886]:
+                    - generic [ref=f33e3888]:
+                      - generic [ref=f33e3889]:
+                        - generic [ref=f33e3890]: O
+                        - generic [ref=f33e3891]: u
+                        - generic [ref=f33e3892]: t
+                        - generic [ref=f33e3893]: p
+                        - generic [ref=f33e3894]: u
+                        - generic [ref=f33e3895]: t
+                      - generic [ref=f33e3896]: ←
+                      - generic [ref=f33e3897]:
+                        - generic [ref=f33e3898]: A
+                        - generic [ref=f33e3899]: d
+                        - generic [ref=f33e3900]: d
+                        - generic [ref=f33e3901]: "N"
+                        - generic [ref=f33e3902]: o
+                        - generic [ref=f33e3903]: r
+                        - generic [ref=f33e3904]: m
+                        - generic [ref=f33e3905]:
+                          - generic [ref=f33e3906]: (
+                          - generic [ref=f33e3907]:
+                            - generic [ref=f33e3908]: A
+                            - generic [ref=f33e3909]: t
+                            - generic [ref=f33e3910]: t
+                            - generic [ref=f33e3911]: "n"
+                            - generic [ref=f33e3912]: O
+                            - generic [ref=f33e3913]: u
+                            - generic [ref=f33e3914]: t
+                          - generic [ref=f33e3915]: ","
+                          - generic [ref=f33e3916]:
+                            - generic [ref=f33e3917]: E
+                            - generic [ref=f33e3918]: x
+                            - generic [ref=f33e3919]: p
+                            - generic [ref=f33e3920]: O
+                            - generic [ref=f33e3921]: u
+                            - generic [ref=f33e3922]: t
+                          - generic [ref=f33e3923]: )
+                - generic [ref=f33e3924]: "// Step 6: Output propagation"
+                - generic [ref=f33e3925]:
+                  - generic [ref=f33e3926]: "15"
+                  - math [ref=f33e3927]:
+                    - generic [ref=f33e3929]:
+                      - generic [ref=f33e3930]:
+                        - generic [ref=f33e3931]: O
+                        - generic [ref=f33e3932]: u
+                        - generic [ref=f33e3933]:
+                          - generic [ref=f33e3934]: t
+                          - generic [ref=f33e3935]:
+                            - generic [ref=f33e3936]: M
+                            - generic [ref=f33e3937]: o
+                            - generic [ref=f33e3938]: E
+                      - generic [ref=f33e3939]: ←
+                      - generic [ref=f33e3940]:
+                        - generic [ref=f33e3941]: O
+                        - generic [ref=f33e3942]: u
+                        - generic [ref=f33e3943]: t
+                        - generic [ref=f33e3944]: p
+                        - generic [ref=f33e3945]: u
+                        - generic [ref=f33e3946]: t
+                - generic [ref=f33e3947]:
+                  - generic [ref=f33e3948]: "16"
+                  - text: Pass
+                  - math [ref=f33e3949]:
+                    - generic [ref=f33e3951]:
+                      - generic [ref=f33e3952]: O
+                      - generic [ref=f33e3953]: u
+                      - generic [ref=f33e3954]:
+                        - generic [ref=f33e3955]: t
+                        - generic [ref=f33e3956]:
+                          - generic [ref=f33e3957]: M
+                          - generic [ref=f33e3958]: o
+                          - generic [ref=f33e3959]: E
+                  - text: to the next pipeline stage
+              - generic [ref=f33e3961]:
+                - generic [ref=f33e3962]: Algorithm 1
+                - text: MoE distributed training with DP/EP/PP and LPT-based all-to-all communication.
+            - paragraph [ref=f33e3964]:
+              - text: Our system builds on a scalable software transport framework that supports flexible, multi-path data transmission across NICs. Algorithm
+              - link "1" [ref=f33e3965] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#algorithm1
+              - text: presents the procedure for system operation in MoE training. Its primary advantage lies in its successful decoupling of the RDMA NIC’s control and data paths, enabling flexible implementation and innovation of transport-layer protocols in software on the host CPU. This design provides a natural entry point for integrating a custom LPT scheduler. The framework mainly exploits some key features.
+            - paragraph [ref=f33e3967]:
+              - text: Multipath Transmission. The system realizes multipath communication by establishing and managing multiple QPs between each pair of communicating NICs. In our Rail architecture, each node is equipped with
+              - math [ref=f33e3968]:
+                - generic [ref=f33e3969]: "N"
+              - text: NICs, and this mechanism is used to construct
+              - math [ref=f33e3971]:
+                - generic [ref=f33e3972]: "N"
+              - text: parallel logical communication lanes, perfectly corresponding to the
+              - math [ref=f33e3974]:
+                - generic [ref=f33e3975]: "N"
+              - text: parallel channels in our theoretical model. By default, it supports up to 256 QPs for parallelization and load balancing, providing abundant path resources for traffic spraying.
+            - paragraph [ref=f33e3978]:
+              - text: Flow Splitting and Atomicity. Theorem
+              - link "4" [ref=f33e3979] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem4
+              - text: indicates that the effectiveness of load balancing is closely related to the granularity of traffic. The underlying control coalescing mechanism naturally supports flow splitting. It segments large application-layer messages into fixed-size data chunks (e.g., 32 KB by default), and makes independent transmission decisions for each chunk. In our system, these generated fixed-size chunks, or small application-layer messages, are treated as indivisible atomic flows. These atomic flows serve as the fundamental units for load balancing operations.
+            - paragraph [ref=f33e3981]: Proactive Spraying. Current spraying strategies are often reactive, such as randomly sampling path RTTs and probabilistically steering traffic to currently lower-latency paths. While these approaches can adapt to network dynamics, they do not necessarily achieve the globally balanced load that the theoretical analysis guarantees as optimal. Our core design principle is to implement a proactive, theory-guided spraying mechanism on top of the multipath framework. Using a deterministic scheduling algorithm, the system directly computes the optimal target path for each atomic flow. The next section presents the key component that realizes the LPT scheduler.
+          - generic [ref=f33e3982]:
+            - heading "V-B LPT Scheduler" [level=3] [ref=f33e3983]:
+              - generic [ref=f33e3984]: V-B
+              - text: LPT Scheduler
+            - paragraph [ref=f33e3986]:
+              - text: To realize the proactive, load-aware spraying strategy proposed in the previous section, we design and implement the LPT Scheduler for path selection logic. The scheduler is deployed as a lightweight software module on each source domain and serves as the core decision engine for path selection, translating the theoretical algorithm from Chapter
+              - link "IV" [ref=f33e3987] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S4
+              - text: into an efficient engineering practice.
+            - paragraph [ref=f33e3989]:
+              - text: Architecture and State Management. The LPT Scheduler runs independently on each sending node. Its core component is a local load state array of size
+              - math [ref=f33e3990]:
+                - generic [ref=f33e3991]: "N"
+              - text: ", denoted as"
+              - math [ref=f33e3993]:
+                - generic [ref=f33e3995]:
+                  - generic [ref=f33e3996]: L
+                  - generic [ref=f33e3997]: o
+                  - generic [ref=f33e3998]: a
+                  - generic [ref=f33e3999]: d
+                  - generic [ref=f33e4000]: S
+                  - generic [ref=f33e4001]: t
+                  - generic [ref=f33e4002]: a
+                  - generic [ref=f33e4003]: t
+                  - generic [ref=f33e4004]: e
+                  - generic [ref=f33e4005]:
+                    - generic [ref=f33e4006]: "["
+                    - generic [ref=f33e4007]: "N"
+                    - generic [ref=f33e4008]: "]"
+              - text: . Each entry
+              - math [ref=f33e4009]:
+                - generic [ref=f33e4011]:
+                  - generic [ref=f33e4012]: L
+                  - generic [ref=f33e4013]: o
+                  - generic [ref=f33e4014]: a
+                  - generic [ref=f33e4015]: d
+                  - generic [ref=f33e4016]: S
+                  - generic [ref=f33e4017]: t
+                  - generic [ref=f33e4018]: a
+                  - generic [ref=f33e4019]: t
+                  - generic [ref=f33e4020]: e
+                  - generic [ref=f33e4021]:
+                    - generic [ref=f33e4022]: "["
+                    - generic [ref=f33e4023]: j
+                    - generic [ref=f33e4024]: "]"
+              - text: maintains the cumulative number of bytes already assigned to the
+              - math [ref=f33e4025]:
+                - generic [ref=f33e4026]: j
+              - text: "-th communication lane (i.e., the"
+              - math [ref=f33e4028]:
+                - generic [ref=f33e4029]: j
+              - text: "-th local NIC) for the current all-to-all operation. To adapt to the dynamic nature of MoE traffic, the array is reset at the start of each new all-to-all round, ensuring that scheduling decisions are always based on the current communication round’s status."
+            - figure "Algorithm 2 LPT scheduler." [ref=f33e4031]:
+              - generic [ref=f33e4032]:
+                - generic [ref=f33e4033]:
+                  - generic [ref=f33e4034]: "Input:"
+                  - generic [ref=f33e4035]:
+                    - text: Number of rails
+                    - math [ref=f33e4036]:
+                      - generic [ref=f33e4037]: "N"
+                    - text: ; set of local GPUs
+                    - math [ref=f33e4039]:
+                      - generic [ref=f33e4040]: 𝒢
+                - generic [ref=f33e4042]:
+                  - generic [ref=f33e4043]: "Output:"
+                  - text: Path assignment
+                  - math [ref=f33e4044]:
+                    - generic [ref=f33e4046]:
+                      - generic [ref=f33e4047]: "{"
+                      - generic [ref=f33e4048]:
+                        - generic [ref=f33e4049]: (
+                        - generic [ref=f33e4050]:
+                          - generic [ref=f33e4051]: w
+                          - generic [ref=f33e4052]: i
+                        - generic [ref=f33e4053]: ","
+                        - generic [ref=f33e4054]:
+                          - generic [ref=f33e4055]: j
+                          - generic [ref=f33e4056]: ∗
+                        - generic [ref=f33e4057]: )
+                      - generic [ref=f33e4058]: "}"
+                  - text: for all flows; load MSE
+                - generic [ref=f33e4059]: "1"
+                - generic [ref=f33e4061]: // Initialization before each All-to-All
+                - generic [ref=f33e4062]:
+                  - generic [ref=f33e4063]: "2"
+                  - text: Initialize
+                  - math [ref=f33e4064]:
+                    - generic [ref=f33e4066]:
+                      - generic [ref=f33e4067]:
+                        - generic [ref=f33e4068]: L
+                        - generic [ref=f33e4069]: o
+                        - generic [ref=f33e4070]: a
+                        - generic [ref=f33e4071]: d
+                        - generic [ref=f33e4072]: S
+                        - generic [ref=f33e4073]: t
+                        - generic [ref=f33e4074]: a
+                        - generic [ref=f33e4075]: t
+                        - generic [ref=f33e4076]: e
+                        - generic [ref=f33e4077]:
+                          - generic [ref=f33e4078]: "["
+                          - generic [ref=f33e4079]:
+                            - generic [ref=f33e4080]: "1"
+                            - generic [ref=f33e4081]: …
+                            - generic [ref=f33e4082]: "N"
+                          - generic [ref=f33e4083]: "]"
+                      - generic [ref=f33e4084]: ←
+                      - generic [ref=f33e4085]: "0"
+                  - text: .
+                - generic [ref=f33e4086]:
+                  - generic [ref=f33e4087]: "3"
+                  - text: Initialize empty flow set
+                  - math [ref=f33e4088]:
+                    - generic [ref=f33e4090]:
+                      - generic [ref=f33e4091]: 𝒲
+                      - generic [ref=f33e4092]: ←
+                      - generic [ref=f33e4093]: ∅
+                  - text: .
+                - generic [ref=f33e4094]: "4"
+                - generic [ref=f33e4096]: "// Step 1: Flow collection from local GPUs"
+                - generic [ref=f33e4097]:
+                  - generic [ref=f33e4098]: "5"
+                  - text: for
+                  - emphasis [ref=f33e4099]:
+                    - text: each GPU
+                    - math [ref=f33e4100]:
+                      - generic [ref=f33e4102]:
+                        - generic [ref=f33e4103]: g
+                        - generic [ref=f33e4104]: ∈
+                        - generic [ref=f33e4105]: 𝒢
+                  - text: do
+                - generic [ref=f33e4106]:
+                  - generic [ref=f33e4107]: "6"
+                  - text: Receive atomic flows
+                  - math [ref=f33e4109]:
+                    - generic [ref=f33e4111]:
+                      - generic [ref=f33e4112]: "{"
+                      - generic [ref=f33e4113]:
+                        - generic [ref=f33e4114]: w
+                        - generic [ref=f33e4115]:
+                          - generic [ref=f33e4116]: g
+                          - generic [ref=f33e4117]: ","
+                          - generic [ref=f33e4118]: "1"
+                      - generic [ref=f33e4119]: ","
+                      - generic [ref=f33e4120]:
+                        - generic [ref=f33e4121]: w
+                        - generic [ref=f33e4122]:
+                          - generic [ref=f33e4123]: g
+                          - generic [ref=f33e4124]: ","
+                          - generic [ref=f33e4125]: "2"
+                      - generic [ref=f33e4126]: ","
+                      - generic [ref=f33e4127]: …
+                      - generic [ref=f33e4128]: "}"
+                  - text: from GPU
+                  - math [ref=f33e4129]:
+                    - generic [ref=f33e4130]: g
+                  - text: .
+                - generic [ref=f33e4132]:
+                  - generic [ref=f33e4133]: "7"
+                  - text: Tag each
+                  - math [ref=f33e4135]:
+                    - generic [ref=f33e4137]:
+                      - generic [ref=f33e4138]: w
+                      - generic [ref=f33e4139]:
+                        - generic [ref=f33e4140]: g
+                        - generic [ref=f33e4141]: ","
+                        - generic [ref=f33e4142]: k
+                  - text: with source ID
+                  - math [ref=f33e4143]:
+                    - generic [ref=f33e4144]: g
+                  - text: .
+                - generic [ref=f33e4146]:
+                  - generic [ref=f33e4147]: "8"
+                  - text: Append them into
+                  - math [ref=f33e4149]:
+                    - generic [ref=f33e4150]: 𝒲
+                  - text: .
+                - generic [ref=f33e4152]: "9"
+                - generic [ref=f33e4155]: "10"
+                - generic [ref=f33e4157]: "// Step 2: LPT sorting"
+                - generic [ref=f33e4158]:
+                  - generic [ref=f33e4159]: "11"
+                  - text: Sort
+                  - math [ref=f33e4160]:
+                    - generic [ref=f33e4161]: 𝒲
+                  - text: by descending weight.
+                - generic [ref=f33e4163]:
+                  - generic [ref=f33e4164]: "12"
+                  - text: Break ties by GPU index.
+                - generic [ref=f33e4165]: "13"
+                - generic [ref=f33e4167]: "// Step 3: Iterative allocation"
+                - generic [ref=f33e4168]:
+                  - generic [ref=f33e4169]: "14"
+                  - text: for
+                  - emphasis [ref=f33e4170]:
+                    - text: each flow
+                    - math [ref=f33e4171]:
+                      - generic [ref=f33e4173]:
+                        - generic [ref=f33e4174]:
+                          - generic [ref=f33e4175]: w
+                          - generic [ref=f33e4176]: i
+                        - generic [ref=f33e4177]: ∈
+                        - generic [ref=f33e4178]: 𝒲
+                  - text: do
+                - generic [ref=f33e4179]:
+                  - generic [ref=f33e4180]: "15"
+                  - math [ref=f33e4182]:
+                    - generic [ref=f33e4184]:
+                      - generic [ref=f33e4185]:
+                        - generic [ref=f33e4186]: j
+                        - generic [ref=f33e4187]: ∗
+                      - generic [ref=f33e4188]: ←
+                      - generic [ref=f33e4189]:
+                        - generic [ref=f33e4190]:
+                          - generic [ref=f33e4191]: arg
+                          - generic: ⁡
+                          - generic [ref=f33e4192]:
+                            - generic [ref=f33e4193]:
+                              - generic [ref=f33e4194]: min
+                              - generic [ref=f33e4195]:
+                                - generic [ref=f33e4196]: j
+                                - generic [ref=f33e4197]: ∈
+                                - generic [ref=f33e4198]:
+                                  - generic [ref=f33e4199]: "["
+                                  - generic [ref=f33e4200]: "1"
+                                  - generic [ref=f33e4201]: ","
+                                  - generic [ref=f33e4202]: "N"
+                                  - generic [ref=f33e4203]: "]"
+                            - generic: ⁡
+                            - generic [ref=f33e4204]:
+                              - generic [ref=f33e4205]: L
+                              - generic [ref=f33e4206]: o
+                              - generic [ref=f33e4207]: a
+                              - generic [ref=f33e4208]: d
+                              - generic [ref=f33e4209]: S
+                              - generic [ref=f33e4210]: t
+                              - generic [ref=f33e4211]: a
+                              - generic [ref=f33e4212]: t
+                              - generic [ref=f33e4213]: e
+                        - generic [ref=f33e4214]:
+                          - generic [ref=f33e4215]: "["
+                          - generic [ref=f33e4216]: j
+                          - generic [ref=f33e4217]: "]"
+                  - text: .
+                - generic [ref=f33e4218]:
+                  - generic [ref=f33e4219]: "16"
+                  - text: Record mapping
+                  - math [ref=f33e4221]:
+                    - generic [ref=f33e4223]:
+                      - generic [ref=f33e4224]: (
+                      - generic [ref=f33e4225]:
+                        - generic [ref=f33e4226]: w
+                        - generic [ref=f33e4227]: i
+                      - generic [ref=f33e4228]: ","
+                      - generic [ref=f33e4229]:
+                        - generic [ref=f33e4230]: j
+                        - generic [ref=f33e4231]: ∗
+                      - generic [ref=f33e4232]: )
+                  - text: into assignment table.
+                - generic [ref=f33e4233]:
+                  - generic [ref=f33e4234]: "17"
+                  - text: Notify source GPU of
+                  - math [ref=f33e4236]:
+                    - generic [ref=f33e4238]:
+                      - generic [ref=f33e4239]: w
+                      - generic [ref=f33e4240]: i
+                  - text: with selected NIC
+                  - math [ref=f33e4241]:
+                    - generic [ref=f33e4243]:
+                      - generic [ref=f33e4244]: j
+                      - generic [ref=f33e4245]: ∗
+                  - text: .
+                - generic [ref=f33e4246]:
+                  - generic [ref=f33e4247]: "18"
+                  - math [ref=f33e4249]:
+                    - generic [ref=f33e4251]:
+                      - generic [ref=f33e4252]:
+                        - generic [ref=f33e4253]: L
+                        - generic [ref=f33e4254]: o
+                        - generic [ref=f33e4255]: a
+                        - generic [ref=f33e4256]: d
+                        - generic [ref=f33e4257]: S
+                        - generic [ref=f33e4258]: t
+                        - generic [ref=f33e4259]: a
+                        - generic [ref=f33e4260]: t
+                        - generic [ref=f33e4261]: e
+                        - generic [ref=f33e4262]:
+                          - generic [ref=f33e4263]: "["
+                          - generic [ref=f33e4264]:
+                            - generic [ref=f33e4265]: j
+                            - generic [ref=f33e4266]: ∗
+                          - generic [ref=f33e4267]: "]"
+                      - generic [ref=f33e4268]: ←
+                      - generic [ref=f33e4269]:
+                        - generic [ref=f33e4270]:
+                          - generic [ref=f33e4271]: L
+                          - generic [ref=f33e4272]: o
+                          - generic [ref=f33e4273]: a
+                          - generic [ref=f33e4274]: d
+                          - generic [ref=f33e4275]: S
+                          - generic [ref=f33e4276]: t
+                          - generic [ref=f33e4277]: a
+                          - generic [ref=f33e4278]: t
+                          - generic [ref=f33e4279]: e
+                          - generic [ref=f33e4280]:
+                            - generic [ref=f33e4281]: "["
+                            - generic [ref=f33e4282]:
+                              - generic [ref=f33e4283]: j
+                              - generic [ref=f33e4284]: ∗
+                            - generic [ref=f33e4285]: "]"
+                        - generic [ref=f33e4286]: +
+                        - generic [ref=f33e4287]:
+                          - generic [ref=f33e4288]: w
+                          - generic [ref=f33e4289]: i
+                  - text: .
+                - generic [ref=f33e4290]: "19"
+                - generic [ref=f33e4293]: "20"
+                - generic [ref=f33e4295]: "// Step 4: Spraying execution"
+                - generic [ref=f33e4296]:
+                  - generic [ref=f33e4297]: "21"
+                  - text: for
+                  - emphasis [ref=f33e4298]:
+                    - text: each assignment
+                    - math [ref=f33e4299]:
+                      - generic [ref=f33e4301]:
+                        - generic [ref=f33e4302]: (
+                        - generic [ref=f33e4303]:
+                          - generic [ref=f33e4304]: w
+                          - generic [ref=f33e4305]: i
+                        - generic [ref=f33e4306]: ","
+                        - generic [ref=f33e4307]:
+                          - generic [ref=f33e4308]: j
+                          - generic [ref=f33e4309]: ∗
+                        - generic [ref=f33e4310]: )
+                  - text: do
+                - generic [ref=f33e4311]:
+                  - generic [ref=f33e4312]: "22"
+                  - text: Select port
+                  - math [ref=f33e4314]:
+                    - generic [ref=f33e4315]: p
+                  - text: from NIC
+                  - math [ref=f33e4317]:
+                    - generic [ref=f33e4319]:
+                      - generic [ref=f33e4320]: j
+                      - generic [ref=f33e4321]: ∗
+                  - text: by round-robin.
+                - generic [ref=f33e4322]:
+                  - generic [ref=f33e4323]: "23"
+                  - text: Map
+                  - math [ref=f33e4325]:
+                    - generic [ref=f33e4327]:
+                      - generic [ref=f33e4328]: (
+                      - generic [ref=f33e4329]:
+                        - generic [ref=f33e4330]: j
+                        - generic [ref=f33e4331]: ∗
+                      - generic [ref=f33e4332]: ","
+                      - generic [ref=f33e4333]: p
+                      - generic [ref=f33e4334]: )
+                  - text: to a QP in NIC’s QP set.
+                - generic [ref=f33e4335]:
+                  - generic [ref=f33e4336]: "24"
+                  - text: Bind
+                  - math [ref=f33e4338]:
+                    - generic [ref=f33e4340]:
+                      - generic [ref=f33e4341]: w
+                      - generic [ref=f33e4342]: i
+                  - text: to the chosen QP.
+                - generic [ref=f33e4343]:
+                  - generic [ref=f33e4344]: "25"
+                  - text: Transmit
+                  - math [ref=f33e4346]:
+                    - generic [ref=f33e4348]:
+                      - generic [ref=f33e4349]: w
+                      - generic [ref=f33e4350]: i
+                  - text: via transport engine.
+                - generic [ref=f33e4351]: "26"
+                - generic [ref=f33e4354]: "27"
+                - generic [ref=f33e4356]: "// Step 5: Completion & Feedback"
+                - generic [ref=f33e4357]:
+                  - generic [ref=f33e4358]: "28"
+                  - text: for
+                  - emphasis [ref=f33e4359]:
+                    - text: each flow
+                    - math [ref=f33e4360]:
+                      - generic [ref=f33e4362]:
+                        - generic [ref=f33e4363]: w
+                        - generic [ref=f33e4364]: i
+                  - text: do
+                - generic [ref=f33e4365]:
+                  - generic [ref=f33e4366]: "29"
+                  - text: Await completion signal from NIC
+                  - math [ref=f33e4368]:
+                    - generic [ref=f33e4370]:
+                      - generic [ref=f33e4371]: j
+                      - generic [ref=f33e4372]: ∗
+                  - text: .
+                - generic [ref=f33e4373]:
+                  - generic [ref=f33e4374]: "30"
+                  - text: Confirm delivery to destination GPU.
+                - generic [ref=f33e4376]:
+                  - generic [ref=f33e4377]: "31"
+                  - text: Update scheduler statistics with actual transmission time and throughput.
+                - generic [ref=f33e4379]: "32"
+                - generic [ref=f33e4382]: "33"
+                - generic [ref=f33e4384]: "// Step 6: Performance evaluation (MSE)"
+                - generic [ref=f33e4385]:
+                  - generic [ref=f33e4386]: "34"
+                  - text: "Compute average load:"
+                  - math [ref=f33e4387]:
+                    - generic [ref=f33e4389]:
+                      - generic [ref=f33e4390]: μ
+                      - generic [ref=f33e4391]: ←
+                      - generic [ref=f33e4392]:
+                        - generic [ref=f33e4393]:
+                          - generic [ref=f33e4394]: "1"
+                          - generic [ref=f33e4395]: "N"
+                        - generic [ref=f33e4396]:
+                          - generic [ref=f33e4397]:
+                            - generic [ref=f33e4398]: ∑
+                            - generic [ref=f33e4399]:
+                              - generic [ref=f33e4400]: j
+                              - generic [ref=f33e4401]: =
+                              - generic [ref=f33e4402]: "1"
+                            - generic [ref=f33e4403]: "N"
+                          - generic [ref=f33e4404]:
+                            - generic [ref=f33e4405]: L
+                            - generic [ref=f33e4406]: o
+                            - generic [ref=f33e4407]: a
+                            - generic [ref=f33e4408]: d
+                            - generic [ref=f33e4409]: S
+                            - generic [ref=f33e4410]: t
+                            - generic [ref=f33e4411]: a
+                            - generic [ref=f33e4412]: t
+                            - generic [ref=f33e4413]: e
+                            - generic [ref=f33e4414]:
+                              - generic [ref=f33e4415]: "["
+                              - generic [ref=f33e4416]: j
+                              - generic [ref=f33e4417]: "]"
+                - generic [ref=f33e4418]:
+                  - generic [ref=f33e4419]: "35"
+                  - text: Compute
+                  - math [ref=f33e4420]:
+                    - generic [ref=f33e4422]:
+                      - generic [ref=f33e4423]:
+                        - generic [ref=f33e4424]: M
+                        - generic [ref=f33e4425]: S
+                        - generic [ref=f33e4426]: E
+                      - generic [ref=f33e4427]: ←
+                      - generic [ref=f33e4428]:
+                        - generic [ref=f33e4429]:
+                          - generic [ref=f33e4430]: "1"
+                          - generic [ref=f33e4431]: "N"
+                        - generic [ref=f33e4432]:
+                          - generic [ref=f33e4433]:
+                            - generic [ref=f33e4434]: ∑
+                            - generic [ref=f33e4435]:
+                              - generic [ref=f33e4436]: j
+                              - generic [ref=f33e4437]: =
+                              - generic [ref=f33e4438]: "1"
+                            - generic [ref=f33e4439]: "N"
+                          - generic [ref=f33e4440]:
+                            - generic [ref=f33e4441]:
+                              - generic [ref=f33e4442]: (
+                              - generic [ref=f33e4443]:
+                                - generic [ref=f33e4444]:
+                                  - generic [ref=f33e4445]: L
+                                  - generic [ref=f33e4446]: o
+                                  - generic [ref=f33e4447]: a
+                                  - generic [ref=f33e4448]: d
+                                  - generic [ref=f33e4449]: S
+                                  - generic [ref=f33e4450]: t
+                                  - generic [ref=f33e4451]: a
+                                  - generic [ref=f33e4452]: t
+                                  - generic [ref=f33e4453]: e
+                                  - generic [ref=f33e4454]:
+                                    - generic [ref=f33e4455]: "["
+                                    - generic [ref=f33e4456]: j
+                                    - generic [ref=f33e4457]: "]"
+                                - generic [ref=f33e4458]: −
+                                - generic [ref=f33e4459]: μ
+                              - generic [ref=f33e4460]: )
+                            - generic [ref=f33e4461]: "2"
+                - generic [ref=f33e4462]:
+                  - generic [ref=f33e4463]: "36"
+                  - text: Log
+                  - math [ref=f33e4464]:
+                    - generic [ref=f33e4466]:
+                      - generic [ref=f33e4467]: M
+                      - generic [ref=f33e4468]: S
+                      - generic [ref=f33e4469]: E
+                  - text: for analysis and scheduler tuning.
+              - generic [ref=f33e4471]:
+                - generic [ref=f33e4472]: Algorithm 2
+                - text: LPT scheduler.
+            - paragraph [ref=f33e4474]:
+              - text: Workflow and Implementation. Upon the initiation of an all-to-all communication by the upper-layer application, the generated traffic is split into a set of atomic flows
+              - math [ref=f33e4475]:
+                - generic [ref=f33e4477]:
+                  - generic [ref=f33e4478]: "{"
+                  - generic [ref=f33e4479]:
+                    - generic [ref=f33e4480]: w
+                    - generic [ref=f33e4481]: i
+                  - generic [ref=f33e4482]: "}"
+              - text: . The LPT Scheduler then takes over the path selection for these flows, following the LPT algorithm
+              - link "2" [ref=f33e4483] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#algorithm2
+              - text: "strictly:"
+            - list [ref=f33e4485]:
+              - listitem [ref=f33e4486]:
+                - text: •
+                - paragraph [ref=f33e4488]:
+                  - text: "Flow Sorting: The scheduler first sorts all atomic flows"
+                  - math [ref=f33e4489]:
+                    - generic [ref=f33e4491]:
+                      - generic [ref=f33e4492]: "{"
+                      - generic [ref=f33e4493]:
+                        - generic [ref=f33e4494]: w
+                        - generic [ref=f33e4495]: i
+                      - generic [ref=f33e4496]: "}"
+                  - text: to be sent from the local node in descending order of their weights.
+              - listitem [ref=f33e4497]:
+                - text: •
+                - generic [ref=f33e4498]:
+                  - paragraph [ref=f33e4499]:
+                    - text: "Iterative Assignment: The scheduler then iterates over the sorted flow list. For each flow"
+                    - math [ref=f33e4500]:
+                      - generic [ref=f33e4502]:
+                        - generic [ref=f33e4503]: w
+                        - generic [ref=f33e4504]: i
+                    - text: ", it performs the following core steps:"
+                  - list [ref=f33e4505]:
+                    - listitem [ref=f33e4506]:
+                      - generic [ref=f33e4507]: –
+                      - paragraph [ref=f33e4509]:
+                        - text: "Path Selection: Identify the index of the path with the currently minimum cumulative load in the local"
+                        - math [ref=f33e4510]:
+                          - generic [ref=f33e4512]:
+                            - generic [ref=f33e4513]: L
+                            - generic [ref=f33e4514]: o
+                            - generic [ref=f33e4515]: a
+                            - generic [ref=f33e4516]: d
+                            - generic [ref=f33e4517]: S
+                            - generic [ref=f33e4518]: t
+                            - generic [ref=f33e4519]: a
+                            - generic [ref=f33e4520]: t
+                            - generic [ref=f33e4521]: e
+                        - text: array
+                        - math [ref=f33e4522]:
+                          - generic [ref=f33e4524]:
+                            - generic [ref=f33e4525]:
+                              - generic [ref=f33e4526]: j
+                              - generic [ref=f33e4527]: ∗
+                            - generic [ref=f33e4528]: =
+                            - generic [ref=f33e4529]:
+                              - generic [ref=f33e4530]:
+                                - generic [ref=f33e4531]: arg
+                                - generic: ⁡
+                                - generic [ref=f33e4532]:
+                                  - generic [ref=f33e4533]:
+                                    - generic [ref=f33e4534]: min
+                                    - generic [ref=f33e4535]: j
+                                  - generic: ⁡
+                                  - generic [ref=f33e4536]:
+                                    - generic [ref=f33e4537]: L
+                                    - generic [ref=f33e4538]: o
+                                    - generic [ref=f33e4539]: a
+                                    - generic [ref=f33e4540]: d
+                                    - generic [ref=f33e4541]: S
+                                    - generic [ref=f33e4542]: t
+                                    - generic [ref=f33e4543]: a
+                                    - generic [ref=f33e4544]: t
+                                    - generic [ref=f33e4545]: e
+                              - generic [ref=f33e4546]:
+                                - generic [ref=f33e4547]: "["
+                                - generic [ref=f33e4548]: j
+                                - generic [ref=f33e4549]: "]"
+                        - text: .
+                    - listitem [ref=f33e4550]:
+                      - generic [ref=f33e4551]: –
+                      - paragraph [ref=f33e4553]:
+                        - text: "Decision Output: Assign"
+                        - math [ref=f33e4554]:
+                          - generic [ref=f33e4556]:
+                            - generic [ref=f33e4557]: w
+                            - generic [ref=f33e4558]: i
+                        - text: to the selected path
+                        - math [ref=f33e4559]:
+                          - generic [ref=f33e4561]:
+                            - generic [ref=f33e4562]: j
+                            - generic [ref=f33e4563]: ∗
+                        - text: and return this decision to transport engine.
+                    - listitem [ref=f33e4564]:
+                      - generic [ref=f33e4565]: –
+                      - paragraph [ref=f33e4567]:
+                        - text: "State Update: Immediately update the local load state"
+                        - math [ref=f33e4568]:
+                          - generic [ref=f33e4570]:
+                            - generic [ref=f33e4571]:
+                              - generic [ref=f33e4572]: L
+                              - generic [ref=f33e4573]: o
+                              - generic [ref=f33e4574]: a
+                              - generic [ref=f33e4575]: d
+                              - generic [ref=f33e4576]: S
+                              - generic [ref=f33e4577]: t
+                              - generic [ref=f33e4578]: a
+                              - generic [ref=f33e4579]: t
+                              - generic [ref=f33e4580]: e
+                              - generic [ref=f33e4581]:
+                                - generic [ref=f33e4582]: "["
+                                - generic [ref=f33e4583]:
+                                  - generic [ref=f33e4584]: j
+                                  - generic [ref=f33e4585]: ∗
+                                - generic [ref=f33e4586]: "]"
+                            - generic [ref=f33e4587]: ←
+                            - generic [ref=f33e4588]:
+                              - generic [ref=f33e4589]:
+                                - generic [ref=f33e4590]: L
+                                - generic [ref=f33e4591]: o
+                                - generic [ref=f33e4592]: a
+                                - generic [ref=f33e4593]: d
+                                - generic [ref=f33e4594]: S
+                                - generic [ref=f33e4595]: t
+                                - generic [ref=f33e4596]: a
+                                - generic [ref=f33e4597]: t
+                                - generic [ref=f33e4598]: e
+                                - generic [ref=f33e4599]:
+                                  - generic [ref=f33e4600]: "["
+                                  - generic [ref=f33e4601]:
+                                    - generic [ref=f33e4602]: j
+                                    - generic [ref=f33e4603]: ∗
+                                  - generic [ref=f33e4604]: "]"
+                              - generic [ref=f33e4605]: +
+                              - generic [ref=f33e4606]:
+                                - generic [ref=f33e4607]: w
+                                - generic [ref=f33e4608]: i
+                        - text: .
+              - listitem [ref=f33e4609]:
+                - text: •
+                - paragraph [ref=f33e4611]:
+                  - text: "Spraying Execution: Upon receiving the path index"
+                  - math [ref=f33e4612]:
+                    - generic [ref=f33e4614]:
+                      - generic [ref=f33e4615]: j
+                      - generic [ref=f33e4616]: ∗
+                  - text: ", the transport engine transmits the atomic flow"
+                  - math [ref=f33e4617]:
+                    - generic [ref=f33e4619]:
+                      - generic [ref=f33e4620]: w
+                      - generic [ref=f33e4621]: i
+                  - text: through the set of QPs associated with the
+                  - math [ref=f33e4622]:
+                    - generic [ref=f33e4624]:
+                      - generic [ref=f33e4625]: j
+                      - generic [ref=f33e4626]: ∗
+                  - text: "-th lane. Repeating this process for all atomic flows completes a global, deterministic spraying, systematically distributing the node’s total outbound traffic across the"
+                  - math [ref=f33e4627]:
+                    - generic [ref=f33e4628]: "N"
+                  - text: parallel lanes according to the LPT-optimized allocation.
+            - paragraph [ref=f33e4631]:
+              - text: The LPT Scheduler effectively translates the theoretical model of Theorem
+              - link "4" [ref=f33e4632] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#Thmtheorem4
+              - text: into a fully distributed low-complexity engineering implementation. Unlike naive random spraying, it performs strategic flow assignments aimed at minimizing load variance, thereby fully exploiting the multi-NIC parallelism provided by the Rail architecture, even under the irregular and sparse traffic patterns typical of MoE workloads.
+        - generic [ref=f33e4633]:
+          - heading "VI Evaluation" [level=2] [ref=f33e4634]:
+            - generic [ref=f33e4635]: VI
+            - text: Evaluation
+          - generic [ref=f33e4636]:
+            - heading "VI-A Experimental Setup" [level=3] [ref=f33e4637]:
+              - generic [ref=f33e4638]: VI-A
+              - text: Experimental Setup
+            - paragraph [ref=f33e4640]: Simulation Setup. We implement a scalable datacenter simulation environment on Mininet 2.3.1b4 with Soft-RoCE, using a Rail-optimized topology. The network comprises multiple spine switches and at least eight fully connected leaf switches. Each computing domain connects in parallel to different leaf switches via multiple NICs, forming Rail-based links. The system scales to 128 compute domains with eight GPUs each interconnected through NVLINK. Network forwarding uses Open vSwitch with OpenFlow for fine-grained control, while a Ryu-based distributed controller installs flow rules and manages ECMP routing.
+            - 'figure "Figure 7: Normalized BusBw of different schemes under various all-to-all workloads: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)." [ref=f33e4641]':
+              - generic [ref=f33e4642]:
+                - figure "(a) Uniform" [ref=f33e4644]:
+                  - img "Refer to caption" [ref=f33e4645]
+                  - generic [ref=f33e4646]:
+                    - generic [ref=f33e4647]: (a)
+                    - text: Uniform
+                - figure "(b) Sparse-0.6" [ref=f33e4649]:
+                  - img "Refer to caption" [ref=f33e4650]
+                  - generic [ref=f33e4651]:
+                    - generic [ref=f33e4652]: (b)
+                    - text: Sparse-0.6
+                - figure "(c) Sparse-0.4" [ref=f33e4654]:
+                  - img "Refer to caption" [ref=f33e4655]
+                  - generic [ref=f33e4656]:
+                    - generic [ref=f33e4657]: (c)
+                    - text: Sparse-0.4
+                - figure "(d) Sparse-0.2" [ref=f33e4659]:
+                  - img "Refer to caption" [ref=f33e4660]
+                  - generic [ref=f33e4661]:
+                    - generic [ref=f33e4662]: (d)
+                    - text: Sparse-0.2
+                - figure "(e) Sparse-0 (Fully dense)" [ref=f33e4664]:
+                  - img "Refer to caption" [ref=f33e4665]
+                  - generic [ref=f33e4666]:
+                    - generic [ref=f33e4667]: (e)
+                    - text: Sparse-0 (Fully dense)
+              - generic [ref=f33e4668]:
+                - generic [ref=f33e4669]: "Figure 7:"
+                - text: "Normalized BusBw of different schemes under various all-to-all workloads: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)."
+            - 'figure "Figure 8: CDF of normalized CCT for different schemes under various all-to-all workloads: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)." [ref=f33e4670]':
+              - generic [ref=f33e4671]:
+                - figure [ref=f33e4673]:
+                  - img "Refer to caption" [ref=f33e4674]
+                - figure "(a) Uniform" [ref=f33e4676]:
+                  - img "Refer to caption" [ref=f33e4677]
+                  - generic [ref=f33e4678]:
+                    - generic [ref=f33e4679]: (a)
+                    - text: Uniform
+                - figure "(b) Sparse-0.6" [ref=f33e4681]:
+                  - img "Refer to caption" [ref=f33e4682]
+                  - generic [ref=f33e4683]:
+                    - generic [ref=f33e4684]: (b)
+                    - text: Sparse-0.6
+                - figure "(c) Sparse-0.4" [ref=f33e4686]:
+                  - img "Refer to caption" [ref=f33e4687]
+                  - generic [ref=f33e4688]:
+                    - generic [ref=f33e4689]: (c)
+                    - text: Sparse-0.4
+                - figure "(d) Sparse-0.2" [ref=f33e4691]:
+                  - img "Refer to caption" [ref=f33e4692]
+                  - generic [ref=f33e4693]:
+                    - generic [ref=f33e4694]: (d)
+                    - text: Sparse-0.2
+                - figure "(e) Sparse-0 (Fully dense)" [ref=f33e4696]:
+                  - img "Refer to caption" [ref=f33e4697]
+                  - generic [ref=f33e4698]:
+                    - generic [ref=f33e4699]: (e)
+                    - text: Sparse-0 (Fully dense)
+              - generic [ref=f33e4700]:
+                - generic [ref=f33e4701]: "Figure 8:"
+                - text: "CDF of normalized CCT for different schemes under various all-to-all workloads: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)."
+            - 'figure "Figure 9: Normalized CCT of different schemes under various all-to-all workloads, showing average, 80th, 95th, and 99th percentiles: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)." [ref=f33e4702]':
+              - generic [ref=f33e4703]:
+                - figure [ref=f33e4705]:
+                  - img "Refer to caption" [ref=f33e4706]
+                - figure "(a) Uniform" [ref=f33e4708]:
+                  - img "Refer to caption" [ref=f33e4709]
+                  - generic [ref=f33e4710]:
+                    - generic [ref=f33e4711]: (a)
+                    - text: Uniform
+                - figure "(b) Sparse-0.6" [ref=f33e4713]:
+                  - img "Refer to caption" [ref=f33e4714]
+                  - generic [ref=f33e4715]:
+                    - generic [ref=f33e4716]: (b)
+                    - text: Sparse-0.6
+                - figure "(c) Sparse-0.4" [ref=f33e4718]:
+                  - img "Refer to caption" [ref=f33e4719]
+                  - generic [ref=f33e4720]:
+                    - generic [ref=f33e4721]: (c)
+                    - text: Sparse-0.4
+                - figure "(d) Sparse-0.2" [ref=f33e4723]:
+                  - img "Refer to caption" [ref=f33e4724]
+                  - generic [ref=f33e4725]:
+                    - generic [ref=f33e4726]: (d)
+                    - text: Sparse-0.2
+                - figure "(e) Sparse-0 (Fully dense)" [ref=f33e4728]:
+                  - img "Refer to caption" [ref=f33e4729]
+                  - generic [ref=f33e4730]:
+                    - generic [ref=f33e4731]: (e)
+                    - text: Sparse-0 (Fully dense)
+              - generic [ref=f33e4732]:
+                - generic [ref=f33e4733]: "Figure 9:"
+                - text: "Normalized CCT of different schemes under various all-to-all workloads, showing average, 80th, 95th, and 99th percentiles: (a) Uniform matrix, (b) Sparse-0.6, (c) Sparse-0.4, (d) Sparse-0.2, and (e) Sparse-0 (fully dense)."
+            - paragraph [ref=f33e4735]:
+              - text: Workloads. We construct four representative workloads using MoE outputs from the SimAI AICB library
+              - generic [ref=f33e4736]:
+                - text: "["
+                - link "58" [ref=f33e4737] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib58
+                - text: "]"
+              - text: "with controlled token and gating distributions. Uniform Workload sends equal data from each sender to all receivers, yielding balanced link loads without “elephant” or “mice” flows, and serves to measure the gap between achieved and optimal bandwidth utilization. Sparse Workload applies a Top-K expert selection matrix with column-wise sparsity, where higher sparsity increases load concentration as fewer active experts handle proportionally more traffic. Skewed Workload models Zipfian-driven imbalance in two forms: receiver skew, where many senders target a few experts (incast), and sender skew, where uneven input causes asymmetric expert loads. Real MoE Workload replays traffic traces from MixNet"
+              - generic [ref=f33e4738]:
+                - text: "["
+                - link "35" [ref=f33e4739] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib35
+                - text: "]"
+              - text: to reproduce realistic communication patterns. Table
+              - link "I" [ref=f33e4740] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.T1
+              - text: summarizes the corresponding distributions.
+            - paragraph [ref=f33e4742]: Evaluation Metrics. We evaluate performance using some key metrics. Collective Completion Time (CCT) measures MoE all-to-all efficiency across average, 80th, 95th, and 99th percentiles, with the 99th percentile approximating total transfer completion. Bus Bandwidth (BusBw) quantifies effective link utilization and enables direct comparison with peak hardware bandwidth to assess algorithmic efficiency. NIC Transmission/Reception Volume captures per-NIC send and receive traffic via a matrix representation, assessing load balance across interfaces. Normalized MSE of Load evaluates intra-domain NIC load balance on a 0–1 scale, where 0 denotes perfect uniformity. Iteration Time measures the total duration of one training iteration.
+            - paragraph [ref=f33e4744]:
+              - text: "Baseline Methods. We propose the RailS and compare it with four baseline methods: ECMP"
+              - generic [ref=f33e4745]:
+                - text: "["
+                - link "25" [ref=f33e4746] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib25
+                - text: "]"
+              - text: is a widely used equal-cost multipath routing mechanism in datacenters that binds flows to a single path via hashing, providing traditional load balancing and serving as a performance benchmark. MinRTT
+              - generic [ref=f33e4747]:
+                - text: "["
+                - link "42" [ref=f33e4748] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib42
+                - text: "]"
+              - text: is a multipath scheduling algorithm based on RTT measurements. It selects the subflow with the minimum RTT to transmit packets, enabling multipath bandwidth aggregation and load balancing. MinRTT was first implemented in MPTCP. PLB
+              - generic [ref=f33e4749]:
+                - text: "["
+                - link "45" [ref=f33e4750] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib45
+                - text: "]"
+              - text: is a flowlet-based load balancing scheme that uses IPv6 flow label to dynamically switch paths during idle periods, balancing loads while minimizing packet reordering. REPS
+              - generic [ref=f33e4751]:
+                - text: "["
+                - link "9" [ref=f33e4752] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2510.19262v1#bib.bib9
+                - text: "]"
+              - text: is a per-packet spraying load balancing algorithm that minimally manages state to reroute packets around congestion hotspots and unreliable links.
+            - 'figure "TABLE I: The MoE workloads’ token and gating distributions." [ref=f33e4753]':
+              - generic [ref=f33e4754]:
+                - generic [ref=f33e4755]: "TABLE I:"
+                - text: The MoE workloads’ token and gating distributions.
+              - table [ref=f33e4756]:
+                - rowgroup [ref=f33e4757]:
+                  - row [ref=f33e4758]:
+                    - cell [ref=f33e4759]:
+                      - img [ref=f33e4760]:
+                        - generic [ref=f33e4761]:
+                          - generic [ref=f33e4763]: Distribution
+                          - generic [ref=f33e4771]: Type
+                    - cell "Uniform" [ref=f33e4779]
+                    - cell "Sparse" [ref=f33e4780]
+                    - cell [ref=f33e4781]:
+                      - table [ref=f33e4782]:
+                        - rowgroup [ref=f33e4783]:
+                          - row [ref=f33e4784]:
+                            - cell "Sender-" [ref=f33e4785]
+                          - row [ref=f33e4786]:
+                            - cell "skewed" [ref=f33e4787]
+                    - cell [ref=f33e4788]:
+                      - table [ref=f33e4789]:
+                        - rowgroup [ref=f33e4790]:
+                          - row [ref=f33e4791]:
+                            - cell "Receiver-" [ref=f33e4792]
+                          - row [ref=f33e4793]:
+                            - cell "skewed" [ref=f33e4794]
+                    - cell [ref=f33e4795]:
+                      - table [ref=f33e4796]:
+                        - rowgroup [ref=f33e4797]:
+                          - row [ref=f33e4798]:
+                            - cell "Real" [ref=f33e4799]
+                          - row [ref=f33e4800]:
+                            - cell "workload" [ref=f33e4801]
+                  - row [ref=f33e4802]:
+                    - cell "Token input" [ref=f33e4803]
+                    - cell "Uniform" [ref=f33e4804]
+                    - cell "Uniform" [ref=f33e4805]
+                    - cell "Zipf" [ref=f33e4806]
+                    - cell "Uniform" [ref=f33e4807]
+                    - cell [ref=f33e4808]:
+                      - table [ref=f33e4809]:
+                        - rowgroup [ref=f33e4810]:
+                          - row [ref=f33e4811]:
+                            - cell "Uniform" [ref=f33e4812]
+                  - row [ref=f33e4813]:
+                    - cell "Gating" [ref=f33e4814]
+                    - cell "Uniform" [ref=f33e4815]
+                    - cell "Top-K" [ref=f33e4816]
+                    - cell "Uniform" [ref=f33e4817]
+                    - cell "Zipf" [ref=f33e4818]
+                    - cell [ref=f33e4819]:
+                      - table [ref=f33e4820]:
+                        - rowgroup [ref=f33e4821]:
+                          - row [ref=f33e4822]:
+                            - cell "Training" [ref=f33e4823]
+                          - row [ref=f33e4824]:
+                            - cell "-based" [ref=f33e4825]
+          - generic [ref=f33e4826]:
+            - heading "VI-B Performance under Uniform Load" [level=3] [ref=f33e4827]:
+              - generic [ref=f33e4828]: VI-B
+              - text: Performance under Uniform Load
+            - paragraph [ref=f33e4830]: The uniform-load scenario simulates an ideal condition in which each sender transmits an equal amount of data to all receivers, resulting in balanced link utilization without the presence of “elephant” or “mice” flows.
+            - paragraph [ref=f33e4832]:
+              - text: BusBw. Fig.
+              - link "7" [ref=f33e4833] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F7
+              - text: shows the normalized BusBw of different schemes relative to ECMP under the uniform-load scenario. RailS achieves a normalized BusBw of 1.29, representing an improvement of approximately 29% over ECMP, demonstrating its superior bandwidth utilization. REPS and MinRTT achieve normalized bandwidths of 1.34 and 1.24, respectively, which are close to that of RailS. PLB’s normalized BusBw is 20% lower than that of RailS, indicating relatively average performance.
+            - paragraph [ref=f33e4835]:
+              - text: CDF of CCT. Fig.
+              - link "8" [ref=f33e4836] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F8
+              - text: illustrates the CDF of normalized CCT for different schemes relative to RailS under the uniform-load scenario. Specifically, RailS and REPS exhibit similar and concentrated trends, reflecting excellent load-balancing capability. MinRTT completes some flows faster, but its overall completion time is slightly worse than RailS. PLB follows, showing better performance than ECMP.
+            - paragraph [ref=f33e4838]:
+              - text: CCT Values. Fig.
+              - link "9" [ref=f33e4839] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F9
+              - text: further presents the mean, 80th, 95th, and 99th percentile values of normalized CCT for different schemes under uniform load. RailS demonstrates very close mean and tail percentiles, indicating good load-balancing capability. REPS performs consistently with RailS. Although MinRTT achieves the lowest mean CCT, its overall completion time is 4% worse than RailS. The tail flows of PLB finish relatively simultaneously, with an overall completion time 18% longer than RailS but still 11% better than the worst-performing ECMP.
+          - generic [ref=f33e4840]:
+            - heading "VI-C Performance under Sparse Load" [level=3] [ref=f33e4841]:
+              - generic [ref=f33e4842]: VI-C
+              - text: Performance under Sparse Load
+            - paragraph [ref=f33e4844]:
+              - text: The sparse-load scenario is constructed using a Top-K (
+              - math [ref=f33e4845]:
+                - generic [ref=f33e4847]:
+                  - generic [ref=f33e4848]: K
+                  - generic [ref=f33e4849]: =
+                  - generic [ref=f33e4850]: "2"
+              - text: ) expert selection matrix to simulate non-uniform communication patterns. By adjusting the sparsity, only a subset of receivers participates in data processing, forming hotspot experts and unbalanced link loads. This setup is used to evaluate the load-balancing capability of different schemes under non-ideal conditions.
+            - paragraph [ref=f33e4852]:
+              - text: BusBw. Fig.
+              - link "7" [ref=f33e4853] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F7
+              - text: ","
+              - link "7" [ref=f33e4854] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F7
+              - text: ","
+              - link "7" [ref=f33e4855] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F7
+              - text: and
+              - link "7" [ref=f33e4856] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F7
+              - text: show normalized BusBw of different schemes under various sparsity levels (0.6, 0.4, 0.2, and fully dense). RailS consistently maintains the highest BusBw across all sparsity levels, and its advantage becomes more pronounced as the load becomes sparser. At a sparsity of 0.6, RailS achieves a BusBw
+              - math [ref=f33e4857]:
+                - generic [ref=f33e4859]:
+                  - generic [ref=f33e4860]: "2.8"
+                  - generic [ref=f33e4861]: ×
+              - text: higher than other schemes. Under other sparsity levels, RailS still achieves 20%–78% performance improvements, indicating that RailS fully utilizes the multi-path bandwidth of the Rail architecture to maintain high BusBw.
+            - 'figure "Figure 10: Performance of different schemes under sender-skewed workloads: (a) normalized BusBw, (b) sender load matrix and its MSE, (c) receiver load matrix and its MSE, and (d) normalized CCT." [ref=f33e4862]':
+              - generic [ref=f33e4863]:
+                - figure "(f) Normalized BusBw" [ref=f33e4865]:
+                  - img "Refer to caption" [ref=f33e4866]
+                  - generic [ref=f33e4867]:
+                    - generic [ref=f33e4868]: (f)
+                    - text: Normalized BusBw
+                - figure "(g) Sender load matrix and MSE" [ref=f33e4870]:
+                  - img "Refer to caption" [ref=f33e4871]
+                  - generic [ref=f33e4872]:
+                    - generic [ref=f33e4873]: (g)
+                    - text: Sender load matrix and MSE
+                - figure "(h) Receiver load matrix and MSE" [ref=f33e4875]:
+                  - img "Refer to caption" [ref=f33e4876]
+                  - generic [ref=f33e4877]:
+                    - generic [ref=f33e4878]: (h)
+                    - text: Receiver load matrix and MSE
+                - figure "(i) Normalized CCT" [ref=f33e4880]:
+                  - img "Refer to caption" [ref=f33e4881]
+                  - generic [ref=f33e4882]:
+                    - generic [ref=f33e4883]: (i)
+                    - text: Normalized CCT
+              - generic [ref=f33e4884]:
+                - generic [ref=f33e4885]: "Figure 10:"
+                - text: "Performance of different schemes under sender-skewed workloads: (a) normalized BusBw, (b) sender load matrix and its MSE, (c) receiver load matrix and its MSE, and (d) normalized CCT."
+            - 'figure "Figure 11: Performance of different schemes under receiver-skewed workloads: (a) normalized BusBw, (b) sender load matrix and its MSE, (c) receiver load matrix and its MSE, and (d) normalized CCT." [ref=f33e4886]':
+              - generic [ref=f33e4887]:
+                - figure "(a) Normalized BusBw" [ref=f33e4889]:
+                  - img "Refer to caption" [ref=f33e4890]
+                  - generic [ref=f33e4891]:
+                    - generic [ref=f33e4892]: (a)
+                    - text: Normalized BusBw
+                - figure "(b) Sender load matrix and MSE" [ref=f33e4894]:
+                  - img "Refer to caption" [ref=f33e4895]
+                  - generic [ref=f33e4896]:
+                    - generic [ref=f33e4897]: (b)
+                    - text: Sender load matrix and MSE
+                - figure "(c) Receiver load matrix and MSE" [ref=f33e4899]:
+                  - img "Refer to caption" [ref=f33e4900]
+                  - generic [ref=f33e4901]:
+                    - generic [ref=f33e4902]: (c)
+                    - text: Receiver load matrix and MSE
+                - figure "(d) Normalized CCT" [ref=f33e4904]:
+                  - img "Refer to caption" [ref=f33e4905]
+                  - generic [ref=f33e4906]:
+                    - generic [ref=f33e4907]: (d)
+                    - text: Normalized CCT
+              - generic [ref=f33e4908]:
+                - generic [ref=f33e4909]: "Figure 11:"
+                - text: "Performance of different schemes under receiver-skewed workloads: (a) normalized BusBw, (b) sender load matrix and its MSE, (c) receiver load matrix and its MSE, and (d) normalized CCT."
+            - paragraph [ref=f33e4911]:
+              - text: CDF of CCT. Fig.
+              - link "8" [ref=f33e4912] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F8
+              - text: ","
+              - link "8" [ref=f33e4913] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F8
+              - text: ","
+              - link "8" [ref=f33e4914] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F8
+              - text: and
+              - link "8" [ref=f33e4915] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F8
+              - text: illustrate the CDF of normalized CCT for different schemes under sparse load. It is evident that as sparsity decreases, RailS completes flows faster and with greater advantage. With increasing sparsity, the short-flow performance of RailS becomes closer to other schemes, yet the longest flows still complete the fastest. This demonstrates that RailS achieves optimal load balancing and maintains excellent completion time performance.
+            - paragraph [ref=f33e4917]:
+              - text: CCT Values. Fig.
+              - link "9" [ref=f33e4918] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F9
+              - text: ","
+              - link "9" [ref=f33e4919] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F9
+              - text: ","
+              - link "9" [ref=f33e4920] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F9
+              - text: and
+              - link "9" [ref=f33e4921] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F9
+              - text: further present the mean, 80th, 95th, and 99th percentile values of normalized CCT for different schemes under sparse load. At low sparsity, RailS maintains closely aligned tail flow completion times. As sparsity increases, the range of tail completion times expands. Compared with other schemes, RailS consistently achieves the best mean and percentile performance in normalized CCT. At a sparsity of 0.6, RailS improves total completion time by more than
+              - math [ref=f33e4922]:
+                - generic [ref=f33e4924]:
+                  - generic [ref=f33e4925]: "1.5"
+                  - generic [ref=f33e4926]: ×
+              - text: . With higher sparsity levels, the improvement remains within 17%–78%, demonstrating the superior load-balancing performance of RailS.
+          - generic [ref=f33e4927]:
+            - heading "VI-D Performance under Skewed Sender Load" [level=3] [ref=f33e4928]:
+              - generic [ref=f33e4929]: VI-D
+              - text: Performance under Skewed Sender Load
+            - paragraph [ref=f33e4931]: The sender-skewed scenario employs a Zipf distribution to make a small number of domain experts carry the majority of traffic, forming “hotspot senders.” This simulates a situation where non-uniform input leads to extremely unbalanced outgoing loads among experts. It is used to examine each scheme’s bandwidth utilization and congestion mitigation capability under sudden source-side pressure.
+            - paragraph [ref=f33e4933]:
+              - text: BusBw. Fig.
+              - link "10" [ref=f33e4934] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F10
+              - text: shows that RailS and REPS achieve BusBw
+              - math [ref=f33e4935]:
+                - generic [ref=f33e4937]:
+                  - generic [ref=f33e4938]: "2.7"
+                  - generic [ref=f33e4939]: ×
+              - text: and
+              - math [ref=f33e4940]:
+                - generic [ref=f33e4942]:
+                  - generic [ref=f33e4943]: "2.75"
+                  - generic [ref=f33e4944]: ×
+              - text: higher than PLB, respectively. RailS improves bandwidth by 126% compared with ECMP and by 58% compared with MinRTT, demonstrating the effectiveness of the spraying mechanism under sender-skewed load.
+            - paragraph [ref=f33e4946]:
+              - text: Sender Load Matrix and MSE. The heatmap in Fig.
+              - link "10" [ref=f33e4947] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F10
+              - text: shows that RailS and REPS maintain balanced traffic distribution across NICs within each domain, with an inter-domain MSE below 0.01, indicating excellent sender load balancing. MinRTT shows moderate balance with an MSE of about 0.03, while PLB and ECMP have the highest MSE, around 15%.
+            - paragraph [ref=f33e4949]:
+              - text: Receiver Load Matrix and MSE. Fig.
+              - link "10" [ref=f33e4950] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F10
+              - text: shows that although the sending side is skewed, the receiving traffic distribution remains uniform. As a result, the actual NIC-level receiving load of all schemes is balanced, and the bottleneck lies on the sender side.
+            - paragraph [ref=f33e4952]:
+              - text: CCT. As shown in Fig.
+              - link "10" [ref=f33e4953] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F10
+              - text: ", the CDF curves indicate that RailS and REPS achieve the best CCT performance, reducing completion time by 55.9%–62.9% compared with ECMP and PLB, and by 34.6% compared with MinRTT."
+            - paragraph [ref=f33e4955]: In summary, RailS and REPS effectively mitigate sender-side bottlenecks under skewed load through the spraying mechanism, achieving balanced transmission. MinRTT benefits from multipath utilization and thus outperforms PLB and ECMP. However, since the bottleneck is not within the network and PLB cannot exploit the Rail architecture’s advantages, its performance is the lowest.
+          - generic [ref=f33e4956]:
+            - heading "VI-E Performance under Skewed Receiver Load" [level=3] [ref=f33e4957]:
+              - generic [ref=f33e4958]: VI-E
+              - text: Performance under Skewed Receiver Load
+            - paragraph [ref=f33e4960]: The receiver-skewed scenario models an incast situation, where most senders concentrate on a few hot experts following a Zipf distribution, leading to sudden many-to-one traffic bursts. This pattern reflects the real training condition in which “hot experts” are frequently invoked. It is used to evaluate each scheme’s ability to suppress tail latency and maintain load balance when the target-side load increases sharply.
+            - paragraph [ref=f33e4962]:
+              - text: BusBw. As shown in Fig.
+              - link "11" [ref=f33e4963] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F11
+              - text: ", RailS achieves"
+              - math [ref=f33e4964]:
+                - generic [ref=f33e4966]:
+                  - generic [ref=f33e4967]: "3.08"
+                  - generic [ref=f33e4968]: ×
+              - text: normalized BusBw, representing a
+              - math [ref=f33e4969]:
+                - generic [ref=f33e4971]:
+                  - generic [ref=f33e4972]: "2"
+                  - generic [ref=f33e4973]: ×
+              - text: improvement over ECMP, MinRTT, and PLB, significantly alleviating receiver hotspots. REPS reaches only
+              - math [ref=f33e4974]:
+                - generic [ref=f33e4976]:
+                  - generic [ref=f33e4977]: "1.44"
+                  - generic [ref=f33e4978]: ×
+              - text: that of PLB, less than half of RailS.
+            - paragraph [ref=f33e4980]:
+              - text: Sender Load Matrix and MSE. Fig.
+              - link "11" [ref=f33e4981] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F11
+              - text: shows that although the receiver load is skewed, the sending traffic distribution remains uniform. Therefore, all schemes exhibit balanced NIC-level sending and receiving loads, with the bottleneck located on the receiver side.
+            - paragraph [ref=f33e4983]:
+              - text: Receiver Load Matrix and MSE. Fig.
+              - link "11" [ref=f33e4984] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F11
+              - text: demonstrates that RailS maintains balanced receiving traffic across domains, with an MSE below 0.01, while all other schemes have MSE values around 15%. The heatmap clearly shows that although Domain 1 experiences a strong receiving skew, RailS effectively evens it out. This indicates that RailS achieves simultaneous load balancing on both sender and receiver sides.
+            - paragraph [ref=f33e4986]:
+              - text: CCT. As shown in Fig.
+              - link "11" [ref=f33e4987] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F11
+              - text: ", RailS achieves the best CCT performance. Compared with other schemes, RailS reduces completion time by more than 50%, benefiting from balanced NIC utilization on the receiver side, which other schemes fail to achieve."
+            - paragraph [ref=f33e4989]: In summary, although RailS also employs a spraying mechanism, its uniform sending pattern naturally induces uniform receiving distribution, making it significantly superior to REPS. Since the bottleneck lies on the single receiver side rather than within the network, PLB and MinRTT even perform worse than ECMP, as ECMP avoids unnecessary path reorganization in this case.
+            - 'figure "Figure 12: The Mixtral 8×7B model under dense mode exhibits the following metrics: (a) all-to-all completion time and (b) training iteration time." [ref=f33e4990]':
+              - generic [ref=f33e4991]:
+                - figure "(a) Various phases for CCT" [ref=f33e4993]:
+                  - img "Refer to caption" [ref=f33e4994]
+                  - generic [ref=f33e4995]:
+                    - generic [ref=f33e4996]: (a)
+                    - text: Various phases for CCT
+                - figure "(b) Training iteration time" [ref=f33e4998]:
+                  - img "Refer to caption" [ref=f33e4999]
+                  - generic [ref=f33e5000]:
+                    - generic [ref=f33e5001]: (b)
+                    - text: Training iteration time
+              - generic [ref=f33e5002]:
+                - generic [ref=f33e5003]: "Figure 12:"
+                - text: "The Mixtral 8×7B model under dense mode exhibits the following metrics: (a) all-to-all completion time and (b) training iteration time."
+            - 'figure "Figure 13: The Mixtral 8×7B model under sparse mode exhibits the following metrics: (a) all-to-all completion time and (b) training iteration time." [ref=f33e5004]':
+              - generic [ref=f33e5005]:
+                - figure "(a) Various phases for CCT" [ref=f33e5007]:
+                  - img "Refer to caption" [ref=f33e5008]
+                  - generic [ref=f33e5009]:
+                    - generic [ref=f33e5010]: (a)
+                    - text: Various phases for CCT
+                - figure "(b) Training iteration time" [ref=f33e5012]:
+                  - img "Refer to caption" [ref=f33e5013]
+                  - generic [ref=f33e5014]:
+                    - generic [ref=f33e5015]: (b)
+                    - text: Training iteration time
+              - generic [ref=f33e5016]:
+                - generic [ref=f33e5017]: "Figure 13:"
+                - text: "The Mixtral 8×7B model under sparse mode exhibits the following metrics: (a) all-to-all completion time and (b) training iteration time."
+          - generic [ref=f33e5018]:
+            - heading "VI-F Real-World Workload Performance" [level=3] [ref=f33e5019]:
+              - generic [ref=f33e5020]: VI-F
+              - text: Real-World Workload Performance
+            - paragraph [ref=f33e5022]:
+              - text: We replayed the training and communication emulation of the Mixtral 8
+              - math [ref=f33e5023]:
+                - generic [ref=f33e5024]: ×
+              - text: 7B MoE training trace. Each expert was deployed across multiple GPUs. The original data to be transmitted by each expert were distributed on GPUs in two different ways to perform all-to-all communication. In the dense setup, each expert’s original data were evenly distributed across multiple GPUs for parallel data exchange. In the sparse setup, the original data were aggregated on a single GPU, and the all-to-all exchange was performed on that GPU.
+            - paragraph [ref=f33e5027]: "During training, four phases of the iteration process were identified: Start denotes the first iteration, Early represents the early stage, Mid refers to the middle stage, and Stable indicates the stable stage. The input distribution on each GPU remained uniform, while the total data volume increased as the iteration progressed. For example, in the Start phase, the total transmission volume per expert was around 100 MB, whereas in the Stable phase, it reached 256 MB."
+            - paragraph [ref=f33e5029]:
+              - text: Dense Setup. In Fig.
+              - link "12" [ref=f33e5030] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F12
+              - text: ", the normalized CCT analysis indicates that RailS reduces the CCT by 19.5%–34.9% in the Start phase, 8.9%–19.2% in the Early phase, 25.3%–31.2% in the Mid phase, and 17.9%–44.3% in the Stable phase. Overall, RailS shortens the iteration time by up to 18% compared with other schemes."
+            - paragraph [ref=f33e5032]:
+              - text: Sparse Setup. In Fig.
+              - link "13" [ref=f33e5033] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#S6.F13
+              - text: ", the normalized CCT shows that RailS reduces the CCT by 66.1%–69.2% in the Start phase, 75.1%–80.4% in the Early phase, 75.1%–76.8% in the Mid phase, and 73.9%–75.7% in the Stable phase. Throughout the entire training process, RailS achieves at least a 40% reduction in iteration time compared with other schemes."
+            - paragraph [ref=f33e5035]: These results demonstrate that the sparser the load matrix, the better the performance of the RailS scheme. This is because, under sparse workloads, bottlenecks tend to occur at the receiver side of the Rail architecture rather than within the network. Although some schemes can exploit multipath transmission, they fail to leverage parallel reception, thereby creating receiver-side bottlenecks and performing worse than ECMP. The uniform-sending and uniform-receiving characteristics of RailS fully utilize architectural parallelism and ensure NIC load balancing, achieving optimal performance.
+        - generic [ref=f33e5036]:
+          - heading "VII Related Work" [level=2] [ref=f33e5037]:
+            - generic [ref=f33e5038]: VII
+            - text: Related Work
+          - paragraph [ref=f33e5040]:
+            - text: The core objective of load balancing is to efficiently distribute network traffic across multiple paths to enhance system throughput and resource utilization. Existing schemes exhibit significant differences in traffic granularity. Traffic granularity can range from individual packets
+            - generic [ref=f33e5041]:
+              - text: "["
+              - link "9" [ref=f33e5042] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib9
+              - text: ","
+              - link "22" [ref=f33e5043] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib22
+              - text: ","
+              - link "66" [ref=f33e5044] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib66
+              - text: ","
+              - link "33" [ref=f33e5045] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib33
+              - text: "]"
+            - text: to flowlets
+            - generic [ref=f33e5046]:
+              - text: "["
+              - link "6" [ref=f33e5047] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib6
+              - text: ","
+              - link "55" [ref=f33e5048] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib55
+              - text: ","
+              - link "57" [ref=f33e5049] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib57
+              - text: ","
+              - link "29" [ref=f33e5050] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib29
+              - text: "]"
+            - text: ", to subflows"
+            - generic [ref=f33e5051]:
+              - text: "["
+              - link "47" [ref=f33e5052] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib47
+              - text: ","
+              - link "42" [ref=f33e5053] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib42
+              - text: ","
+              - link "37" [ref=f33e5054] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib37
+              - text: "]"
+            - text: within a single connection, and up to entire connections or flows
+            - generic [ref=f33e5055]:
+              - text: "["
+              - link "25" [ref=f33e5056] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib25
+              - text: ","
+              - link "65" [ref=f33e5057] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib65
+              - text: ","
+              - link "5" [ref=f33e5058] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib5
+              - text: "]"
+            - text: . The choice of granularity impacts scheduling accuracy and load balancing, with fine-grained partitioning improving allocation precision and coarse-grained partitioning reducing overhead.
+          - paragraph [ref=f33e5060]:
+            - text: Local load balancing distributes traffic across equivalent paths and can be implemented at the host or switch level. Host-level schemes
+            - generic [ref=f33e5061]:
+              - text: "["
+              - link "45" [ref=f33e5062] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib45
+              - text: ","
+              - link "31" [ref=f33e5063] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib31
+              - text: ","
+              - link "48" [ref=f33e5064] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib48
+              - text: ","
+              - link "62" [ref=f33e5065] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib62
+              - text: "]"
+            - text: offer greater flexibility, easier scaling, and faster adaptation to network changes, supporting multipath scheduling and improving system performance. Switch-level
+            - generic [ref=f33e5066]:
+              - text: "["
+              - link "7" [ref=f33e5067] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib7
+              - text: ","
+              - link "11" [ref=f33e5068] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib11
+              - text: ","
+              - link "51" [ref=f33e5069] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib51
+              - text: ","
+              - link "8" [ref=f33e5070] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib8
+              - text: "]"
+            - text: schemes react quickly to transient congestion and reduce host overhead but provide limited flexibility for policy customization and scaling.
+          - paragraph [ref=f33e5072]:
+            - text: Traffic forwarding decisions in load balancing rely on network state information. Many schemes utilize connectivity information to identify currently available equivalent paths. Significant differences exist in how load information is applied. Some schemes perform static allocation without relying on load information
+            - generic [ref=f33e5073]:
+              - text: "["
+              - link "24" [ref=f33e5074] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib24
+              - text: ","
+              - link "13" [ref=f33e5075] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib13
+              - text: ","
+              - link "41" [ref=f33e5076] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib41
+              - text: "]"
+            - text: . Others dynamically adjust traffic distribution based on local load conditions to optimize link utilization
+            - generic [ref=f33e5077]:
+              - text: "["
+              - link "61" [ref=f33e5078] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib61
+              - text: ","
+              - link "30" [ref=f33e5079] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib30
+              - text: ","
+              - link "53" [ref=f33e5080] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib53
+              - text: "]"
+            - text: . Certain schemes employ global load information for unified scheduling to achieve overall performance optimization
+            - generic [ref=f33e5081]:
+              - text: "["
+              - link "43" [ref=f33e5082] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib43
+              - text: ","
+              - link "32" [ref=f33e5083] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2510.19262v1#bib.bib32
+              - text: "]"
+            - text: . These differences determine the performance of load balancing schemes in terms of throughput, latency, and network resource utilization.
+        - generic [ref=f33e5084]:
+          - heading "VIII Conclusion" [level=2] [ref=f33e5085]:
+            - generic [ref=f33e5086]: VIII
+            - text: Conclusion
+          - paragraph [ref=f33e5088]: Driven by the sparse, dynamic, and imbalanced communication of MoE models, we propose RailS, a load balancer for MoE all-to-all communication. RailS exploits the deterministic topology and symmetry of the Rail architecture to resolve path conflicts and structure multi-NIC resource allocation. Theoretically, we prove that sender-side balancing inherently ensures receiver-side balance, reducing global coordination to locally solvable subproblems. System-wise, an LPT-based scheduler efficiently realizes this principle, achieving near-optimal performance through proactive, fine-grained traffic planning. Experiments demonstrate that RailS enhances bus bandwidth, shortens collective communication and training iteration times, and improves overall GPU and network utilization. We hope this work inspires future exploration of topology-aware load balancing and transport co-design, encouraging broader investigation into efficient and scalable communication for large MoE systems.
+        - generic [ref=f33e5089]:
+          - heading "References" [level=2] [ref=f33e5090]
+          - list [ref=f33e5091]:
+            - listitem [ref=f33e5092]:
+              - generic [ref=f33e5093]:
+                - text: "[1]"
+                - button "Back to the article" [ref=f33e5094] [cursor=pointer]: ↑
+              - generic [ref=f33e5095]: NVIDIA Collective Communications Library (NCCL).
+              - generic [ref=f33e5096]:
+                - link "https://github.com/NVIDIA/nccl" [ref=f33e5097] [cursor=pointer]:
+                  - /url: https://github.com/NVIDIA/nccl
+                - text: .
+            - listitem [ref=f33e5098]:
+              - generic [ref=f33e5099]:
+                - text: "[2]"
+                - button "Back to the article" [ref=f33e5100] [cursor=pointer]: ↑
+              - generic [ref=f33e5101]: "Infiniband architecture specification release 1.2.1 annex a16: Roce."
+              - generic [ref=f33e5102]: InfiniBand Trade Association, 2010.
+            - listitem [ref=f33e5103]:
+              - generic [ref=f33e5104]:
+                - text: "[3]"
+                - button "Back to the article" [ref=f33e5105] [cursor=pointer]: ↑
+              - generic [ref=f33e5106]: "Infiniband architecture specification release 1.2.1 annex a17: Rocev2."
+              - generic [ref=f33e5107]: InfiniBand Trade Association, 2014.
+            - listitem [ref=f33e5108]:
+              - generic [ref=f33e5109]:
+                - text: "[4]"
+                - button "Back to the article" [ref=f33e5110] [cursor=pointer]: ↑
+              - generic [ref=f33e5111]: Mohammad Al-Fares, Alexander Loukissas, and Amin Vahdat.
+              - generic [ref=f33e5112]: A scalable, commodity data center network architecture.
+              - generic [ref=f33e5113]: ACM SIGCOMM computer communication review, 38(4):63–74, 2008.
+            - listitem [ref=f33e5114]:
+              - generic [ref=f33e5115]:
+                - text: "[5]"
+                - button "Back to the article" [ref=f33e5116] [cursor=pointer]: ↑
+              - generic [ref=f33e5117]: Mohammad Al-Fares, Sivasankar Radhakrishnan, Barath Raghavan, et al.
+              - generic [ref=f33e5118]: "Hedera: dynamic flow scheduling for data center networks."
+              - generic [ref=f33e5119]: In Nsdi, volume 10, pages 89–92. San Jose, USA, 2010.
+            - listitem [ref=f33e5120]:
+              - generic [ref=f33e5121]:
+                - text: "[6]"
+                - button "Back to the article" [ref=f33e5122] [cursor=pointer]: ↑
+              - generic [ref=f33e5123]: Mohammad Alizadeh, Tom Edsall, et al.
+              - generic [ref=f33e5124]: "Conga: Distributed congestion-aware load balancing for datacenters."
+              - generic [ref=f33e5125]: In Proceedings of the 2014 ACM conference on SIGCOMM, pages 503–514, 2014.
+            - listitem [ref=f33e5126]:
+              - generic [ref=f33e5127]:
+                - text: "[7]"
+                - button "Back to the article" [ref=f33e5128] [cursor=pointer]: ↑
+              - generic [ref=f33e5129]: Mohammad Alizadeh, Shuang Yang, Milad Sharif, et al.
+              - generic [ref=f33e5130]: "pfabric: Minimal near-optimal datacenter transport."
+              - generic [ref=f33e5131]: ACM SIGCOMM Computer Communication Review, 43(4):435–446, 2013.
+            - listitem [ref=f33e5132]:
+              - generic [ref=f33e5133]:
+                - text: "[8]"
+                - button "Back to the article" [ref=f33e5134] [cursor=pointer]: ↑
+              - generic [ref=f33e5135]: Theophilus Benson, Ashok Anand, Aditya Akella, and Ming Zhang.
+              - generic [ref=f33e5136]: "Microte: Fine grained traffic engineering for data centers."
+              - generic [ref=f33e5137]: In Proceedings of the seventh conference on emerging networking experiments and technologies, pages 1–12, 2011.
+            - listitem [ref=f33e5138]:
+              - generic [ref=f33e5139]:
+                - text: "[9]"
+                - button "Back to the article" [ref=f33e5140] [cursor=pointer]: ↑
+              - generic [ref=f33e5141]: Tommaso Bonato, Abdul Kabbani, Ahmad Ghalayini, et al.
+              - generic [ref=f33e5142]: "Reps: Recycled entropy packet spraying for adaptive load balancing and failure mitigation."
+              - generic [ref=f33e5143]: arXiv preprint arXiv:2407.21625, 2025.
+            - listitem [ref=f33e5144]:
+              - generic [ref=f33e5145]:
+                - text: "[10]"
+                - button "Back to the article" [ref=f33e5146] [cursor=pointer]: ↑
+              - generic [ref=f33e5147]: Tom Brown, Benjamin Mann, Nick Ryder, et al.
+              - generic [ref=f33e5148]: Language models are few-shot learners.
+              - generic [ref=f33e5149]: Advances in neural information processing systems, 33:1877–1901, 2020.
+            - listitem [ref=f33e5150]:
+              - generic [ref=f33e5151]:
+                - text: "[11]"
+                - button "Back to the article" [ref=f33e5152] [cursor=pointer]: ↑
+              - generic [ref=f33e5153]: Qizhe Cai, Mina Tahmasbi Arashloo, and Rachit Agarwal.
+              - generic [ref=f33e5154]: "dcpim: Near-optimal proactive datacenter transport."
+              - generic [ref=f33e5155]: In Proceedings of the ACM SIGCOMM 2022 Conference, pages 53–65, 2022.
+            - listitem [ref=f33e5156]:
+              - generic [ref=f33e5157]:
+                - text: "[12]"
+                - button "Back to the article" [ref=f33e5158] [cursor=pointer]: ↑
+              - generic [ref=f33e5159]: Jacob Devlin, Ming-Wei Chang, Kenton Lee, et al.
+              - generic [ref=f33e5160]: "Bert: Pre-training of deep bidirectional transformers for language understanding."
+              - generic [ref=f33e5161]: "In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers), pages 4171–4186, 2019."
+            - listitem [ref=f33e5162]:
+              - generic [ref=f33e5163]:
+                - text: "[13]"
+                - button "Back to the article" [ref=f33e5164] [cursor=pointer]: ↑
+              - generic [ref=f33e5165]: Advait Dixit, Pawan Prakash, Y Charlie Hu, and Ramana Rao Kompella.
+              - generic [ref=f33e5166]: On the impact of packet spraying in data center networks.
+              - generic [ref=f33e5167]: In 2013 proceedings ieee infocom, pages 2130–2138. IEEE, 2013.
+            - listitem [ref=f33e5168]:
+              - generic [ref=f33e5169]:
+                - text: "[14]"
+                - button "Back to the article" [ref=f33e5170] [cursor=pointer]: ↑
+              - generic [ref=f33e5171]: Nan Du, Yanping Huang, Andrew M Dai, et al.
+              - generic [ref=f33e5172]: "Glam: Efficient scaling of language models with mixture-of-experts."
+              - generic [ref=f33e5173]: In International conference on machine learning, pages 5547–5569. PMLR, 2022.
+            - listitem [ref=f33e5174]:
+              - generic [ref=f33e5175]:
+                - text: "[15]"
+                - button "Back to the article" [ref=f33e5176] [cursor=pointer]: ↑
+              - generic [ref=f33e5177]: William Fedus, Barret Zoph, and Noam Shazeer.
+              - generic [ref=f33e5178]: "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity."
+              - generic [ref=f33e5179]: Journal of Machine Learning Research, 23(120):1–39, 2022.
+            - listitem [ref=f33e5180]:
+              - generic [ref=f33e5181]:
+                - text: "[16]"
+                - button "Back to the article" [ref=f33e5182] [cursor=pointer]: ↑
+              - generic [ref=f33e5183]: Adithya Gangidi, Rui Miao, Shengbao Zheng, et al.
+              - generic [ref=f33e5184]: Rdma over ethernet for distributed training at meta scale.
+              - generic [ref=f33e5185]: In Proceedings of the ACM SIGCOMM 2024 Conference, pages 57–70, 2024.
+            - listitem [ref=f33e5186]:
+              - generic [ref=f33e5187]:
+                - text: "[17]"
+                - button "Back to the article" [ref=f33e5188] [cursor=pointer]: ↑
+              - generic [ref=f33e5189]: Ronald L. Graham.
+              - generic [ref=f33e5190]: Bounds on multiprocessing timing anomalies.
+              - generic [ref=f33e5191]: SIAM journal on Applied Mathematics, 17(2):416–429, 1969.
+            - listitem [ref=f33e5192]:
+              - generic [ref=f33e5193]:
+                - text: "[18]"
+                - button "Back to the article" [ref=f33e5194] [cursor=pointer]: ↑
+              - generic [ref=f33e5195]: Albert Greenberg, James R Hamilton, Navendu Jain, et al.
+              - generic [ref=f33e5196]: "Vl2: A scalable and flexible data center network."
+              - generic [ref=f33e5197]: In Proceedings of the ACM SIGCOMM 2009 conference on Data communication, pages 51–62, 2009.
+            - listitem [ref=f33e5198]:
+              - generic [ref=f33e5199]:
+                - text: "[19]"
+                - button "Back to the article" [ref=f33e5200] [cursor=pointer]: ↑
+              - generic [ref=f33e5201]: Chuanxiong Guo, Guohan Lu, Dan Li, et al.
+              - generic [ref=f33e5202]: "Bcube: a high performance, server-centric network architecture for modular data centers."
+              - generic [ref=f33e5203]: SIGCOMM ’09, page 63–74, New York, NY, USA, 2009. Association for Computing Machinery.
+            - listitem [ref=f33e5204]:
+              - generic [ref=f33e5205]:
+                - text: "[20]"
+                - button "Back to the article" [ref=f33e5206] [cursor=pointer]: ↑
+              - generic [ref=f33e5207]: Chuanxiong Guo, Haitao Wu, Kun Tan, et al.
+              - generic [ref=f33e5208]: "Dcell: a scalable and fault-tolerant network structure for data centers."
+              - generic [ref=f33e5209]: In Proceedings of the ACM SIGCOMM 2008 Conference on Data Communication, SIGCOMM ’08, page 75–86, New York, NY, USA, 2008. Association for Computing Machinery.
+            - listitem [ref=f33e5210]:
+              - generic [ref=f33e5211]:
+                - text: "[21]"
+                - button "Back to the article" [ref=f33e5212] [cursor=pointer]: ↑
+              - generic [ref=f33e5213]: Daya Guo, Dejian Yang, Haowei Zhang, et al.
+              - generic [ref=f33e5214]: Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+              - generic [ref=f33e5215]: Nature, 645(8081):633–638, 2025.
+            - listitem [ref=f33e5216]:
+              - generic [ref=f33e5217]:
+                - text: "[22]"
+                - button "Back to the article" [ref=f33e5218] [cursor=pointer]: ↑
+              - generic [ref=f33e5219]: Mark Handley, Costin Raiciu, Alexandru Agache, et al.
+              - generic [ref=f33e5220]: Re-architecting datacenter networks and stacks for low latency and high performance.
+              - generic [ref=f33e5221]: In Proceedings of the conference of the ACM special interest group on data communication, pages 29–42, 2017.
+            - listitem [ref=f33e5222]:
+              - generic [ref=f33e5223]:
+                - text: "[23]"
+                - button "Back to the article" [ref=f33e5224] [cursor=pointer]: ↑
+              - generic [ref=f33e5225]: Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+              - generic [ref=f33e5226]: Deep residual learning for image recognition.
+              - generic [ref=f33e5227]: In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 770–778, 2016.
+            - listitem [ref=f33e5228]:
+              - generic [ref=f33e5229]:
+                - text: "[24]"
+                - button "Back to the article" [ref=f33e5230] [cursor=pointer]: ↑
+              - generic [ref=f33e5231]: Keqiang He, Eric Rozner, Kanak Agarwal, et al.
+              - generic [ref=f33e5232]: "Presto: Edge-based load balancing for fast datacenter networks."
+              - generic [ref=f33e5233]: ACM SIGCOMM Computer Communication Review, 45(4):465–478, 2015.
+            - listitem [ref=f33e5234]:
+              - generic [ref=f33e5235]:
+                - text: "[25]"
+                - button "Back to the article" [ref=f33e5236] [cursor=pointer]: ↑
+              - generic [ref=f33e5237]: Christian Hopps.
+              - generic [ref=f33e5238]: Analysis of an equal-cost multi-path algorithm.
+              - generic [ref=f33e5239]: Technical report, 2000.
+            - listitem [ref=f33e5240]:
+              - generic [ref=f33e5241]:
+                - text: "[26]"
+                - button "Back to the article" [ref=f33e5242] [cursor=pointer]: ↑
+              - generic [ref=f33e5243]: Jinbin Hu, Chaoliang Zeng, Zilong Wang, et al.
+              - generic [ref=f33e5244]: Load balancing with multi-level signals for lossless datacenter networks.
+              - generic [ref=f33e5245]: IEEE/ACM Transactions on Networking, 32(3):2736–2748, 2024.
+            - listitem [ref=f33e5246]:
+              - generic [ref=f33e5247]:
+                - text: "[27]"
+                - button "Back to the article" [ref=f33e5248] [cursor=pointer]: ↑
+              - generic [ref=f33e5249]: Shuihai Hu, Yibo Zhu, Peng Cheng, et al.
+              - generic [ref=f33e5250]: "Deadlocks in datacenter networks: Why do they form, and how to avoid them."
+              - generic [ref=f33e5251]: In Proceedings of the 15th ACM Workshop on Hot Topics in Networks, pages 92–98, 2016.
+            - listitem [ref=f33e5252]:
+              - generic [ref=f33e5253]:
+                - text: "[28]"
+                - button "Back to the article" [ref=f33e5254] [cursor=pointer]: ↑
+              - generic [ref=f33e5255]: Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, et al.
+              - generic [ref=f33e5256]: Mixtral of experts.
+              - generic [ref=f33e5257]: arXiv preprint arXiv:2401.04088, 2024.
+            - listitem [ref=f33e5258]:
+              - generic [ref=f33e5259]:
+                - text: "[29]"
+                - button "Back to the article" [ref=f33e5260] [cursor=pointer]: ↑
+              - generic [ref=f33e5261]: Abdul Kabbani, Balajee Vamanan, Jahangir Hasan, and Fabien Duchene.
+              - generic [ref=f33e5262]: "Flowbender: Flow-level adaptive routing for improved latency and throughput in datacenter networks."
+              - generic [ref=f33e5263]: In Proceedings of the 10th ACM International on Conference on emerging Networking Experiments and Technologies, pages 149–160, 2014.
+            - listitem [ref=f33e5264]:
+              - generic [ref=f33e5265]:
+                - text: "[30]"
+                - button "Back to the article" [ref=f33e5266] [cursor=pointer]: ↑
+              - generic [ref=f33e5267]: Srikanth Kandula, Dina Katabi, Shantanu Sinha, and Arthur Berger.
+              - generic [ref=f33e5268]: Dynamic load balancing without packet reordering.
+              - generic [ref=f33e5269]: ACM SIGCOMM Computer Communication Review, 37(2):51–62, 2007.
+            - listitem [ref=f33e5270]:
+              - generic [ref=f33e5271]:
+                - text: "[31]"
+                - button "Back to the article" [ref=f33e5272] [cursor=pointer]: ↑
+              - generic [ref=f33e5273]: Naga Katta, Aditi Ghag, Mukesh Hira, et al.
+              - generic [ref=f33e5274]: "Clove: Congestion-aware load balancing at the virtual edge."
+              - generic [ref=f33e5275]: In Proceedings of the 13th International Conference on emerging Networking EXperiments and Technologies, pages 323–335, 2017.
+            - listitem [ref=f33e5276]:
+              - generic [ref=f33e5277]:
+                - text: "[32]"
+                - button "Back to the article" [ref=f33e5278] [cursor=pointer]: ↑
+              - generic [ref=f33e5279]: Naga Katta, Mukesh Hira, Changhoon Kim, et al.
+              - generic [ref=f33e5280]: "Hula: Scalable load balancing using programmable data planes."
+              - generic [ref=f33e5281]: In Proceedings of the Symposium on SDN Research, pages 1–12, 2016.
+            - listitem [ref=f33e5282]:
+              - generic [ref=f33e5283]:
+                - text: "[33]"
+                - button "Back to the article" [ref=f33e5284] [cursor=pointer]: ↑
+              - generic [ref=f33e5285]: Yanfang Le, Rong Pan, Peter Newman, et al.
+              - generic [ref=f33e5286]: "Strack: A reliable multipath transport for ai/ml clusters."
+              - generic [ref=f33e5287]: arXiv preprint arXiv:2407.15266, 2024.
+            - listitem [ref=f33e5288]:
+              - generic [ref=f33e5289]:
+                - text: "[34]"
+                - button "Back to the article" [ref=f33e5290] [cursor=pointer]: ↑
+              - generic [ref=f33e5291]: Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, et al.
+              - generic [ref=f33e5292]: "Gshard: Scaling giant models with conditional computation and automatic sharding."
+              - generic [ref=f33e5293]: arXiv preprint arXiv:2006.16668, 2020.
+            - listitem [ref=f33e5294]:
+              - generic [ref=f33e5295]:
+                - text: "[35]"
+                - button "Back to the article" [ref=f33e5296] [cursor=pointer]: ↑
+              - generic [ref=f33e5297]: Xudong Liao, Yijun Sun, Han Tian, et al.
+              - generic [ref=f33e5298]: "Mixnet: A runtime reconfigurable optical-electrical fabric for distributed mixture-of-experts training."
+              - generic [ref=f33e5299]: In Proceedings of the ACM SIGCOMM 2025 Conference, pages 554–574, 2025.
+            - listitem [ref=f33e5300]:
+              - generic [ref=f33e5301]:
+                - text: "[36]"
+                - button "Back to the article" [ref=f33e5302] [cursor=pointer]: ↑
+              - generic [ref=f33e5303]: Aixin Liu, Bei Feng, Bing Xue, et al.
+              - generic [ref=f33e5304]: Deepseek-v3 technical report.
+              - generic [ref=f33e5305]: arXiv preprint arXiv:2412.19437, 2024.
+            - listitem [ref=f33e5306]:
+              - generic [ref=f33e5307]:
+                - text: "[37]"
+                - button "Back to the article" [ref=f33e5308] [cursor=pointer]: ↑
+              - generic [ref=f33e5309]: Yuanwei Lu, Guo Chen, Bojie Li, Kun Tan, et al.
+              - generic [ref=f33e5310]:
+                - math [ref=f33e5311]:
+                  - generic [ref=f33e5312]: "{"
+                - text: Multi-Path
+                - math [ref=f33e5314]:
+                  - generic [ref=f33e5315]: "}"
+                - text: transport for
+                - math [ref=f33e5317]:
+                  - generic [ref=f33e5318]: "{"
+                - text: RDMA
+                - math [ref=f33e5320]:
+                  - generic [ref=f33e5321]: "}"
+                - text: in datacenters.
+              - generic [ref=f33e5323]: In 15th USENIX symposium on networked systems design and implementation (NSDI 18), pages 357–371, 2018.
+            - listitem [ref=f33e5324]:
+              - generic [ref=f33e5325]:
+                - text: "[38]"
+                - button "Back to the article" [ref=f33e5326] [cursor=pointer]: ↑
+              - generic [ref=f33e5327]: Radhika Mittal, Alexander Shpiner, Aurojit Panda, et al.
+              - generic [ref=f33e5328]: Revisiting network support for rdma.
+              - generic [ref=f33e5329]: In Proceedings of the 2018 Conference of the ACM Special Interest Group on Data Communication, pages 313–326, 2018.
+            - listitem [ref=f33e5330]:
+              - generic [ref=f33e5331]:
+                - text: "[39]"
+                - button "Back to the article" [ref=f33e5332] [cursor=pointer]: ↑
+              - generic [ref=f33e5333]: Michael Mitzenmacher.
+              - generic [ref=f33e5334]: The power of two choices in randomized load balancing.
+              - generic [ref=f33e5335]: IEEE Transactions on Parallel and Distributed Systems, 12(10):1094–1104, 2002.
+            - listitem [ref=f33e5336]:
+              - generic [ref=f33e5337]:
+                - text: "[40]"
+                - button "Back to the article" [ref=f33e5338] [cursor=pointer]: ↑
+              - generic [ref=f33e5339]: DGX NVIDIA.
+              - generic [ref=f33e5340]: "SuperPOD: Next Generation Scalable Infrastructure for AI Leadership."
+              - generic [ref=f33e5341]:
+                - link "https://docs.nvidia.com/https:/docs.nvidia.com/dgx-superpod-reference-architecture-dgx-h100.pdf" [ref=f33e5342] [cursor=pointer]:
+                  - /url: https://docs.nvidia.com/https:/docs.nvidia.com/dgx-superpod-reference-architecture-dgx-h100.pdf
+                - text: ", 2023."
+            - listitem [ref=f33e5343]:
+              - generic [ref=f33e5344]:
+                - text: "[41]"
+                - button "Back to the article" [ref=f33e5345] [cursor=pointer]: ↑
+              - generic [ref=f33e5346]: Vladimir Olteanu, Haggai Eran, Dragos Dumitrescu, et al.
+              - generic [ref=f33e5347]: An edge-queued datagram service for all datacenter traffic.
+              - generic [ref=f33e5348]: In 19th USENIX Symposium on Networked Systems Design and Implementation (NSDI 22), pages 761–777, 2022.
+            - listitem [ref=f33e5349]:
+              - generic [ref=f33e5350]:
+                - text: "[42]"
+                - button "Back to the article" [ref=f33e5351] [cursor=pointer]: ↑
+              - generic [ref=f33e5352]: Christoph Paasch, Simone Ferlin, Ozgu Alay, and Olivier Bonaventure.
+              - generic [ref=f33e5353]: Experimental evaluation of multipath tcp schedulers.
+              - generic [ref=f33e5354]: In Proceedings of the 2014 ACM SIGCOMM workshop on Capacity sharing workshop, pages 27–32, 2014.
+            - listitem [ref=f33e5355]:
+              - generic [ref=f33e5356]:
+                - text: "[43]"
+                - button "Back to the article" [ref=f33e5357] [cursor=pointer]: ↑
+              - generic [ref=f33e5358]: Jonathan Perry, Amy Ousterhout, Hari Balakrishnan, et al.
+              - generic [ref=f33e5359]: "Fastpass: A centralized” zero-queue” datacenter network."
+              - generic [ref=f33e5360]: In Proceedings of the 2014 ACM conference on SIGCOMM, pages 307–318, 2014.
+            - listitem [ref=f33e5361]:
+              - generic [ref=f33e5362]:
+                - text: "[44]"
+                - button "Back to the article" [ref=f33e5363] [cursor=pointer]: ↑
+              - generic [ref=f33e5364]: Kun Qian, Yongqing Xi, Jiamin Cao, et al.
+              - generic [ref=f33e5365]: "Alibaba hpn: A data center network for large language model training."
+              - generic [ref=f33e5366]: In Proceedings of the ACM SIGCOMM 2024 Conference, pages 691–706, 2024.
+            - listitem [ref=f33e5367]:
+              - generic [ref=f33e5368]:
+                - text: "[45]"
+                - button "Back to the article" [ref=f33e5369] [cursor=pointer]: ↑
+              - generic [ref=f33e5370]: Mubashir Adnan Qureshi, Yuchung Cheng, Qianwen Yin, et al.
+              - generic [ref=f33e5371]: "Plb: congestion signals are simple and effective for network load balancing."
+              - generic [ref=f33e5372]: In Proceedings of the ACM SIGCOMM 2022 Conference, pages 207–218, 2022.
+            - listitem [ref=f33e5373]:
+              - generic [ref=f33e5374]:
+                - text: "[46]"
+                - button "Back to the article" [ref=f33e5375] [cursor=pointer]: ↑
+              - generic [ref=f33e5376]: Costin Raiciu, Sebastien Barre, Christopher Pluntke, et al.
+              - generic [ref=f33e5377]: Improving datacenter performance and robustness with multipath tcp.
+              - generic [ref=f33e5378]: ACM SIGCOMM Computer Communication Review, 41(4):266–277, 2011.
+            - listitem [ref=f33e5379]:
+              - generic [ref=f33e5380]:
+                - text: "[47]"
+                - button "Back to the article" [ref=f33e5381] [cursor=pointer]: ↑
+              - generic [ref=f33e5382]: Costin Raiciu, Dragos Niculescu, Marcelo Bagnulo, and Mark James Handley.
+              - generic [ref=f33e5383]: Opportunistic mobility with multipath tcp.
+              - generic [ref=f33e5384]: In Proceedings of the sixth international workshop on MobiArch, pages 7–12, 2011.
+            - listitem [ref=f33e5385]:
+              - generic [ref=f33e5386]:
+                - text: "[48]"
+                - button "Back to the article" [ref=f33e5387] [cursor=pointer]: ↑
+              - generic [ref=f33e5388]: Costin Raiciu, Christoph Paasch, Sebastien Barre, et al.
+              - generic [ref=f33e5389]:
+                - text: How hard can it be? designing and implementing a deployable multipath
+                - math [ref=f33e5390]:
+                  - generic [ref=f33e5391]: "{"
+                - text: TCP
+                - math [ref=f33e5393]:
+                  - generic [ref=f33e5394]: "}"
+                - text: .
+              - generic [ref=f33e5396]: In 9th USENIX symposium on networked systems design and implementation (NSDI 12), pages 399–412, 2012.
+            - listitem [ref=f33e5397]:
+              - generic [ref=f33e5398]:
+                - text: "[49]"
+                - button "Back to the article" [ref=f33e5399] [cursor=pointer]: ↑
+              - generic [ref=f33e5400]: Samyam Rajbhandari, Conglong Li, Zhewei Yao, et al.
+              - generic [ref=f33e5401]: "Deepspeed-moe: Advancing mixture-of-experts inference and training to power next-generation ai scale."
+              - generic [ref=f33e5402]: In International conference on machine learning, pages 18332–18346. PMLR, 2022.
+            - listitem [ref=f33e5403]:
+              - generic [ref=f33e5404]:
+                - text: "[50]"
+                - button "Back to the article" [ref=f33e5405] [cursor=pointer]: ↑
+              - generic [ref=f33e5406]: Renato Recio, Bernard Metzler, Paul Culley, Jeff Hilland, and Dave Garcia.
+              - generic [ref=f33e5407]: A remote direct memory access protocol specification.
+              - generic [ref=f33e5408]: Technical report, 2007.
+            - listitem [ref=f33e5409]:
+              - generic [ref=f33e5410]:
+                - text: "[51]"
+                - button "Back to the article" [ref=f33e5411] [cursor=pointer]: ↑
+              - generic [ref=f33e5412]: Siddhartha Sen, David Shue, Sunghwan Ihm, and Michael J Freedman.
+              - generic [ref=f33e5413]: Scalable, optimal flow routing in datacenters via local link balancing.
+              - generic [ref=f33e5414]: In Proceedings of the ninth ACM conference on Emerging networking experiments and technologies, pages 151–162, 2013.
+            - listitem [ref=f33e5415]:
+              - generic [ref=f33e5416]:
+                - text: "[52]"
+                - button "Back to the article" [ref=f33e5417] [cursor=pointer]: ↑
+              - generic [ref=f33e5418]: Arjun Singh, Joon Ong, Amit Agarwal, et al.
+              - generic [ref=f33e5419]: "Jupiter rising: A decade of clos topologies and centralized control in google’s datacenter network."
+              - generic [ref=f33e5420]: SIGCOMM ’15, page 183–197, New York, NY, USA, 2015. Association for Computing Machinery.
+            - listitem [ref=f33e5421]:
+              - generic [ref=f33e5422]:
+                - text: "[53]"
+                - button "Back to the article" [ref=f33e5423] [cursor=pointer]: ↑
+              - generic [ref=f33e5424]: Cha Hwan Song, Xin Zhe Khooi, Raj Joshi, et al.
+              - generic [ref=f33e5425]: Network load balancing with in-network reordering support for rdma.
+              - generic [ref=f33e5426]: In Proceedings of the ACM SIGCOMM 2023 Conference, pages 816–831, 2023.
+            - listitem [ref=f33e5427]:
+              - generic [ref=f33e5428]:
+                - text: "[54]"
+                - button "Back to the article" [ref=f33e5429] [cursor=pointer]: ↑
+              - generic [ref=f33e5430]: Hugo Touvron, Thibaut Lavril, Gautier Izacard, et al.
+              - generic [ref=f33e5431]: "Llama: Open and efficient foundation language models."
+              - generic [ref=f33e5432]: arXiv preprint arXiv:2302.13971, 2023.
+            - listitem [ref=f33e5433]:
+              - generic [ref=f33e5434]:
+                - text: "[55]"
+                - button "Back to the article" [ref=f33e5435] [cursor=pointer]: ↑
+              - generic [ref=f33e5436]: Erico Vanini, Rong Pan, Mohammad Alizadeh, et al.
+              - generic [ref=f33e5437]: "Let it flow: Resilient asymmetric load balancing with flowlet switching."
+              - generic [ref=f33e5438]: In 14th USENIX Symposium on Networked Systems Design and Implementation (NSDI 17), pages 407–420, 2017.
+            - listitem [ref=f33e5439]:
+              - generic [ref=f33e5440]:
+                - text: "[56]"
+                - button "Back to the article" [ref=f33e5441] [cursor=pointer]: ↑
+              - generic [ref=f33e5442]: Ying Wan, Haoyu Song, Yu Jia, et al.
+              - generic [ref=f33e5443]: "Laps: Joint load balancing and congestion control on unequal-cost multi-path data center networks."
+              - generic [ref=f33e5444]: In Proceedings of the 2nd Workshop on Networks for AI Computing, pages 11–18, 2025.
+            - listitem [ref=f33e5445]:
+              - generic [ref=f33e5446]:
+                - text: "[57]"
+                - button "Back to the article" [ref=f33e5447] [cursor=pointer]: ↑
+              - generic [ref=f33e5448]: Peng Wang, Hong Xu, Zhixiong Niu, et al.
+              - generic [ref=f33e5449]: "Expeditus: Congestion-aware load balancing in clos data center networks."
+              - generic [ref=f33e5450]: In Proceedings of the Seventh ACM Symposium on Cloud Computing, pages 442–455, 2016.
+            - listitem [ref=f33e5451]:
+              - generic [ref=f33e5452]:
+                - text: "[58]"
+                - button "Back to the article" [ref=f33e5453] [cursor=pointer]: ↑
+              - generic [ref=f33e5454]: Xizheng Wang, Qingxu Li, Yichi Xu, et al.
+              - generic [ref=f33e5455]:
+                - math [ref=f33e5456]:
+                  - generic [ref=f33e5457]: "{"
+                - text: SimAI
+                - math [ref=f33e5459]:
+                  - generic [ref=f33e5460]: "}"
+                - text: ": Unifying architecture design and performance tuning for"
+                - math [ref=f33e5462]:
+                  - generic [ref=f33e5463]: "{"
+                - text: Large-Scale
+                - math [ref=f33e5465]:
+                  - generic [ref=f33e5466]: "}"
+                - text: large language model training with scalability and precision.
+              - generic [ref=f33e5468]: In 22nd USENIX Symposium on Networked Systems Design and Implementation (NSDI 25), pages 541–558, 2025.
+            - listitem [ref=f33e5469]:
+              - generic [ref=f33e5470]:
+                - text: "[59]"
+                - button "Back to the article" [ref=f33e5471] [cursor=pointer]: ↑
+              - generic [ref=f33e5472]: An Yang, Anfeng Li, Baosong Yang, et al.
+              - generic [ref=f33e5473]: Qwen3 technical report.
+              - generic [ref=f33e5474]: arXiv preprint arXiv:2505.09388, 2025.
+            - listitem [ref=f33e5475]:
+              - generic [ref=f33e5476]:
+                - text: "[60]"
+                - button "Back to the article" [ref=f33e5477] [cursor=pointer]: ↑
+              - generic [ref=f33e5478]: Jin Y Yen.
+              - generic [ref=f33e5479]: Finding the k shortest loopless paths in a network.
+              - generic [ref=f33e5480]: management Science, 17(11):712–716, 1971.
+            - listitem [ref=f33e5481]:
+              - generic [ref=f33e5482]:
+                - text: "[61]"
+                - button "Back to the article" [ref=f33e5483] [cursor=pointer]: ↑
+              - generic [ref=f33e5484]: David Zats, Tathagata Das, Prashanth Mohan, Dhruba Borthakur, and Randy Katz.
+              - generic [ref=f33e5485]: "Detail: Reducing the flow completion time tail in datacenter networks."
+              - generic [ref=f33e5486]: In Proceedings of the ACM SIGCOMM 2012 conference on Applications, technologies, architectures, and protocols for computer communication, pages 139–150, 2012.
+            - listitem [ref=f33e5487]:
+              - generic [ref=f33e5488]:
+                - text: "[62]"
+                - button "Back to the article" [ref=f33e5489] [cursor=pointer]: ↑
+              - generic [ref=f33e5490]: Hong Zhang, Junxue Zhang, Wei Bai, et al.
+              - generic [ref=f33e5491]: Resilient datacenter load balancing in the wild.
+              - generic [ref=f33e5492]: In Proceedings of the Conference of the ACM Special Interest Group on Data Communication, pages 253–266, 2017.
+            - listitem [ref=f33e5493]:
+              - generic [ref=f33e5494]:
+                - text: "[63]"
+                - button "Back to the article" [ref=f33e5495] [cursor=pointer]: ↑
+              - generic [ref=f33e5496]: Junxue Zhang, Wei Bai, and Kai Chen.
+              - generic [ref=f33e5497]: Enabling ecn for datacenter networks with rtt variations.
+              - generic [ref=f33e5498]: In Proceedings of the 15th international conference on emerging networking experiments and technologies, pages 233–245, 2019.
+            - listitem [ref=f33e5499]:
+              - generic [ref=f33e5500]:
+                - text: "[64]"
+                - button "Back to the article" [ref=f33e5501] [cursor=pointer]: ↑
+              - generic [ref=f33e5502]: Chenggang Zhao, Shangyan Zhou, Liyue Zhang, et al.
+              - generic [ref=f33e5503]: "Deepep: an efficient expert-parallel communication library."
+              - generic [ref=f33e5504]: https://github.com/deepseek-ai/DeepEP, 2025.
+            - listitem [ref=f33e5505]:
+              - generic [ref=f33e5506]:
+                - text: "[65]"
+                - button "Back to the article" [ref=f33e5507] [cursor=pointer]: ↑
+              - generic [ref=f33e5508]: Junlan Zhou, Malveeka Tewari, Min Zhu, et al.
+              - generic [ref=f33e5509]: "Wcmp: Weighted cost multipathing for improved fairness in data centers."
+              - generic [ref=f33e5510]: In Proceedings of the Ninth European Conference on Computer Systems, pages 1–14, 2014.
+            - listitem [ref=f33e5511]:
+              - generic [ref=f33e5512]:
+                - text: "[66]"
+                - button "Back to the article" [ref=f33e5513] [cursor=pointer]: ↑
+              - generic [ref=f33e5514]: Yang Zhou, Zhongjie Chen, , et al.
+              - generic [ref=f33e5515]: An extensible software transport layer for gpu networking.
+              - generic [ref=f33e5516]: arXiv preprint arXiv:2504.17307, 2025.
+  - button "Report Issue" [ref=f33e5517] [cursor=pointer]
+  - button "Report Issue for Selection" [ref=f33e5518] [cursor=pointer]
+  - generic [ref=f33e5520]:
+    - text: Generated by
+    - link "L A T E xml [LOGO]" [ref=f33e5521] [cursor=pointer]:
+      - /url: https://math.nist.gov/~BMiller/LaTeXML/
+      - generic [ref=f33e5522]: L A T E
+      - text: xml
+      - img "[LOGO]" [ref=f33e5523]
+  - contentinfo [ref=f33e5524]:
+    - generic [ref=f33e5525]:
+      - heading "Instructions for reporting errors" [level=2] [ref=f33e5526]
+      - paragraph [ref=f33e5527]: "We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:"
+      - list [ref=f33e5528]:
+        - listitem [ref=f33e5529]: Click the "Report Issue" button.
+        - listitem [ref=f33e5530]:
+          - text: Open a report feedback form via keyboard, use "
+          - strong [ref=f33e5531]: Ctrl + ?
+          - text: "\"."
+        - listitem [ref=f33e5532]: Make a text selection and click the "Report Issue for Selection" button near your cursor.
+        - listitem [ref=f33e5533]: You can use Alt+Y to toggle on and Alt+Shift+Y to toggle off accessible reporting links at each section.
+      - paragraph [ref=f33e5534]:
+        - text: Our team has already identified
+        - link "the following issues" [ref=f33e5535] [cursor=pointer]:
+          - /url: https://github.com/arXiv/html_feedback/issues
+        - text: . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+      - paragraph [ref=f33e5536]:
+        - text: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+        - link "list of packages that need conversion" [ref=f33e5537] [cursor=pointer]:
+          - /url: https://github.com/brucemiller/LaTeXML/wiki/Porting-LaTeX-packages-for-LaTeXML
+        - text: ", and welcome"
+        - link "developer contributions" [ref=f33e5538] [cursor=pointer]:
+          - /url: https://github.com/brucemiller/LaTeXML/issues
+        - text: .
+  - text: beta

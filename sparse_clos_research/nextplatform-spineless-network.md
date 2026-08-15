@@ -1,0 +1,1280 @@
+- generic [active] [ref=f28e1]:
+  - dialog [ref=f28e2]:
+    - generic [ref=f28e3]:
+      - link "Cookiebot by Usercentrics - opens in a new window" [ref=f28e6] [cursor=pointer]:
+        - /url: https://www.cookiebot.com/en/what-is-behind-powered-by-cookiebot/?utm_source=banner_cb&utm_medium=referral&utm_content=v2
+      - tabpanel "Consent" [ref=f28e34]:
+        - generic [ref=f28e36]:
+          - heading "This website uses cookies" [level=2] [ref=f28e37]
+          - paragraph [ref=f28e39]: We occasionally run membership recruitment campaigns on social media channels and use cookies to track post-clicks. We also share information about your use of our site with our social media, advertising and analytics partners who may combine it with other information that you’ve provided to them or that they’ve collected from your use of their services. Use the check boxes below to choose the types of cookies you consent to have stored on your device.
+        - generic [ref=f28e40]:
+          - group "Consent Selection" [ref=f28e46]:
+            - generic [ref=f28e48]:
+              - generic [ref=f28e49]:
+                - strong [ref=f28e51]: Necessary
+                - generic [ref=f28e52]:
+                  - checkbox "Necessary" [checked] [disabled]
+              - generic [ref=f28e53]:
+                - strong [ref=f28e55] [cursor=pointer]: Preferences
+                - switch "Preferences" [ref=f28e57] [cursor=pointer]
+              - generic [ref=f28e58]:
+                - strong [ref=f28e60] [cursor=pointer]: Statistics
+                - switch "Statistics" [ref=f28e62] [cursor=pointer]
+              - generic [ref=f28e63]:
+                - strong [ref=f28e65] [cursor=pointer]: Marketing
+                - switch "Marketing" [ref=f28e67] [cursor=pointer]
+          - link "Show details" [ref=f28e69] [cursor=pointer]:
+            - /url: "#"
+      - generic [ref=f28e73]:
+        - button "Use necessary cookies only" [ref=f28e74] [cursor=pointer]
+        - button "Allow selected cookies" [ref=f28e75] [cursor=pointer]
+        - button "Allow all cookies" [ref=f28e76] [cursor=pointer]
+  - link "skip to main content" [ref=f28e77] [cursor=pointer]:
+    - /url: "#skip-to-main-content"
+  - generic [ref=f28e79]:
+    - banner [ref=f28e80]:
+      - generic [ref=f28e81]:
+        - generic [ref=f28e82]:
+          - navigation [ref=f28e83]:
+            - list [ref=f28e84]:
+              - listitem [ref=f28e85]:
+                - link [ref=f28e86] [cursor=pointer]:
+                  - /url: /
+                  - img "ACM Digital Library home" [ref=f28e87]
+              - listitem [ref=f28e88]:
+                - link [ref=f28e89] [cursor=pointer]:
+                  - /url: https://www.acm.org
+                  - img "ACM - Association for Computing Machinery" [ref=f28e90]
+          - generic [ref=f28e91]:
+            - link "Basic Edition, Upgrade" [ref=f28e97] [cursor=pointer]:
+              - /url: /premium
+            - navigation [ref=f28e99]:
+              - list [ref=f28e102]:
+                - listitem [ref=f28e103]:
+                  - link "Sign in" [ref=f28e104] [cursor=pointer]:
+                    - /url: /action/showLogin?redirectUri=%2Fdoi%2Fabs%2F10.1145%2F3544216.3544265
+                - listitem [ref=f28e105]:
+                  - link "Register" [ref=f28e106] [cursor=pointer]:
+                    - /url: https://accounts.acm.org?redirectUri=%2Fdoi%2Fabs%2F10.1145%2F3544216.3544265
+        - generic [ref=f28e108]:
+          - generic:  
+          - generic [ref=f28e111]:
+            - generic "Quick Search" [ref=f28e114]:
+              - generic [ref=f28e116]:
+                - generic [ref=f28e117]: Search ACM Digital Library
+                - searchbox "Search ACM Digital Library" [ref=f28e118]
+              - button "Search" [ref=f28e120] [cursor=pointer]: 
+            - generic "Advanced Search (Premium feature)" [ref=f28e121]:
+              - link "Advanced Search" [ref=f28e123] [cursor=pointer]:
+                - /url: "#"
+        - navigation [ref=f28e130]:
+          - list [ref=f28e131]:
+            - listitem [ref=f28e132]:
+              - link "Conference" [ref=f28e133] [cursor=pointer]:
+                - /url: /conference/comm
+            - listitem [ref=f28e134]:
+              - link "Proceedings" [ref=f28e135] [cursor=pointer]:
+                - /url: /conference/comm/proceedings
+            - listitem [ref=f28e136]:
+              - link "Upcoming Events" [ref=f28e137] [cursor=pointer]:
+                - /url: /conference/comm/upcoming
+            - listitem [ref=f28e138]:
+              - link "Authors" [ref=f28e139] [cursor=pointer]:
+                - /url: /conference/comm/authors
+            - listitem [ref=f28e140]:
+              - link "Affiliations" [ref=f28e141] [cursor=pointer]:
+                - /url: /conference/comm/affiliations
+            - listitem [ref=f28e142]:
+              - link "Award Winners" [ref=f28e143] [cursor=pointer]:
+                - /url: /conference/comm/award-winners
+            - text: 
+    - generic [ref=f28e145]:
+      - main [ref=f28e146]:
+        - generic [ref=f28e147]:
+          - generic [ref=f28e148]: Several features on this page require Premium Access.
+          - generic [ref=f28e149]:
+            - link "Learn more" [ref=f28e150] [cursor=pointer]:
+              - /url: /about/upgrade
+            - link "Sign in" [ref=f28e151] [cursor=pointer]:
+              - /url: /action/showLogin?redirectUri=%2Fdoi%2F10.1145%2F3544216.3544265
+        - article [ref=f28e152]:
+          - generic [ref=f28e154]:
+            - navigation "Breadcrumbs" [ref=f28e155]:
+              - list [ref=f28e156]:
+                - listitem [ref=f28e157]:
+                  - link "Home" [ref=f28e158] [cursor=pointer]:
+                    - /url: https://dl.acm.org/
+                - listitem [ref=f28e159]:
+                  - text: ">"
+                  - link "Conferences" [ref=f28e160] [cursor=pointer]:
+                    - /url: /conferences
+                - listitem [ref=f28e161]:
+                  - text: ">"
+                  - link "COMM" [ref=f28e162] [cursor=pointer]:
+                    - /url: /conference/comm
+                - listitem [ref=f28e163]:
+                  - text: ">"
+                  - link "Proceedings" [ref=f28e164] [cursor=pointer]:
+                    - /url: /conference/comm/proceedings
+                - listitem [ref=f28e165]:
+                  - text: ">"
+                  - link "SIGCOMM '22" [ref=f28e166] [cursor=pointer]:
+                    - /url: /doi/proceedings/10.1145/3544216
+                - listitem [ref=f28e167]:
+                  - text: ">"
+                  - 'link "Jupiter evolving: transforming google''s datacenter network via optical circuit switches and software-defined networking" [ref=f28e168] [cursor=pointer]':
+                    - /url: /doi/abs/10.1145/3544216.3544265
+            - generic [ref=f28e169]:
+              - generic [ref=f28e170]:
+                - generic [ref=f28e171]: research-article
+                - generic [ref=f28e173]: Open access
+              - generic [ref=f28e178]:
+                - generic "shareBlock"
+                - generic [ref=f28e179]: Share on
+                - list [ref=f28e180]:
+                  - listitem [ref=f28e181]:
+                    - link "share on X" [ref=f28e182]:
+                      - generic [ref=f28e183]: 
+                  - listitem [ref=f28e184]:
+                    - link "share on LinkedIn" [ref=f28e185]:
+                      - generic [ref=f28e186]: 
+                  - listitem [ref=f28e187]:
+                    - link "share on Reddit" [ref=f28e188]:
+                      - generic [ref=f28e189]: 
+                  - listitem [ref=f28e190]:
+                    - link "share on Facebook" [ref=f28e191]:
+                      - generic [ref=f28e192]: 
+                  - listitem [ref=f28e193]:
+                    - link "share via email" [ref=f28e194]:
+                      - generic [ref=f28e195]: 
+            - 'heading "Jupiter evolving: transforming google''s datacenter network via optical circuit switches and software-defined networking" [level=1] [ref=f28e196]'
+            - generic [ref=f28e197]:
+              - generic [ref=f28e198]:
+                - text: "Authors:"
+                - list [ref=f28e199]:
+                  - listitem [ref=f28e200]:
+                    - link "Leon Poutievski" [ref=f28e201] [cursor=pointer]:
+                      - /url: "#artseq-00001"
+                  - text: ","
+                  - listitem [ref=f28e202]:
+                    - link "Omid Mashayekhi" [ref=f28e203] [cursor=pointer]:
+                      - /url: "#artseq-00002"
+                  - text: ","
+                  - listitem [ref=f28e204]:
+                    - link "Joon Ong" [ref=f28e205] [cursor=pointer]:
+                      - /url: "#artseq-00003"
+                  - text: ","
+                  - listitem [ref=f28e206]:
+                    - link "Arjun Singh" [ref=f28e207] [cursor=pointer]:
+                      - /url: "#artseq-00004"
+                  - generic [ref=f28e208]:
+                    - text: ","
+                    - listitem [ref=f28e209]:
+                      - link "Mukarram Tariq" [ref=f28e210] [cursor=pointer]:
+                        - /url: "#artseq-00005"
+                  - generic [ref=f28e211]:
+                    - text: ","
+                    - listitem [ref=f28e212]:
+                      - link "Rui Wang" [ref=f28e213] [cursor=pointer]:
+                        - /url: "#artseq-00006"
+                  - generic [ref=f28e214]:
+                    - text: ","
+                    - listitem [ref=f28e215]:
+                      - link "Jianan Zhang" [ref=f28e216] [cursor=pointer]:
+                        - /url: "#artseq-00007"
+                  - generic [ref=f28e217]:
+                    - text: ","
+                    - listitem [ref=f28e218]:
+                      - link "Virginia Beauregard" [ref=f28e219] [cursor=pointer]:
+                        - /url: "#artseq-00008"
+                  - generic [ref=f28e220]:
+                    - text: ","
+                    - listitem [ref=f28e221]:
+                      - link "Patrick Conner" [ref=f28e222] [cursor=pointer]:
+                        - /url: "#artseq-00009"
+                  - generic [ref=f28e223]:
+                    - text: ","
+                    - listitem [ref=f28e224]:
+                      - link "Steve Gribble" [ref=f28e225] [cursor=pointer]:
+                        - /url: "#artseq-00010"
+                  - generic [ref=f28e226]:
+                    - text: ","
+                    - generic [ref=f28e227]: + 13
+              - link "Authors Info & Claims" [ref=f28e228] [cursor=pointer]:
+                - /url: "#tab-contributors"
+            - generic [ref=f28e229]:
+              - 'link "SIGCOMM ''22: Proceedings of the ACM SIGCOMM 2022 Conference" [ref=f28e231] [cursor=pointer]':
+                - /url: /doi/proceedings/10.1145/3544216
+              - generic [ref=f28e232]: Pages 66 - 85
+              - link "https://doi.org/10.1145/3544216.3544265" [ref=f28e234] [cursor=pointer]:
+                - /url: https://doi.org/10.1145/3544216.3544265
+            - generic [ref=f28e235]:
+              - text: "Published: 22 August 2022"
+              - link "Publication History" [ref=f28e236] [cursor=pointer]:
+                - /url: "#core-history"
+              - link "Check for updates on crossmark" [ref=f28e237] [cursor=pointer]:
+                - /url: "#"
+            - generic [ref=f28e245]:
+              - generic "Additional metrics (Premium feature)" [ref=f28e248]:
+                - button "201 citation 18,216 Downloads" [ref=f28e252] [cursor=pointer]:
+                  - generic [ref=f28e253]:
+                    - generic [ref=f28e254]: 
+                    - generic [ref=f28e255]: "201"
+                    - generic [ref=f28e256]: citation
+                  - generic [ref=f28e257]:
+                    - generic [ref=f28e258]: 
+                    - generic [ref=f28e259]: 18,216
+                    - generic [ref=f28e260]: Downloads
+              - generic [ref=f28e261]:
+                - button "Get Citation Alerts (Premium feature)" [ref=f28e263] [cursor=pointer]:
+                  - generic [ref=f28e264]: 
+                - link "Save to Binder (Premium feature)" [ref=f28e266] [cursor=pointer]:
+                  - /url: "#get-premium-access"
+                  - generic [ref=f28e267]: 
+                - button "Export Citation" [ref=f28e269] [cursor=pointer]:
+                  - generic [ref=f28e270]: 
+                - link "View online with eReader" [ref=f28e272] [cursor=pointer]:
+                  - /url: /doi/epdf/10.1145/3544216.3544265
+                  - generic [ref=f28e273]: 
+                  - generic [ref=f28e274]: PDF/eReader
+          - generic:
+            - navigation "Article navigation":
+              - generic:
+                - button "Toggle section navigation menu" [ref=f28e275] [cursor=pointer]:
+                  - generic [ref=f28e276]: 
+                - navigation "Contents":  
+              - navigation [ref=f28e277]:
+                - list [ref=f28e278]:
+                  - listitem [ref=f28e279]:
+                    - link "Information & Contributors" [disabled]:
+                      - /url: "#core-collateral-info"
+                      - generic: 
+                  - listitem [ref=f28e280]:
+                    - link "Bibliometrics & Citations" [disabled]:
+                      - /url: "#core-collateral-metrics"
+                      - generic: 
+                  - listitem [ref=f28e281]:
+                    - link "Reading Options" [disabled]:
+                      - /url: "#get-premium-access"
+                      - generic: 
+                  - listitem [ref=f28e282]:
+                    - link "References" [disabled]:
+                      - /url: "#get-premium-access"
+                      - generic: 
+                  - listitem [ref=f28e283]:
+                    - link "Figures" [disabled]:
+                      - /url: "#get-premium-access"
+                      - generic: 
+                  - listitem [ref=f28e284]:
+                    - link "Tables" [disabled]:
+                      - /url: "#get-premium-access"
+                      - generic: 
+                  - listitem [ref=f28e285]:
+                    - link "Media" [disabled]:
+                      - /url: "#get-premium-access"
+                      - generic: 
+                  - listitem [ref=f28e286]:
+                    - link "Share" [disabled]:
+                      - /url: "#core-collateral-share"
+                      - generic: 
+          - generic [ref=f28e287]:
+            - generic [ref=f28e290]:
+              - heading "Abstract" [level=2] [ref=f28e291]
+              - generic [ref=f28e292]:
+                - heading "Abstract" [level=3] [ref=f28e293]
+                - paragraph [ref=f28e294]: "We present a decade of evolution and production experience with Jupiter datacenter network fabrics. In this period Jupiter has delivered 5x higher speed and capacity, 30% reduction in capex, 41% reduction in power, incremental deployment and technology refresh all while serving live production traffic. A key enabler for these improvements is evolving Jupiter from a Clos to a direct-connect topology among the machine aggregation blocks. Critical architectural changes for this include: A datacenter interconnection layer employing Micro-Electro-Mechanical Systems (MEMS) based Optical Circuit Switches (OCSes) to enable dynamic topology reconfiguration, centralized Software-Defined Networking (SDN) control for traffic engineering, and automated network operations for incremental capacity delivery and topology engineering. We show that the combination of traffic and topology engineering on direct-connect fabrics achieves similar throughput as Clos fabrics for our production traffic patterns. We also optimize for path lengths: 60% of the traffic takes direct path from source to destination aggregation blocks, while the remaining transits one additional block, achieving an average block-level path length of 1.4 in our fleet today. OCS also achieves 3x faster fabric reconfiguration compared to pre-evolution Clos fabrics that used a patch panel based interconnect."
+              - generic [ref=f28e295]:
+                - heading "AI Summary" [level=3] [ref=f28e296]
+                - generic [ref=f28e297]:
+                  - heading "AI-Generated Summary (Experimental)" [level=3] [ref=f28e298]
+                  - paragraph [ref=f28e299]:
+                    - text: This summary was generated using automated tools and was not authored or reviewed by the article's author(s). It is provided to support discovery, help readers assess relevance, and assist readers from adjacent research areas in understanding the work. It is intended to complement the author-supplied abstract, which remains the primary summary of the paper. The full article remains the authoritative version of record.
+                    - link "Click here to learn more" [ref=f28e300] [cursor=pointer]:
+                      - /url: /generative-ai/summarizations
+                    - text: .
+                  - paragraph [ref=f28e301]: Click here to comment on the accuracy, clarity, and usefulness of this summary. Doing so will help inform refinements and future regenerated versions.
+                - paragraph [ref=f28e302]: To view this AI-generated plain language summary, you must have Premium access.
+            - region [ref=f28e305]:
+              - heading "Formats available" [level=2] [ref=f28e306]
+              - paragraph [ref=f28e307]: "You can view the full content in the following formats:"
+              - link "View online with eReader" [ref=f28e309] [cursor=pointer]:
+                - /url: /doi/epdf/10.1145/3544216.3544265
+                - generic [ref=f28e310]: 
+                - generic [ref=f28e311]: PDF/eReader
+            - generic [ref=f28e313]:
+              - generic [ref=f28e314]:
+                - heading "Supplementary Material" [level=2] [ref=f28e315]
+                - list [ref=f28e316]:
+                  - listitem [ref=f28e317]:
+                    - generic [ref=f28e318]:
+                      - generic [ref=f28e319]: PDF File (p66-poutievski-supp.pdf)
+                      - generic [ref=f28e320]: Supplemental material.
+                    - list [ref=f28e322]:
+                      - listitem [ref=f28e323]:
+                        - link "Download" [ref=f28e324] [cursor=pointer]:
+                          - /url: /doi/suppl/10.1145/3544216.3544265/suppl_file/p66-poutievski-supp.pdf
+                      - listitem [ref=f28e325]: 73.04 KB
+              - generic [ref=f28e326]:
+                - heading "References" [level=2] [ref=f28e327]
+                - generic [ref=f28e328]:
+                  - generic [ref=f28e329]:
+                    - generic [ref=f28e330]: "[1]"
+                    - generic [ref=f28e332]:
+                      - generic [ref=f28e333]: Mohammad Al-Fares, Alexander Loukissas, and Amin Vahdat. 2008. A Scalable, Commodity Data Center Network Architecture. SIGCOMM Comput. Commun. Rev. 38, 4 (August 2008), 63--74.
+                      - generic [ref=f28e334]:
+                        - link "Digital Library" [ref=f28e336] [cursor=pointer]:
+                          - /url: /doi/10.1145/1402946.1402967
+                        - generic [ref=f28e337]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e338] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1402946.1402967
+                  - generic [ref=f28e339]:
+                    - generic [ref=f28e340]: "[2]"
+                    - generic [ref=f28e342]:
+                      - generic [ref=f28e343]: Alexey Andreyev, Xu Wang, and Alex Eckert. 2019. Reinventing Facebook's data center network. https://engineering.fb.com/2019/03/14/data-center-engineering/f16-minipack/. Facebook Engineering (2019).
+                      - link "Google Scholar" [ref=f28e346] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Alexey+Andreyev%2C+Xu+Wang%2C+and+Alex+Eckert.+2019.+Reinventing+Facebook%27s+data+center+network.+https%3A%2F%2Fengineering.fb.com%2F2019%2F03%2F14%2Fdata-center-engineering%2Ff16-minipack%2F.+Facebook+Engineering+%282019%29.
+                  - generic [ref=f28e347]:
+                    - generic [ref=f28e348]: "[3]"
+                    - generic [ref=f28e350]:
+                      - generic [ref=f28e351]: "David Applegate, Lee Breslau, and Edith Cohen. 2004. Coping with Network Failures: Routing Strategies for Optimal Demand Oblivious Restoration. In Proc. ACM SIGMETRICS."
+                      - generic [ref=f28e352]:
+                        - link "Digital Library" [ref=f28e354] [cursor=pointer]:
+                          - /url: /doi/10.1145/1005686.1005719
+                        - generic [ref=f28e355]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e356] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1005686.1005719
+                  - generic [ref=f28e357]:
+                    - generic [ref=f28e358]: "[4]"
+                    - generic [ref=f28e360]:
+                      - generic [ref=f28e361]: "David Applegate and Edith Cohen. 2003. Making Intra-domain Routing Robust to Changing and Uncertain Traffic Demands: Understanding Fundamental Tradeoffs. In Proc. ACM SIGCOMM."
+                      - generic [ref=f28e362]:
+                        - link "Digital Library" [ref=f28e364] [cursor=pointer]:
+                          - /url: /doi/10.1145/863955.863991
+                        - generic [ref=f28e365]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e366] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F863955.863991
+                  - generic [ref=f28e367]:
+                    - generic [ref=f28e368]: "[5]"
+                    - generic [ref=f28e370]:
+                      - generic [ref=f28e371]: "Hitesh Ballani, Paolo Costa, Raphael Behrendt, Daniel Cletheroe, Istvan Haller, Krzysztof Jozwik, Fotini Karinou, Sophie Lange, Kai Shi, Benn Thomsen, and Hugh Williams. 2020. Sirius: A Flat Datacenter Network with Nanosecond Optical Switching. In Proceedings of the Annual Conference of the ACM Special Interest Group on Data Communication on the Applications, Technologies, Architectures, and Protocols for Computer Communication (SIGCOMM '20)."
+                      - generic [ref=f28e372]:
+                        - link "Digital Library" [ref=f28e374] [cursor=pointer]:
+                          - /url: /doi/10.1145/3387514.3406221
+                        - generic [ref=f28e375]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e376] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3387514.3406221
+                  - generic [ref=f28e377]:
+                    - generic [ref=f28e378]: "[6]"
+                    - generic [ref=f28e380]:
+                      - generic [ref=f28e381]: "Maciej Besta and Torsten Hoefler. 2014. Slim fly: A cost effective low-diameter network topology. In SC'14: Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis. IEEE, 348--359."
+                      - generic [ref=f28e382]:
+                        - link "Digital Library" [ref=f28e384] [cursor=pointer]:
+                          - /url: /doi/10.1109/SC.2014.34
+                        - generic [ref=f28e385]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e386] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FSC.2014.34
+                  - generic [ref=f28e387]:
+                    - generic [ref=f28e388]: "[7]"
+                    - generic [ref=f28e390]:
+                      - generic [ref=f28e391]: Betsy Beyer, Chris Jones, Jennifer Petoff, and Niall Murphy. 2016. Site Reliability Engineering. https://sre.google/books/. Google Engineering (2016).
+                      - link "Google Scholar" [ref=f28e394] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Betsy+Beyer%2C+Chris+Jones%2C+Jennifer+Petoff%2C+and+Niall+Murphy.+2016.+Site+Reliability+Engineering.+https%3A%2F%2Fsre.google%2Fbooks%2F.+Google+Engineering+%282016%29.
+                  - generic [ref=f28e395]:
+                    - generic [ref=f28e396]: "[8]"
+                    - generic [ref=f28e398]:
+                      - generic [ref=f28e399]: "Peirui Cao, Shizhen Zhao, Min Yee Teh, Yunzhuo and Xinbing Wang. 2021. TROD: Evolving From Electrical Data Center to Optical Data Center. In 2021 IEEE 29th International Conference on Network Protocols (ICNP). IEEE, 1--11."
+                      - generic [ref=f28e400]:
+                        - link "Crossref" [ref=f28e402] [cursor=pointer]:
+                          - /url: https://doi.org/10.1109/ICNP52444.2021.9651977
+                        - generic [ref=f28e403]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e404] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FICNP52444.2021.9651977
+                  - generic [ref=f28e405]:
+                    - generic [ref=f28e406]: "[9]"
+                    - generic [ref=f28e408]:
+                      - generic [ref=f28e409]: "Kai Chen, Ankit Singla, Atul Singh, Kishore Ramachandran, Lei Xu, Yueping Zhang, Xitao Wen, and Yan Chen. 2013. OSA: An optical switching architecture for data center networks with unprecedented flexibility. IEEE/ACM Transactions on Networking 22, 2 (2013), 498--511."
+                      - generic [ref=f28e410]:
+                        - link "Digital Library" [ref=f28e412] [cursor=pointer]:
+                          - /url: /doi/10.1109/TNET.2013.2253120
+                        - generic [ref=f28e413]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e414] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FTNET.2013.2253120
+                  - generic [ref=f28e415]:
+                    - generic [ref=f28e416]: "[10]"
+                    - generic [ref=f28e418]:
+                      - generic [ref=f28e419]: William James Dally and Brian Patrick Towles. 2004. Principles and practices of interconnection networks. Elsevier.
+                      - generic [ref=f28e420]:
+                        - link "Digital Library" [ref=f28e422] [cursor=pointer]:
+                          - /url: /doi/10.5555/2821589
+                        - generic [ref=f28e423]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e424] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.5555%2F2821589
+                  - generic [ref=f28e425]:
+                    - generic [ref=f28e426]: "[11]"
+                    - generic [ref=f28e428]:
+                      - generic [ref=f28e429]: "N. Farrington, G. Porter, S. Radhakrishnan, H. H. Bazzaz, V. Subramanya, Y. Fainman, G. Papen, and A. Vahdat. 2010. Helios: A Hybrid Electrical/Optical Switch Architecture for Modular Data Centers. In Proc. ACM SIGCOMM."
+                      - link "Google Scholar" [ref=f28e432] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=N.+Farrington%2C+G.+Porter%2C+S.+Radhakrishnan%2C+H.+H.+Bazzaz%2C+V.+Subramanya%2C+Y.+Fainman%2C+G.+Papen%2C+and+A.+Vahdat.+2010.+Helios%3A+A+Hybrid+Electrical%2FOptical+Switch+Architecture+for+Modular+Data+Centers.+In+Proc.+ACM+SIGCOMM.
+                  - generic [ref=f28e433]:
+                    - generic [ref=f28e434]: "[12]"
+                    - generic [ref=f28e436]:
+                      - generic [ref=f28e437]: "Andrew D Ferguson, Steve Gribble, Chi-Yao Hong, Charles Edwin Killian, Waqar Mohsin, Henrik Muehe, Joon Ong, Leon Poutievski, Arjun Singh, Lorenzo Vicisano, et al. 2021. Orion: Google's Software-Defined Networking Control Plane. In NSDI. 83--98."
+                      - link "Google Scholar" [ref=f28e440] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Andrew+D+Ferguson%2C+Steve+Gribble%2C+Chi-Yao+Hong%2C+Charles+Edwin+Killian%2C+Waqar+Mohsin%2C+Henrik+Muehe%2C+Joon+Ong%2C+Leon+Poutievski%2C+Arjun+Singh%2C+Lorenzo+Vicisano%2C+et+al.+2021.+Orion%3A+Google%27s+Software-Defined+Networking+Control+Plane.+In+NSDI.+83--98.
+                  - generic [ref=f28e441]:
+                    - generic [ref=f28e442]: "[13]"
+                    - generic [ref=f28e444]:
+                      - generic [ref=f28e445]: "Monia Ghobadi, Ratul Mahajan, Amar Phanishayee, Nikhil Devanur, Janardhan Kulkarni, Gireeja Ranade, Pierre-Alexandre Blanche, Houman Rastegarfar, Madeleine Glick, and Daniel Kilper. 2016. Projector: Agile reconfigurable data center interconnect. In Proceedings of the 2016 ACM SIGCOMM Conference. 216--229."
+                      - generic [ref=f28e446]:
+                        - link "Digital Library" [ref=f28e448] [cursor=pointer]:
+                          - /url: /doi/10.1145/2934872.2934911
+                        - generic [ref=f28e449]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e450] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F2934872.2934911
+                  - generic [ref=f28e451]:
+                    - generic [ref=f28e452]: "[14]"
+                    - generic [ref=f28e454]:
+                      - generic [ref=f28e455]: "Albert Greenberg, James R. Hamilton, Navendu Jain, Srikanth Kandula, Changhoon Kim, Parantap Lahiri, David A. Maltz, Parveen Patel, and Sudipta Sengupta. 2009. VL2: A Scalable and Flexible Data Center Network. In Proceedings of the ACM SIGCOMM 2009 Conference on Data Communication (SIGCOMM '09). Association for Computing Machinery, New York, NY, USA, 51--62."
+                      - generic [ref=f28e456]:
+                        - link "Digital Library" [ref=f28e458] [cursor=pointer]:
+                          - /url: /doi/10.1145/1592568.1592576
+                        - generic [ref=f28e459]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e460] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1592568.1592576
+                  - generic [ref=f28e461]:
+                    - generic [ref=f28e462]: "[15]"
+                    - generic [ref=f28e464]:
+                      - generic [ref=f28e465]: "Chen Griner, Johannes Zerwas, Andreas Blenk, Manya Ghobadi, Stefan Schmid, and Chen Avin. 2021. Cerberus: The Power of Choices in Datacenter Topology Design-A Throughput Perspective. Proceedings of the ACM on Measurement and Analysis of Computing Systems 5, 3 (2021), 1--33."
+                      - generic [ref=f28e466]:
+                        - link "Digital Library" [ref=f28e468] [cursor=pointer]:
+                          - /url: /doi/10.1145/3491050
+                        - generic [ref=f28e469]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e470] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3491050
+                  - generic [ref=f28e471]:
+                    - generic [ref=f28e472]: "[16]"
+                    - generic [ref=f28e474]:
+                      - generic [ref=f28e475]: "N. Hamedazimi, Z. Qazi, H. Gupta, V. Sekar, S. R. Das, J. P. Longtin, H. Shah, and A. Tanwer. 2014. FireFly: A Reconfigurable Wireless Data Center Fabric Using Free-space Optics. In Proc. ACM SIGCOMM."
+                      - link "Google Scholar" [ref=f28e478] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=N.+Hamedazimi%2C+Z.+Qazi%2C+H.+Gupta%2C+V.+Sekar%2C+S.+R.+Das%2C+J.+P.+Longtin%2C+H.+Shah%2C+and+A.+Tanwer.+2014.+FireFly%3A+A+Reconfigurable+Wireless+Data+Center+Fabric+Using+Free-space+Optics.+In+Proc.+ACM+SIGCOMM.
+                  - generic [ref=f28e479]:
+                    - generic [ref=f28e480]: "[17]"
+                    - generic [ref=f28e482]:
+                      - generic [ref=f28e483]: S. A. Jyothi, A. Singla, P. B. Godfrey, and A. Kolla. 2016. Measuring and Understanding Throughput of Network Topologies. In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC).
+                      - link "Google Scholar" [ref=f28e486] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=S.+A.+Jyothi%2C+A.+Singla%2C+P.+B.+Godfrey%2C+and+A.+Kolla.+2016.+Measuring+and+Understanding+Throughput+of+Network+Topologies.+In+Proceedings+of+the+International+Conference+for+High+Performance+Computing%2C+Networking%2C+Storage+and+Analysis+%28SC%29.
+                  - generic [ref=f28e487]:
+                    - generic [ref=f28e488]: "[18]"
+                    - generic [ref=f28e490]:
+                      - generic [ref=f28e491]: John Kim, Wiliam J Dally, Steve Scott, and Dennis Abts. 2008. Technology-driven, highly-scalable dragonfly topology. In 2008 International Symposium on Computer Architecture. IEEE, 77--88.
+                      - generic [ref=f28e492]:
+                        - link "Digital Library" [ref=f28e494] [cursor=pointer]:
+                          - /url: /doi/10.1109/ISCA.2008.19
+                        - generic [ref=f28e495]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e496] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FISCA.2008.19
+                  - generic [ref=f28e497]:
+                    - generic [ref=f28e498]: "[19]"
+                    - generic [ref=f28e500]:
+                      - generic [ref=f28e501]: "Gautam Kumar, Nandita Dukkipati, Keon Jang, Hassan M. G. Wassel, Xian Wu, Behnam Montazeri, Yaogong Wang, Kevin Springborn, Christopher Alfeld, Michael Ryan, David Wetherall, and Amin Vahdat. 2020. Swift: Delay is Simple and Effective for Congestion Control in the Datacenter. In Proceedings of the Annual Conference of the ACM Special Interest Group on Data Communication on the Applications, Technologies, Architectures, and Protocols for Computer Communication (SIGCOMM '20). Association for Computing Machinery, New York, NY, USA, 514--528."
+                      - generic [ref=f28e502]:
+                        - link "Digital Library" [ref=f28e504] [cursor=pointer]:
+                          - /url: /doi/10.1145/3387514.3406591
+                        - generic [ref=f28e505]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e506] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3387514.3406591
+                  - generic [ref=f28e507]:
+                    - generic [ref=f28e508]: "[20]"
+                    - generic [ref=f28e510]:
+                      - generic [ref=f28e511]: "Praveen Kumar, Yang Yuan, Chris Yu, Nate Foster, Robert Kleinberg, Petr Lapukhov, ChiunLin Lim, and Robert Soule. 2018. Semi-Oblivious Traffic Engineering: The Road Not Taken. In Proc. NSDI."
+                      - link "Google Scholar" [ref=f28e514] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Praveen+Kumar%2C+Yang+Yuan%2C+Chris+Yu%2C+Nate+Foster%2C+Robert+Kleinberg%2C+Petr+Lapukhov%2C+ChiunLin+Lim%2C+and+Robert+Soule.+2018.+Semi-Oblivious+Traffic+Engineering%3A+The+Road+Not+Taken.+In+Proc.+NSDI.
+                  - generic [ref=f28e515]:
+                    - generic [ref=f28e516]: "[21]"
+                    - generic [ref=f28e518]:
+                      - generic [ref=f28e519]: Weiqiang Li, Rui Wang, and Jianan Zhang. 2022. Configuring data center network wiring. US Patent 11,223,527.
+                      - link "Google Scholar" [ref=f28e522] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Weiqiang+Li%2C+Rui+Wang%2C+and+Jianan+Zhang.+2022.+Configuring+data+center+network+wiring.+US+Patent+11%2C223%2C527.
+                  - generic [ref=f28e523]:
+                    - generic [ref=f28e524]: "[22]"
+                    - generic [ref=f28e526]:
+                      - generic [ref=f28e527]: He Liu, Matthew K. Mukerjee, Conglong Li, Nicolas Feltman, George Papen, Stefan Savage, Srinivasan Seshan, Geoffrey M. Voelker, David G. Andersen, Michael Kaminsky, George Porter, and Alex C. Snoeren. 2015. Scheduling Techniques for Hybrid Circuit/Packet Networks. In Proc. ACM CoNEXT.
+                      - link "Google Scholar" [ref=f28e530] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=He+Liu%2C+Matthew+K.+Mukerjee%2C+Conglong+Li%2C+Nicolas+Feltman%2C+George+Papen%2C+Stefan+Savage%2C+Srinivasan+Seshan%2C+Geoffrey+M.+Voelker%2C+David+G.+Andersen%2C+Michael+Kaminsky%2C+George+Porter%2C+and+Alex+C.+Snoeren.+2015.+Scheduling+Techniques+for+Hybrid+Circuit%2FPacket+Networks.+In+Proc.+ACM+CoNEXT.
+                  - generic [ref=f28e531]:
+                    - generic [ref=f28e532]: "[23]"
+                    - generic [ref=f28e534]:
+                      - generic [ref=f28e535]: Hong Liu, Ryohei Urata, Xiang Zhou, and Amin Vahdat. 2020. Evolving Requirements and Trends in Datacenter Networks. Springer handbook of optical networks.
+                      - link "Google Scholar" [ref=f28e538] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Hong+Liu%2C+Ryohei+Urata%2C+Xiang+Zhou%2C+and+Amin+Vahdat.+2020.+Evolving+Requirements+and+Trends+in+Datacenter+Networks.+Springer+handbook+of+optical+networks.
+                  - generic [ref=f28e539]:
+                    - generic [ref=f28e540]: "[24]"
+                    - generic [ref=f28e542]:
+                      - generic [ref=f28e543]: "Vincent Liu, Daniel Halperin, Arvind Krishnamurthy, and Thomas Anderson. 2013. F10: A Fault-Tolerant Engineered Network. In 10th USENIX Symposium on Networked Systems Design and Implementation (NSDI 13). USENIX Association, Lombard, IL, 399--412. https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/liuvincent"
+                      - link "Google Scholar" [ref=f28e546] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Vincent+Liu%2C+Daniel+Halperin%2C+Arvind+Krishnamurthy%2C+and+Thomas+Anderson.+2013.+F10%3A+A+Fault-Tolerant+Engineered+Network.+In+10th+USENIX+Symposium+on+Networked+Systems+Design+and+Implementation+%28NSDI+13%29.+USENIX+Association%2C+Lombard%2C+IL%2C+399--412.+https%3A%2F%2Fwww.usenix.org%2Fconference%2Fnsdi13%2Ftechnical-sessions%2Fpresentation%2Fliuvincent
+                  - generic [ref=f28e547]:
+                    - generic [ref=f28e548]: "[25]"
+                    - generic [ref=f28e550]:
+                      - generic [ref=f28e551]: "Nick McKeown, Tom Anderson, Hari Balakrishnan, Guru Parulkar, Larry Peterson, Jennifer Rexford, Scott Shenker, and Jonathan Turner. 2008 OpenFlow: Enabling Innovation in Campus Networks ACM Computer Communication Review 38 (2008), 69--74. Issue 2."
+                      - generic [ref=f28e552]:
+                        - link "Digital Library" [ref=f28e554] [cursor=pointer]:
+                          - /url: /doi/10.1145/1355734.1355746
+                        - generic [ref=f28e555]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e556] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1355734.1355746
+                  - generic [ref=f28e557]:
+                    - generic [ref=f28e558]: "[26]"
+                    - generic [ref=f28e560]:
+                      - generic [ref=f28e561]: William M. Mellette, Rajdeep Das, Yibo Guo, Rob McGuinness, Alex C. Snoeren, and George Porter. 2020. Expanding across time to deliver bandwidth efficiency and low latency. In Proc. NSDI.
+                      - link "Google Scholar" [ref=f28e564] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=William+M.+Mellette%2C+Rajdeep+Das%2C+Yibo+Guo%2C+Rob+McGuinness%2C+Alex+C.+Snoeren%2C+and+George+Porter.+2020.+Expanding+across+time+to+deliver+bandwidth+efficiency+and+low+latency.+In+Proc.+NSDI.
+                  - generic [ref=f28e565]:
+                    - generic [ref=f28e566]: "[27]"
+                    - generic [ref=f28e568]:
+                      - generic [ref=f28e569]: "William M Mellette, Rob McGuinness, Arjun Roy, Alex Forencich, George Papen, Alex C Snoeren, and George Porter. 2017. Rotornet: A scalable, low-complexity, optical datacenter network. In Proceedings of the Conference of the ACM Special Interest Group on Data Communication. 267--280."
+                      - generic [ref=f28e570]:
+                        - link "Digital Library" [ref=f28e572] [cursor=pointer]:
+                          - /url: /doi/10.1145/3098822.3098838
+                        - generic [ref=f28e573]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e574] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3098822.3098838
+                  - generic [ref=f28e575]:
+                    - generic [ref=f28e576]: "[28]"
+                    - generic [ref=f28e578]:
+                      - generic [ref=f28e579]: Jeffrey C. Mogul, Drago Goricanec, Martin Pool, Anees Shaikh, Douglas Turk, Bikash Koley, and Xiaoxue Zhao. 2020. Experiences with Modeling Network Topologies at Multiple Levels of Abstraction. In 17th Symposium on Networked Systems Design and Implementation (NSDI). https://www.usenix.org/conference/nsdi20/presentation/mogul
+                      - link "Google Scholar" [ref=f28e582] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Jeffrey+C.+Mogul%2C+Drago+Goricanec%2C+Martin+Pool%2C+Anees+Shaikh%2C+Douglas+Turk%2C+Bikash+Koley%2C+and+Xiaoxue+Zhao.+2020.+Experiences+with+Modeling+Network+Topologies+at+Multiple+Levels+of+Abstraction.+In+17th+Symposium+on+Networked+Systems+Design+and+Implementation+%28NSDI%29.+https%3A%2F%2Fwww.usenix.org%2Fconference%2Fnsdi20%2Fpresentation%2Fmogul
+                  - generic [ref=f28e583]:
+                    - generic [ref=f28e584]: "[29]"
+                    - generic [ref=f28e586]:
+                      - generic [ref=f28e587]: George Porter, Richard D. Strong, Nathan Farrington, Alex Forencich, Pang-Chen Sun, Tajana Rosing, Yeshaiahu Fainman, George Papen, and Amin Vahdat. 2013. Integrating microsecond circuit switching into the data center. In Proc. ACM SIGCOMM.
+                      - generic [ref=f28e588]:
+                        - link "Digital Library" [ref=f28e590] [cursor=pointer]:
+                          - /url: /doi/10.1145/2486001.2486007
+                        - generic [ref=f28e591]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e592] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F2486001.2486007
+                  - generic [ref=f28e593]:
+                    - generic [ref=f28e594]: "[30]"
+                    - generic [ref=f28e596]:
+                      - generic [ref=f28e597]: Matthew Roughan, Mikkel Thorup, and Yin Zhang. 2003. Traffic engineering with estimated traffic matrices. In Proceedings of the 3rd ACM SIGCOMM Conference on Internet Measurement. 248--258.
+                      - generic [ref=f28e598]:
+                        - link "Digital Library" [ref=f28e600] [cursor=pointer]:
+                          - /url: /doi/10.1145/948205.948237
+                        - generic [ref=f28e601]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e602] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F948205.948237
+                  - generic [ref=f28e603]:
+                    - generic [ref=f28e604]: "[31]"
+                    - generic [ref=f28e606]:
+                      - generic [ref=f28e607]: R Ryf, J Kim, JP Hickey, A Gnauck, D Carr, F Pardo, C Bolle, R Frahm, N Basavanhally, C Yoh, et al. 2001. 1296-port MEMS transparent optical crossconnect with 2.07 petabit/s switch capacity. In Optical Fiber Communication Conference. Optical Society of America, PD28.
+                      - generic [ref=f28e608]:
+                        - link "Crossref" [ref=f28e610] [cursor=pointer]:
+                          - /url: https://doi.org/10.1109/OFC.2001.927572
+                        - generic [ref=f28e611]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e612] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FOFC.2001.927572
+                  - generic [ref=f28e613]:
+                    - generic [ref=f28e614]: "[32]"
+                    - generic [ref=f28e616]:
+                      - generic [ref=f28e617]: "Alexander Shpiner, Zachy Haramaty, Saar Eliad, Vladimir Zdornov, Barak Gafni, and Eitan Zahavi. 2017. Dragonfly+: Low cost topology for scaling datacenters. In 2017 IEEE 3rd International Workshop on High-Performance Interconnection Networks in the Exascale and Big-Data Era (HiPINEB). IEEE, 1--8."
+                      - generic [ref=f28e618]:
+                        - link "Crossref" [ref=f28e620] [cursor=pointer]:
+                          - /url: https://doi.org/10.1109/HiPINEB.2017.11
+                        - generic [ref=f28e621]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e622] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1109%2FHiPINEB.2017.11
+                  - generic [ref=f28e623]:
+                    - generic [ref=f28e624]: "[33]"
+                    - generic [ref=f28e626]:
+                      - generic [ref=f28e627]: "Arjun Singh, Joon Ong, Amit Agarwal, Glen Anderson, Ashby Armistead, Roy Bannon, Seb Boving, Gaurav Desai, Bob Felderman, Paulie Germano, Anand Kanagala, Hanying Liu, Jeff Provost, Jason Simmons, Eiichi Tanda, Jim Wanderer, Urs Holzle, Stephen Stuart, and Amin Vahdat. 2015. Jupiter Rising: A Decade of Clos Topologies and Centralized Control in Google's Datacenter Network. In SIGCOMM '15."
+                      - generic [ref=f28e628]:
+                        - link "Digital Library" [ref=f28e630] [cursor=pointer]:
+                          - /url: /doi/10.1145/2785956.2787508
+                        - generic [ref=f28e631]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e632] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F2785956.2787508
+                  - generic [ref=f28e633]:
+                    - generic [ref=f28e634]: "[34]"
+                    - generic [ref=f28e636]:
+                      - generic [ref=f28e637]: Rachee Singh, Nikolaj Bjorner, Sharon Shoham, Yawei Yin, John Arnold, and Jamie Gaudette. 2021. Cost-effective capacity provisioning in wide area networks with Shoofly. In Proceedings of the 2021 ACM SIGCOMM 2021 Conference. 534--546.
+                      - generic [ref=f28e638]:
+                        - link "Digital Library" [ref=f28e640] [cursor=pointer]:
+                          - /url: /doi/10.1145/3452296.3472895
+                        - generic [ref=f28e641]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e642] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3452296.3472895
+                  - generic [ref=f28e643]:
+                    - generic [ref=f28e644]: "[35]"
+                    - generic [ref=f28e646]:
+                      - generic [ref=f28e647]: "Rachee Singh, Manya Ghobadi, Klaus-Tycho Foerster, Mark Filer, and Phillipa Gill. 2018. RADWAN: rate adaptive wide area network. In Proceedings of the 2018 Conference of the ACM Special Interest Group on Data Communication. 547--560."
+                      - generic [ref=f28e648]:
+                        - link "Digital Library" [ref=f28e650] [cursor=pointer]:
+                          - /url: /doi/10.1145/3230543.3230570
+                        - generic [ref=f28e651]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e652] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F3230543.3230570
+                  - generic [ref=f28e653]:
+                    - generic [ref=f28e654]: "[36]"
+                    - generic [ref=f28e656]:
+                      - generic [ref=f28e657]: Ankit Singla, P Brighten Godfrey, and Alexandra Kolla. 2014. High throughput data center topology design. In 11th USENIX Symposium on Networked Systems Design and Implementation NSDI 14). 29--41.
+                      - link "Google Scholar" [ref=f28e660] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Ankit+Singla%2C+P+Brighten+Godfrey%2C+and+Alexandra+Kolla.+2014.+High+throughput+data+center+topology+design.+In+11th+USENIX+Symposium+on+Networked+Systems+Design+and+Implementation+NSDI+14%29.+29--41.
+                  - generic [ref=f28e661]:
+                    - generic [ref=f28e662]: "[37]"
+                    - generic [ref=f28e664]:
+                      - generic [ref=f28e665]: "A. Singla, C.-Y. Hong, L. Popa, and P. B. Godfrey. 2012. Jellyfish: Networking Data Centers Randomly. In Proc. USENIX NSDI."
+                      - link "Google Scholar" [ref=f28e668] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=A.+Singla%2C+C.-Y.+Hong%2C+L.+Popa%2C+and+P.+B.+Godfrey.+2012.+Jellyfish%3A+Networking+Data+Centers+Randomly.+In+Proc.+USENIX+NSDI.
+                  - generic [ref=f28e669]:
+                    - generic [ref=f28e670]: "[38]"
+                    - generic [ref=f28e672]:
+                      - generic [ref=f28e673]: Martin Suchara, Dahai Xu, Robert Doverspike, David Johnson, and Jennifer Rexford. 2011. Network Architecture for Joint Failure Recovery and Traffic Engineering. In Proc. ACM SIGMETRICS.
+                      - generic [ref=f28e674]:
+                        - link "Digital Library" [ref=f28e676] [cursor=pointer]:
+                          - /url: /doi/10.1145/1993744.1993756
+                        - generic [ref=f28e677]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e678] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1993744.1993756
+                  - generic [ref=f28e679]:
+                    - generic [ref=f28e680]: "[39]"
+                    - generic [ref=f28e682]:
+                      - generic [ref=f28e683]: "Yu-Wei Eric Sung, Xiaozheng Tie, Starsky H.Y. Wong, and Hongyi Zeng. 2016. Robotron: Top-down Network Management at Facebook Scale. In Proceedings of the 2016 ACM SIGCOMM Conference (SIGCOMM '16). Association for Computing Machinery, New York, NY, USA, 426--439."
+                      - generic [ref=f28e684]:
+                        - link "Digital Library" [ref=f28e686] [cursor=pointer]:
+                          - /url: /doi/10.1145/2934872.2934874
+                        - generic [ref=f28e687]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e688] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F2934872.2934874
+                  - generic [ref=f28e689]:
+                    - generic [ref=f28e690]: "[40]"
+                    - generic [ref=f28e692]:
+                      - generic [ref=f28e693]: "Min Yee Teh, Shizhen Zhao, Peirui Cao, and Keren Bergman. 2020. COUDER: robust topology engineering for optical circuit switched data center networks. arXivpreprint arXiv:2010.00090 (2020)."
+                      - link "Google Scholar" [ref=f28e696] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Min+Yee+Teh%2C+Shizhen+Zhao%2C+Peirui+Cao%2C+and+Keren+Bergman.+2020.+COUDER%3A+robust+topology+engineering+for+optical+circuit+switched+data+center+networks.+arXivpreprint+arXiv%3A2010.00090+%282020%29.
+                  - generic [ref=f28e697]:
+                    - generic [ref=f28e698]: "[41]"
+                    - generic [ref=f28e700]:
+                      - generic [ref=f28e701]: "Ryohei Urata, Hong Liu, Kevin Yasumura, Erji Mao, Jill Berger, Xiang Zhou, Cedric Lam, Roy Bannon, Darren Hutchinson, Daniel Nelson, Leon Poutievski, Arjun Singh, Joon Ong, and Amin Vahdat. 2022. Mission Apollo: Landing Optical Circuit Switching at Datacenter Scale. arXiv."
+                      - link "Google Scholar" [ref=f28e704] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Ryohei+Urata%2C+Hong+Liu%2C+Kevin+Yasumura%2C+Erji+Mao%2C+Jill+Berger%2C+Xiang+Zhou%2C+Cedric+Lam%2C+Roy+Bannon%2C+Darren+Hutchinson%2C+Daniel+Nelson%2C+Leon+Poutievski%2C+Arjun+Singh%2C+Joon+Ong%2C+and+Amin+Vahdat.+2022.+Mission+Apollo%3A+Landing+Optical+Circuit+Switching+at+Datacenter+Scale.+arXiv.
+                  - generic [ref=f28e705]:
+                    - generic [ref=f28e706]: "[42]"
+                    - generic [ref=f28e708]:
+                      - generic [ref=f28e709]: "Ryohei Urata, Hong Liu, Xiang Zhou, and Amin Vahdat. 2017. Datacenter interconnect and networking: From evolution to holistic revolution. In Proceedings of Optical Fiber Communication (OFC) 2017 Conference."
+                      - generic [ref=f28e710]:
+                        - link "Crossref" [ref=f28e712] [cursor=pointer]:
+                          - /url: https://doi.org/10.1364/OFC.2017.W3G.1
+                        - generic [ref=f28e713]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e714] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1364%2FOFC.2017.W3G.1
+                  - generic [ref=f28e715]:
+                    - generic [ref=f28e716]: "[43]"
+                    - generic [ref=f28e718]:
+                      - generic [ref=f28e719]: "Guohui Wang, David G Andersen, Michael Kaminsky, Konstantina Papagiannaki, TS Eugene Ng, Michael Kozuch, and Michael Ryan. 2010. c-Through: Part-time optics in data centers. In Proceedings of the ACM SIGCOMM 2010 Conference. 327--338."
+                      - generic [ref=f28e720]:
+                        - link "Digital Library" [ref=f28e722] [cursor=pointer]:
+                          - /url: /doi/10.1145/1851182.1851222
+                        - generic [ref=f28e723]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e724] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1851182.1851222
+                  - generic [ref=f28e725]:
+                    - generic [ref=f28e726]: "[44]"
+                    - generic [ref=f28e728]:
+                      - generic [ref=f28e729]: "Hao Wang, Haiyong Xie, Lili Qiu, Yang Richard Yang, Yin Zhang, and Albert Greenberg. 2006. COPE: Traffic Engineering in Dynamic Networks. In Proc. ACM SIGCOMM."
+                      - generic [ref=f28e730]:
+                        - link "Digital Library" [ref=f28e732] [cursor=pointer]:
+                          - /url: /doi/10.1145/1159913.1159926
+                        - generic [ref=f28e733]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e734] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F1159913.1159926
+                  - generic [ref=f28e735]:
+                    - generic [ref=f28e736]: "[45]"
+                    - generic [ref=f28e738]:
+                      - generic [ref=f28e739]: Mingyang Zhang, Radhika Niranjan Mysore, Sucha Supittayapornpong, and Ramesh Govindan. 2019. Understanding Lifecycle Management Complexity of Datacenter Topologies. In Proc. NSDI.
+                      - link "Google Scholar" [ref=f28e742] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Mingyang+Zhang%2C+Radhika+Niranjan+Mysore%2C+Sucha+Supittayapornpong%2C+and+Ramesh+Govindan.+2019.+Understanding+Lifecycle+Management+Complexity+of+Datacenter+Topologies.+In+Proc.+NSDI.
+                  - generic [ref=f28e743]:
+                    - generic [ref=f28e744]: "[46]"
+                    - generic [ref=f28e746]:
+                      - generic [ref=f28e747]: "Mingyang Zhang, Jianan Zhang, Rui Wang, Ramesh Govindan, Jeffrey C. Mogul, and Amin Vahdat. 2021. Gemini: Practical Reconfigurable Datacenter Networks with Topology and Traffic Engineering. arXiv:cs.NI/2110.08374"
+                      - link "Google Scholar" [ref=f28e750] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Mingyang+Zhang%2C+Jianan+Zhang%2C+Rui+Wang%2C+Ramesh+Govindan%2C+Jeffrey+C.+Mogul%2C+and+Amin+Vahdat.+2021.+Gemini%3A+Practical+Reconfigurable+Datacenter+Networks+with+Topology+and+Traffic+Engineering.+arXiv%3Acs.NI%2F2110.08374
+                  - generic [ref=f28e751]:
+                    - generic [ref=f28e752]: "[47]"
+                    - generic [ref=f28e754]:
+                      - generic [ref=f28e755]: Y. Zhang and Z. Ge. 2005. Finding critical traffic matrices. In 2005 International Conference on Dependable Systems and Networks (DSN'05).
+                      - link "Google Scholar" [ref=f28e758] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Y.+Zhang+and+Z.+Ge.+2005.+Finding+critical+traffic+matrices.+In+2005+International+Conference+on+Dependable+Systems+and+Networks+%28DSN%2705%29.
+                  - generic [ref=f28e759]:
+                    - generic [ref=f28e760]: "[48]"
+                    - generic [ref=f28e762]:
+                      - generic [ref=f28e763]: R. Zhang-Shen and N. McKeown. 2005. Designing a Predictable Internet Backbone with Valiant Load-balancing. In Proc. IEEE IWQoS.
+                      - link "Google Scholar" [ref=f28e766] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=R.+Zhang-Shen+and+N.+McKeown.+2005.+Designing+a+Predictable+Internet+Backbone+with+Valiant+Load-balancing.+In+Proc.+IEEE+IWQoS.
+                  - generic [ref=f28e767]:
+                    - generic [ref=f28e768]: "[49]"
+                    - generic [ref=f28e770]:
+                      - generic [ref=f28e771]: "Shizhen Zhao, Rui Wang, Junlan Zhou, Joon Ong, Jeffrey C Mogul, and Amin Vahdat. 2019. Minimal rewiring: Efficient live expansion for clos data center networks. In 16th USENIX Symposium on Networked Systems Design and Implementation (NSDI 19). 221--234."
+                      - link "Google Scholar" [ref=f28e774] [cursor=pointer]:
+                        - /url: https://scholar.google.com/scholar?q=Shizhen+Zhao%2C+Rui+Wang%2C+Junlan+Zhou%2C+Joon+Ong%2C+Jeffrey+C+Mogul%2C+and+Amin+Vahdat.+2019.+Minimal+rewiring%3A+Efficient+live+expansion+for+clos+data+center+networks.+In+16th+USENIX+Symposium+on+Networked+Systems+Design+and+Implementation+%28NSDI+19%29.+221--234.
+                  - generic [ref=f28e775]:
+                    - generic [ref=f28e776]: "[50]"
+                    - generic [ref=f28e778]:
+                      - generic [ref=f28e779]: "Junlan Zhou, Malveeka Tewari, Min Zhu, Abdul Kabbani, Leon Poutievski, Arjun Singh, and Amin Vahdat. 2014. WCMP: Weighted Cost Multipathing for Improved Fairness in Data Centers. In Proceedings of the Ninth European Conference on Computer Systems (EuroSys '14). Association for Computing Machinery, New York, NY, USA, Article 5, 14 pages."
+                      - generic [ref=f28e780]:
+                        - link "Digital Library" [ref=f28e782] [cursor=pointer]:
+                          - /url: /doi/10.1145/2592798.2592803
+                        - generic [ref=f28e783]:
+                          - text: "|"
+                          - link "Google Scholar" [ref=f28e784] [cursor=pointer]:
+                            - /url: https://scholar.google.com/scholar_lookup?doi=10.1145%2F2592798.2592803
+              - generic [ref=f28e786]:
+                - generic [ref=f28e790]:
+                  - generic [ref=f28e791]:
+                    - heading "Cited By" [level=2] [ref=f28e792]
+                    - link "View all " [ref=f28e793] [cursor=pointer]:
+                      - /url: /action/ajaxShowCitedBy?doi=10.1145/3544216.3544265
+                      - text: View all
+                      - generic [ref=f28e794]: 
+                  - list [ref=f28e795]:
+                    - listitem [ref=f28e796]:
+                      - generic [ref=f28e797]: Kim J and Kim H.
+                      - text: (2026). Fast-Converging Volterra Equalizer Using Mini-Batch Gradient Descent-Based Adam Optimization. IEEE Photonics Technology Letters. 10.1109/LPT.2026.3682670.
+                      - generic [ref=f28e798]: 38:17.
+                      - text: "(1183-1186). Online publication date: 1-Sep-2026."
+                      - link "https://doi.org/10.1109/LPT.2026.3682670" [ref=f28e800] [cursor=pointer]:
+                        - /url: https://doi.org/10.1109/LPT.2026.3682670
+                    - listitem [ref=f28e801]:
+                      - generic [ref=f28e802]: Cruzes S.
+                      - text: "(2026). Data centers in the age of AI: A tutorial survey on infrastructure, sustainability, and emerging challenges. Journal of Network and Computer Applications. 10.1016/j.jnca.2026.104525."
+                      - generic [ref=f28e803]: "252."
+                      - text: "(104525). Online publication date: Aug-2026."
+                      - link "https://doi.org/10.1016/j.jnca.2026.104525" [ref=f28e805] [cursor=pointer]:
+                        - /url: https://doi.org/10.1016/j.jnca.2026.104525
+                    - listitem [ref=f28e806]:
+                      - generic [ref=f28e807]: Hanauer K, Heck S and Schmid S.
+                      - text: "(2026). DistroMatch: Distributed Disjoint Weighted Matchings in Demand-Aware Reconfigurable Optical Datacenters. Proceedings of the 40th ACM International Conference on Supercomputing. 10.1145/3797905.3800555. (409-421). Online publication date: 6-Jul-2026."
+                      - link "https://dl.acm.org/doi/10.1145/3797905.3800555" [ref=f28e809] [cursor=pointer]:
+                        - /url: https://dl.acm.org/doi/10.1145/3797905.3800555
+                    - listitem [ref=f28e810]:
+                      - link "Show More Cited By" [ref=f28e811] [cursor=pointer]:
+                        - /url: javascript:void(0)
+                - generic [ref=f28e814]:
+                  - heading "Index Terms" [level=2] [ref=f28e815]
+                  - generic "Index Terms (Premium feature)" [ref=f28e816]:
+                    - list [ref=f28e818]:
+                      - listitem [ref=f28e819]:
+                        - generic [ref=f28e820]: "Jupiter evolving: transforming google's datacenter network via optical circuit switches and software-defined networking"
+                        - list [ref=f28e821]:
+                          - listitem [ref=f28e822]:
+                            - paragraph [ref=f28e824]:
+                              - link "Networks" [ref=f28e825] [cursor=pointer]:
+                                - /url: "#"
+                            - list [ref=f28e826]:
+                              - listitem [ref=f28e827]:
+                                - paragraph [ref=f28e829]:
+                                  - link "Network algorithms" [ref=f28e830] [cursor=pointer]:
+                                    - /url: "#"
+                                - list [ref=f28e832]:
+                                  - listitem [ref=f28e833]:
+                                    - paragraph [ref=f28e835]:
+                                      - link "Control path algorithms" [ref=f28e836] [cursor=pointer]:
+                                        - /url: "#"
+                                    - list [ref=f28e837]:
+                                      - listitem [ref=f28e838]:
+                                        - paragraph [ref=f28e840]:
+                                          - link "Traffic engineering algorithms" [ref=f28e841] [cursor=pointer]:
+                                            - /url: "#"
+                                        - list
+                              - listitem [ref=f28e842]:
+                                - paragraph [ref=f28e844]:
+                                  - link "Network properties" [ref=f28e845] [cursor=pointer]:
+                                    - /url: "#"
+                                - list [ref=f28e847]:
+                                  - listitem [ref=f28e848]:
+                                    - paragraph [ref=f28e850]:
+                                      - link "Network manageability" [ref=f28e851] [cursor=pointer]:
+                                        - /url: "#"
+                                    - list
+                              - listitem [ref=f28e852]:
+                                - paragraph [ref=f28e854]:
+                                  - link "Network types" [ref=f28e855] [cursor=pointer]:
+                                    - /url: "#"
+                                - list [ref=f28e857]:
+                                  - listitem [ref=f28e858]:
+                                    - paragraph [ref=f28e860]:
+                                      - link "Data center networks" [ref=f28e861] [cursor=pointer]:
+                                        - /url: "#"
+                                    - list
+                              - listitem [ref=f28e862]
+                - generic [ref=f28e864]:
+                  - heading "Recommendations" [level=2] [ref=f28e865]
+                  - generic "Recommendations (Premium feature)" [ref=f28e867]:
+                    - list [ref=f28e870]:
+                      - listitem [ref=f28e871]:
+                        - generic [ref=f28e872]:
+                          - link [ref=f28e873] [cursor=pointer]:
+                            - /url: "#"
+                            - 'heading "Lightwave Fabrics: At-Scale Optical Circuit Switching for Datacenter and Machine Learning Systems" [level=3] [ref=f28e874]'
+                          - generic [ref=f28e875]: "ACM SIGCOMM '23: Proceedings of the ACM SIGCOMM 2023 Conference"
+                          - paragraph [ref=f28e878]: We describe our experience developing what we believe to be the world's first large-scale production deployments of lightwave fabrics used for both datacenter networking and machine-learning (ML) applications. Using optical circuit switches (OCSes) and ...
+                          - link [ref=f28e880] [cursor=pointer]:
+                            - /url: "#"
+                            - text: Read More
+                      - listitem [ref=f28e881]:
+                        - generic [ref=f28e882]:
+                          - link [ref=f28e883] [cursor=pointer]:
+                            - /url: "#"
+                            - heading "An efficient routing algorithm based on segment routing in software-defined networking" [level=3] [ref=f28e884]
+                          - paragraph [ref=f28e887]: Software-defined networking (SDN) is an emerging architecture that offers advantages over traditional network architecture. Segment routing (SR) defines the path of information through the network via an ordered list of multi-protocol label switching (...
+                          - link [ref=f28e889] [cursor=pointer]:
+                            - /url: "#"
+                            - text: Read More
+                      - listitem [ref=f28e890]:
+                        - generic [ref=f28e891]:
+                          - link [ref=f28e892] [cursor=pointer]:
+                            - /url: "#"
+                            - heading "Towards efficient optical burst-switched networks without all-optical wavelength converters" [level=3] [ref=f28e893]
+                          - generic [ref=f28e894]: "ONDM'07: Proceedings of the 11th international IFIP TC6 conference on Optical network design and modeling"
+                          - paragraph [ref=f28e897]: Optical Burst Switching (OBS) is a promising switching paradigm to efficiently support Internet Protocol (IP) packets over optical networks, under current and foreseeable limitations of optical technology. The prospects of OBS networks would greatly ...
+                          - link [ref=f28e899] [cursor=pointer]:
+                            - /url: "#"
+                            - text: Read More
+                - generic [ref=f28e901]:
+                  - heading "Comments" [level=2] [ref=f28e902]
+                  - generic "Comments (Premium feature)"
+          - dialog [ref=f28e903]:
+            - generic [ref=f28e904]:
+              - heading "Information & Contributors" [level=2] [ref=f28e906]:
+                - generic [ref=f28e907]: 
+                - text: Information & Contributors
+              - tabpanel [ref=f28e908]:
+                - heading "Information" [level=3] [ref=f28e909]
+                - generic [ref=f28e910]:
+                  - heading "Published In" [level=4] [ref=f28e911]
+                  - generic [ref=f28e912]:
+                    - img "cover image ACM Conferences" [ref=f28e914]
+                    - generic [ref=f28e915]:
+                      - generic [ref=f28e916]: "SIGCOMM '22: Proceedings of the ACM SIGCOMM 2022 Conference"
+                      - generic [ref=f28e917]: August 2022
+                      - generic [ref=f28e918]: 858 pages
+                      - generic [ref=f28e919]:
+                        - generic [ref=f28e920]:
+                          - generic [ref=f28e921]: "ISBN:"
+                          - generic [ref=f28e922]: "9781450394208"
+                        - generic [ref=f28e923]:
+                          - generic [ref=f28e924]: "DOI:"
+                          - generic [ref=f28e925]: 10.1145/3544216
+                        - list "list of authors" [ref=f28e928]:
+                          - listitem [ref=f28e929]: "General Chairs:"
+                          - listitem [ref=f28e930]:
+                            - link "Fernando Kuipers" [ref=f28e931] [cursor=pointer]:
+                              - /url: /profile/81100656645
+                            - text: ","
+                          - listitem [ref=f28e933]:
+                            - link "Ariel Orda" [ref=f28e934] [cursor=pointer]:
+                              - /url: /profile/81100236873
+                      - generic "metadataDisplayExtra"
+                  - paragraph [ref=f28e936]: Copyright © 2022 Owner/Author.
+                  - generic [ref=f28e937]: This work is licensed under a Creative Commons Attribution International 4.0 License.
+                - generic [ref=f28e938]:
+                  - heading "Sponsors" [level=4] [ref=f28e939]
+                  - list [ref=f28e940]:
+                    - listitem [ref=f28e941]:
+                      - 'link "SIGCOMM: ACM Special Interest Group on Data Communication" [ref=f28e942] [cursor=pointer]':
+                        - /url: /sig/sigcomm
+                - generic [ref=f28e943]:
+                  - heading "Publisher" [level=4] [ref=f28e944]
+                  - generic [ref=f28e946]:
+                    - paragraph [ref=f28e947]: Association for Computing Machinery
+                    - paragraph [ref=f28e948]: New York, NY, United States
+                - generic [ref=f28e949]:
+                  - heading "Publication History" [level=4] [ref=f28e950]
+                  - generic [ref=f28e951]: "Published: 22 August 2022"
+                - generic [ref=f28e952]:
+                  - heading "Check for updates" [level=4] [ref=f28e953]
+                  - link "Check for updates on crossmark" [ref=f28e954] [cursor=pointer]:
+                    - /url: "#"
+                - generic [ref=f28e960]:
+                  - heading "Author Tags" [level=4] [ref=f28e961]
+                  - list [ref=f28e962]:
+                    - listitem [ref=f28e963]:
+                      - link "datacenter network" [ref=f28e964] [cursor=pointer]:
+                        - /url: /keyword/datacenter+network?expand=all
+                    - listitem [ref=f28e965]:
+                      - link "optical circuit switches" [ref=f28e966] [cursor=pointer]:
+                        - /url: /keyword/optical+circuit+switches?expand=all
+                    - listitem [ref=f28e967]:
+                      - link "software-defined networking" [ref=f28e968] [cursor=pointer]:
+                        - /url: /keyword/software-defined+networking?expand=all
+                    - listitem [ref=f28e969]:
+                      - link "topology engineering" [ref=f28e970] [cursor=pointer]:
+                        - /url: /keyword/topology+engineering?expand=all
+                    - listitem [ref=f28e971]:
+                      - link "traffic engineering" [ref=f28e972] [cursor=pointer]:
+                        - /url: /keyword/traffic+engineering?expand=all
+                - generic [ref=f28e973]:
+                  - heading "Qualifiers" [level=4] [ref=f28e974]
+                  - list [ref=f28e975]:
+                    - listitem [ref=f28e976]: Research-article
+                - generic [ref=f28e977]:
+                  - heading "Conference" [level=4] [ref=f28e978]
+                  - generic [ref=f28e979]:
+                    - generic [ref=f28e980]: SIGCOMM '22
+                    - generic [ref=f28e981]:
+                      - text: "Sponsor:"
+                      - list [ref=f28e982]:
+                        - listitem [ref=f28e983]:
+                          - link "SIGCOMM" [ref=f28e984] [cursor=pointer]:
+                            - /url: /sig/sigcomm
+                  - generic [ref=f28e985]:
+                    - 'link "SIGCOMM ''22: ACM SIGCOMM 2022 Conference" [ref=f28e986] [cursor=pointer]':
+                      - /url: http://conferences.sigcomm.org/sigcomm/2022/
+                    - generic [ref=f28e987]:
+                      - generic [ref=f28e988]: 
+                      - text: August 22 - 26, 2022
+                    - generic [ref=f28e989]:
+                      - generic [ref=f28e990]: 
+                      - text: Amsterdam, Netherlands
+                - generic [ref=f28e991]:
+                  - heading "Acceptance Rates" [level=4] [ref=f28e992]
+                  - generic [ref=f28e994]:
+                    - generic [ref=f28e995]: SIGCOMM '22 Paper Acceptance Rate Not Available
+                    - generic [ref=f28e996]: Overall Acceptance Rate 493 of 3,624 submissions, 14%
+                - generic [ref=f28e997]:
+                  - heading "Upcoming Conference" [level=4] [ref=f28e998]
+                  - generic [ref=f28e1001]:
+                    - generic [ref=f28e1002]:
+                      - generic [ref=f28e1003]: ANRW '26
+                      - list [ref=f28e1006]:
+                        - listitem [ref=f28e1007]: "Sponsor:"
+                        - listitem [ref=f28e1008]:
+                          - link "sigcomm" [ref=f28e1009] [cursor=pointer]:
+                            - /url: /sig/sigcomm
+                    - generic [ref=f28e1010]:
+                      - link "ACM/IRTF Applied Networking Research Workshop 2026" [ref=f28e1011] [cursor=pointer]:
+                        - /url: /conference/anrw
+                      - link "ACM/IRTF Applied Networking Research Workshop 2026" [ref=f28e1012] [cursor=pointer]:
+                        - /url: /conference/comm
+                      - generic [ref=f28e1013]:
+                        - generic [ref=f28e1014]:
+                          - link "" [ref=f28e1015] [cursor=pointer]:
+                            - /url: https://www.google.com/calendar/event?action=TEMPLATE&text=ACM/IRTF Applied Networking Research Workshop 2026&dates=20260720/20260720&details=ACM/IRTF Applied Networking Research Workshop 2026&location=Vienna%2C%20%2C%20Austria
+                          - generic [ref=f28e1017]: July 20, 2026
+                        - generic [ref=f28e1018]:
+                          - link "" [ref=f28e1019] [cursor=pointer]:
+                            - /url: https://maps.google.com/?q=Vienna,, Austria
+                          - generic [ref=f28e1021]: Vienna , Austria
+              - tabpanel [ref=f28e1022]:
+                - heading "Contributors" [level=3] [ref=f28e1023]
+                - generic [ref=f28e1028]:
+                  - heading "Other Metrics" [level=4] [ref=f28e1029]
+                  - link "View Article Metrics" [ref=f28e1031] [cursor=pointer]:
+                    - /url: "#tab-metrics-inner"
+            - generic [ref=f28e1032]:
+              - heading "Bibliometrics & Citations" [level=2] [ref=f28e1034]:
+                - generic [ref=f28e1035]: 
+                - text: Bibliometrics & Citations
+              - tabpanel [ref=f28e1036]:
+                - heading "Bibliometrics" [level=3] [ref=f28e1037]
+                - generic [ref=f28e1038]:
+                  - heading "Article Metrics" [level=4] [ref=f28e1039]
+                  - generic [ref=f28e1041]:
+                    - list [ref=f28e1042]:
+                      - listitem [ref=f28e1043]:
+                        - generic [ref=f28e1044]:
+                          - generic [ref=f28e1045]: "201"
+                          - text: Total Citations
+                        - link "View Citations" [ref=f28e1046] [cursor=pointer]:
+                          - /url: "#tab-citations"
+                      - listitem [ref=f28e1047]:
+                        - generic [ref=f28e1048]:
+                          - generic [ref=f28e1049]: 18,216
+                          - text: Total Downloads
+                    - list [ref=f28e1050]:
+                      - listitem [ref=f28e1051]:
+                        - generic [ref=f28e1052]: Downloads (Last 12 months)
+                        - generic "Advanced metrics (Premium feature)" [ref=f28e1053]: ...
+                      - listitem [ref=f28e1054]:
+                        - generic [ref=f28e1055]: Downloads (Last 6 weeks)
+                        - generic "Advanced metrics (Premium feature)" [ref=f28e1056]: ...
+                    - generic [ref=f28e1057]: Reflects downloads up to 08 Jul 2026
+                - generic [ref=f28e1058]:
+                  - heading "Other Metrics" [level=4] [ref=f28e1059]
+                  - link "View Author Metrics" [ref=f28e1061] [cursor=pointer]:
+                    - /url: "#tab-contributors"
+              - tabpanel [ref=f28e1062]:
+                - heading "Citations" [level=3] [ref=f28e1063]
+                - generic [ref=f28e1066]:
+                  - generic [ref=f28e1067]:
+                    - heading "Cited By" [level=2] [ref=f28e1068]
+                    - link "View all " [ref=f28e1069] [cursor=pointer]:
+                      - /url: /action/ajaxShowCitedBy?doi=10.1145/3544216.3544265
+                      - text: View all
+                      - generic [ref=f28e1070]: 
+                  - list [ref=f28e1071]:
+                    - listitem [ref=f28e1072]:
+                      - generic [ref=f28e1073]: Kim J and Kim H.
+                      - text: (2026). Fast-Converging Volterra Equalizer Using Mini-Batch Gradient Descent-Based Adam Optimization. IEEE Photonics Technology Letters. 10.1109/LPT.2026.3682670.
+                      - generic [ref=f28e1074]: 38:17.
+                      - text: "(1183-1186). Online publication date: 1-Sep-2026."
+                      - link "https://doi.org/10.1109/LPT.2026.3682670" [ref=f28e1076] [cursor=pointer]:
+                        - /url: https://doi.org/10.1109/LPT.2026.3682670
+                    - listitem [ref=f28e1077]:
+                      - generic [ref=f28e1078]: Cruzes S.
+                      - text: "(2026). Data centers in the age of AI: A tutorial survey on infrastructure, sustainability, and emerging challenges. Journal of Network and Computer Applications. 10.1016/j.jnca.2026.104525."
+                      - generic [ref=f28e1079]: "252."
+                      - text: "(104525). Online publication date: Aug-2026."
+                      - link "https://doi.org/10.1016/j.jnca.2026.104525" [ref=f28e1081] [cursor=pointer]:
+                        - /url: https://doi.org/10.1016/j.jnca.2026.104525
+                    - listitem [ref=f28e1082]:
+                      - generic [ref=f28e1083]: Hanauer K, Heck S and Schmid S.
+                      - text: "(2026). DistroMatch: Distributed Disjoint Weighted Matchings in Demand-Aware Reconfigurable Optical Datacenters. Proceedings of the 40th ACM International Conference on Supercomputing. 10.1145/3797905.3800555. (409-421). Online publication date: 6-Jul-2026."
+                      - link "https://dl.acm.org/doi/10.1145/3797905.3800555" [ref=f28e1085] [cursor=pointer]:
+                        - /url: https://dl.acm.org/doi/10.1145/3797905.3800555
+                    - listitem [ref=f28e1086]:
+                      - generic [ref=f28e1087]: Bentert M, Avin C and Schmid S.
+                      - text: "(2026). A Separation Between Optimal Demand-Oblivious and Demand-Aware Network Throughput. Proceedings of the ACM Symposium on Principles of Distributed Computing. 10.1145/3796701.3815941. (360-370). Online publication date: 6-Jul-2026."
+                      - link "https://dl.acm.org/doi/10.1145/3796701.3815941" [ref=f28e1089] [cursor=pointer]:
+                        - /url: https://dl.acm.org/doi/10.1145/3796701.3815941
+                    - listitem [ref=f28e1090]:
+                      - generic [ref=f28e1091]: Anazawa K, Mano T and Sone Y.
+                      - text: (2026). Reliable Operation Technologies for Datacenter Networks Composed of Optical Circuit Switches. NTT Technical Review. 10.53829/ntr202606ra1.
+                      - generic [ref=f28e1092]: 24:6.
+                      - text: "(60-71). Online publication date: Jun-2026."
+                      - link "https://doi.org/10.53829/ntr202606ra1" [ref=f28e1094] [cursor=pointer]:
+                        - /url: https://doi.org/10.53829/ntr202606ra1
+                    - listitem [ref=f28e1095]:
+                      - generic [ref=f28e1096]: Pop C, Riedl A and Neumann T.
+                      - text: "(2026). Compression-Aware LIKE: Matching Patterns in the FSST Domain. Proceedings of the 22nd International Workshop on Data Management on New Hardware. 10.1145/3789237.3809128. (1-10). Online publication date: 31-May-2026."
+                      - link "https://dl.acm.org/doi/10.1145/3789237.3809128" [ref=f28e1098] [cursor=pointer]:
+                        - /url: https://dl.acm.org/doi/10.1145/3789237.3809128
+                    - listitem [ref=f28e1099]:
+                      - generic [ref=f28e1100]: Schichtholz B, Waldhorst O, Bless R, König M and Zitterbart M.
+                      - text: "(2026). Taming the Shift: Investigating Flow Shifting Strategies for Traffic Engineering. 2026 IFIP Networking Conference (IFIP Networking). 10.23919/IFIPNetworking70592.2026.11579153. (1-9). Online publication date: 24-May-2026."
+                      - link "https://doi.org/10.23919/IFIPNetworking70592.2026.11579153" [ref=f28e1102] [cursor=pointer]:
+                        - /url: https://doi.org/10.23919/IFIPNetworking70592.2026.11579153
+                    - listitem [ref=f28e1103]:
+                      - generic [ref=f28e1104]: Yuan M, Wang X, Wu Q, He Y and Zhang H.
+                      - text: "(2026). BiPlane: Toward A Behavior-Aware Cross-Layer Interconnect Architecture for LLM Training. IEEE INFOCOM 2026 - IEEE Conference on Computer Communications. 10.1109/INFOCOM59046.2026.11571638. (1-10). Online publication date: 18-May-2026."
+                      - link "https://doi.org/10.1109/INFOCOM59046.2026.11571638" [ref=f28e1106] [cursor=pointer]:
+                        - /url: https://doi.org/10.1109/INFOCOM59046.2026.11571638
+                    - listitem [ref=f28e1107]:
+                      - generic [ref=f28e1108]: Yuan X, Qiao Y, Wang Z, Li M and Chen W.
+                      - text: "(2026). Lmte: Putting the \"Reasoning\" into WAN Traffic Engineering with Language Models. IEEE INFOCOM 2026 - IEEE Conference on Computer Communications. 10.1109/INFOCOM59046.2026.11571346. (1-10). Online publication date: 18-May-2026."
+                      - link "https://doi.org/10.1109/INFOCOM59046.2026.11571346" [ref=f28e1110] [cursor=pointer]:
+                        - /url: https://doi.org/10.1109/INFOCOM59046.2026.11571346
+                    - listitem [ref=f28e1111]:
+                      - generic [ref=f28e1112]: Mao Y, Zhai Q, Liu X, Han X, Li F, Zhao S, Zhou Y, Yao Z and Zhu X.
+                      - text: "(2026). ATRO: A Fast Algorithm for Topology Engineering of Reconfigurable Datacenter Networks. IEEE INFOCOM 2026 - IEEE Conference on Computer Communications. 10.1109/INFOCOM59046.2026.11571240. (1-10). Online publication date: 18-May-2026."
+                      - link "https://doi.org/10.1109/INFOCOM59046.2026.11571240" [ref=f28e1114] [cursor=pointer]:
+                        - /url: https://doi.org/10.1109/INFOCOM59046.2026.11571240
+                    - listitem [ref=f28e1115]:
+                      - link "Show More Cited By" [ref=f28e1116] [cursor=pointer]:
+                        - /url: javascript:void(0)
+            - generic [ref=f28e1117]:
+              - heading "Share" [level=2] [ref=f28e1119]:
+                - generic [ref=f28e1120]: 
+                - text: Share
+              - heading "Share" [level=3] [ref=f28e1121]
+              - generic [ref=f28e1122]:
+                - generic [ref=f28e1123]:
+                  - heading "Share this Publication link" [level=4] [ref=f28e1124]
+                  - generic [ref=f28e1125]:
+                    - paragraph
+                    - button "Copy the content Link" [ref=f28e1126] [cursor=pointer]:
+                      - generic [ref=f28e1127]: 
+                      - generic [ref=f28e1128]: Copy Link
+                    - generic: 
+                - generic [ref=f28e1129]:
+                  - heading "Share on social media" [level=4] [ref=f28e1130]
+                  - generic [ref=f28e1131]:
+                    - link "Share on X" [ref=f28e1132] [cursor=pointer]:
+                      - /url: "#"
+                      - generic [ref=f28e1133]: 
+                      - generic [ref=f28e1134]: X
+                    - link "Share on LinkedIn" [ref=f28e1135] [cursor=pointer]:
+                      - /url: "#"
+                      - generic [ref=f28e1136]: 
+                      - generic [ref=f28e1137]: LinkedIn
+                    - link "Share on Reddit" [ref=f28e1138] [cursor=pointer]:
+                      - /url: "#"
+                      - generic [ref=f28e1139]: 
+                      - generic [ref=f28e1140]: Reddit
+                    - link "Share on Facebook" [ref=f28e1141] [cursor=pointer]:
+                      - /url: "#"
+                      - generic [ref=f28e1142]: 
+                      - generic [ref=f28e1143]: Facebook
+                    - link "Share on email" [ref=f28e1144] [cursor=pointer]:
+                      - /url: "#"
+                      - generic [ref=f28e1145]: 
+                      - generic [ref=f28e1146]: email
+          - complementary [ref=f28e1147]:
+            - generic [ref=f28e1148]:
+              - link [ref=f28e1150] [cursor=pointer]:
+                - /url: /action/clickThrough?id=108307&url=https%3A%2F%2Fdl.acm.org%2Fjournal%2Fimwut&loc=%2Fdoi%2Fabs%2F10.1145%2F3544216.3544265&pubId=59718698&placeholderId=101020&productId=108184
+                - img "PACMIMWUT Sky Ad" [ref=f28e1151]
+              - link [ref=f28e1153] [cursor=pointer]:
+                - /url: /action/clickThrough?id=108206&url=https%3A%2F%2Fdl.acm.org%2Fjournal%2Fdlt&loc=%2Fdoi%2Fabs%2F10.1145%2F3544216.3544265&pubId=59718698&placeholderId=101021&productId=108184
+                - img "DLT Ad" [ref=f28e1154]
+              - link [ref=f28e1156] [cursor=pointer]:
+                - /url: /action/clickThrough?id=108247&url=https%3A%2F%2Fdl.acm.org%2Fdoi%2Fbook%2F10.1145%2F3749421&loc=%2Fdoi%2Fabs%2F10.1145%2F3544216.3544265&pubId=59718698&placeholderId=101022&productId=108184
+                - img "ACM Books Chang Med Box Ad" [ref=f28e1157]
+        - link [ref=f28e1161] [cursor=pointer]:
+          - /url: /doi/pdf/10.1145/3544216.3544265?download=true
+          - text: Download PDF
+        - navigation "Sticky Navigation" [ref=f28e1162]
+        - link "View Table of Contents" [ref=f28e1165] [cursor=pointer]:
+          - /url: /doi/proceedings/10.1145/3544216
+      - dialog "Export Citations":   
+      - dialog "New Citation Alert added!":  
+    - contentinfo [ref=f28e1166]:
+      - heading "Footer" [level=2] [ref=f28e1167]
+      - generic [ref=f28e1170]:
+        - generic [ref=f28e1172]:
+          - heading "Categories" [level=3] [ref=f28e1173]
+          - list [ref=f28e1174]:
+            - listitem [ref=f28e1175]:
+              - link "Journals" [ref=f28e1176] [cursor=pointer]:
+                - /url: /journals
+            - listitem [ref=f28e1177]:
+              - link "Magazines" [ref=f28e1178] [cursor=pointer]:
+                - /url: /magazines
+            - listitem [ref=f28e1179]:
+              - link "Books" [ref=f28e1180] [cursor=pointer]:
+                - /url: /acmbooks
+            - listitem [ref=f28e1181]:
+              - link "Proceedings" [ref=f28e1182] [cursor=pointer]:
+                - /url: /proceedings
+            - listitem [ref=f28e1183]:
+              - link "SIGs" [ref=f28e1184] [cursor=pointer]:
+                - /url: /sigs
+            - listitem [ref=f28e1185]:
+              - link "Conferences" [ref=f28e1186] [cursor=pointer]:
+                - /url: /conferences
+            - listitem [ref=f28e1187]:
+              - link "Collections" [ref=f28e1188] [cursor=pointer]:
+                - /url: /collections
+            - listitem [ref=f28e1189]:
+              - link "People" [ref=f28e1190] [cursor=pointer]:
+                - /url: /people
+        - generic [ref=f28e1192]:
+          - heading "About" [level=3] [ref=f28e1193]
+          - list [ref=f28e1194]:
+            - listitem [ref=f28e1195]:
+              - link "About ACM Digital Library" [ref=f28e1196] [cursor=pointer]:
+                - /url: /about
+            - listitem [ref=f28e1197]:
+              - link "ACM Digital Library Board" [ref=f28e1198] [cursor=pointer]:
+                - /url: /about/dlboard
+            - listitem [ref=f28e1199]:
+              - link "Author Guidelines" [ref=f28e1200] [cursor=pointer]:
+                - /url: https://www.acm.org/publications/authors/information-for-authors
+            - listitem [ref=f28e1201]:
+              - link "All Holdings within the ACM Digital Library" [ref=f28e1202] [cursor=pointer]:
+                - /url: /about/content#sec2
+            - listitem [ref=f28e1203]:
+              - link "ACM Computing Classification System" [ref=f28e1204] [cursor=pointer]:
+                - /url: /ccs
+            - listitem [ref=f28e1205]:
+              - link "Accessibility Statement" [ref=f28e1206] [cursor=pointer]:
+                - /url: /about/accessibility
+        - generic [ref=f28e1208]:
+          - heading "Join" [level=3] [ref=f28e1209]
+          - list [ref=f28e1210]:
+            - listitem [ref=f28e1211]:
+              - link "Join ACM" [ref=f28e1212] [cursor=pointer]:
+                - /url: https://www.acm.org/membership/join
+            - listitem [ref=f28e1213]:
+              - link "Join SIGs" [ref=f28e1214] [cursor=pointer]:
+                - /url: https://www.acm.org/special-interest-groups/join
+            - listitem [ref=f28e1215]:
+              - link "Subscribe to Publications" [ref=f28e1216] [cursor=pointer]:
+                - /url: https://www.acm.org/publications/subscribe
+            - listitem [ref=f28e1217]:
+              - link "Institutions and Libraries" [ref=f28e1218] [cursor=pointer]:
+                - /url: https://libraries.acm.org/
+        - generic [ref=f28e1220]:
+          - heading "Connect" [level=3] [ref=f28e1221]
+          - list [ref=f28e1222]:
+            - listitem [ref=f28e1223]:
+              - link "Contact us via email" [ref=f28e1224] [cursor=pointer]:
+                - /url: mailto:dl-team@hq.acm.org
+                - generic [ref=f28e1225]: 
+                - text: Contact us via email
+            - listitem [ref=f28e1226]:
+              - link "ACM on Facebook" [ref=f28e1227] [cursor=pointer]:
+                - /url: https://www.facebook.com/AssociationForComputingMachinery/
+                - generic [ref=f28e1228]: 
+                - text: ACM on Facebook
+            - listitem [ref=f28e1229]:
+              - link "ACM DL on X" [ref=f28e1230] [cursor=pointer]:
+                - /url: https://x.com/acmdl
+                - generic [ref=f28e1231]: 
+                - text: ACM DL on X
+            - listitem [ref=f28e1232]:
+              - link "ACM on Linkedin" [ref=f28e1233] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/association-for-computing-machinery/
+                - generic [ref=f28e1234]: 
+                - text: ACM on Linkedin
+            - listitem [ref=f28e1235]:
+              - generic [ref=f28e1236] [cursor=pointer]:
+                - generic [ref=f28e1237]: 
+                - text: Send Feedback
+            - listitem [ref=f28e1238]:
+              - generic [ref=f28e1239] [cursor=pointer]:
+                - generic [ref=f28e1240]: 
+                - text: Submit a Bug Report
+      - generic [ref=f28e1243]:
+        - generic [ref=f28e1244]:
+          - generic [ref=f28e1245]: The ACM Digital Library is published by the Association for Computing Machinery. Copyright © 2026 ACM, Inc.
+          - list [ref=f28e1246]:
+            - listitem [ref=f28e1247]:
+              - link "Terms of Usage" [ref=f28e1248] [cursor=pointer]:
+                - /url: https://libraries.acm.org/digital-library/policies#anchor3
+            - listitem [ref=f28e1249]:
+              - link "Privacy Policy" [ref=f28e1250] [cursor=pointer]:
+                - /url: https://www.acm.org/about-acm/privacy-policy
+            - listitem [ref=f28e1251]:
+              - link "Code of Ethics" [ref=f28e1252] [cursor=pointer]:
+                - /url: https://www.acm.org/code-of-ethics
+        - generic [ref=f28e1254]:
+          - link [ref=f28e1256] [cursor=pointer]:
+            - /url: /
+            - img "ACM Digital Library home" [ref=f28e1257]
+          - link [ref=f28e1259] [cursor=pointer]:
+            - /url: https://www.acm.org
+            - img "ACM - Association for Computing Machinery" [ref=f28e1260]
+    - region "notification"
+    - text:      
+  - iframe [ref=f28e1261]:
+    
