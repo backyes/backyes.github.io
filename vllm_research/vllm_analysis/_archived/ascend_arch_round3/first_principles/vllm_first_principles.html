@@ -1,45 +1,81 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <link rel="stylesheet" href="../../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>vLLM 架构第一性原理反思</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;
+  --a:#58a6ff;--b:#7ee787;--c:#d2a8ff;--d:#ff7b72;--e:#ffa657;--m:#8b949e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.7}
+header{background:linear-gradient(135deg,#161b22 0%,#121826 100%);
+  padding:32px 24px 28px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.45rem;color:var(--b);margin-bottom:8px;letter-spacing:.2px}
+header .sub{color:var(--m);font-size:.83rem;max-width:780px}
+.wrap{max-width:900px;margin:0 auto;padding:20px 22px 60px}
+nav{position:sticky;top:0;background:var(--bg);z-index:50;border-bottom:1px solid var(--border);
+  overflow-x:auto;white-space:nowrap;padding:0 16px}
+nav a{display:inline-block;padding:10px 12px;color:var(--m);text-decoration:none;
+  font-size:.78rem;border-bottom:2px solid transparent}
+nav a:hover{color:var(--a)}
+h2{font-size:1.18rem;color:var(--c);margin:38px 0 14px;padding-bottom:6px;
+  border-bottom:1px solid var(--border)}
+h3{font-size:1rem;color:var(--e);margin:22px 0 8px}
+h4{font-size:.9rem;color:var(--a);margin:14px 0 5px}
+p{margin:9px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+.card h3{margin-top:0}
+.pbox{border-left:3px solid var(--b);background:rgba(126,231,135,.07);
+  padding:14px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+.pbox strong{color:var(--b)}
+.pbox .why{display:block;margin-top:8px;color:var(--m);font-size:.85rem}
+.pbox .why::before{content:"为什么成立：";color:var(--d);font-weight:600}
+.pbox .test{display:block;margin-top:5px;color:var(--m);font-size:.85rem}
+.pbox .test::before{content:"可证伪条件：";color:var(--e);font-weight:600}
+code{background:#0d1117;padding:1px 5px;border-radius:4px;font-size:.8em;
+  color:var(--e);border:1px solid var(--border)}
+pre{background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:14px;
+  overflow-x:auto;font-size:.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:.78rem;margin:10px 0;
+  display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--b)}
+tr:nth-child(even) td{background:#0d1117}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.tag{display:inline-block;background:rgba(88,166,255,.15);color:var(--a);
+  padding:2px 7px;border-radius:10px;font-size:.68rem;margin:2px}
+.src{color:var(--a);font-size:.76rem;margin-top:4px;display:block}
+.src::before{content:"↳ 代码证据："}
+.footnote{color:var(--m);font-size:.78rem;border-top:1px solid var(--border);
+  margin-top:40px;padding-top:16px;line-height:1.8}
+quote{display:block;border-left:3px solid var(--e);background:rgba(255,166,87,.06);
+  padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-style:italic}
+@media(max-width:600px){header h1{font-size:1.15rem}nav a{padding:8px 8px;font-size:.72rem}
+  th,td{padding:5px 6px;font-size:.72rem}}
+</style>
+
+<style>
+@media(max-width:768px){
+  body{padding:16px!important;max-width:100%!important}
+  h1{font-size:1.3rem!important}
+  h2{font-size:1.1rem!important}
+  table{font-size:.82em!important; display:block; overflow-x:auto}
+  th,td{padding:5px 7px!important}
+  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
+  .archgrid,.grid,.shell{grid-template-columns:1fr!important}
+  nav,.nav{position:static!important;max-height:none!important}
+  img{max-width:100%!important}
+}
+</style>
 </head>
 <body>
 
-
 <header>
-<div class="notion-page">
+<div class="wrap">
 <h1>vLLM 架构的第一性原理</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#p1-kv-缓存是整个系统的一切--内存容量是硬约束算力不是" class="toc-h2">P1. KV 缓存是整个系统的一切 —— 内存容量是硬约束，算力不是</a></li>
-<li><a href="#代码证据" class="toc-h3">代码证据</a></li>
-<li><a href="#p1-的推论" class="toc-h3">P1 的推论</a></li>
-<li><a href="#p2-推理服务--连续批处理调度不是跑一个模型" class="toc-h2">P2. 推理服务 = 连续批处理调度，不是「跑一个模型」</a></li>
-<li><a href="#代码证据-1" class="toc-h3">代码证据</a></li>
-<li><a href="#p2-的推论" class="toc-h3">P2 的推论</a></li>
-<li><a href="#p3-python-控制面--kernel-数据面forward-context-是唯一的桥" class="toc-h2">P3. Python 控制面 + kernel 数据面，Forward Context 是唯一的桥</a></li>
-<li><a href="#代码证据-2" class="toc-h3">代码证据</a></li>
-<li><a href="#p3-的推论" class="toc-h3">P3 的推论</a></li>
-<li><a href="#p4-算子融合--内存带宽倍增器--serving-优化的天花板由-roofline-左侧决定" class="toc-h2">P4. 算子融合 = 内存带宽倍增器 —— serving 优化的天花板由 roofline 左侧决定</a></li>
-<li><a href="#代码证据-3" class="toc-h3">代码证据</a></li>
-<li><a href="#p4-的推论" class="toc-h3">P4 的推论</a></li>
-<li><a href="#p5-硬件抽象必须零成本--否则插件就是-fork-的另一个名字" class="toc-h2">P5. 硬件抽象必须零成本 —— 否则插件就是 fork 的另一个名字</a></li>
-<li><a href="#代码证据-4" class="toc-h3">代码证据</a></li>
-<li><a href="#p5-的推论" class="toc-h3">P5 的推论</a></li>
-<li><a href="#p6-并行度是调度维度不只是执行模式" class="toc-h2">P6. 并行度是调度维度，不只是执行模式</a></li>
-<li><a href="#代码证据-5" class="toc-h3">代码证据</a></li>
-<li><a href="#p6-的推论" class="toc-h3">P6 的推论</a></li>
-<li><a href="#综合推论六条原理如何咬合成一个系统" class="toc-h2">综合推论：六条原理如何咬合成一个系统</a></li>
-<li><a href="#推论-1三个架构级必然模块" class="toc-h3">推论 1：三个「架构级必然模块」</a></li>
-<li><a href="#推论-2未来工作的位置" class="toc-h3">推论 2：「未来工作」的位置</a></li>
-<li><a href="#推论-3真正的工作不在-kernel在调度与抽象" class="toc-h3">推论 3：真正的工作不在 kernel，在调度与抽象</a></li>
-<li><a href="#一句话总结" class="toc-h3">一句话总结</a></li>
-</ul>
-</details>
-
 <div class="sub">
   基于 vllm-ascend（vllm-project/vllm-ascend, commit b266da5d）代码事实的反思，结合大模型推理系统的设计约束。<br>
   不是功能清单，而是“如果这条不成立，整个架构就要改写”意义上的第一性原理。<br>
@@ -501,6 +537,5 @@ vllm-ascend 的 8 个编译 pass、MLAPO prolog、四层 MoECommType、rew 三�
 </div>
 
 </div>
-
 </body>
 </html>

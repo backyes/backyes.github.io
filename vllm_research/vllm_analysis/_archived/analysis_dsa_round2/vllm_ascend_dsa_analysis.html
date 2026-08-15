@@ -1,112 +1,67 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <link rel="stylesheet" href="../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>vLLM / vLLM_Ascend 架构深析：KVCache on HBM 与 DSA index→pageattention 查表机制</title>
+<style>
+:root{
+  --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+  --muted:#8b949e; --accent:#58a6ff; --accent2:#7ee787; --warn:#d29922; --code:#c9d1d9;
+  --dim:#6e7681;
+}
+*{box-sizing:border-box;-webkit-text-size-adjust:100%}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;font-size:15px;padding:12px;}
+h1{font-size:1.5em;margin:.4em 0 .6em;color:var(--accent2);border-bottom:1px solid var(--border);padding-bottom:8px}
+h2{font-size:1.25em;color:var(--accent);margin-top:1.6em;border-left:3px solid var(--accent);padding-left:10px}
+h3{font-size:1.05em;color:var(--accent2);margin-top:1.3em}
+p,li{color:var(--text)}
+.muted{color:var(--muted);font-size:.85em}
+.warn{color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin:10px 0}
+code{background:#1c2128;padding:1px 5px;border-radius:4px;font-size:.88em;color:var(--accent2);word-break:break-all}
+pre{background:#0d1117;border:1px solid var(--border);border-left:3px solid var(--accent);
+  padding:12px;border-radius:6px;overflow-x:auto;font-size:.82em;line-height:1.5;
+  white-space:pre-wrap;word-break:break-all}
+pre code{background:none;padding:0;color:var(--code)}
+.toc a{color:var(--accent);text-decoration:none;display:block;padding:3px 0}
+.toc a:hover{text-decoration:underline}
+.tag{display:inline-block;background:#1f6feb22;border:1px solid #1f6feb;color:var(--accent);
+  border-radius:10px;padding:0 8px;font-size:.75em;margin-right:5px}
+.tag.g{background:#2ea04322;border-color:#2ea043;color:var(--accent2)}
+.tag.w{background:#d2992222;border-color:#d29922;color:var(--warn)}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.85em}
+th,td{border:1px solid var(--border);padding:6px 8px;text-align:left}
+th{background:#161b22;color:var(--accent)}
+.flow{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:14px;margin:12px 0;
+  font-family:monospace;font-size:.82em;line-height:1.7;overflow-x:auto;white-space:pre}
+.src{font-size:.78em;color:var(--dim);margin-top:4px}
+.src a{color:var(--accent);text-decoration:none}
+.src a:hover{text-decoration:underline}
+.highlight{background:#d2992215;border:1px solid #d2992255;border-radius:6px;padding:10px 12px;margin:10px 0}
+ul,ol{padding-left:22px}
+li{margin:3px 0}
+.footer{border-top:1px solid var(--border);margin-top:30px;padding-top:12px;color:var(--muted);font-size:.8em}
+</style>
+
+<style>
+@media(max-width:768px){
+  body{padding:16px!important;max-width:100%!important}
+  h1{font-size:1.3rem!important}
+  h2{font-size:1.1rem!important}
+  table{font-size:.82em!important; display:block; overflow-x:auto}
+  th,td{padding:5px 7px!important}
+  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
+  .archgrid,.grid,.shell{grid-template-columns:1fr!important}
+  nav,.nav{position:static!important;max-height:none!important}
+  img{max-width:100%!important}
+}
+</style>
 </head>
 <body>
-<div class="notion-page">
-
 
 <h1>vLLM / vLLM_Ascend 架构深析</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#1-问题定义与分析边界" class="toc-h2">1. 问题定义与分析边界</a></li>
-<li><a href="#2-vllm-v1-的-paged-kvcache-抽象" class="toc-h2">2. vLLM v1 的 Paged KVCache 抽象</a></li>
-<li><a href="#3-slot_mapping--block_table--hbm-物理化" class="toc-h2">3. slot_mapping → block_table → HBM 物理化</a></li>
-<li><a href="#31-triton-kernelvllm-主路径block_tablepy388-411" class="toc-h3">3.1 Triton kernel（vLLM 主路径，block_table.py:388-411）</a></li>
-<li><a href="#32-numpy-路径ascend-310p_310pblock_tablepy44-49" class="toc-h3">3.2 NumPy 路径（Ascend 310P，_310p/block_table.py:44-49）</a></li>
-<li><a href="#33-block_table-矩阵本身" class="toc-h3">3.3 block_table 矩阵本身</a></li>
-<li><a href="#4-vllm_ascend-的三种-attention-stack" class="toc-h2">4. vLLM_Ascend 的三种 Attention Stack</a></li>
-<li><a href="#5-dsa-全景多层-cache-与多段压缩" class="toc-h2">5. DSA 全景：多层 cache 与多段压缩</a></li>
-<li><a href="#51-_build_kv_cache6-7-元-cache-元组" class="toc-h3">5.1 _build_kv_cache：6-7 元 cache 元组</a></li>
-<li><a href="#52-forward-入口拆分" class="toc-h3">5.2 forward 入口拆分</a></li>
-<li><a href="#53-attn_metadata-是-5-元素-list" class="toc-h3">5.3 attn_metadata 是 5 元素 list</a></li>
-<li><a href="#6-核心dsa-indexer-如何算出-index" class="toc-h2">6. 核心：DSA indexer 如何算出 index</a></li>
-<li><a href="#61-入口indexer_select_qlidsa_v1py2630" class="toc-h3">6.1 入口：indexer_select_qli（dsa_v1.py:2630）</a></li>
-<li><a href="#62-_indexer_qkv_prepareindexer-的-qkv-prologdsa_v1p" class="toc-h3">6.2 _indexer_qkv_prepare：indexer 的 Q/KV prolog（dsa_v1.py:2434）</a></li>
-<li><a href="#63-_indexer_qlilightning-indexer-调用dsa_v1py2584-26" class="toc-h3">6.3 _indexer_qli：lightning indexer 调用（dsa_v1.py:2584-2628）—— 算出 index 的瞬间</a></li>
-<li><a href="#64-indexcache跨层复用-index" class="toc-h3">6.4 IndexCache：跨层复用 index</a></li>
-<li><a href="#7-关键转换index_id--pageattention-查表" class="toc-h2">7. 关键转换：index_id → pageattention 查表</a></li>
-<li><a href="#71-答案index-直接作为-sparse-attention-op-的-cmp_sparse_i" class="toc-h3">7.1 答案：index 直接作为 sparse attention op 的 cmp_sparse_indices 参数</a></li>
-<li><a href="#72-attn_op-是什么devicedevice_oppy752" class="toc-h3">7.2 attn_op 是什么？（device/device_op.py:752）</a></li>
-<li><a href="#73-index_id--pageattention-的转换语义" class="toc-h3">7.3 index_id → pageattention 的转换语义</a></li>
-<li><a href="#74-与-sfa-路径的对照更清晰的-reference" class="toc-h3">7.4 与 SFA 路径的对照（更清晰的 reference）</a></li>
-<li><a href="#75-与-vllm-gpu-侧-sparse-path-的对照" class="toc-h3">7.5 与 vLLM GPU 侧 sparse path 的对照</a></li>
-<li><a href="#8-数据流总图端到端-index-生命周期" class="toc-h2">8. 数据流总图：端到端 index 生命周期</a></li>
-<li><a href="#9-关键设计洞察芯片系统视角" class="toc-h2">9. 关键设计洞察（芯片/系统视角）</a></li>
-<li><a href="#91-indexer-拥有独立的-block_table-是核心架构决策" class="toc-h3">9.1 indexer 拥有独立的 block_table 是核心架构决策</a></li>
-<li><a href="#92-index_id--pageattention是融合语义不是两步-kernel" class="toc-h3">9.2 "index_id → pageattention"是融合语义，不是两步 kernel</a></li>
-<li><a href="#93-slot_mapping-的-2d-格式化是-ascend-特有" class="toc-h3">9.3 slot_mapping 的 2D 格式化是 Ascend 特有</a></li>
-<li><a href="#94-multistream-重叠indexer-与-qkv-计算双流水" class="toc-h3">9.4 multistream 重叠：indexer 与 Q/KV 计算双流水</a></li>
-<li><a href="#95-compress_ratio-是架构可扩展的旋钮" class="toc-h3">9.5 compress_ratio 是架构可扩展的"旋钮"</a></li>
-<li><a href="#10-索引过程有-hash-计算么三种选择机制的辨析" class="toc-h2">10. 索引过程有 hash 计算么？三种选择机制的辨析</a></li>
-<li><a href="#101-结论先行对比表" class="toc-h3">10.1 结论先行：对比表</a></li>
-<li><a href="#102-路径-a--dsa-indexer-的hadamard不是-hash" class="toc-h3">10.2 路径 A —— DSA indexer 的"Hadamard"不是 hash</a></li>
-<li><a href="#103-路径-b--kvcomp_attn真正的-simhash--汉明距离-top-k" class="toc-h3">10.3 路径 B —— kvcomp_attn：真正的 SimHash + 汉明距离 top-k</a></li>
-<li><a href="#104-路径-c--moe-路由-hash与-kv-索引无关仅辨识" class="toc-h3">10.4 路径 C —— MoE 路由 hash（与 KV 索引无关，仅辨识）</a></li>
-<li><a href="#105-为什么有两套稀疏选择机制" class="toc-h3">10.5 为什么有两套稀疏选择机制？</a></li>
-<li><a href="#11-关键代码文件索引" class="toc-h2">11. 关键代码文件索引</a></li>
-<li><a href="#12-调研方法与溯源" class="toc-h2">12. 调研方法与溯源</a></li>
-<li><a href="#13-batch-prefill-查表多请求如何共享-block_table" class="toc-h2">13. batch prefill 查表：多请求如何共享 block_table</a></li>
-<li><a href="#131-核心结论行请求的二维-tensor--query_start_loc-请求寻址" class="toc-h3">13.1 核心结论：行=请求的二维 tensor + query_start_loc 请求寻址</a></li>
-<li><a href="#132-block_table-是二维矩阵行--请求" class="toc-h3">13.2 block_table 是二维矩阵，行 = 请求</a></li>
-<li><a href="#133-query_start_loctoken--请求-的映射表" class="toc-h3">13.3 query_start_loc：token → 请求 的映射表</a></li>
-<li><a href="#134-index_id-是请求内的-block-序号不是全局物理块号" class="toc-h3">13.4 index_id 是"请求内的 block 序号"，不是全局物理块号</a></li>
-<li><a href="#135-代码证据kernel-调用时两者都传" class="toc-h3">13.5 代码证据：kernel 调用时两者都传</a></li>
-<li><a href="#136-为什么这样设计系统视角" class="toc-h3">13.6 为什么这样设计？（系统视角）</a></li>
-<li><a href="#137-一张图总结端到端查表" class="toc-h3">13.7 一张图总结：端到端查表</a></li>
-<li><a href="#14-block_tablepy-该放在-worker-下吗职责与位置分析" class="toc-h2">14. block_table.py 该放在 worker/ 下吗？职责与位置分析</a></li>
-<li><a href="#141-核心结论" class="toc-h3">14.1 核心结论</a></li>
-<li><a href="#142-事实blocktable-到底是什么" class="toc-h3">14.2 事实：BlockTable 到底是什么？</a></li>
-<li><a href="#143-为什么放在-worker-下站得住脚的理由" class="toc-h3">14.3 为什么放在 worker/ 下？（站得住脚的理由）</a></li>
-<li><a href="#144-但批评确实有道理放在-worker-的问题" class="toc-h3">14.4 但批评确实有道理（放在 worker/ 的问题）</a></li>
-<li><a href="#145-总结对比与判断" class="toc-h3">14.5 总结对比与判断</a></li>
-<li><a href="#15-worker-模块系统总结目标--模块--代码--挑战" class="toc-h2">15. worker 模块系统总结（目标 / 模块 / 代码 / 挑战）</a></li>
-<li><a href="#151-设计目标" class="toc-h3">15.1 设计目标</a></li>
-<li><a href="#152-关键模块地图" class="toc-h3">15.2 关键模块地图</a></li>
-<li><a href="#153-关键代码解析" class="toc-h3">15.3 关键代码解析</a></li>
-<li><a href="#154-当前主要挑战" class="toc-h3">15.4 当前主要挑战</a></li>
-<li><a href="#155-worker-与两条查表路径的衔接" class="toc-h3">15.5 worker 与两条查表路径的衔接</a></li>
-<li><a href="#156-关键文件行速查" class="toc-h3">15.6 关键文件:行速查</a></li>
-<li><a href="#16-三条查表路径对比dsa--sfa--kvcomp-hamming" class="toc-h2">16. 三条查表路径对比（DSA / SFA / kvcomp Hamming）</a></li>
-<li><a href="#161-路径-a--dsa-lightning-indexer确认" class="toc-h3">16.1 路径 A — DSA Lightning Indexer（确认）</a></li>
-<li><a href="#162-路径-b--kvcomp_attn-hamming-sparse确认" class="toc-h3">16.2 路径 B — kvcomp_attn Hamming Sparse（确认）</a></li>
-<li><a href="#163-路径-c--sfa-sparse-flash-attention第三种活跃路径但不是新-in" class="toc-h3">16.3 路径 C — SFA (Sparse Flash Attention)（第三种活跃路径，但不是新 indexer 机制）</a></li>
-<li><a href="#164-对比总表" class="toc-h3">16.4 对比总表</a></li>
-<li><a href="#165-为什么是两套-indexer-而不是三套" class="toc-h3">16.5 为什么是两套 indexer 而不是三套？</a></li>
-<li><a href="#166-决定三条路径差异的两个维度" class="toc-h3">16.6 决定三条路径差异的两个维度</a></li>
-<li><a href="#167-候选路径排除" class="toc-h3">16.7 候选路径排除</a></li>
-<li><a href="#17-多级-cache-分离机制四个变量的函数意义与分离原因" class="toc-h2">17. 多级 cache 分离机制（四个变量的函数意义与分离原因）</a></li>
-<li><a href="#171-命名纠正代码注释里的真实语义" class="toc-h3">17.1 命名纠正：代码注释里的真实语义</a></li>
-<li><a href="#172-对应的-cache-元组布局" class="toc-h3">17.2 对应的 cache 元组布局</a></li>
-<li><a href="#173-逐变量解读为什么写和读必须分表" class="toc-h3">17.3 逐变量解读：为什么"写"和"读"必须分表</a></li>
-<li><a href="#174-流水线视角为什么必须分离" class="toc-h3">17.4 流水线视角：为什么必须分离</a></li>
-<li><a href="#175-分离的根本原因" class="toc-h3">17.5 分离的根本原因</a></li>
-<li><a href="#176-一张表总结" class="toc-h3">17.6 一张表总结</a></li>
-<li><a href="#18-sfa-完整解读后端--indexer--gather--c8--与-dsa-差异" class="toc-h2">18. SFA 完整解读（后端 / indexer / gather / C8 / 与 DSA 差异）</a></li>
-<li><a href="#181-后端概览" class="toc-h3">18.1 后端概览</a></li>
-<li><a href="#182-sfa-的-indexer-机制" class="toc-h3">18.2 SFA 的 indexer 机制</a></li>
-<li><a href="#183-indexer-cache-结构物理分离" class="toc-h3">18.3 Indexer cache 结构：物理分离</a></li>
-<li><a href="#184-gather-kernel单表--sparse_indices" class="toc-h3">18.4 Gather kernel：单表 + sparse_indices</a></li>
-<li><a href="#185-c8-量化支持" class="toc-h3">18.5 C8 量化支持</a></li>
-<li><a href="#186-sfa-与-dsa-的判别器" class="toc-h3">18.6 SFA 与 DSA 的判别器</a></li>
-<li><a href="#187-sfa-forward-关键流程" class="toc-h3">18.7 SFA forward 关键流程</a></li>
-<li><a href="#188-关键差异总结" class="toc-h3">18.8 关键差异总结</a></li>
-<li><a href="#19-kvcomp_attn-hamming-sparse-算法起源simhash--hashevi" class="toc-h2">19. kvcomp_attn Hamming Sparse 算法起源（SimHash → HashEvict → 现代发展）</a></li>
-<li><a href="#191-理论基石simhash-与-hamming--cosine" class="toc-h3">19.1 理论基石：SimHash 与 Hamming ≈ Cosine</a></li>
-<li><a href="#192-算法祖先hashevict与-kvcomp_attn-算法同构" class="toc-h3">19.2 算法祖先：HashEvict（与 kvcomp_attn 算法同构）</a></li>
-<li><a href="#193-算法谱系从-simhash-到现代-hashing-based-sparse-attenti" class="toc-h3">19.3 算法谱系：从 SimHash 到现代 hashing-based sparse attention</a></li>
-<li><a href="#194-哈希代理-vs-学习型稀疏两条路线的本质差异" class="toc-h3">19.4 哈希代理 vs 学习型稀疏：两条路线的本质差异</a></li>
-<li><a href="#195-为什么随机投影--hamming-能-work信息论直觉" class="toc-h3">19.5 为什么随机投影 + Hamming 能 work？——信息论直觉</a></li>
-<li><a href="#196-hashevict-论文的核心实验发现" class="toc-h3">19.6 HashEvict 论文的核心实验发现</a></li>
-<li><a href="#197-完整算法流程图" class="toc-h3">19.7 完整算法流程图</a></li>
-<li><a href="#198-为什么是pre-attention选择计算节省的来源" class="toc-h3">19.8 为什么是"pre-attention"选择？——计算节省的来源</a></li>
-</ul>
-</details>
-
 <p class="muted">KVCache on HBM · DSA 稀疏索引 · index_id → pageattention 查表机制<br>
 分析基于本地代码：vLLM <code>2db39c70</code> / vLLM_Ascend <code>b266da5d</code> · 2026-07-16</p>
 
@@ -1643,7 +1598,5 @@ Minghui Liu, Tahseen Rabbani et al. · arXiv 2412.16187 · 2024-12<br><br>
 <p class="muted">报告生成：2026-07-17 · 分析器：Claude · 代码副本与片段：<code>/Users/backyes/work/vllm_research/vllm_analysis/</code></p>
 </div>
 
-
-</div>
 </body>
 </html>

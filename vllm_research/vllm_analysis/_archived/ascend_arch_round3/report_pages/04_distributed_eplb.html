@@ -1,56 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="stylesheet" href="../../../../../assets/css/notion-style.css">
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>04 · Distributed / KV Transfer / EPLB — vllm-ascend architecture</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--accent2:#7ee787;--accent3:#d2a8ff;--accent4:#ff7b72;--accent5:#ffa657;--muted:#8b949e;--code:#0d1117}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+header{background:linear-gradient(135deg,#161b22 0%,#1a2332 100%);padding:22px 20px;border-bottom:1px solid var(--border)}
+header h1{font-size:1.3rem;color:var(--accent2);margin-bottom:4px}
+header .sub{color:var(--muted);font-size:0.8rem}
+.wrap{max-width:900px;margin:0 auto;padding:18px}
+nav.top{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:50;display:flex;flex-wrap:wrap;gap:2px;padding:0 12px}
+nav.top a{padding:9px 11px;color:var(--muted);text-decoration:none;font-size:0.76rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav.top a:hover,nav.top a.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top a.home{color:var(--accent2);font-weight:600}
+h1.doc{margin:18px 0 10px;font-size:1.3rem;color:var(--accent2)}
+h2{font-size:1.05rem;color:var(--accent3);margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+h3{font-size:0.95rem;color:var(--accent5);margin:18px 0 8px}
+h4{font-size:0.88rem;color:var(--accent);margin:12px 0 5px}
+p{margin:7px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;margin:10px 0;display:block;overflow-x:auto}
+th,td{padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:#1c2128;color:var(--accent2)}
+tr:nth-child(even) td{background:#0d1117}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:0.8em;color:var(--accent5);border:1px solid var(--border)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-size:0.76rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0;border:none;color:var(--text)}
+.highlight{background:rgba(126,231,135,0.08);border-left:3px solid var(--accent2);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.warn{background:rgba(255,123,114,0.08);border-left:3px solid var(--accent4);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+.insight{background:rgba(210,168,255,0.08);border-left:3px solid var(--accent3);padding:12px;margin:12px 0;border-radius:0 6px 6px 0}
+ul,ol{margin:6px 0 6px 22px}li{margin:3px 0}
+.ref{color:var(--accent);font-size:0.78rem}
+footer{border-top:1px solid var(--border);padding:18px;color:var(--muted);font-size:0.74rem;text-align:center;margin-top:36px}
+.toc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;font-size:0.82rem}
+.toc a{color:var(--accent);text-decoration:none;display:block;margin:2px 0}
+.toc a:hover{text-decoration:underline}
+.toc a.l3{padding-left:16px;color:var(--muted)}
+@media(max-width:600px){header h1{font-size:1.05rem}nav.top a{padding:7px 7px;font-size:0.7rem}th,td{padding:5px 6px;font-size:0.72rem}}
+</style>
+
+<style>
+@media(max-width:768px){
+  body{padding:16px!important;max-width:100%!important}
+  h1{font-size:1.3rem!important}
+  h2{font-size:1.1rem!important}
+  table{font-size:.82em!important; display:block; overflow-x:auto}
+  th,td{padding:5px 7px!important}
+  pre,code{word-break:break-word;white-space:pre-wrap;font-size:.78em}
+  .archgrid,.grid,.shell{grid-template-columns:1fr!important}
+  nav,.nav{position:static!important;max-height:none!important}
+  img{max-width:100%!important}
+}
+</style>
 </head>
 <body>
-
-<header><div class="notion-page">
+<header><div class="wrap">
   <h1>vllm-ascend · Distributed / KV Transfer / EPLB</h1>
-<details class="notion-toc"><summary>Contents</summary>
-<ul>
-<li><a href="#1-hccl-通信器层device_communicators" class="toc-h2">1. HCCL 通信器层（device_communicators）</a></li>
-<li><a href="#11-底层-ctypes-直绑pyhccl_wrapperpy" class="toc-h3">1.1 底层 ctypes 直绑：pyhccl_wrapper.py</a></li>
-<li><a href="#12-pyhcclcommunicatorpyhcclpy" class="toc-h3">1.2 PyHcclCommunicator：pyhccl.py</a></li>
-<li><a href="#13-npucommunicatornpu_communicatorpy" class="toc-h3">1.3 NPUCommunicator：npu_communicator.py</a></li>
-<li><a href="#14-hccl-vs-nccl-语义差距与桥接" class="toc-h3">1.4 HCCL vs NCCL 语义差距与桥接</a></li>
-<li><a href="#2-kv-cache-传输pd-分离-深度重点" class="toc-h2">2. KV-cache 传输（PD 分离）— 深度重点</a></li>
-<li><a href="#21-连接器全景kv_transfer__init__py-注册" class="toc-h3">2.1 连接器全景（kv_transfer/__init__.py 注册）</a></li>
-<li><a href="#22-mooncakeconnector-生命周期核心-p2p-路径" class="toc-h3">2.2 MooncakeConnector 生命周期（核心 P2P 路径）</a></li>
-<li><a href="#23-ascendstoreconnectorpool-路径" class="toc-h3">2.3 AscendStoreConnector（Pool 路径）</a></li>
-<li><a href="#24-与-vanilla-vllm-nixlconnector-的对比" class="toc-h3">2.4 与 vanilla vLLM NixlConnector 的对比</a></li>
-<li><a href="#3-权重传输引擎weight_transfer" class="toc-h2">3. 权重传输引擎（weight_transfer）</a></li>
-<li><a href="#31-hccl-引擎hccl_enginepy" class="toc-h3">3.1 HCCL 引擎：hccl_engine.py</a></li>
-<li><a href="#32-npu-ipc-引擎npu_ipc_enginepy" class="toc-h3">3.2 NPU IPC 引擎：npu_ipc_engine.py</a></li>
-<li><a href="#33-对比与用例" class="toc-h3">3.3 对比与用例</a></li>
-<li><a href="#4-eplbexpert-parallelism-load-balancing-深度重点" class="toc-h2">4. EPLB（Expert Parallelism Load Balancing）— 深度重点</a></li>
-<li><a href="#41-架构分层core-vs-adaptor" class="toc-h3">4.1 架构分层：core/ vs adaptor/</a></li>
-<li><a href="#42-核心算法四种策略policy" class="toc-h3">4.2 核心算法：四种策略（policy/）</a></li>
-<li><a href="#43-核心进程eplbworker-与-eplbprocess" class="toc-h3">4.3 核心进程：EplbWorker 与 EplbProcess</a></li>
-<li><a href="#44-d2d-权重迁移d2dexpertweightloader" class="toc-h3">4.4 D2D 权重迁移：D2DExpertWeightLoader</a></li>
-<li><a href="#45-编排器eplbupdator" class="toc-h3">4.5 编排器：EplbUpdator</a></li>
-<li><a href="#46-适配层vllmeplbadaptor" class="toc-h3">4.6 适配层：VllmEplbAdaptor</a></li>
-<li><a href="#47-通信域" class="toc-h3">4.7 通信域</a></li>
-<li><a href="#5-通信计算重叠memcache_comm_fence" class="toc-h2">5. 通信/计算重叠：memcache_comm_fence</a></li>
-<li><a href="#51-问题背景" class="toc-h3">5.1 问题背景</a></li>
-<li><a href="#52-机制" class="toc-h3">5.2 机制</a></li>
-<li><a href="#53-为什么-ascend-需要显式门控" class="toc-h3">5.3 为什么 Ascend 需要显式门控</a></li>
-<li><a href="#6-moecommtype-与-ep-通信模式" class="toc-h2">6. MoECommType 与 EP 通信模式</a></li>
-<li><a href="#61-选择逻辑select_moe_comm_method" class="toc-h3">6.1 选择逻辑（select_moe_comm_method）</a></li>
-<li><a href="#62-mc2-对-ep-带宽延迟的影响" class="toc-h3">6.2 MC2 对 EP 带宽/延迟的影响</a></li>
-<li><a href="#63-与-eplb-的关联" class="toc-h3">6.3 与 EPLB 的关联</a></li>
-<li><a href="#关键文件-references" class="toc-h2">关键文件 references</a></li>
-<li><a href="#分布式通信" class="toc-h3">分布式通信</a></li>
-<li><a href="#kv-传输" class="toc-h3">KV 传输</a></li>
-<li><a href="#权重传输" class="toc-h3">权重传输</a></li>
-<li><a href="#eplb" class="toc-h3">EPLB</a></li>
-<li><a href="#通信计算重叠" class="toc-h3">通信/计算重叠</a></li>
-</ul>
-</details>
-
   <div class="sub">Subsystem deep-dive · 2026-07-18 · part of <code>vllm-project/vllm-ascend</code> multi-agent architecture analysis</div>
 </div></header>
 <nav class="top"><a href="../final_report/vllm_ascend_architecture.html" class="home">← Main Report</a><a href="01_platform_core.html" class="">01 · Platform Entry + Core Scheduler</a><a href="02_worker_runner.html" class="">02 · Worker / Model Runner / Compilation</a><a href="03_attention_ops.html" class="">03 · Attention / MLA / Ops / Triton</a><a href="04_distributed_eplb.html" class="active">04 · Distributed / KV Transfer / EPLB</a><a href="05_models_quant.html" class="">05 · Models / Quant / Spec Decode / Loader</a><a href="06_patch_device.html" class="">06 · Patch System / Device / Xlite</a></nav>
@@ -824,6 +832,5 @@ ret = self.engine.batch_transfer_sync_read(session_id, src_list, dst_list, lengt
 </ul>
 </div>
 <footer>Report 04 — source <code>agent_reports/04_distributed_eplb.md</code> · part of the <code>vllm_ascend_arch_analysis</code> study.</footer>
-
 </body>
 </html>
