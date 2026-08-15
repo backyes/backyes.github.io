@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPU-Initiated Networking: Converging at the Bottom, Diverging at the Top · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/main.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../">backyes</a></div>
+    <div class="brand-tagline">Thoughts on AI infrastructure, chip architecture, and system design.</div>
+  </div>
+  <nav class="topnav" aria-label="Primary">
+    <a href="../posts.html" class="nav-accent">Posts</a>
+    <a href="../#survey">Survey by AI</a>
+    <a href="../tags.html" class="nav-hide-mobile">Tags</a>
+    <button class="nav-search-btn" onclick="document.getElementById('search-overlay').classList.add('open');document.getElementById('search-input').focus()" aria-label="Search" title="Search (⌘K)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    </button>
+  </nav>
+</header>
+<div class="article-layout">
+  <aside class="toc-sidebar">
+    <div class="toc"><div class="toc-title">Contents</div><ul>
+<li><a href="#thesis" class="toc-h2">Thesis</a></li>
+<li><a href="#three-generations-of-gpu-communication" class="toc-h2">Three Generations of GPU Communication</a></li>
+<li><a href="#concept-hierarchy" class="toc-h2">Concept Hierarchy</a></li>
+<li><a href="#nvshmem-vs-gin-from-divergence-to-convergence" class="toc-h2">NVSHMEM vs GIN: From Divergence to Convergence</a></li>
+<li><a href="#gin-dual-backend-architecture" class="toc-h2">GIN Dual-Backend Architecture</a></li>
+<li><a href="#deepep-integration-semantic-mapping" class="toc-h2">DeepEP Integration & Semantic Mapping</a></li>
+<li><a href="#the-real-divide-runtime-ecosystem" class="toc-h2">The Real Divide: Runtime Ecosystem</a></li>
+<li><a href="#future-trajectories-open-questions" class="toc-h2">Future Trajectories (Open Questions)</a></li>
+<li><a href="#references" class="toc-h2">References</a></li>
+</ul></div>
+  </aside>
+  <article class="article">
+    <a href="../posts.html" class="back">← Back to Posts</a>
+    <h1>GPU-Initiated Networking: Converging at the Bottom, Diverging at the Top</h1>
+    <div class="meta"><span>📅 2026-08-16</span><div><span class="ptag">NCCL</span><span class="ptag">NVSHMEM</span><span class="ptag">GIN</span><span class="ptag">GPUDirect</span><span class="ptag">GDAKI</span><span class="ptag">RDMA</span><span class="ptag">DeepEP</span><span class="ptag">MoE</span><span class="ptag">DOCA</span><span class="ptag">CUDA</span></div></div>
+    <div class="article-body">
+
+<h2 id="thesis">Thesis</h2>
+<p><strong>GPU-Initiated Networking is not a technological breakthrough—it is an ecosystem unification.</strong> NCCL 2.28's GIN (GPU-Initiated Networking) does not pioneer GPU-side RDMA control; NVSHMEM 3.7.0+ already achieves the same through DOCA GPUNetIO. The real question is no longer <em>"who can make GPUs initiate RDMA"</em>—both can. The real question is: <strong>when the bottom layer converges, what determines the winner at the top?</strong></p>
+<blockquote><p>The next battle in GPU communication is not about who owns the doorbell—it's about who owns the runtime ecosystem.</p></blockquote>
+<hr>
+
+<h2 id="three-generations-of-gpu-communication">Three Generations of GPU Communication</h2>
+<p>The evolution of GPU networking follows a clear trajectory: <strong>each generation pushes the control path one step closer to the GPU</strong>, but none eliminates the CPU entirely until the third.</p>
+
+<h3 id="generation-1-gpudirect-rdma-2013">Generation 1: GPUDirect RDMA (2013)</h3>
+<p>GPUDirect RDMA removes the CPU and host memory from the <em>data path</em>—the NIC's DMA engine reads GPU memory directly via PCIe BAR mappings. But the CPU remains fully in control of the <em>control path</em>: memory registration, queue pair creation, and work request submission all happen on the host.</p>
+<div class="hl-blue"><p><strong>Key limitation:</strong> Consistency guarantees exist only at kernel boundaries. GPU memory model semantics (relaxed ordering, write-back caching) prevent safe concurrent access to RDMA-registered memory from executing kernels, forcing applications to separate computation and communication.<sup>[1]</sup></p></div>
+
+<h3 id="generation-2-gpudirect-async-2016">Generation 2: GPUDirect Async (2016)</h3>
+<p>GPUDirect Async introduces partial control-path offload: GPU threads write to NIC doorbell registers (memory-mapped into GPU address space) to trigger pre-configured operations. But the CPU must still pre-construct communication descriptors—operations are limited to those the host prepared in advance.<sup>[2]</sup></p>
+<div class="hl-amber"><p><strong>Key limitation:</strong> GPU can "kick" the doorbell, but cannot create the work. The CPU remains the architect; the GPU is merely the trigger finger.</p></div>
+
+<h3 id="generation-3-gdaki-2024">Generation 3: GDAKI (2024)</h3>
+<p>GPUDirect Async Kernel-Initiated (GDAKI) completes the offload. GPU threads construct RDMA work queue entries (WQEs) in device memory, populate them with source/destination addresses and transfer metadata, and directly write to NIC doorbell registers—<strong>zero CPU involvement in both data and control paths</strong>.<sup>[3]</sup></p>
+<div class="hl-green"><p><strong>Enabling technology:</strong> DOCA GPUNetIO provides the GPU-side device verbs that make GDAKI possible. It exposes InfiniBand/RoCE programming interfaces callable from CUDA kernels, forming the foundation for both NCCL GIN's GDAKI backend and NVSHMEM 3.7.0+'s GPU-initiated transport.</p></div>
+
+<h3 id="comparison-summary">Comparison Summary</h3>
+<table>
+<thead><tr><th>Generation</th><th>Data Path</th><th>Control Path</th><th>CPU Role</th><th>Hardware Dependency</th></tr></thead>
+<tbody>
+<tr><td><strong>GPUDirect RDMA</strong></td><td>NIC DMA → GPU memory</td><td>CPU constructs & submits WR</td><td>Full control</td><td>PCIe BAR + nvidia_p2p</td></tr>
+<tr><td><strong>GPUDirect Async</strong></td><td>NIC DMA → GPU memory</td><td>CPU prepares descriptors, GPU triggers doorbell</td><td>Partial control</td><td>NIC doorbell in GPU address space</td></tr>
+<tr><td><strong>GDAKI</strong></td><td>NIC DMA → GPU memory</td><td>GPU constructs WQE + triggers doorbell</td><td>Zero (setup only)</td><td>DOCA GPUNetIO (ConnectX-6 Dx+)</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="concept-hierarchy">Concept Hierarchy</h2>
+<p>The GPU-Initiated Networking landscape suffers from overlapping terminology across communities. Here is the definitive mapping:</p>
+
+<h3 id="layered-architecture">Layered Architecture</h3>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  Layer 6: Application Frameworks                              │
+│  PyTorch / vLLM / SGLang / TensorRT-LLM / JAX / Triton      │
+└──────────────────────────┬───────────────────────────────────┘
+                           │ calls
+┌──────────────────────────▼───────────────────────────────────┐
+│  Layer 5: Communication Runtimes                             │
+│  ┌─────────────────────┐  ┌─────────────────────┐           │
+│  │       NCCL          │  │     NVSHMEM         │           │
+│  │ Collective + Device │  │ PGAS one-sided      │           │
+│  │ API (GIN/LSA/Multi) │  │ put/get/atomics     │           │
+│  └─────────┬───────────┘  └─────────┬───────────┘           │
+│            │                        │                        │
+└────────────┼────────────────────────┼────────────────────────┘
+             │                        │
+┌────────────▼────────────────────────▼────────────────────────┐
+│  Layer 4: Communication Modes (Control Path Location)        │
+│                                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │   LSA    │  │ Multimem │  │   GIN    │  │   IBGDA  │    │
+│  │ GPU      │  │ GPU HW   │  │ (NCCL    │  │ (NVSHMEM │    │
+│  │ load/    │  │ multicast│  │  name)   │  │  name)   │    │
+│  │ store    │  │          │  │          │  │          │    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
+│       │             │             │             │           │
+│       │             │      ┌──────┴─────────────┘           │
+│       │             │      │ = GDAKI (same thing)            │
+│       │             │      │                                │
+└───────┼─────────────┼──────┼────────────────────────────────┘
+        │             │      │
+┌───────▼─────────────▼──────▼────────────────────────────────┐
+│  Layer 3: GPUDirect Technology Generations                   │
+│                                                              │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐ │
+│  │ GPUDirect RDMA │  │GPUDirect Async │  │     GDAKI      │ │
+│  │ (2013)         │  │ (2016)         │  │ (2024)         │ │
+│  │                │  │                │  │                │ │
+│  │ CPU controls   │  │ CPU prepares   │  │ GPU fully      │ │
+│  │ NIC DMA        │  │ GPU triggers   │  │ controls       │ │
+│  └────────────────┘  └───────┬────────┘  └───────┬────────┘ │
+│                              │                   │          │
+│                              │ GDAKI includes    │          │
+│                              │ doorbell trigger  │          │
+│                              │ + GPU WQE construction       │
+│                              └───────────────────┘          │
+│                                                              │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────┐
+│  Layer 2: Low-Level Programming Interface                    │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ DOCA GPUNetIO                                         │   │
+│  │ ┌──────────────────────────────────────────────────┐ │   │
+│  │ │ Exposes GPU-side device verbs                   │ │   │
+│  │ │ GPU threads directly program NICs                │ │   │
+│  │ │ (construct WQE / write doorbell / trigger RDMA) │ │   │
+│  │ └──────────────────────────────────────────────────┘ │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+┌──────────────────────────────▼───────────────────────────────┐
+│  Layer 1: Hardware & Kernel                                   │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ PCIe BAR     │  │ nvidia_p2p   │  │ ConnectX-6 Dx+   │   │
+│  │ address map  │  │ kernel module│  │ NIC hardware     │   │
+│  │              │  │ registers    │  │ (GPU can access  │   │
+│  │              │  │ GPU memory   │  │  control structs)│   │
+│  └──────────────┘  └──────────────┘  └──────────────────┘   │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="synonym-equivalence-table">Synonym / Equivalence Table</h3>
+<table>
+<thead><tr><th>Term A</th><th>Term B</th><th>Relationship</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><strong>GDAKI</strong></td><td><strong>IBGDA</strong></td><td>Equivalent</td><td>Same mechanism, different community naming. GDAKI = NCCL side, IBGDA = NVSHMEM side</td></tr>
+<tr><td><strong>NCCL GIN</strong></td><td>—</td><td>—</td><td>NCCL's overall inter-node device-initiated networking solution (contains GDAKI + Proxy backends)</td></tr>
+<tr><td><strong>GIN GDAKI backend</strong></td><td>—</td><td>—</td><td>GIN's hardware-direct mode (requires DOCA GPUNetIO)</td></tr>
+<tr><td><strong>GIN Proxy backend</strong></td><td>—</td><td>—</td><td>GIN's compatibility mode (CPU-assisted, works on any RDMA NIC)</td></tr>
+<tr><td><strong>GPUDirect Async</strong></td><td><strong>GDAKI</strong></td><td>Evolution</td><td>GPUDirect Async = "CPU prepare + GPU trigger"; GDAKI = "GPU full control". GDAKI subsumes Async</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="nvshmem-vs-gin-from-divergence-to-convergence">NVSHMEM vs GIN: From Divergence to Convergence</h2>
+<p>The NCCL GIN paper describes NVSHMEM as using "IBGDA (InfiniBand with GPUDirect Async)"—implying CPU-controlled descriptor preparation with GPU triggering.<sup>[3]</sup> This was accurate for NVSHMEM ≤3.6. But <strong>NVSHMEM 3.7.0 (August 2025) closes the gap</strong>.</p>
+
+<h3 id="nvshmem-pre-3-7-the-old-paradigm">NVSHMEM pre-3.7: The Old Paradigm</h3>
+<p>Earlier NVSHMEM versions relied on GPUDirect Async: CPU pre-constructs WQEs, GPU triggers doorbells. The paper's characterization was correct at publication time:</p>
+<blockquote><p>"NVSHMEM... extended OpenSHMEM semantics to GPU clusters with device-callable one-sided operations (put, get, atomics) invokable from CUDA kernels. This enables the device code to interleave computation and communication without kernel launch overhead, using transport backends including IBGDA (InfiniBand with GPUDirect Async)"<sup>[3]</sup></p></blockquote>
+
+<h3 id="nvshmem-3-7-0-the-convergence-point">NVSHMEM 3.7.0: The Convergence Point</h3>
+<p>NVSHMEM 3.7.0 introduces full GPU-side control through DOCA GPUNetIO:</p>
+<div class="key-callout"><p><strong>Changelog excerpt (3.7.0):</strong> "Added GPUNetIO remote transport (<code>NVSHMEM_REMOTE_TRANSPORT=gpunetio</code>) with GPU-initiated communication (<code>NVSHMEM_GPUNETIO_ENABLE_GDAKI=1</code>) and support for the DOCA SDK"<sup>[4]</sup></p></div>
+<p>Both NCCL GIN (GDAKI backend) and NVSHMEM 3.7.0+ now share the <strong>identical bottom path</strong>:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                         CUDA Kernel                         │
+│                   calls ncclGin.put()                       │
+│                            │                                │
+│                   calls nvshmem_put_nbi()                   │
+│                            │                                │
+│                            ▼                                │
+│              ┌─────────────────────────────┐                │
+│              │      DOCA GPUNetIO          │                │
+│              │  (GPU constructs WQE,       │                │
+│              │   writes NIC doorbell,      │                │
+│              │   triggers RDMA)            │                │
+│              └─────────────┬───────────────┘                │
+│                            │                                │
+│                            ▼                                │
+│                    ┌───────────────┐                        │
+│                    │  NIC Hardware │                        │
+│                    │  (DMA engine  │                        │
+│                    │   executes    │                        │
+│                    │   RDMA)       │                        │
+│                    └───────────────┘                        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3 id="what-still-differs">What Still Differs</h3>
+<table>
+<thead><tr><th>Dimension</th><th>NVSHMEM 3.7.0+</th><th>NCCL GIN (GDAKI)</th></tr></thead>
+<tbody>
+<tr><td><strong>Control Path</strong></td><td>GPU full control</td><td>GPU full control</td></tr>
+<tr><td><strong>Bottom Interface</strong></td><td>DOCA GPUNetIO</td><td>DOCA GPUNetIO</td></tr>
+<tr><td><strong>Programming Model</strong></td><td>PGAS (pointer-based, symmetric heap)</td><td>Window-based (ncclWindow + offset)</td></tr>
+<tr><td><strong>Synchronization</strong></td><td>Memory atomics (atomic_add, quiet())</td><td>Signal atomics (signal, counter)</td></tr>
+<tr><td><strong>Runtime</strong></td><td>Standalone</td><td>Integrated in NCCL</td></tr>
+<tr><td><strong>Collective Support</strong></td><td>Limited (team-based)</td><td>Full (AllReduce, AllGather, etc.)</td></tr>
+<tr><td><strong>Hierarchy</strong></td><td>Flat (PE-based)</td><td>Layered communicators (TP/PP/EP)</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="gin-dual-backend-architecture">GIN Dual-Backend Architecture</h2>
+<p>GIN does not require DOCA GPUNetIO hardware. It offers two interchangeable backends:</p>
+
+<h3 id="gdaki-backend-hardware-direct">GDAKI Backend (Hardware-Direct)</h3>
+<p>GPU threads construct WQEs and write NIC doorbells directly. Requires ConnectX-6 Dx+ NICs. Achieves 16.7 µs round-trip latency for small messages—matching NVSHMEM IBRC (16.0 µs) and beating NVSHMEM IBGDA (24.3 µs).</p>
+
+<h3 id="proxy-backend-cpu-assisted">Proxy Backend (CPU-Assisted)</h3>
+<p>GPU threads enqueue 64-byte descriptors into lock-free CPU-memory queues. A dedicated CPU proxy thread polls and executes via standard RDMA verbs. Adds ~1.3 µs overhead vs GDAKI but works on any RDMA-capable NIC.</p>
+
+<h3 id="backend-comparison">Backend Comparison</h3>
+<table>
+<thead><tr><th>Characteristic</th><th>GDAKI</th><th>Proxy</th></tr></thead>
+<tbody>
+<tr><td><strong>Comm Path</strong></td><td>GPU ↔ NIC (direct)</td><td>GPU → CPU → NIC</td></tr>
+<tr><td><strong>CPU Involvement</strong></td><td>Zero (device-driven)</td><td>Required (dedicated thread)</td></tr>
+<tr><td><strong>Hardware</strong></td><td>ConnectX-6 Dx+ (GPUNetIO)</td><td>Any RDMA NIC</td></tr>
+<tr><td><strong>CUDA Version</strong></td><td>12.2+</td><td>Any CUDA GPU</td></tr>
+<tr><td><strong>Small Msg RTT</strong></td><td>16.7 µs</td><td>18.0 µs</td></tr>
+<tr><td><strong>Implementation Base</strong></td><td>DOCA GPUNetIO device verbs</td><td>Plugin iput/test API</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="deepep-integration-semantic-mapping">DeepEP Integration & Semantic Mapping</h2>
+<p>DeepEP, the MoE communication library, originally built on NVSHMEM IBGDA. Its integration with GIN reveals the semantic translation challenges when migrating between programming models.</p>
+
+<h3 id="semantic-translation-table">Semantic Translation Table</h3>
+<table>
+<thead><tr><th>DeepEP Pattern</th><th>NVSHMEM (IBGDA)</th><th>NCCL GIN</th></tr></thead>
+<tbody>
+<tr><td><strong>Data Transfer</strong></td><td><code>put_nbi(dst_ptr, src_ptr, count, pe)</code></td><td><code>put(team, peer, dstWin, dstOff, srcWin, srcOff, bytes)</code></td></tr>
+<tr><td><strong>Addressing</strong></td><td>Pointer-based (PGAS symmetric heap)</td><td>Window-based (registered memory window + byte offset)</td></tr>
+<tr><td><strong>Synchronization</strong></td><td>Memory atomics (<code>atomic_add</code>, <code>quiet()</code>)</td><td>Signal atomics (<code>signal(peer, SignalInc)</code>, <code>counter</code>)</td></tr>
+<tr><td><strong>Local Completion</strong></td><td><code>quiet()</code> per QP</td><td><code>flush()</code> per context</td></tr>
+<tr><td><strong>Remote Notification</strong></td><td>Memory-based atomic increment</td><td><code>signal(peer, SignalAdd)</code> atomic signal</td></tr>
+</tbody>
+</table>
+
+<h3 id="key-translation-challenges">Key Translation Challenges</h3>
+<div class="hl-amber"><p><strong>Challenge 1: Multi-communicator mapping.</strong> GIN provides 4 contexts per communicator. Meeting DeepEP's 24 QP (HT) or 8-16 QP (LL) requires ⌈QPs/4⌉ communicators, with work distributed deterministically: <code>comm_id = id / 4</code>, <code>ctx_id = id % 4</code>.<sup>[3]</sup></p></div>
+<div class="hl-amber"><p><strong>Challenge 2: Memory management.</strong> Backend registers allocated buffers with all communicators, stores GPU-accessible window handles in device memory. Kernels translate pointer arithmetic to <code>(window, offset)</code> pairs on-the-fly.</p></div>
+<div class="hl-amber"><p><strong>Challenge 3: Synchronization mapping.</strong> Pre-allocated signal layouts map memory-based atomics to signal primitives: HT uses 2 signals per channel (head/tail), LL uses 1 signal per expert.</p></div>
+<div class="hl-amber"><p><strong>Challenge 4: Semantic preservation.</strong> Zero-byte <code>put()</code> with atomic signal emulates release-acquire semantics, ensuring visibility of prior data transfers before signaling completion.</p></div>
+
+<h3 id="performance-results">Performance Results</h3>
+<p>GIN achieves competitive performance vs NVSHMEM across DeepEP's High-Throughput and Low-Latency kernels:</p>
+<table>
+<thead><tr><th>Kernel</th><th>Metric</th><th>GIN</th><th>NVSHMEM</th><th>Delta</th></tr></thead>
+<tbody>
+<tr><td><strong>LL Dispatch (1 node, BF16)</strong></td><td>Bandwidth</td><td>185.28 GB/s</td><td>182.15 GB/s</td><td>+1.7%</td></tr>
+<tr><td><strong>LL Dispatch (1 node, BF16)</strong></td><td>Latency</td><td>40.62 µs</td><td>41.43 µs</td><td>-2.0%</td></tr>
+<tr><td><strong>LL Dispatch (2 nodes, BF16)</strong></td><td>Latency</td><td>142.51 µs</td><td>157.00 µs</td><td>-9.2%</td></tr>
+<tr><td><strong>HT Dispatch (2 nodes, BF16)</strong></td><td>RDMA BW</td><td>84.36 GB/s</td><td>84.97 GB/s</td><td>-0.7%</td></tr>
+<tr><td><strong>HT Dispatch (8 nodes, BF16)</strong></td><td>RDMA BW</td><td>~53 GB/s</td><td>~54 GB/s</td><td>-1.8%</td></tr>
+</tbody>
+</table>
+<p><em>Data from NCCL GIN paper, Figure 4-9. Configuration: NVIDIA EOS cluster, 576 nodes, H100 80GB, 8×400Gbit/s InfiniBand.<sup>[3]</sup></em></p>
+
+<hr>
+
+<h2 id="the-real-divide-runtime-ecosystem">The Real Divide: Runtime Ecosystem</h2>
+<p>When both GIN and NVSHMEM 3.7.0+ converge on DOCA GPUNetIO at the bottom, the differentiation shifts upward—to runtime ecosystem.</p>
+
+<h3 id="nccl-ecosystem">NCCL Ecosystem</h3>
+<div class="key-callout"><p>"GIN uniquely integrates device-initiated network primitives into NCCL's production infrastructure... preserving NCCL's ecosystem compatibility while enabling device-driven communication"<sup>[3]</sup></p></div>
+<p><strong>NCCL production features GIN inherits:</strong></p>
+<ul>
+<li><strong>Hierarchical communicators</strong> for multi-dimensional parallelism (tensor-parallel, pipeline-parallel, expert-parallel)</li>
+<li><strong>Elasticity & fault tolerance</strong> for resilient large-scale training</li>
+<li><strong>Topology-aware collective algorithms</strong> (ring, tree, NVSwitch-aware)</li>
+<li><strong>Deep framework integration</strong> (PyTorch, TensorRT-LLM, vLLM, SGLang)</li>
+</ul>
+
+<h3 id="nvshmem-ecosystem">NVSHMEM Ecosystem</h3>
+<p><strong>NVSHMEM differentiators:</strong></p>
+<ul>
+<li><strong>OpenSHMEM compatibility</strong> for HPC code portability</li>
+<li><strong>PGAS programming model</strong> familiar to SHMEM developers</li>
+<li><strong>CUDA stream-ordered APIs</strong> for fine-grained async control</li>
+<li><strong>Multi-transport support</strong> (IBGDA, IBRC, libfabric/EFA, NVLink)</li>
+</ul>
+
+<h3 id="ecosystem-comparison">Ecosystem Comparison</h3>
+<table>
+<thead><tr><th>Dimension</th><th>NCCL + GIN</th><th>NVSHMEM 3.7.0+</th></tr></thead>
+<tbody>
+<tr><td><strong>Primary Use Case</strong></td><td>Collective + device-initiated hybrid</td><td>One-sided PGAS communication</td></tr>
+<tr><td><strong>Programming Model</strong></td><td>Collective API + Device API (window/signal)</td><td>OpenSHMEM (symmetric heap, pointer-based)</td></tr>
+<tr><td><strong>Collective Quality</strong></td><td>Topology-aware, highly optimized</td><td>Basic (team-based, less optimized)</td></tr>
+<tr><td><strong>Point-to-Point Flexibility</strong></td><td>Moderate (GIN window-based)</td><td>High (full PGAS atomics + RMA)</td></tr>
+<tr><td><strong>Production Hardening</strong></td><td>Extensive (PyTorch, vLLM, TRT-LLM)</td><td>Moderate (HPC-focused)</td></tr>
+<tr><td><strong>Standard Compliance</strong></td><td>Proprietary (NVIDIA)</td><td>OpenSHMEM standard</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="future-trajectories-open-questions">Future Trajectories (Open Questions)</h2>
+<p>The convergence at the bottom layer raises fundamental questions about the future landscape:</p>
+
+<h3 id="question-1-what-determines-the-winner">Question 1: What Determines the Winner?</h3>
+<p>If both runtimes can achieve identical hardware-level performance through DOCA GPUNetIO, competitive advantage shifts to:</p>
+<ul>
+<li><strong>Framework integration depth</strong>: PyTorch's first-party NCCL integration vs NVSHMEM's niche HPC adoption</li>
+<li><strong>Standardization pressure</strong>: Will OpenSHMEM compliance matter in the AI era, or will proprietary NVIDIA APIs dominate?</li>
+<li><strong>Collective innovation speed</strong>: NCCL's topology-aware algorithms vs NVSHMEM's simpler team-based collectives</li>
+</ul>
+
+<h3 id="question-2-will-nvshmem-be-absorbed-into-nccl">Question 2: Will NVSHMEM Be Absorbed into NCCL?</h3>
+<div class="hl-amber"><p><strong>Argument for absorption:</strong> NCCL already provides everything NVSHMEM offers (GPU-initiated RDMA via GIN) plus superior collective support. Maintaining two parallel runtimes wastes NVIDIA engineering resources.</p></div>
+<div class="hl-blue"><p><strong>Argument against absorption:</strong> NVSHMEM's OpenSHMEM standard compatibility and PGAS model serve HPC customers who value portability. Absorption would alienate this user base.</p></div>
+
+<h3 id="question-3-what-comes-after-gdaki">Question 3: What Comes After GDAKI?</h3>
+<p>GIN's Proxy backend already hints at the next challenge: <strong>GPU-initiated networking for non-NVIDIA fabrics</strong>. As AMD and Intel enter the GPU race, the ability to run device-initiated communication across vendor boundaries may become the next differentiator.</p>
+
+<h3 id="question-4-the-collective-vs-one-sided-spectrum">Question 4: The Collective vs One-Sided Spectrum</h3>
+<p>NCCL's roots are collectives (AllReduce, AllGather). NVSHMEM's roots are one-sided (put/get). GIN bridges both—but incompletely. The runtime that seamlessly blends optimized collectives with flexible one-sided operations may define the next generation.</p>
+
+<hr>
+
+<h2 id="references">References</h2>
+<ul>
+<li><strong>[1]</strong> NVIDIA Corporation. "GPUDirect RDMA." <a href="https://docs.nvidia.com/cuda/gpudirect-rdma/" target="_blank" rel="noopener">https://docs.nvidia.com/cuda/gpudirect-rdma/</a>, 2013.</li>
+<li><strong>[2]</strong> Agostini E., Rossetti D., Potluri S. "GPUDirect Async: Exploring GPU Synchronous Communication Techniques for InfiniBand Clusters." <em>Journal of Parallel and Distributed Computing</em>, vol. 114, 2018, pp. 28-45.</li>
+<li><strong>[3]</strong> Hamidouche K., Bachan J., Markthub P., et al. "GPU-Initiated Networking for NCCL." <em>arXiv:2511.15076</em>, 2025.</li>
+<li><strong>[4]</strong> NVIDIA Corporation. "NVSHMEM 3.7.0 Changelog." <a href="https://github.com/NVIDIA/nvshmem/blob/devel/changelog" target="_blank" rel="noopener">https://github.com/NVIDIA/nvshmem/blob/devel/changelog</a>, 2025.</li>
+<li><strong>[5]</strong> NVIDIA Corporation. "DOCA GPUNetIO Programming Guide." <a href="https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html" target="_blank" rel="noopener">https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html</a>.</li>
+<li><strong>[6]</strong> DeepSeek-AI. "DeepEP: Efficient Mixture-of-Experts Communication Library." <a href="https://github.com/deepseek-ai/DeepEP" target="_blank" rel="noopener">https://github.com/deepseek-ai/DeepEP</a>, 2025.</li>
+<li><strong>[7]</strong> Jeaugey S., Bachan J., Markthub P., et al. "Fusing Communication and Compute with New Device API and Copy Engine Collectives in NVIDIA NCCL 2.28." NVIDIA Developer Blog, November 2025.</li>
+</ul>
+    </div>
+  </article>
+</div>
+<footer class="footer-grid" style="margin-top:60px;max-width:1160px;margin-left:auto;margin-right:auto;padding:0 32px">
+  <div class="footer-card"><p class="note">© 2026 backyes · Human-driven, AI-amplified</p></div>
+</footer>
+
+<!-- SEARCH OVERLAY -->
+<div id="search-overlay" class="search-overlay">
+  <div class="search-box">
+    <input id="search-input" type="search" placeholder="Search posts..." autocomplete="off">
+    <div id="search-results" class="search-results"></div>
+    <div class="search-hint">⌘K to open · Esc to close</div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  if(typeof renderMathInElement==='function')
+    renderMathInElement(document.querySelector('.article-body'),{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});
+});
+</script>
+<script>
+const overlay = document.getElementById('search-overlay');
+const input = document.getElementById('search-input');
+const results = document.getElementById('search-results');
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); overlay.classList.add('open'); input.focus(); }
+  if (e.key === 'Escape') overlay.classList.remove('open');
+});
+overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
+input.addEventListener('input', () => {
+  const q = input.value.toLowerCase().trim();
+  if (!q) { results.innerHTML = ''; return; }
+  const items = [
+    {t:"GPU-Initiated Networking: Converging at the Bottom, Diverging at the Top",u:"nccl-gin-gpu-initiated-networking-ecosystem-unification.html"},
+    {t:"DeepEP × DualPipe: Synchronization & Parallelization",u:"deepep-dualpipe-synchronization-parallelization.html"},
+    {t:"When Do We Need a Global Address Service",u:"when-do-we-need-global-address-service.html"},
+    {t:"AI Supernode Unified Addressing",u:"ai-supernode-unified-addressing-first-principles.html"},
+    {t:"Server-Side CPU Agentic Revolution",u:"server-side-cpu-agentic-revolution.html"},
+    {t:"Why I'm Bullish on CXL",u:"why-im-bullish-on-cxl.html"},
+    {t:"Kimi3 Architecture Analysis",u:"kimi3-architecture-analysis.html"},
+    {t:"Kimi3 Cost Efficiency",u:"kimi3-cost-efficiency.html"},
+    {t:"Million-Token Storage vs Compute",u:"million-seq-storage-vs-compute.html"},
+    {t:"Google Lustre for KV Cache",u:"google-rapid-storage-not-for-kvcache.html"},
+    {t:"Memory Wall Model Comparison",u:"z-ai-memory-wall-model-architecture-comparison.html"},
+  ];
+  const matches = items.filter(it => it.t.toLowerCase().includes(q)).slice(0, 12);
+  results.innerHTML = matches.map(it => `<a href="${it.u}"><h4>${it.t}</h4></a>`).join('') || '<div style="padding:18px;color:var(--ink-mute)">No results</div>';
+});
+</script>
+</body>
+</html>
