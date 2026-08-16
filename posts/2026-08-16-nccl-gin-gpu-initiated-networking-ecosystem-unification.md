@@ -27,10 +27,14 @@ GIN's design — one-sided semantics, windows-based (a)symmetric memory, GIN con
 | Generation | Technology | QP Creator | Operation Trigger | CPU in Hot Path | Year |
 |------------|-----------|------------|-------------------|-----------------|------|
 | **Gen 1** | GPUDirect RDMA | CPU (`ibv_create_qp`) | CPU (`ibv_post_send`) | Every operation | ~2013 |
-| **Gen 2** | GPUDirect Async (IBGDA) | CPU (pre-configured) | GPU (doorbell MMIO) | Setup only | ~2016 |
+| **Gen 2** | GPUDirect Async | CPU (pre-configured) | GPU (doorbell MMIO) | Setup only | ~2016* |
 | **Gen 3** | GDAKI / GPUNetIO | GPU kernel | GPU kernel | None | ~2024 |
 
+*\*Gen 2 date reflects the general GPUDirect Async doorbell-triggering concept (~2016). IBGDA — the concrete InfiniBand implementation of this concept, used inside NVSHMEM — shipped later, in NVSHMEM 2.6.0 (~2022, experimental mode). The two dates should not be conflated.*
+
 The critical metric is **per-operation control overhead**:
+
+*(Latency figures below are order-of-magnitude estimates based on known syscall/MMIO overheads, not figures reported in the GIN paper — the paper's own measured latencies appear in §V, e.g. 16.7μs GDAKI ping-pong at small message sizes, cited separately below.)*
 
 ```
 Gen 1 path:  GPU → CPU syscall → kernel transition → MMIO doorbell → NIC    (~1-2μs)
@@ -52,15 +56,18 @@ GPUDirect (NVIDIA umbrella brand)
 ├── GPUDirect Async    — GPU triggers pre-configured RDMA via doorbell
 │   └── IBGDA          — InfiniBand-specific implementation
 ├── GPUDirect Storage  — SSD DMA directly to GPU HBM (GDS)
-└── GDAKI              — GPU full control of RDMA lifecycle
-    ├── GIN (NCCL)     — NCCL 2.28+ public API name
-    └── GPUNetIO (DOCA)— DOCA SDK API name
+└── GDAKI (GPU full control of RDMA lifecycle, GPU creates/destroys QP)
+    └── DOCA GPUNetIO   — the underlying SDK/device-verbs layer
+        ├── used directly by NVSHMEM 3.7.0+ (see §3.2)
+        └── used by NCCL GIN's "GDAKI backend" (one of GIN's two backends, see §3.3)
 
 Software Ecosystem
 ├── NCCL GIN    — Collective communication + GIN device API (3 modes: LSA, Multimem, GIN)
 ├── NVSHMEM     — PGAS one-sided put/get (≤3.6: IBGDA, 3.7.0+: GPUNetIO)
 └── DeepEP      — MoE communication library (V1: NVSHMEM, V2: NCCL GIN)
 ```
+
+> **Note:** "GDAKI" (GPUDirect Async Kernel-Initiated) is the name the GIN paper gives to its own direct-mode backend — not a pre-existing NVIDIA umbrella term. Both NVSHMEM's GPUNetIO backend and NCCL GIN's GDAKI backend are built on the same underlying DOCA GPUNetIO device-verbs layer; they are two different API surfaces over one substrate, not two names for the same thing.
 
 ### GIN's Three Device API Modes (NCCL 2.28+)
 
@@ -183,7 +190,7 @@ GIN's ecosystem bet is: **when all NIC vendors connect via plugins, NCCL GIN bec
 
 ## 5. What Problems Does GIN Solve? The Five Fundamental Challenges
 
-GIN's design essentially answers one question: **when a GPU directly initiates network communication, what fundamental problems must be solved?** The paper distills GIN's design into 5 core elements, corresponding to 3 fundamental challenges in one-sided communication plus 2 programming usability requirements.
+GIN's design essentially answers one question: **when a GPU directly initiates network communication, what fundamental problems must be solved?** The paper itself names 5 design elements in §III-A (one-sided semantics, symmetric memory windows, GIN contexts, completion tracking, ordering semantics), listed as a flat set. Grouping them into "3 fundamental challenges in one-sided communication plus 2 programming usability requirements" below is my own reading of how these elements relate — not a taxonomy the paper draws explicitly.
 
 ### 5.1 Three Fundamental Challenges
 
