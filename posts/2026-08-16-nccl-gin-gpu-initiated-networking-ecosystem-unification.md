@@ -116,43 +116,43 @@ The hardware requirement is identical: NIC must expose memory-mapped queue pairs
 
 ## 4. GIN's Ecosystem Play: Plugin Architecture for Multi-Vendor Expansion
 
-GIN 的核心战略不只是提供一套 GPU 发起通信的 API，而是**构建一个以 GPU 为中心的通信系统生态**。这一战略最清晰地体现在其三层软件分层设计和可扩展的网络插件架构中。
+GIN's core strategy is not merely to provide a GPU-initiated communication API, but to **build a GPU-centric communication ecosystem**. This strategy is most clearly reflected in its three-layer software architecture and extensible network plugin framework.
 
-### 4.1 三层架构：关注点分离
+### 4.1 Three-Layer Architecture: Separation of Concerns
 
-GIN 的三层架构（NCCL Core → Device GIN API → GIN Network Plugin）每一层都有明确的职责边界：
+GIN's three-layer architecture (NCCL Core → Device GIN API → GIN Network Plugin) defines clear responsibility boundaries for each layer:
 
-| 层 | 职责 | 关键设计 |
+| Layer | Responsibility | Key Design |
 |---|---|---|
-| **NCCL Core** (Host) | 通信子初始化、内存窗口注册、资源分配 | 扩展现有 NCCL 基础设施，不破坏兼容性 |
-| **Device GIN API** (GPU) | GPU 内核可调用的 put/signal 原语 | 统一接口，后端透明切换（GDAKI 或 Proxy） |
-| **GIN Network Plugin** | 远程数据移动的具体实现 | 双语义（GDAKI + Proxy），支持厂商自定义 |
+| **NCCL Core** (Host) | Communicator initialization, memory window registration, resource allocation | Extends existing NCCL infrastructure without breaking compatibility |
+| **Device GIN API** (GPU) | put/signal primitives callable from CUDA kernels | Unified interface, transparent backend switching (GDAKI or Proxy) |
+| **GIN Network Plugin** | Concrete implementation of remote data movement | Dual semantics (GDAKI + Proxy), supports vendor customization |
 
 > "GIN builds on a three-layer architecture: i) NCCL Core host-side APIs for device communicator setup and collective memory window registration; ii) Device-side APIs for remote memory operations callable from CUDA kernels; and iii) A network plugin architecture with dual semantics (GPUDirect Async Kernel-Initiated and Proxy) for broad hardware support."
 > — [arXiv:2511.15076](https://arxiv.org/abs/2511.15076)
 
-### 4.2 双后端 → 多厂商扩展
+### 4.2 Dual Backend → Multi-Vendor Expansion
 
-GIN 的网络插件架构从设计之初就为**多厂商参与**预留了接口：
+GIN's network plugin architecture was designed from the ground up for **multi-vendor participation**:
 
-| 后端类型 | 控制路径归属 | 硬件要求 | 当前支持 |
+| Backend Type | Control Path Ownership | Hardware Requirement | Current Support |
 |---|---|---|---|
-| **GDAKI** | 插件全权拥有（createContext + device code） | ConnectX-6 Dx+ / DOCA GPUNetIO | NVIDIA InfiniBand |
-| **Proxy** | NCCL Core 拥有控制结构，插件仅提供 CPU 数据路径 | 任意 RDMA 网卡 | NVIDIA InfiniBand |
-| **External Plugin** | 通过 `libnccl-net.so` 动态加载 | 厂商自定义 | 开放给第三方厂商 |
+| **GDAKI** | Plugin fully owns (createContext + device code) | ConnectX-6 Dx+ / DOCA GPUNetIO | NVIDIA InfiniBand |
+| **Proxy** | NCCL Core owns control structures; plugin provides only CPU data path | Any RDMA-capable NIC | NVIDIA InfiniBand |
+| **External Plugin** | Dynamically loaded via `libnccl-net.so` | Vendor-defined | Open to third-party vendors |
 
 > "NCCL's InfiniBand transport implements both, while external vendors may supply their own. Under the Proxy interface, NCCL Core owns control structures, device-side queuing logic, and device API implementations, while plugins provide only CPU-based put, signal, test, and regMr operations, enabling networks without GPU-direct capabilities and lowering the barrier to GIN adoption."
 > — [arXiv:2511.15076](https://arxiv.org/abs/2511.15076)
 
-关键机制是 `NCCL_NET_PLUGIN` 环境变量——外部插件在运行时动态加载，无需修改 NCCL 核心代码。这意味着：
+The key mechanism is the `NCCL_NET_PLUGIN` environment variable — external plugins are loaded at runtime without modifying NCCL core code. This means:
 
-- **AWS EFA**（Elastic Fabric Adapter）可以通过实现 Proxy 语义的 `libnccl-net.so` 插件接入 GIN 生态
-- **其他网卡厂商**（Marvell/Cisco/Mellanox 等）只需提供 CPU 数据路径的 4 个基础操作（put/signal/test/regMr），即可获得完整的 GIN Device API 能力
-- **不要求 GPU 直通能力**——Proxy 后端让不具备 DOCA GPUNetIO 的网卡也能参与生态
+- **AWS EFA** (Elastic Fabric Adapter) can join the GIN ecosystem by implementing a Proxy-semantics `libnccl-net.so` plugin
+- **Other NIC vendors** (Marvell/Cisco/Mellanox, etc.) need only provide 4 basic CPU data-path operations (put/signal/test/regMr) to gain full GIN Device API capability
+- **No GPU-direct capability required** — the Proxy backend allows NICs without DOCA GPUNetIO to participate in the ecosystem
 
-### 4.3 生态目标：以 GPU 为中心的统一通信层
+### 4.3 Ecosystem Goal: A GPU-Centric Unified Communication Layer
 
-GIN 的生态逻辑可以概括为：
+GIN's ecosystem logic can be summarized as:
 
 ```
                ┌─────────────────────────────────┐
@@ -161,7 +161,7 @@ GIN 的生态逻辑可以概括为：
                └──────────────┬──────────────────┘
                               │
                ┌──────────────▼──────────────────┐
-               │     NCCL Device GIN API          │  ← 统一编程接口
+               │     NCCL Device GIN API          │  ← Unified programming interface
                │  (put / signal / flush / ...)    │
                └──────────────┬──────────────────┘
                               │
@@ -169,97 +169,97 @@ GIN 的生态逻辑可以概括为：
         │                     │                     │
    ┌────▼─────┐        ┌────▼─────┐         ┌────▼─────┐
    │  GDAKI   │        │  Proxy   │         │ External │
-   │ (NVIDIA  │        │ (通用    │         │ (AWS EFA,│
-   │  IB/RoCE)│        │  RDMA)   │         │  其他)   │
+   │ (NVIDIA  │        │ (Generic │         │ (AWS EFA,│
+   │  IB/RoCE)│        │  RDMA)   │         │  others) │
    └──────────┘        └──────────┘         └──────────┘
 ```
 
 > "By providing both hardware-direct and CPU-assisted plugin interfaces, GIN offers functionality across diverse deployment scenarios while maintaining compatibility with NCCL's existing ecosystem."
 > — [arXiv:2511.15076](https://arxiv.org/abs/2511.15076)
 
-GIN 的生态赌注是：**当所有网卡厂商都通过插件接入时，NCCL GIN 就成为 GPU 通信的"USB 接口"——统一、即插即用、硬件无关**。这与 NVSHMEM 的路径截然不同：NVSHMEM 是单一厂商（NVIDIA）的垂直整合方案，而 GIN 试图构建一个水平分层的多厂商生态。
+GIN's ecosystem bet is: **when all NIC vendors connect via plugins, NCCL GIN becomes the "USB interface" for GPU communication — universal, plug-and-play, hardware-agnostic.** This stands in stark contrast to NVSHMEM's path: NVSHMEM is a single-vendor (NVIDIA) vertical integration solution, while GIN attempts to build a horizontally-layered, multi-vendor ecosystem.
 
 ---
 
 ## 5. What Problems Does GIN Solve? The Five Fundamental Challenges
 
-GIN 的设计本质上是在回答一个问题：**GPU 直接发起网络通信，需要解决哪些基础问题？**论文将 GIN 的设计元素归纳为 5 个核心功能，它们分别对应单边通信中 3 个根本性挑战 + 2 个编程易用性需求。
+GIN's design essentially answers one question: **when a GPU directly initiates network communication, what fundamental problems must be solved?** The paper distills GIN's design into 5 core elements, corresponding to 3 fundamental challenges in one-sided communication plus 2 programming usability requirements.
 
-### 5.1 三个根本性挑战
+### 5.1 Three Fundamental Challenges
 
-在任何单边通信系统（GIN、NVSHMEM、OpenSHMEM）中，必须解决三个基础问题：
+In any one-sided communication system (GIN, NVSHMEM, OpenSHMEM), three foundational problems must be addressed:
 
-| # | 挑战 | 核心问题 | GIN 的解决 |
-|---|------|---------|-----------|
-| **1** | **Data Transfer** | GPU 如何远程写入/读取数据？ | One-Sided Semantics（put / put with signal） |
-| **2** | **Ordering** | 对方按什么顺序看到数据更新？ | Ordering Semantics（signal 保证前置 put 的可见顺序） |
-| **3** | **Consistency** | 什么时候对方能看到数据？ | Asynchronous Completion Tracking（Signal/Counter 远程可见性通知） |
+| # | Challenge | Core Question | GIN's Solution |
+|---|-----------|---------------|----------------|
+| **1** | **Data Transfer** | How does a GPU remotely write/read data? | One-Sided Semantics (put / put with signal) |
+| **2** | **Ordering** | In what order does the remote peer see data updates? | Ordering Semantics (signal guarantees visibility order of preceding puts) |
+| **3** | **Consistency** | When can the remote peer actually observe the data? | Asynchronous Completion Tracking (Signal/Counter for remote visibility notification) |
 
 > "These components enable device-initiated one-sided communication through several key design elements: one-sided semantics for unilateral data movement, symmetric memory windows for zero-copy remote access, and asynchronous completion tracking with flexible ordering semantics."
 > — [arXiv:2511.15076](https://arxiv.org/abs/2511.15076)
 
-### 5.2 两个编程易用性需求
+### 5.2 Two Programming Usability Requirements
 
-在解决三个基础问题之上，GIN 还需要让程序员**容易地写出正确的通信代码**：
+Beyond the three foundational challenges, GIN must also make it **easy for programmers to write correct communication code**:
 
-| # | 需求 | 核心问题 | GIN 的解决 |
-|---|------|---------|-----------|
-| **4** | **Network Parallelism** | 如何充分利用多网卡/多端口/多 QP？ | GIN Contexts（每个 context 抽象一个 GPU↔NIC 通道） |
-| **5** | **Memory Flexibility** | 是否必须对称内存？ | Windows-based (A)Symmetric Memory（支持非对称容量） |
+| # | Requirement | Core Question | GIN's Solution |
+|---|-------------|---------------|----------------|
+| **4** | **Network Parallelism** | How to fully utilize multiple NICs/ports/QPs? | GIN Contexts (each context abstracts a GPU↔NIC channel) |
+| **5** | **Memory Flexibility** | Must memory be symmetric? | Windows-based (A)Symmetric Memory (supports asymmetric capacities) |
 
 > "GIN windows are designed to support asymmetry in capacity: each rank may register different buffer sizes. This flexibility proves essential for disaggregated serving architectures where prefill ranks require larger buffers than decode ranks."
 > — [arXiv:2511.15076](https://arxiv.org/abs/2511.15076)
 
-### 5.3 科普：为什么 Ordering 和 Consistency 是单边通信的基石？
+### 5.3 Why Ordering and Consistency Are the Cornerstones of One-Sided Communication
 
-用一个简单的例子说明这两个概念为什么重要。
+Consider a simple example illustrating why these two concepts matter.
 
-**场景**：GPU A 需要向 GPU B 发送一组数据，并告诉 B"数据准备好了"。
+**Scenario**: GPU A needs to send a batch of data to GPU B and notify B that "data is ready."
 
 ```
-GPU A (发送方)                    GPU B (接收方)
+GPU A (Sender)                   GPU B (Receiver)
 ─────────────                    ─────────────
-put(data[0] → B)  ──────→  (网络中...)
-put(data[1] → B)  ──────→  (网络中...)
-signal(B, ready)  ──────→  (网络中...)
+put(data[0] → B)  ──────→  (in network...)
+put(data[1] → B)  ──────→  (in network...)
+signal(B, ready)  ──────→  (in network...)
                                  ...
-                            B 如何知道数据真的到了？
+                            How does B know the data truly arrived?
 ```
 
-**问题 1 — Ordering（顺序性）**：
+**Problem 1 — Ordering**:
 
-如果 signal 先于 data 到达 B（网络乱序），B 会认为"数据准备好了"，但实际上 data[0]、data[1] 还在路上。B 读到的是**旧数据**。
+If signal arrives at B before the data (network reordering), B thinks "data is ready" but data[0] and data[1] are still in transit. B reads **stale data**.
 
-GIN 的解决方案：
+GIN's solution:
 > "When a signal operation completes at the destination, it guarantees that all preceding put operations to that peer on the same context have completed and are visible to remote GPU threads."
 
-即 signal 是一个**顺序锚点**：signal 可见 = 之前所有 put 都可见。程序员只需在最后一次 put 后 attach 一个 signal，然后 waitSignal，就能保证整批数据的顺序可见性。
+A signal is an **ordering anchor**: signal visible = all preceding puts visible. Programmers need only attach a signal to the final put and then waitSignal — guaranteeing ordered visibility of the entire batch.
 
-**问题 2 — Consistency（一致性）**：
+**Problem 2 — Consistency**:
 
-即使数据到达了 B 的 HBM，B 的 GPU 内核也不一定能立即看到——因为 GPU 有 write-back cache 和 relaxed memory model。
+Even after data arrives in B's HBM, B's GPU kernels may not immediately see it — because GPUs have write-back caches and relaxed memory models.
 
-GIN 区分两种完成状态：
-- **Local completion**（`flush`）：源端缓冲区可以安全重用（数据已离开发送方）
-- **Remote completion**（`waitSignal`）：数据已到达目的地且对远程 GPU 线程可见
+GIN distinguishes two completion states:
+- **Local completion** (`flush`): source buffers can be safely reused (data has left the sender)
+- **Remote completion** (`waitSignal`): data has arrived at destination and is visible to remote GPU threads
 
 > "The flush operation ensures only local completion—all pending operations have been consumed and source buffers can be safely reused—but makes no guarantees about remote visibility."
 
-**一句话总结**：Ordering 解决"**按什么顺序看到**"，Consistency 解决"**什么时候能看到**"。两者缺一不可——没有 Ordering，数据可能乱序到达；没有 Consistency，数据到了也不一定能读到。GIN 通过 signal 机制将两者统一：signal 既保证顺序（之前所有 put 完成），又保证可见（对远程 GPU 线程可见）。
+**In one sentence**: Ordering answers "**in what order** is data seen," Consistency answers "**when** can data be seen." Both are indispensable — without Ordering, data may arrive out of order; without Consistency, data may have arrived but remain unreadable. GIN unifies both through the signal mechanism: a signal guarantees both ordering (all preceding puts complete) and visibility (visible to remote GPU threads).
 
-### 5.4 GIN vs NVSHMEM：相同的问题，不同的解法
+### 5.4 GIN vs NVSHMEM: Same Problems, Different Solutions
 
-值得注意的是，NVSHMEM 作为成熟的 PGAS 库，同样需要解决上述 5 个问题。两者的对比：
+Notably, NVSHMEM as a mature PGAS library must also address all 5 challenges. The comparison:
 
-| 设计元素 | GIN | NVSHMEM |
+| Design Element | GIN | NVSHMEM |
 |---|---|---|
 | **Data Transfer** | `put(team, peer, win, off, ...)` | `put_nbi(dst_ptr, src_ptr, count, pe)` |
-| **Ordering** | Signal-based（ID 地址，轻量） | `fence` / `quiet`（QP 级别） |
-| **Consistency** | Counter（本地）+ Signal（远程） | `quiet()` per QP |
-| **Network Parallelism** | GIN Context（显式多通道） | QP per PE |
-| **Memory Model** | Window-based（支持非对称容量） | Symmetric Heap（全局地址空间） |
+| **Ordering** | Signal-based (ID-addressed, lightweight) | `fence` / `quiet` (QP-level) |
+| **Consistency** | Counter (local) + Signal (remote) | `quiet()` per QP |
+| **Network Parallelism** | GIN Context (explicit multi-channel) | QP per PE |
+| **Memory Model** | Window-based (supports asymmetric capacity) | Symmetric Heap (global address space) |
 
-GIN 的 signal-based ordering 相比 NVSHMEM 的 fence/quiet 更轻量——它只保证"同一 context 内、同一 peer 的 put-signal 顺序"，而不是全局顺序。这种选择性保证换来了更高的网络效率。
+GIN's signal-based ordering is lighter-weight than NVSHMEM's fence/quiet — it guarantees only "put-signal order within the same context to the same peer," not global ordering. This selective guarantee enables higher network efficiency.
 
 ---
 
