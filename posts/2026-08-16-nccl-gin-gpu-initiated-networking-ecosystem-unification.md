@@ -1,11 +1,11 @@
 ---
-title: "[Under Review] GPU-Driven RDMA: The Five Fundamental Challenges Where Memory and Communication Converge"
+title: "[Under Review] GPU-Driven RDMA(1): The Five Fundamental Challenges Where Memory and Communication Converge"
 date: 2026-08-16
 tags: ["GPUDirect", "GDAKI", "GIN", "NVSHMEM", "NCCL", "RDMA", "IBGDA", "GPUNetIO", "DOCA", "DeepEP", "MoE"]
 excerpt: "GPU-Driven RDMA is not just 'GPU initiates RDMA' — it is the tight coupling of memory and communication in a multi-execution-unit system (GPU + NIC + CPU), analogous to the multi-core era where cache coherence and memory ordering became first-class design problems. This article explores the five fundamental challenges this convergence creates: data transfer, ordering, consistency, network parallelism, and memory flexibility."
 ---
 
-# [Under Review] GPU-Driven RDMA: The Five Fundamental Challenges Where Memory and Communication Converge
+# [Under Review] GPU-Driven RDMA(1): The Five Fundamental Challenges Where Memory and Communication Converge
 
 ## Thesis
 
