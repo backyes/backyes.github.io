@@ -599,19 +599,19 @@ Enables rapid prototyping of CXL-aware DataLoader designs with high fidelity.
 
 | # | Source | URL |
 |---|---|---|
-| 1 | **TRAININGCXL: Failure Tolerant Training with PMEM Disaggregation over CXL** (KAIST, arXiv:2301.07492) | https://arxiv.org/abs/2301.07492 |
-| 2 | **CCCL: Node-Spanning GPU Collectives with CXL Memory Pooling** (arXiv:2602.22457) | https://arxiv.org/abs/2602.22457 |
-| 3 | **TERAIO: Cost-Efficient LLM Training with GDS Tensor Offloading** (arXiv:2506.06472) | https://arxiv.org/abs/2506.06472 |
-| 4 | **Proxics: Efficient Programming Model for Far Memory Accelerators** (arXiv:2604.18120) | https://arxiv.org/abs/2604.18120 |
-| 5 | **CXLMemUring: Asynchronous CXL Memory Pool Access** (arXiv:2309.04011) | https://arxiv.org/abs/2309.04011 |
-| 6 | **CXL-DMSim: Full-System CXL Disaggregated Memory Simulator** (arXiv:2411.02282, IEEE TCAD) | https://arxiv.org/abs/2411.02282 |
-| 7 | **CXLRAMSim: System-Level Exploration of CXL Memory Expander Cards** (arXiv:2603.29483) | https://arxiv.org/abs/2603.29483 |
-| 8 | **DAXFS: Lock-Free Shared Filesystem for CXL Memory** (arXiv:2604.01620) | https://arxiv.org/abs/2604.01620 |
-| 9 | **Aquifer: Hierarchical CXL+RDMA Memory Pooling** (arXiv:2606.24079) | https://arxiv.org/abs/2606.24079 |
-| 10 | **CXL-GPU: Pushing GPU Memory Boundaries with CXL** (arXiv:2506.15601) | https://arxiv.org/abs/2506.15601 |
-| 11 | **TPP: Transparent Page Placement for CXL Tiered-Memory** (Meta, arXiv:2206.02878) | https://arxiv.org/abs/2206.02878 |
-| 12 | **Samsung CXL Memory Module Hybrid (CMM-H)** (arXiv:2503.22017) | https://arxiv.org/abs/2503.22017 |
-| 13 | **NVIDIA DALI Documentation** | https://docs.nvidia.com/deeplearning/dali/user-guide/docs/ |
-| 14 | **NVIDIA GPUDirect Storage Documentation** | https://docs.nvidia.com/cuda/gpudirect-storage/ |
-| 15 | **PMDK Documentation** | https://pmem.io/pmdk/ |
-| 16 | **Memkind Documentation** | https://github.com/memkey/memkind |
+| 1 | **TRAININGCXL: Failure Tolerant Training with PMEM Disaggregation over CXL** (KAIST, arXiv:2301.07492) | [arXiv:2301.07492](https://arxiv.org/abs/2301.07492) |
+| 2 | **CCCL: Node-Spanning GPU Collectives with CXL Memory Pooling** (arXiv:2602.22457) | [arXiv:2602.22457](https://arxiv.org/abs/2602.22457) |
+| 3 | **TERAIO: Cost-Efficient LLM Training with GDS Tensor Offloading** (arXiv:2506.06472) | [arXiv:2506.06472](https://arxiv.org/abs/2506.06472) |
+| 4 | **Proxics: Efficient Programming Model for Far Memory Accelerators** (arXiv:2604.18120) | [arXiv:2604.18120](https://arxiv.org/abs/2604.18120) |
+| 5 | **CXLMemUring: Asynchronous CXL Memory Pool Access** (arXiv:2309.04011) | [arXiv:2309.04011](https://arxiv.org/abs/2309.04011) |
+| 6 | **CXL-DMSim: Full-System CXL Disaggregated Memory Simulator** (arXiv:2411.02282, IEEE TCAD) | [arXiv:2411.02282](https://arxiv.org/abs/2411.02282) |
+| 7 | **CXLRAMSim: System-Level Exploration of CXL Memory Expander Cards** (arXiv:2603.29483) | [arXiv:2603.29483](https://arxiv.org/abs/2603.29483) |
+| 8 | **DAXFS: Lock-Free Shared Filesystem for CXL Memory** (arXiv:2604.01620) | [arXiv:2604.01620](https://arxiv.org/abs/2604.01620) |
+| 9 | **Aquifer: Hierarchical CXL+RDMA Memory Pooling** (arXiv:2606.24079) | [arXiv:2606.24079](https://arxiv.org/abs/2606.24079) |
+| 10 | **CXL-GPU: Pushing GPU Memory Boundaries with CXL** (arXiv:2506.15601) | [arXiv:2506.15601](https://arxiv.org/abs/2506.15601) |
+| 11 | **TPP: Transparent Page Placement for CXL Tiered-Memory** (Meta, arXiv:2206.02878) | [arXiv:2206.02878](https://arxiv.org/abs/2206.02878) |
+| 12 | **Samsung CXL Memory Module Hybrid (CMM-H)** (arXiv:2503.22017) | [arXiv:2503.22017](https://arxiv.org/abs/2503.22017) |
+| 13 | **NVIDIA DALI Documentation** | [docs.nvidia.com](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/) |
+| 14 | **NVIDIA GPUDirect Storage Documentation** | [docs.nvidia.com](https://docs.nvidia.com/cuda/gpudirect-storage/) |
+| 15 | **PMDK Documentation** | [pmem.io/pmdk](https://pmem.io/pmdk/) |
+| 16 | **Memkind Documentation** | [github.com/memkey/memkind](https://github.com/memkey/memkind) |
