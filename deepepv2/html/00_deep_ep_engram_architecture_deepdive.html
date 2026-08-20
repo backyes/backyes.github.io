@@ -87,19 +87,24 @@
 <li><a href="#sym-layout" class="h2">6.1 内存布局</a></li>
 <li><a href="#sym-cpu" class="h2">6.2 CPU 段注册与跨进程映射</a></li>
 <li><a href="#sym-engram" class="h2">6.3 Engram 存储的对称内存语义</a></li>
-<li><a href="#sm-rdma" class="h1">7. SM 如何调用 RoCE 能力</a></li>
+<li><a href="#symmetric-deepdive" class="h1">7. HybridElasticSymmetricMemory 深度专题</a></li>
+<li><a href="#symmetric-why" class="h2">7.1 为什么要设计对称架构</a></li>
+<li><a href="#symmetric-engram" class="h2">7.2 对称性对单向查表的意义</a></li>
+<li><a href="#symmetric-crossnode" class="h2">7.3 对称内存是否跨越节点</a></li>
+<li><a href="#symmetric-summary" class="h2">7.4 设计权衡总结</a></li>
+<li><a href="#sm-rdma" class="h1">8. SM 如何调用 RoCE 能力</a></li>
 <li><a href="#sm-mechanism" class="h2">7.1 "0 SM" 的本质</a></li>
 <li><a href="#sm-gin-api" class="h2">7.2 NCCL Gin GPU-Initiated API</a></li>
 <li><a href="#sm-actual" class="h2">7.3 实际 SM 占用分析</a></li>
-<li><a href="#deployment" class="h1">8. Engram 部署模型</a></li>
+<li><a href="#deployment" class="h1">9. Engram 部署模型</a></li>
 <li><a href="#deploy-colo" class="h2">8.1 与模型共部署</a></li>
 <li><a href="#deploy-buffer" class="h2">8.2 ElasticBuffer 生命周期</a></li>
 <li><a href="#deploy-standalone" class="h2">8.3 独立部署可行性分析</a></li>
-<li><a href="#testing" class="h1">9. 测试方法</a></li>
+<li><a href="#testing" class="h1">10. 测试方法</a></li>
 <li><a href="#test-correctness" class="h2">9.1 正确性验证</a></li>
 <li><a href="#test-perf" class="h2">9.2 性能基准</a></li>
 <li><a href="#test-params" class="h2">9.3 参数空间</a></li>
-<li><a href="#conclusion" class="h1">10. 总结与设计洞察</a></li>
+<li><a href="#conclusion" class="h1">11. 总结与设计洞察</a></li>
 <li><a href="#references" class="h1">References</a></li>
 </ul>
 </div>
@@ -731,7 +736,246 @@ cuMemImportFromShareableHandle(&cpu_handles[i], (void*)(uintptr_t), local_fd, ..
 owner_rank = global_idx / num_entries_per_rank
 local_entry = global_idx % num_entries_per_rank</code></pre>
 
-<h1 id="sm-rdma">7. SM 如何调用 RoCE 能力</h1>
+<h1 id="symmetric-deepdive">7. HybridElasticSymmetricMemory 深度专题</h1>
+
+<blockquote style="border-left:4px solid var(--green);background:var(--green-soft);padding:14px 18px;margin:0 0 1.5em 0;border-radius:0 8px 8px 0">
+<p><strong>专题核心问题</strong>：HybridElasticSymmetricMemory 为什么要设计成"对称"架构？这种对称性为 Engram 的 GPU 单向查表式内存访问带来什么本质好处？从 RoCE 相关代码、测试代码和初始化操作三个维度分析，对称内存到底能否跨越节点，还是仅限于节点内或 Engram 域内？</p>
+</blockquote>
+
+<h2 id="symmetric-why">7.1 为什么要设计对称架构</h2>
+
+<p><strong>"对称"的精确定义</strong>：在 DeepEP 中，"symmetric"不是指数据内容对称（各 rank 存储不同数据），而是指<strong>虚拟地址布局对称</strong>——每个 rank 的 NCCL Window 具有完全相同的 VA 结构：</p>
+
+<pre><code>// 所有 rank 的窗口布局完全相同（nccl.cu L140）
+ncclCommWindowRegister(comm, raw_window_ptr, sym-&gt;num_bytes, &amp;window, ...);
+
+// 每个 rank 的 VA 布局:
+┌─────────────────────────────────────────────────────────────────┐
+│  [GPU VRAM (num_gpu_bytes)]  │  CPU Segments (num_cpu_bytes)   │
+│  所有 rank 大小相同          │  所有 rank 大小相同              │
+└─────────────────────────────────────────────────────────────────┘</code></pre>
+
+<p><strong>对称架构的核心好处</strong>：O(1) 全局地址计算。</p>
+
+<div class="key-callout">
+<p><strong>关键洞察</strong>：因为所有 rank 的窗口布局对称，任意 rank 可以在本地计算出<strong>任意其他 rank</strong> 的存储偏移量，无需查询、无需通信、无需地址转换：</p>
+<pre><code>// engram_fetch.cuh L57-66 — 本地计算远端地址
+const auto owner_rank_idx = global_idx / kNumEntriesPerRank;
+const auto local_entry_idx = global_idx % kNumEntriesPerRank;
+const auto peer_idx = owner_rank_idx / kNumRanksPerRDMAPeer;
+const auto intra_peer_rank_idx = owner_rank_idx % kNumRanksPerRDMAPeer;
+const auto src_byte_offset = int64_t(intra_peer_rank_idx) * kIntraRankStorageStride
+                           + int64_t(local_entry_idx) * kNumHiddenBytes;</code></pre>
+<p>这个偏移量在<strong>任何 rank 上计算结果都相同</strong>——对称性保证了偏移量的全局一致性。</p>
+</div>
+
+<p><strong>对比非对称方案</strong>：</p>
+
+<table>
+<tr><th>方案</th><th>地址计算</th><th>开销</th><th>RDMA 友好</th></tr>
+<tr><td>非对称（各 rank 布局不同）</td><td>需要查询远端布局信息</td><td>O(通信) 或 O(查表)</td><td>否</td></tr>
+<tr><td><b>对称（DeepEP 采用）</b></td><td><b>本地 O(1) 计算</b></td><td><b>零</b></td><td><b>是</b></td></tr>
+<tr><td>全局统一 VA（CXL 风格）</td><td>直接指针访问</td><td>需要硬件支持</td><td>部分</td></tr>
+</table>
+
+<h2 id="symmetric-engram">7.2 对称性对 Engram 单向查表的意义</h2>
+
+<p>Engram 的 GPU 单向内存访问（GPU 主动读远端，远端 GPU 不参与）依赖对称性实现三个关键能力：</p>
+
+<h3>7.2.1 无状态路由</h3>
+
+<p>GPU kernel 计算出的 <code>src_byte_offset</code> 直接传递给 NCCL Gin：</p>
+
+<pre><code class="language-cpp">gin.get&lt;team_t, ncclCoopThread, ncclGin_SegmentMixed&gt;(
+    math::advance_ptr(storage, src_byte_offset),  // 本地 VA 计算的偏移
+    math::advance_ptr(fetched, token_idx * kNumHiddenBytes),  // 本地 GPU 目的
+    kNumHiddenBytes, peer_idx, ...);</codepre>
+
+<div class="hl-blue">
+<p><strong>关键机制</strong>：<code>gin.get</code> 内部将 <code>src_ptr</code> 转换为窗口偏移（<code>src_ptr - lsa_base_ptr</code>），然后告诉 NIC："从 peer_idx 的窗口偏移 XX 处读取数据"。因为所有 peer 的窗口布局对称，本地计算的偏移量在远端同样有效。</p>
+</div>
+
+<h3>7.2.2 单向性（One-Sided）保证</h3>
+
+<p>远端 GPU 完全不参与数据传输：</p>
+
+<pre><code>Node A (发起端)                    Node B (远端)
+┌─────────────────┐                ┌─────────────────┐
+│ GPU Kernel      │                │ GPU 空闲        │
+│ 计算 src_offset │                │ (不参与)        │
+│     ↓           │                │                 │
+│ NIC (A)         │══ RDMA Get ═══▶│ NIC (B)         │
+│                 │                │ 从本地 CPU 段   │
+│                 │                │ 读取物理内存    │
+│     ↓           │                │                 │
+│ GPU VRAM (A)    │◀═══════════════│                 │
+└─────────────────┘                └─────────────────┘</code></pre>
+
+<p>对称性使得这种单向操作成为可能——发起端不需要远端的任何信息（地址、状态、同步），仅凭全局索引即可定位数据。</p>
+
+<h3>7.2.3 对称性消除了 CPU 查表需求</h3>
+
+<p>在传统 RDMA 编程中，CPU 需要维护地址翻译表（MR 查找、lkey/rkey 管理）。对称架构下：</p>
+
+<ul>
+<li>偏移量 = 地址（无需 MR 查找）</li>
+<li>窗口基址 = 常量（<code>lsa_base_ptr</code>）</li>
+<li>远端 key = 隐式（peer_idx → NCCL 内部管理 rkey）</li>
+</ul>
+
+<h2 id="symmetric-crossnode">7.3 对称内存是否跨越节点：三维证据分析</h2>
+
+<p>这是最核心的问题。我从三个维度进行分析：</p>
+
+<h3>7.3.1 维度一：RoCE 相关代码证据</h3>
+
+<p><strong>证据 1：Hybrid 模式的 RDMA peer 覆盖所有 scale-out 节点</strong></p>
+
+<pre><code class="language-cpp">// engram.hpp L44-47 — Hybrid 模式
+if (args.allow_hybrid_mode) {
+    num_rdma_peers = args.num_scaleout_ranks;  // 所有跨节点 peer
+    num_ranks_per_rdma_peer = args.num_scaleup_ranks;
+    team_tag = "ncclTeamTagRail";  // Rail team 覆盖所有节点
+}</code></pre>
+
+<p><strong>证据 2：NCCL 窗口注册是全局 collective</strong></p>
+
+<pre><code class="language-cpp">// nccl.cu L135-140 — 窗口注册跨越所有 rank
+// NOTES: `ncclCommWindowRegister` is collective: it internally calls
+// bootstrapBarrier across all ranks, so no explicit barrier is needed.
+NCCL_CHECK(ncclCommWindowRegister(comm, raw_window_ptr,
+    this-&gt;symmetric_memory-&gt;num_bytes, &amp;window, NCCL_WIN_STRICT_ORDERING));</code></pre>
+
+<p><strong>证据 3：Gin get 的 peer_idx 可以是跨节点 peer</strong></p>
+
+<pre><code class="language-cpp">// engram_fetch.cuh L61-62 — peer_idx 路由到任意 RDMA peer
+const auto peer_idx = owner_rank_idx / kNumRanksPerRDMAPeer;
+// peer_idx 可以是 0 到 num_scaleout_ranks-1（跨节点）</code></pre>
+
+<p><strong>证据 4：CPU handle 通过 all_gather 全局分发</strong></p>
+
+<pre><code class="language-python"># elastic.py L338-342 — 全局分发（跨节点）
+cpu_comm = []
+if allow_hybrid_mode and num_cpu_bytes > 0:
+    pid, fd = _C.create_cpu_handle(num_cpu_bytes)
+    cpu_comm = [None] * self.num_ranks
+    dist.all_gather_object(cpu_comm, (pid, fd), self.group)  # 全局 all_gather</code></pre>
+
+<h3>7.3.2 维度二：测试代码证据</h3>
+
+<p><strong>测试使用全局 group（跨节点）</strong>：</p>
+
+<pre><code class="language-python"># test_engram.py L15,124
+rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
+# init_dist 返回的 group 是全局 group:
+# dist.new_group(list(range(num_local_ranks * num_nodes)))
+
+# 测试默认 4 个进程（可跨节点）
+torch.multiprocessing.spawn(test, args=(num_processes, args), nprocs=num_processes)
+
+# indices 范围覆盖所有 rank 的 entries:
+indices = torch.randint(0, num_ranks * args.num_entries, ...)  # 全局索引</code></pre>
+
+<p><strong>测试的正确性验证</strong>：通过 <code>dist.all_gather_into_tensor</code> 收集所有 rank 的数据作为 reference，验证 Engram fetch 结果。这意味着测试设计本身就假设了<strong>跨节点数据访问</strong>。</p>
+
+<h3>7.3.3 维度三：初始化操作证据</h3>
+
+<p><strong>证据 1：VA 空间分配只包含本地节点</strong></p>
+
+<pre><code class="language-cpp">// symmetric.hpp L211 — 只分配本地节点的 CPU 段
+this-&gt;num_bytes = num_gpu_bytes + num_cpu_bytes * num_scaleup_ranks;
+// 注意：不是 num_ranks，而是 num_scaleup_ranks（本地节点 rank 数）</code></pre>
+
+<p><strong>证据 2：只 import 本地节点的 CPU segments</strong></p>
+
+<pre><code class="language-cpp">// symmetric.hpp L223-226 — 仅映射本地节点
+// Import and map all intra-node CPU segments
+for (int i = 0; i &lt; num_scaleup_ranks; ++i) {
+    auto [pid, fd] = cpu_comm[num_scaleup_ranks * scaleout_rank_idx + i];
+    // scaleout_rank_idx 选择当前节点的 segments
+}</code></pre>
+
+<p><strong>证据 3：set_access 只设置本地设备访问权限</strong></p>
+
+<pre><code class="language-cpp">// symmetric.hpp L104-109 — 仅授予本地 GPU 访问
+for (int i = 0; i &lt; num_devices; ++i) {
+    int can_access_peer = 0;
+    if (i == device_idx ||
+        (cudaDeviceCanAccessPeer(&can_access_peer, i, device_idx) &amp;&amp; can_access_peer)) {
+        desc[0].location.id = i;
+        cuMemSetAccess(addr, num_bytes, desc, ...);
+    }
+}
+// 跨节点 GPU 无法 peer access，不授予权限</code></pre>
+
+<p><strong>证据 4：LSA pointer 只获取节点内 peer</strong></p>
+
+<pre><code class="language-cpp">// nccl.cu L141-147 — 仅 NVLink peer 的 LSA pointer
+ncclGetLsaDevicePointer(window, 0, nvl_rank_idx, &amp;mapped_window_ptr);
+for (int i = 0; i &lt; num_nvl_ranks; ++i)  // 仅节点内 NVLink peers
+    ncclGetLsaDevicePointer(window, 0, i, &amp;nvl_window_ptrs[i]);</code></pre>
+
+<h3>7.3.4 综合结论：物理本地 + 逻辑全局</h3>
+
+<div class="key-callout">
+<p><strong>结论</strong>：HybridElasticSymmetricMemory 是<strong>"物理本地、逻辑全局"</strong>的架构：</p>
+<ul>
+<li><strong>物理层</strong>：CPU 段位于各节点本地（NUMA-local），仅本地节点 GPU 可直接访问</li>
+<li><strong>逻辑层</strong>：通过对称布局，所有节点使用相同的 VA 方案，偏移量全局有效</li>
+<li><strong>访问层</strong>：跨节点访问通过 RDMA 实现——本地 NIC 读取远端节点的本地 CPU 段</li>
+</ul>
+</div>
+
+<p><strong>完整的数据流（跨节点场景）</strong>：</p>
+
+<pre><code>Node 0 (发起 fetch)                           Node 1 (远端)
+┌────────────────────────┐                    ┌────────────────────────┐
+│ GPU Kernel (Node 0)    │                    │ GPU 空闲               │
+│  计算: peer_idx=1      │                    │ (完全不参与)           │
+│  src_off = 3*stride+off│                    │                        │
+│         ↓              │                    │                        │
+│ NIC (Node 0)           │                    │ NIC (Node 1)           │
+│  发起 RDMA Get         │═══ RoCE/IB ═══════▶│  接收 Get 请求         │
+│  peer=1, offset=XXX    │                    │  从本地 CPU 段读取     │
+│                        │                    │  (物理内存 DMA)        │
+│                        │◀═══════════════════│                        │
+│  接收数据              │                    │                        │
+│         ↓              │                    │                        │
+│ GPU VRAM (Node 0)      │                    │                        │
+│  fetched[...] 就绪     │                    │                        │
+└────────────────────────┘                    └────────────────────────┘
+
+关键: NIC 读取的是 Node 1 的本地 CPU 物理内存
+     Node 1 的 GPU 完全不参与
+     对称性保证: Node 0 计算的 offset 在 Node 1 同样有效</code></pre>
+
+<p><strong>"Engram 域"的定义</strong>：</p>
+
+<table>
+<tr><th>层级</th><th>范围</th><th>访问方式</th><th>延迟</th></tr>
+<tr><td>GPU 段</td><td>本地节点所有 GPU</td><td>NVLink peer access</td><td>~10 µs</td></tr>
+<tr><td>CPU 段（本地）</td><td>本地节点所有 rank</td><td>本地 GPU 不可直接访问，RDMA loopback</td><td>~1-2 µs</td></tr>
+<tr><td>CPU 段（远端）</td><td>所有 scale-out 节点的 CPU 段</td><td>RDMA Get (RoCE/IB)</td><td>~5-15 µs</td></tr>
+</table>
+
+<div class="hl-amber">
+<p><strong>重要澄清</strong>：Engram 的"对称内存"不是"跨节点共享内存"（不是 CXL 内存池），而是<strong>"对称地址布局的分布式本地内存"</strong>。每个节点只存储自己的数据，但通过 RDMA 网络让其他节点可以读取。对称性体现在地址计算层面，而非数据物理位置。</p>
+</div>
+
+<h2 id="symmetric-summary">7.4 设计权衡总结</h2>
+
+<table>
+<tr><th>设计决策</th><th>选择</th><th>原因</th></tr>
+<tr><td>对称布局</td><td>所有 rank VA 相同</td><td>O(1) 地址计算，无需查表</td></tr>
+<tr><td>物理分布</td><td>各节点存各节点数据</td><td>避免一致性开销，最大化本地带宽</td></tr>
+<tr><td>跨节点访问</td><td>RDMA one-sided read</td><td>远端 GPU 不参与，真正的 0 SM</td></tr>
+<tr><td>CPU 段注册</td><td>NUMA-local + GDR</td><td>RDMA NIC 可直接 DMA 读取</td></tr>
+<tr><td>全局窗口</td><td>ncclCommWindowRegister</td><td>NCCL 内部管理跨节点 MR</td></tr>
+</table>
+
+<p><strong>对称性带来的根本优势</strong>：它将"远端地址计算"从 O(通信) 或 O(查表) 降为 O(1) 算术运算。GPU kernel 只需一次除法和一次取模即可定位任意 rank 的任意 entry——这是 GPU-Initiated RDMA 能够高效工作的前提。</p>
+
+<h1 id="sm-rdma">8. SM 如何调用 RoCE 能力</h1>
 
 <h2 id="sm-mechanism">7.1 "0 SM" 的本质</h2>
 
@@ -776,7 +1020,7 @@ gin.wait(last_gin_req);</code></pre>
 <p><strong>实际占用</strong>：<code>engram_fetch</code> kernel 使用 <code>__launch_bounds__(1024, 1)</code>，每个 QP 一个 block（1024 threads）。对于 H100（132 SM），如果 num_qps=132，则短暂占用全部 SM，但 kernel 执行时间极短（微秒级）。wait kernel 类似。真正的数据传输期间 SM 完全空闲。</p>
 </div>
 
-<h1 id="deployment">8. Engram 部署模型</h1>
+<h1 id="deployment">9. Engram 部署模型</h1>
 
 <h2 id="deploy-colo">8.1 与模型共部署</h2>
 
@@ -850,7 +1094,7 @@ data, _ = buffer.engram_fetch(indices)()</code></pre>
 </ol>
 </div>
 
-<h1 id="testing">9. 测试方法</h1>
+<h1 id="testing">10. 测试方法</h1>
 
 <h2 id="test-correctness">9.1 正确性验证</h2>
 
@@ -920,7 +1164,7 @@ gb_s = num_fetched_bytes / (issue_t + wait_t) / 1e9  # GB/s</code></pre>
 <tr><td>allow_hybrid_mode</td><td>False</td><td>是否启用 hybrid 模式</td></tr>
 </table>
 
-<h1 id="conclusion">10. 总结与设计洞察</h1>
+<h1 id="conclusion">11. 总结与设计洞察</h1>
 
 <h3>核心设计原则</h3>
 
