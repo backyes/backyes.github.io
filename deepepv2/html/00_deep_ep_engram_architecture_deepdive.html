@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engram 架构深潜：0 SM RDMA 远端内存访问全析 · backyes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+<style>
+/* Article extensions */
+.toc-sidebar{max-height:85vh}
+.article-body{font-family:var(--font-serif);font-size:1.08rem;line-height:1.85}
+.article-body h1{font-size:1.9rem;margin:0 0 14px;line-height:1.3}
+.article-body h2{font-size:1.4rem;margin:2em 0 .6em;padding-bottom:.4em;border-bottom:2px solid var(--green)}
+.article-body h3{font-size:1.2rem;margin:1.5em 0 .5em;padding-left:12px;border-left:3px solid var(--green)}
+.article-body h4{font-size:1.05rem;margin:1.3em 0 .4em;color:var(--green-deep)}
+.article-body p{margin:.75em 0}
+.article-body ul,ol{margin:.6em 0 .6em 1.5em}
+.article-body li{margin:.3em 0;line-height:1.7}
+.article-body code{font-family:var(--font-mono);font-size:.84em;background:var(--green-soft);padding:1px 5px;border-radius:3px}
+.article-body pre{background:var(--surface-strong);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px;overflow-x:auto;font-size:.82em;line-height:1.6}
+.article-body pre code{background:none;padding:0}
+.article-body blockquote{border-left:4px solid var(--green);background:var(--green-soft);padding:12px 16px;margin:1em 0;border-radius:0 8px 8px 0}
+.article-body blockquote p{margin:.3em 0}
+.article-body table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.88em}
+.article-body th{background:var(--green-soft);color:var(--green-deep);padding:10px 14px;border:1px solid var(--line);text-align:left;font-weight:600}
+.article-body td{padding:9px 14px;border:1px solid var(--line);vertical-align:top}
+.article-body tr:nth-child(even){background:rgba(255,255,255,.5)}
+.article-body strong{color:var(--ink)}
+.hl-blue{border-left:4px solid var(--blue);background:rgba(22,62,122,.06);padding:12px 16px;margin:1em 0;border-radius:0 8px 8px 0}
+.hl-amber{border-left:4px solid var(--gold);background:var(--gold-soft);padding:12px 16px;margin:1em 0;border-radius:0 8px 8px 0}
+.key-callout{border-left:4px solid var(--green);background:var(--green-soft);padding:14px 18px;margin:1.2em 0;border-radius:0 8px 8px 0}
+.key-callout p{margin:.3em 0}
+.key-callout strong{color:var(--green-deep)}
+.file-ref{font-family:var(--font-mono);font-size:.82em;color:var(--green-deep);background:var(--green-soft);padding:1px 6px;border-radius:3px}
+@media(max-width:900px){
+  .article-layout{grid-template-columns:1fr}
+  .toc-sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:24px}
+}
+</style>
+</head>
+<body>
+<div class="page-shell">
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-name"><a href="../">backyes</a> / <a href="../index.html">DeepGEMM & DeepEP</a> / <a href="index.html">完整导航</a></div>
+    <div class="brand-tagline">Engram 架构深潜 · 0 SM RDMA 远端内存访问全析 · 源码级剖析</div>
+  </div>
+  <nav class="topnav">
+    <a href="../" style="color:var(--green)">← backyes</a>
+    <a href="index.html">导航</a>
+  </nav>
+</header>
+
+<div class="article-layout">
+<aside class="toc-sidebar">
+<div class="toc">
+<div class="toc-title">Contents</div>
+<ul>
+<li><a href="#thesis" class="h1">Thesis</a></li>
+<li><a href="#overview" class="h1">概述</a></li>
+<li><a href="#arch-layer" class="h1">1. 源码架构分层</a></li>
+<li><a href="#arch-python" class="h2">1.1 Python API 层</a></li>
+<li><a href="#arch-cpp" class="h2">1.2 C++ Runtime 层</a></li>
+<li><a href="#arch-cuda" class="h2">1.3 CUDA Kernel 层</a></li>
+<li><a href="#arch-jit" class="h2">1.4 JIT 编译层</a></li>
+<li><a href="#usage" class="h1">2. 使用方式</a></li>
+<li><a href="#usage-write" class="h2">2.1 Engram Write</a></li>
+<li><a href="#usage-fetch" class="h2">2.2 Engram Fetch</a></li>
+<li><a href="#usage-fp8" class="h2">2.3 FP8 模式</a></li>
+<li><a href="#gin-interaction" class="h1">3. NCCL Gin 交互机制</a></li>
+<li><a href="#gin-handle" class="h2">3.1 Gin Handle 构造</a></li>
+<li><a href="#gin-get" class="h2">3.2 RDMA Get 原语</a></li>
+<li><a href="#gin-flush" class="h2">3.3 Flush 与 Doorbell</a></li>
+<li><a href="#gin-am" class="h2">3.4 gin.get<...> 模板参数</a></li>
+<li><a href="#roce-nvlink" class="h1">4. RoCE 与 NVLink 路径处理</a></li>
+<li><a href="#roce-path" class="h2">4.1 RoCE (RDMA) 路径</a></li>
+<li><a href="#nvlink-path" class="h2">4.2 NVLink 路径</a></li>
+<li><a href="#hybrid" class="h2">4.3 Hybrid 模式</a></li>
+<li><a href="#concurrency" class="h1">5. 查表并发机制</a></li>
+<li><a href="#conc-qp" class="h2">5.1 QP 并行化</a></li>
+<li><a href="#conc-routing" class="h2">5.2 路由分解</a></li>
+<li><a href="#conc-atomic" class="h2">5.3 原子计数与 Flush 控制</a></li>
+<li><a href="#symmetric-memory" class="h1">6. 对称内存定义</a></li>
+<li><a href="#sym-layout" class="h2">6.1 内存布局</a></li>
+<li><a href="#sym-cpu" class="h2">6.2 CPU 段注册与跨进程映射</a></li>
+<li><a href="#sym-engram" class="h2">6.3 Engram 存储的对称内存语义</a></li>
+<li><a href="#sm-rdma" class="h1">7. SM 如何调用 RoCE 能力</a></li>
+<li><a href="#sm-mechanism" class="h2">7.1 "0 SM" 的本质</a></li>
+<li><a href="#sm-gin-api" class="h2">7.2 NCCL Gin GPU-Initiated API</a></li>
+<li><a href="#sm-actual" class="h2">7.3 实际 SM 占用分析</a></li>
+<li><a href="#deployment" class="h1">8. Engram 部署模型</a></li>
+<li><a href="#deploy-colo" class="h2">8.1 与模型共部署</a></li>
+<li><a href="#deploy-buffer" class="h2">8.2 ElasticBuffer 生命周期</a></li>
+<li><a href="#deploy-standalone" class="h2">8.3 独立部署可行性分析</a></li>
+<li><a href="#testing" class="h1">9. 测试方法</a></li>
+<li><a href="#test-correctness" class="h2">9.1 正确性验证</a></li>
+<li><a href="#test-perf" class="h2">9.2 性能基准</a></li>
+<li><a href="#test-params" class="h2">9.3 参数空间</a></li>
+<li><a href="#conclusion" class="h1">10. 总结与设计洞察</a></li>
+<li><a href="#references" class="h1">References</a></li>
+</ul>
+</div>
+</aside>
+
+<article class="article-body" id="top">
+
+<blockquote style="border-left:4px solid var(--gold);background:var(--gold-soft);padding:14px 18px;margin:0 0 1.5em 0;border-radius:0 8px 8px 0">
+<p><strong>Thesis</strong>：Engram 是 DeepEP V2 引入的 0 SM RDMA 远端内存访问原语，通过 NCCL Gin (GPU-Initiated Networking) 让 GPU 直接发起 RDMA Get 操作，绕过 CPU 和 NIC 软件栈。其核心设计在于将远端内存抽象为"对称内存窗口"中的全局可寻址表，通过 QP 并行化 + 路由分解 + 原子 flush 控制实现高并发查表，且与模型推理/训练共部署于同一 GPU 进程内。</p>
+</blockquote>
+
+<h1 id="overview">概述</h1>
+
+<p>Engram（Experimental）是 DeepEP V2 中最具创新性的实验特性之一。它实现了 <strong>0 SM (Streaming Multiprocessor) 占用的远端内存访问</strong>——GPU 通过 RDMA 网络直接读取其他节点的 GPU/CPU 内存，无需占用任何 SM 计算资源进行数据搬运。</p>
+
+<div class="key-callout">
+<p><strong>核心定位</strong>：Engram 面向的场景是 <strong>远程 KV Cache 访问</strong>——在 Disaggregated Inference（分离式推理）架构中，Prefill 节点的 KV Cache 需要被 Decode 节点远程读取。传统方案需要 CPU 参与（GPU → CPU → NIC → 网络 → NIC → CPU → GPU），而 Engram 允许 GPU 直接通过 RDMA Get 远程读取，实现真正的 GPU-to-GPU 零拷贝。</p>
+</div>
+
+<p>本报告基于 DeepEP v2.1.0 源码，从以下维度进行深度剖析：</p>
+<ul>
+<li><strong>源码架构</strong>：Python API → C++ Runtime → CUDA Kernel → JIT 编译 四层结构</li>
+<li><strong>Gin 交互</strong>：NCCL Gin (GPU-Initiated Networking) 的 handle 构造、RDMA Get/Flush 原语</li>
+<li><strong>RoCE/NVLink 路径</strong>：跨节点 RoCE RDMA 与节点内 NVLink 的分流处理</li>
+<li><strong>查表并发</strong>：多 QP 并行、路由分解、原子计数与 flush 控制</li>
+<li><strong>对称内存</strong>：HybridElasticSymmetricMemory 的 CPU 段注册与跨进程映射</li>
+<li><strong>SM 调用 RoCE</strong>："0 SM" 的本质与实际 SM 占用分析</li>
+<li><strong>部署模型</strong>：与模型共部署 vs 独立部署的可行性</li>
+</ul>
+
+<table>
+<tr><th>维度</th><th>传统 RDMA</th><th>Engram (0 SM)</th></tr>
+<tr><td>数据路径</td><td>GPU→CPU→NIC→网络</td><td>GPU RDMA Get 直读</td>
+<tr><td>SM 占用</td><td>CPU 参与 + GPU 等待</td><td>0 SM（实际 kernel launch 极短）</td>
+<tr><td>延迟</td><td>高（CPU 中转）</td><td>低（GPU-direct）</td>
+<tr><td>编程模型</td><td>ibv_post_send (CPU)</td><td>gin.get (GPU kernel 内)</td>
+<tr><td>内存注册</td><td>固定 MR</td><td>对称内存窗口自动映射</td>
+</tr>
+</table>
+
+<h1 id="arch-layer">1. 源码架构分层</h1>
+
+<p>Engram 的实现贯穿 DeepEP 的四层架构。下图展示完整调用链：</p>
+
+<pre><code>Python API (elastic.py)
+    │
+    ├─ ElasticBuffer.engram_write(storage, sf)
+    │     写入本地 KV 到 CPU 段 (对称内存)
+    │
+    └─ ElasticBuffer.engram_fetch(indices) → hook
+          返回 callable，调用时等待 RDMA 完成
+              │
+              ▼
+C++ Runtime (buffer.hpp)
+    │
+    ├─ engram_write(): cudaMemcpyAsync → barrier
+    │
+    └─ engram_fetch(): launch_engram_fetch() → lambda
+                          │
+                          ▼
+JIT Runtime (engram.hpp)
+    │
+    ├─ EngramFetchRuntime::generate() → 生成 CUDA 代码
+    ├─ jit::compiler->build() → 编译
+    ├─ EngramFetchRuntime::launch() → 启动 kernel
+    │
+    └─ EngramFetchWaitRuntime (lambda 被调用时)
+           │
+           ▼
+CUDA Kernel (engram_fetch.cuh)
+    │
+    ├─ engram_fetch_impl: 每个 QP 一个 block，warp 协作发起 RDMA Get
+    └─ engram_fetch_wait_impl: 等待所有 QP 的 RDMA 完成</code></pre>
+
+<h2 id="arch-python">1.1 Python API 层</h2>
+
+<p>Python 层定义在 <span class="file-ref">deep_ep/buffers/elastic.py</span> 的 <code>ElasticBuffer</code> 类中：</p>
+
+<pre><code class="language-python">class ElasticBuffer:
+    @staticmethod
+    def get_engram_storage_size_hint(num_entries, hidden, num_max_tokens_per_rank, dtype):
+        """计算 Engram 存储所需的最小 buffer 大小"""
+        num_bytes_per_entry = align(hidden * dtype.itemsize, 32)  # LDG.256 对齐
+        num_gpu_bytes = align(num_bytes_per_entry * num_max_tokens_per_rank, buffer_alignment)
+        num_cpu_bytes = align(num_bytes_per_entry * num_entries, buffer_alignment)
+        return num_gpu_bytes, num_cpu_bytes
+
+    def engram_write(self, storage, sf=None):
+        """写入 Engram 数据到 buffer（含前后 barrier）"""
+        self.runtime.engram_write(storage, sf)
+
+    def engram_fetch(self, indices, num_qps=0, use_tma_aligned_col_major_sf=False):
+        """发起远端获取，返回 hook callable"""
+        return self.runtime.engram_fetch(indices, num_qps, use_tma_aligned_col_major_sf)</code></pre>
+
+<p>关键设计：</p>
+<ul>
+<li><strong>get_engram_storage_size_hint</strong>：分离 GPU 和 CPU 存储需求。GPU 端只需接收缓冲区（<code>num_max_tokens_per_rank</code>），CPU 端存储全量 entries</li>
+<li><strong>engram_write</strong>：包含 barrier 确保写入对所有 rank 可见</li>
+<li><strong>engram_fetch 返回 callable</strong>：延迟执行模式——fetch 只发起 RDMA，返回的 hook 被调用时才 wait 完成</li>
+</ul>
+
+<h2 id="arch-cpp">1.2 C++ Runtime 层</h2>
+
+<p>C++ 层在 <span class="file-ref">csrc/elastic/buffer.hpp</span> 的 <code>ElasticBuffer</code> 类中实现核心逻辑：</p>
+
+<pre><code class="language-cpp">void ElasticBuffer::engram_write(const torch::Tensor& storage,
+                                  const std::optional&lt;torch::Tensor&gt;& sf) {
+    barrier(false, true);  // 确保之前 fetch 完成
+
+    // 写入到 CPU 段 (buffer + num_gpu_buffer_bytes + offset)
+    const auto cpu_write_offset = allow_hybrid_mode
+        ? nccl_context-&gt;scaleup_rank_idx * num_cpu_buffer_bytes : 0;
+    cudaMemcpyAsync(
+        advance_ptr(buffer, num_gpu_buffer_bytes + cpu_write_offset),
+        storage.data_ptr(), storage.nbytes(),
+        cudaMemcpyDeviceToDevice, compute_stream);
+
+    barrier(false, true);  // 确保写入可见
+}</code></pre>
+
+<p><code>engram_fetch</code> 的 C++ 实现：</p>
+
+<pre><code class="language-cpp">auto ElasticBuffer::engram_fetch(const torch::Tensor& indices, int num_qps,
+                                  const bool& use_tma_aligned_col_major_sf) const {
+    // 1. 准备接收 tensor (zero-copy from GPU buffer)
+    auto fetched = torch::from_blob(buffer,
+        {num_tokens, engram_hidden * num_entries_per_token}, ...);
+
+    // 2. 准备 Gin request 追踪区
+    auto last_gin_requests = torch::empty(
+        {num_gin_ranks * num_qps, sizeof(ncclGinRequest_t)}, ...);
+
+    // 3. 发起 RDMA Get kernel
+    launch_engram_fetch(
+        nccl_context-&gt;dev_comm, nccl_context-&gt;window,
+        advance_ptr(buffer, num_gpu_buffer_bytes),  // CPU 段基址
+        fetched.data_ptr(),                          // GPU 接收区
+        indices.data_ptr&lt;int&gt;(),
+        last_gin_requests, ...);
+
+    // 4. 返回 lambda：调用时执行 wait kernel
+    return [=, this]() {
+        launch_engram_fetch_wait(last_gin_requests, ...);
+        return {fetched, fetched_sf};
+    };
+}</code></pre>
+
+<div class="key-callout">
+<p><strong>关键洞察</strong>：<code>engram_fetch</code> 使用 <code>torch::from_blob</code> 在 GPU buffer 上零拷贝创建输出 tensor。RDMA Get 直接写入 GPU buffer 的前端，无需额外拷贝。</p>
+</div>
+
+<h2 id="arch-cuda">1.2 CUDA Kernel 层</h2>
+
+<p>CUDA kernel 在 <span class="file-ref">deep_ep/include/deep_ep/impls/engram_fetch.cuh</span> 中实现。这是 Engram 的核心：</p>
+
+<pre><code class="language-cpp">template &lt;int kNumQPs, int kNumEntriesPerRank, int kNumHiddenBytes,
+          int kNumSFPacks, int kNumEntriesPerToken, int kNumRDMAPeers,
+          int kNumRanksPerRDMAPeer, size_t kIntraRankStorageStride,
+          int kNumThreads, typename team_t, int kNumWarps&gt;
+__global__ void __launch_bounds__(kNumThreads, 1)
+engram_fetch_impl(const ncclDevComm_t nccl_dev_comm, const ncclWindow_t nccl_window,
+                  void* storage, void* fetched, int* indices,
+                  ncclGinRequest_t* last_gin_requests,
+                  const sf_pack_t* sf_table, sf_pack_t* fetched_sf,
+                  const int sf_token_stride, const int sf_hidden_stride,
+                  const int num_tokens) {
+    const auto qp_idx = blockIdx.x;          // 每个 block = 1 个 QP
+    const auto warp_idx = ptx::get_warp_idx();
+    const auto global_warp_idx = qp_idx * kNumWarps + warp_idx;
+
+    // 构造 Gin handle
+    const auto gin = handle::NCCLGin(nccl_dev_comm, nccl_window, qp_idx,
+                                      NCCL_GIN_RESOURCE_SHARING_CTA);
+
+    // 每个 warp 处理一个 token 的 entry fetch
+    if (ptx::elect_one_sync()) {
+        for (int i = global_warp_idx; i &lt; num_tokens * kNumEntriesPerToken;
+             i += kNumQPs * kNumWarps) {
+            const auto global_idx = __ldg(indices + i);
+            const auto owner_rank_idx = global_idx / kNumEntriesPerRank;
+            const auto local_entry_idx = global_idx % kNumEntriesPerRank;
+
+            // 路由到 RDMA peer
+            const auto peer_idx = owner_rank_idx / kNumRanksPerRDMAPeer;
+            const auto intra_peer_rank_idx = owner_rank_idx % kNumRanksPerRDMAPeer;
+
+            // 计算源地址偏移
+            const auto src_byte_offset = int64_t(intra_peer_rank_idx) * kIntraRankStorageStride
+                                       + int64_t(local_entry_idx) * kNumHiddenBytes;
+
+            // 发起 RDMA Get
+            issue_rdma_get(i, peer_idx, src_byte_offset, ...);
+        }
+    }
+}</code></pre>
+
+<p>Wait kernel 在 <span class="file-ref">deep_ep/include/deep_ep/impls/engram_fetch_wait.cuh</span>：</p>
+
+<pre><code class="language-cpp">__global__ void __launch_bounds__(kNumThreads, 1)
+engram_fetch_wait_impl(const ncclDevComm_t nccl_dev_comm,
+                       const ncclWindow_t nccl_window,
+                       ncclGinRequest_t* last_gin_requests) {
+    const auto qp_idx = blockIdx.x;
+    const auto gin = handle::NCCLGin(nccl_dev_comm, nccl_window, qp_idx, ...);
+
+    // 遍历所有 RDMA peer，等待非零 request 完成
+    for (int i = thread_idx; i &lt; kNumRDMAPeers; i += kNumThreads) {
+        auto last_gin_req_int4 = __ldg(reinterpret_cast&lt;int4*&gt;(
+            last_gin_requests + qp_idx * kNumRDMAPeers + i));
+        if (last_gin_req_int4.x != 0 || ...) {
+            gin.wait(last_gin_req);  // 等待该 peer 的最后一个请求
+        }
+    }
+}</code></pre>
+
+<h2 id="arch-jit">1.4 JIT 编译层</h2>
+
+<p>JIT 层在 <span class="file-ref">csrc/kernels/elastic/engram.hpp</span> 中，使用 CRTP 模式：</p>
+
+<pre><code class="language-cpp">class EngramFetchRuntime final : public jit::LaunchRuntime&lt;EngramFetchRuntime&gt; {
+    struct Args {
+        // Templated arguments (编译期常量)
+        int num_entries_per_rank, num_hidden_bytes, num_sf_packs;
+        int num_entries_per_token, num_scaleout_ranks, num_scaleup_ranks;
+        int64_t num_cpu_bytes_per_rank;
+        int num_qps;
+        bool allow_hybrid_mode;
+        // ...
+    };
+
+    static std::string generate_impl(const Args& args) {
+        // 根据 hybrid 模式选择不同的 team 和 peer 计算
+        if (args.allow_hybrid_mode) {
+            num_rdma_peers = args.num_scaleout_ranks;
+            num_ranks_per_rdma_peer = args.num_scaleup_ranks;
+            team_tag = "ncclTeamTagRail";     // scale-out 使用 rail team
+        } else {
+            num_rdma_peers = args.num_scaleout_ranks * args.num_scaleup_ranks;
+            num_ranks_per_rdma_peer = 1;
+            team_tag = "ncclTeamTagWorld";    // 全局 world team
+        }
+        // 生成模板实例化代码
+        return fmt::format(R"(
+            #include &lt;deep_ep/impls/engram_fetch.cuh&gt;
+            static void __instantiate_kernel() {{
+                auto ptr = reinterpret_cast&lt;void*&gt;(&amp;{});
+            }}
+        )", func_name);
+    }
+};</code></pre>
+
+<div class="hl-blue">
+<p><strong>JIT 设计要点</strong>：</p>
+<ul>
+<li>QP 数量、hidden size、entries per token 等作为<strong>模板参数</strong>传入，编译器可针对性优化</li>
+<li>Hybrid 模式 vs Direct 模式生成不同的 <code>team_tag</code> 和 peer 计算逻辑</li>
+<li>每个 kernel 使用 <code>__launch_bounds__(kNumThreads, 1)</code> 强制每 block 1 个线程块</li>
+</ul>
+</div>
+
+<h1 id="usage">2. 使用方式</h1>
+
+<h2 id="usage-write">2.1 Engram Write</h2>
+
+<p><code>engram_write</code> 将本地 KV 数据写入对称内存的 CPU 端：</p>
+
+<pre><code class="language-python"># 计算存储需求
+num_gpu_bytes, num_cpu_bytes = deep_ep.ElasticBuffer.get_engram_storage_size_hint(
+    num_entries=524288, hidden=128,
+    num_max_tokens_per_rank=512, dtype=torch.bfloat16)
+
+# 创建 buffer（CPU 段用于 Engram 存储）
+buffer = deep_ep.ElasticBuffer(
+    group,
+    num_bytes=num_gpu_bytes + num_cpu_bytes,
+    num_cpu_bytes=num_cpu_bytes,
+    num_allocated_qps=num_qps,
+    allow_hybrid_mode=True)
+
+# 写入本地 KV 到 CPU 段
+local_kv = torch.randn((num_entries, hidden), dtype=torch.bfloat16, device='cuda')
+buffer.engram_write(local_kv)</code></pre>
+
+<div class="hl-amber">
+<p><strong>注意</strong>：<code>engram_write</code> 内部调用 <code>cudaMemcpyAsync</code> 从 GPU tensor 拷贝到 CPU 段的对称内存区域。虽然源数据在 GPU 上，但目标是通过 CUDA Unified Memory 映射到 CPU 地址空间的物理内存，NIC 可以直接通过 RDMA 读取。</p>
+</div>
+
+<h2 id="usage-fetch">2.2 Engram Fetch</h2>
+
+<p><code>engram_fetch</code> 发起远端查表：</p>
+
+<pre><code class="language-python"># indices: [num_tokens, num_entries_per_token] 全局 entry 索引
+indices = torch.randint(0, num_ranks * num_entries,
+                        (num_tokens, num_entries_per_token), dtype=torch.int32)
+
+# 发起 RDMA Get（非阻塞）
+hook = buffer.engram_fetch(indices)
+
+# ... 可在此插入计算 kernel 以 overlap ...
+
+# 等待 RDMA 完成并获取数据
+data, sf = hook()  # data: [num_tokens, num_entries_per_token * hidden]</code></pre>
+
+<p>延迟执行（deferred execution）模式允许用户在 issue 和 wait 之间插入计算 kernel，实现通信与计算的 overlap。</p>
+
+<h2 id="usage-fp8">2.3 FP8 模式</h2>
+
+<p>Engram 支持 FP8 存储 + 全局复制的 scaling factor：</p>
+
+<pre><code class="language-python"># FP8 模式：数据以 FP8 存储，SF 全局复制
+local_fp8, local_sf = per_token_cast_to_fp8(local_bf16)
+
+# SF 全局复制到所有 rank（all-gather）
+sf = torch.empty((num_ranks * num_entries, num_sf_packs), ...)
+dist.all_gather_into_tensor(sf, local_sf, group)
+
+# 写入：FP8 数据走 RDMA，SF 本地查表
+buffer.engram_write(local_fp8, sf=sf)
+
+# 获取：FP8 数据通过 RDMA，SF 通过本地 gather
+data, fetched_sf = buffer.engram_fetch(indices)()</code></pre>
+
+<div class="key-callout">
+<p><strong>设计智慧</strong>：FP8 scaling factor 不通过 RDMA 传输，而是在所有 rank 本地冗余存储。这样：</p>
+<ul>
+<li>RDMA 只传输 FP8 数据（节省带宽）</li>
+<li>SF 查表通过本地 memory read（延迟极低）</li>
+<li>避免 RDMA 传输小数据（SF 通常只有 4-16 bytes/entry）的 overhead</li>
+</ul>
+</div>
+
+<h1 id="gin-interaction">3. NCCL Gin 交互机制</h1>
+
+<h2 id="gin-handle">3.1 Gin Handle 构造</h2>
+
+<p>每个 QP 对应一个 NCCL Gin handle：</p>
+
+<pre><code class="language-cpp">const auto gin = handle::NCCLGin(nccl_dev_comm, nccl_window, qp_idx,
+                                  NCCL_GIN_RESOURCE_SHARING_CTA);</code></pre>
+
+<p>参数含义：</p>
+<ul>
+<li><code>nccl_dev_comm</code>：NCCL 设备端 communicator</li>
+<li><code>nccl_window</code>：对称内存窗口（所有 rank 可访问的共享内存区域）</li>
+<li><code>qp_idx</code>：QP 索引（每个 block 一个 QP）</li>
+<li><code>NCCL_GIN_RESOURCE_SHARING_CTA</code>：资源分享模式（CTA = Cooperative Thread Array，即 block 内共享）</li>
+</ul>
+
+<h2 id="gin-get">3.2 RDMA Get 原语</h2>
+
+<p>核心 RDMA 操作通过 <code>gin.get</code> 发起：</p>
+
+<pre><code class="language-cpp">gin.get&lt;team_t, ncclCoopThread, ncclGin_SegmentMixed&gt;(
+    math::advance_ptr(storage, src_byte_offset),  // 源地址（远端对称内存）
+    math::advance_ptr(fetched, token_idx * kNumHiddenBytes),  // 目的地址（本地 GPU）
+    kNumHiddenBytes,    // 传输字节数
+    peer_idx,           // 目标 RDMA peer
+    extra_options);     // 聚合选项</code></pre>
+
+<p>模板参数：</p>
+<ul>
+<li><code>team_t</code>：通信组类型（<code>ncclTeamTagWorld</code> 或 <code>ncclTeamTagRail</code>）</li>
+<li><code>ncclCoopThread</code>：协作线程模式（单线程发起，非 warp 协作）</li>
+<li><code>ncclGin_SegmentMixed</code>：混合段模式（源在 CPU 段，目的在 GPU 段）</li>
+</ul>
+
+<h2 id="gin-flush">3.3 Flush 与 Doorbell</h2>
+
+<p>RDMA 请求默认聚合（aggregate），达到一定数量后 flush：</p>
+
+<pre><code class="language-cpp">// 每 kGinQPFlushDepth 个请求 flush 一次
+(request_idx % kGinQPFlushDepth == (kGinQPFlushDepth - 1))
+    ? 0   // flush（不聚合）
+    : ncclGinOptFlagsAggregateRequests  // 聚合请求
+
+// 最终 flush：ring doorbell 通知 NIC
+gin.flush_async&lt;team_t, ncclCoopThread&gt;(i, request_ptr);</code></pre>
+
+<div class="hl-blue">
+<p><strong>Flush 机制</strong>：<code>ncclGinOptFlagsAggregateRequests</code> 告诉 Gin 不要立即发送，而是将多个 get 请求聚合后一次性 flush。这减少了 doorbell ringing 次数，提高吞吐。<code>flush_async</code> 将最后一个请求的 handle 写入 <code>last_gin_requests</code>，供 wait kernel 使用。</p>
+</div>
+
+<h2 id="gin-am">3.4 gin.get&lt;...&gt; 模板参数</h2>
+
+<table>
+<tr><th>模板参数</th><th>值</th><th>含义</th></tr>
+<tr><td>team_t</td><td>ncclTeamTagWorld / ncclTeamTagRail</td><td>全局组 vs rail-local 组</td></tr>
+<tr><td>CoopLevel</td><td>ncclCoopThread</td><td>单线程发起操作</td></tr>
+<tr><td>Segment</td><td>ncclGin_SegmentMixed</td><td>源/目的在不同内存段</td></tr>
+<tr><td>Options</td><td>ncclGinOptFlagsAggregateRequests</td><td>请求聚合优化</td></tr>
+</table>
+
+<h1 id="roce-nvlink">4. RoCE 与 NVLink 路径处理</h1>
+
+<h2 id="roce-path">4.1 RoCE (RDMA) 路径</h2>
+
+<p>Engram 的远程访问完全基于 RDMA（RoCE 或 InfiniBand）：</p>
+
+<pre><code class="language-cpp">// 路由计算：owner rank → RDMA peer
+const auto peer_idx = owner_rank_idx / kNumRanksPerRDMAPeer;
+const auto intra_peer_rank_idx = owner_rank_idx % kNumRanksPerRDMAPeer;
+
+// 源地址在 CPU 段（对称内存）
+const auto src_byte_offset = int64_t(intra_peer_rank_idx) * kIntraRankStorageStride
+                           + int64_t(local_entry_idx) * kNumHiddenBytes;
+
+// 发起 RDMA Get（跨节点）
+gin.get&lt;team_t, ncclCoopThread, ncclGin_SegmentMixed&gt;(
+    advance_ptr(storage, src_byte_offset),  // 远端 CPU 段
+    advance_ptr(fetched, token_idx * kNumHiddenBytes),  // 本地 GPU
+    kNumHiddenBytes, peer_idx, ...);</code></pre>
+
+<p>RoCE 路径特点：</p>
+<ul>
+<li>数据从远端节点的 <strong>CPU 物理内存</strong>（通过 CUDA Unified Memory 映射）直接读取</li>
+<li>经过 RDMA NIC（RoCE v2 或 IB）传输</li>
+<li>写入本地 GPU VRAM</li>
+<li>全程无需 CPU 参与（GPU-Initiated）</li>
+</ul>
+
+<h2 id="nvlink-path">4.2 NVLink 路径</h2>
+
+<p>Engram 的 <code>engram_fetch</code> kernel 本身<strong>不直接处理 NVLink</strong>——它只发起 RDMA Get。但 DeepEP 的 barrier 机制区分了 NVLink 和 RDMA：</p>
+
+<pre><code class="language-cpp">// comm.cuh: scaleup_barrier 根据拓扑选择路径
+if constexpr (kIsScaleupNVLink) {
+    // NVLink 路径：使用 LSA (Load-Store Atomic) 屏障
+    nvlink_barrier_wo_local_sync&lt;...&gt;(gin, workspace, rank_idx, sm_idx, thread_idx);
+} else {
+    // RDMA 路径：使用 Gin signal 屏障
+    gin_barrier_wo_local_sync&lt;...&gt;(gin.nccl_dev_comm, 1, rank_idx, sm_idx, thread_idx);
+}</code></pre>
+
+<p>对于 Engram 的 NVLink 场景（同一节点内 GPU 访问另一 GPU 的 Engram 存储）：</p>
+<ul>
+<li>如果 scale-up 域使用 NVLink，<code>engram_write</code> 后的 barrier 使用 NVLink 原子操作</li>
+<li>但 <code>engram_fetch</code> 的 RDMA Get 仍然走 RDMA 路径（即使目标在同一节点）</li>
+<li>这是因为 Engram 的存储位于 CPU 段，GPU 间 NVLink 无法直接访问 CPU 内存</li>
+</ul>
+
+<div class="hl-amber">
+<p><strong>关键限制</strong>：Engram 的远程访问始终走 RDMA，即使目标 rank 在同一 NVLink 域内。这是因为 Engram 数据存储在 CPU 物理内存（对称内存的 CPU 段），而 NVLink 不支持 GPU 直接访问远端 CPU 内存。如果同一节点内 GPU 需要访问对方的 Engram 数据，仍然需要经过 RDMA loopback（RoCE/IB 回环）。</p>
+</div>
+
+<h2 id="hybrid">4.3 Hybrid 模式</h2>
+
+<p>Hybrid 模式（<code>allow_hybrid_mode=True</code>）改变了 RDMA peer 的路由方式：</p>
+
+<pre><code class="language-cpp">if (args.allow_hybrid_mode) {
+    // Hybrid: scale-out 每个 rail 一个 peer
+    num_rdma_peers = args.num_scaleout_ranks;
+    num_ranks_per_rdma_peer = args.num_scaleup_ranks;
+    team_tag = "ncclTeamTagRail";  // 使用 rail team
+} else {
+    // Direct: 每个 rank 一个 peer
+    num_rdma_peers = args.num_scaleout_ranks * args.num_scaleup_ranks;
+    num_ranks_per_rdma_peer = 1;
+    team_tag = "ncclTeamTagWorld";  // 使用 world team
+}</code></pre>
+
+<table>
+<tr><th>模式</th><th>num_rdma_peers</th><th>num_ranks_per_rdma_peer</th><th>team</th><th>适用场景</th></tr>
+<tr><td>Direct</td><td>scaleout × scaleup</td><td>1</td><td>ncclTeamTagWorld</td><td>扁平拓扑</td></tr>
+<tr><td>Hybrid</td><td>scaleout</td><td>scaleup</td><td>ncclTeamTagRail</td><td>NVLink + RDMA 两层</td></tr>
+</table>
+
+<p>Hybrid 模式下，一个 RDMA peer 对应一个 scale-out 域（rail），该 rail 内的多个 scale-up rank 通过 NVLink 共享数据。这减少了跨节点 RDMA 的 QP 数量。</p>
+
+<h1 id="concurrency">5. 查表并发机制</h1>
+
+<h2 id="conc-qp">5.1 QP 并行化</h2>
+
+<p>Engram 的并发核心是 <strong>多 QP (Queue Pair) 并行</strong>：</p>
+
+<pre><code class="language-cpp">// 每个 QP 对应一个 CUDA block
+const auto qp_idx = blockIdx.x;
+
+// 每个 QP 内有多个 warp 并行处理不同 token
+const auto global_warp_idx = qp_idx * kNumWarps + warp_idx;
+
+// 循环处理：每个 warp 处理 num_tokens * kNumEntriesPerToken / (kNumQPs * kNumWarps) 个 entry
+for (int i = global_widx; i &lt; num_tokens * kNumEntriesPerToken; i += kNumQPs * kNumWarps) {
+    // 查表 + RDMA Get
+}</code></pre>
+
+<p>并行度分析：</p>
+<ul>
+<li><strong>num_qps</strong>：默认 = GPU SM 数量（如 H100 = 132 SM），每个 SM 一个 QP</li>
+<li><strong>kNumWarps</strong>：每个 QP 内的 warp 数（1024 threads / 32 = 32 warps）</li>
+<li><strong>总并行度</strong>：num_qps × 32 warps 同时发起 RDMA Get</li>
+</ul>
+
+<h2 id="conc-routing">5.2 路由分解</h2>
+
+<p>全局 entry index 被分解为 RDMA peer + 本地 entry：</p>
+
+<pre><code class="language-cpp">const auto global_idx = __ldg(indices + i);           // 全局索引
+const auto owner_rank_idx = global_idx / kNumEntriesPerRank;  // 所属 rank
+const auto local_entry_idx = global_idx % kNumEntriesPerRank;  // rank 内偏移
+
+// 路由到 RDMA peer
+const auto peer_idx = owner_rank_idx / kNumRanksPerRDMAPeer;
+const auto intra_peer_rank_idx = owner_rank_idx % kNumRanksPerRDMAPeer;
+
+// 计算源地址
+const auto src_byte_offset = int64_t(intra_peer_rank_idx) * kIntraRankStorageStride
+                           + int64_t(local_entry_idx) * kNumHiddenBytes;</code></pre>
+
+<div class="key-callout">
+<p><strong>查表并发设计</strong>：每个 entry 的查表完全独立——通过 <code>__ldg</code> (load global 只读缓存) 读取 index，计算路由，发起 RDMA Get。不同 warp/QP 之间无数据依赖，天然支持最大并发。<code>atomicAdd_block</code> 仅用于统计每个 peer 的请求数以支持 flush 控制。</p>
+</div>
+
+<h2 id="conc-atomic">5.3 原子计数与 Flush 控制</h2>
+
+<pre><code class="language-cpp">__shared__ int num_requests_per_peer[kNumRDMAPeers];
+
+// 原子计数：追踪每个 peer 的请求数
+const auto request_idx = atomicAdd_block(num_requests_per_peer + peer_idx, 1);
+
+// 每 kGinQPFlushDepth 个请求 flush 一次
+issue_rdma_get(i, peer_idx, src_byte_offset,
+    (request_idx % kGinQPFlushDepth == (kGinQPFlushDepth - 1))
+        ? 0   // 不聚合 = flush
+        : ncclGinOptFlagsAggregateRequests);
+
+// 最终 flush：确保所有请求被提交
+gin.flush_async&lt;team_t, ncclCoopThread&gt;(i, request_ptr);</code></pre>
+
+<p>Flush 策略：</p>
+<ul>
+<li>聚合请求减少 doorbell ringing 开销</li>
+<li>每 <code>kGinQPFlushDepth</code> 个请求强制 flush 一次，防止请求无限堆积</li>
+<li>最终无条件 flush 确保所有请求被 NIC 处理</li>
+</ul>
+
+<h1 id="symmetric-memory">6. 对称内存定义</h1>
+
+<h2 id="sym-layout">6.1 内存布局</h2>
+
+<p>Engram 使用 <code>HybridElasticSymmetricMemory</code>（定义在 <span class="file-ref">csrc/kernels/backend/symmetric.hpp</span>）：</p>
+
+<pre><code>Virtual Address Space (per rank):
+┌──────────────────────────────────────────────────────────────┐
+│  [Workspace]  │  GPU Buffer (front)  │  CPU Buffer (back)   │
+│  (2MB align)  │  (dispatch/combine   │  (Engram storage)     │
+│               │   + fetch recv)      │                       │
+└──────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+                            CPU Buffer 内部布局:
+                            ┌─────────┬─────────┬─────┬─────────┐
+                            │ CPU     │ CPU     │     │ CPU     │
+                            │ rank 0  │ rank 1  │ ... │ rank N-1│
+                            └─────────┴─────────┴─────┴─────────┘
+                            (每个 scale-up rank 一段)</code></pre>
+
+<p>关键代码：</p>
+
+<pre><code class="language-cpp">// HybridElasticSymmetricMemory 构造
+this->num_bytes = num_gpu_bytes + num_cpu_bytes * num_scaleup_ranks;
+
+// Reserve VA
+cuMemAddressReserve(&addr, num_bytes, kNumAlignmentBytes, 0, 0);
+
+// Map GPU segment (front)
+cuMemMap(addr, num_gpu_bytes, 0, gpu_handle, 0);
+
+// Import and map CPU segments (back) - 每个 scale-up rank 一段
+for (int i = 0; i &lt; num_scaleup_ranks; ++i) {
+    const auto offset = num_gpu_bytes + i * num_cpu_bytes;
+    cuMemImportFromShareableHandle(&cpu_handles[i], local_fd, ...);
+    cuMemMap(addr + offset, num_cpu_bytes, 0, cpu_handles[i], 0);
+}</code></pre>
+
+<h2 id="sym-cpu">6.2 CPU 段注册与跨进程映射</h2>
+
+<p>CPU 段的创建使用 CUDA Virtual Memory Management：</p>
+
+<pre><code class="language-cpp">// 1. 创建 NUMA-local CPU 分配
+static cpu_handle_t create_cpu_handle(int64_t num_cpu_bytes) {
+    DeviceContext ctx;
+    auto cpu_prop = ctx.cpu_alloc_prop();  // NUMA-local 属性
+
+    CUmemGenericAllocationHandle handle;
+    cumem_create_with_fallback(&handle, num_cpu_bytes, &cpu_prop);
+
+    // 2. 导出为 POSIX FD（跨进程共享）
+    int fd = -1;
+    cuMemExportToShareableHandle(&fd, handle,
+        CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0);
+
+    return {getpid(), fd};
+}
+
+// 3. 跨进程导入（通过 pidfd_open + pidfd_getfd）
+int pidfd = syscall(SYS_pidfd_open, pid, 0);
+int local_fd = syscall(SYS_pidfd_getfd, pidfd, fd, 0);
+cuMemImportFromShareableHandle(&cpu_handles[i], (void*)(uintptr_t), local_fd, ...);</code></pre>
+
+<div class="hl-blue">
+<p><strong>跨进程内存共享机制</strong>：每个 rank 创建自己的 CPU 段，通过 POSIX file descriptor 导出。其他 rank 通过 Linux pidfd API 获取 FD 并 import 到自己的 VA 空间。这允许 NIC 通过 RDMA 直接访问远端进程的 CPU 内存。</p>
+</div>
+
+<h2 id="sym-engram">6.3 Engram 存储的对称内存语义</h2>
+
+<p>Engram 的"对称内存"含义：</p>
+<ul>
+<li><strong>地址对称</strong>：每个 rank 的 CPU 段在各自 VA 空间中的偏移相同（<code>num_gpu_buffer_bytes + rank_idx * num_cpu_buffer_bytes</code>）</li>
+<li><strong>内容不对称</strong>：每个 rank 的 CPU 段只存储自己的 local entries</li>
+<li><strong>全局可寻址</strong>：通过 <code>ncclWindow_t</code>，任何 rank 可以计算远端 rank 的 CPU 段地址并发起 RDMA Get</li>
+</ul>
+
+<p>Engram 的存储布局（CPU 段内）：</p>
+
+<pre><code>CPU segment for rank r:
+┌────────────────────────────────────────────────────────┐
+│ entry 0  │ entry 1  │ ...  │ entry (num_entries-1)     │
+│ hidden*B │ hidden*B │      │ hidden*B                  │
+└────────────────────────────────────────────────────────┘
+
+// 全局视角（所有 rank 的 CPU 段拼接）:
+┌──────────────┬──────────────┬─────┬──────────────┐
+│ rank 0       │ rank 1       │ ... │ rank N-1     │
+│ entries      │ entries      │     │ entries      │
+└──────────────┴──────────────┴─────┴──────────────┘
+
+// 全局索引 → (rank, local_entry):
+owner_rank = global_idx / num_entries_per_rank
+local_entry = global_idx % num_entries_per_rank</code></pre>
+
+<h1 id="sm-rdma">7. SM 如何调用 RoCE 能力</h1>
+
+<h2 id="sm-mechanism">7.1 "0 SM" 的本质</h2>
+
+<p>Engram 被称为"0 SM"通信，但这需要精确理解：</p>
+
+<div class="key-callout">
+<p><strong>"0 SM" 的准确含义</strong>：Engram 的 RDMA Get 操作<strong>不长期占用 SM</strong>。kernel 启动后，SM 只执行少量指令（计算地址、发起 RDMA doorbell），然后 kernel 结束。RDMA 数据传输由 NIC 异步完成，无需 SM 参与。这与传统通信 kernel（如 NCCL）需要 SM 持续参与数据搬运完全不同。</p>
+</div>
+
+<h2 id="sm-gin-api">7.2 NCCL Gin GPU-Initiated API</h2>
+
+<p>SM 通过 NCCL Gin 的 GPU 端 API 直接操作 RDMA：</p>
+
+<pre><code class="language-cpp">// 1. 构造 Gin handle（绑定到特定 QP）
+const auto gin = handle::NCCLGin(nccl_dev_comm, nccl_window, qp_idx,
+                                  NCCL_GIN_RESOURCE_SHARING_CTA);
+
+// 2. 发起 RDMA Get（GPU 指令，直接写 NIC doorbell）
+gin.get&lt;team_t, ncclCoopThread, ncclGin_SegmentMixed&gt;(
+    src_ptr, dst_ptr, size, peer_idx, options);
+
+// 3. Flush（ring doorbell）
+gin.flush_async&lt;team_t, ncclCoopThread&gt;(peer_idx, request_ptr);
+
+// 4. Wait（轮询 completion）
+gin.wait(last_gin_req);</code></pre>
+
+<p>这些 API 在 GPU kernel 内执行，直接操作 NIC 的 doorbell register，绕过 CPU 和 NIC driver。</p>
+
+<h2 id="sm-actual">7.3 实际 SM 占用分析</h2>
+
+<p>虽然称为"0 SM"，但实际仍有短暂占用：</p>
+
+<table>
+<tr><th>阶段</th><th>SM 占用</th><th>持续时间</th><th>说明</th></tr>
+<tr><td>engram_fetch kernel</td><td>num_qps 个 block</td><td>~μs 级</td><td>计算地址 + 发起 RDMA</td></tr>
+<tr><td>engram_fetch_wait kernel</td><td>num_qps 个 block</td><td>等待 RDMA 完成</td><td>轮询 completion</td></tr>
+<tr><td>数据传输</td><td>0 SM</td><td>取决于数据量</td><td>NIC DMA 异步完成</td></tr>
+</table>
+
+<div class="hl-amber">
+<p><strong>实际占用</strong>：<code>engram_fetch</code> kernel 使用 <code>__launch_bounds__(1024, 1)</code>，每个 QP 一个 block（1024 threads）。对于 H100（132 SM），如果 num_qps=132，则短暂占用全部 SM，但 kernel 执行时间极短（微秒级）。wait kernel 类似。真正的数据传输期间 SM 完全空闲。</p>
+</div>
+
+<h1 id="deployment">8. Engram 部署模型</h1>
+
+<h2 id="deploy-colo">8.1 与模型共部署</h2>
+
+<p>当前 Engram 的实现是<strong>与模型共部署</strong>的：</p>
+
+<pre><code class="language-python"># 模型进程内创建 ElasticBuffer（包含 Engram 支持）
+buffer = deep_ep.ElasticBuffer(
+    group,
+    num_bytes=num_gpu_bytes + num_cpu_bytes,
+    num_cpu_bytes=num_cpu_bytes,  # CPU 段用于 Engram
+    ...)
+
+# 模型推理/训练中使用 Engram
+# Prefill 节点：写入 KV Cache 到 Engram
+buffer.engram_write(kv_cache)
+
+# Decode 节点：从 Engram 读取远端 KV
+data, _ = buffer.engram_fetch(indices)()</code></pre>
+
+<p>共部署的特点：</p>
+<ul>
+<li>ElasticBuffer 与模型在同一进程、同一 GPU</li>
+<li>对称内存窗口由 NCCL communicator 管理</li>
+<li>Engram 的 CPU 段与模型的 GPU buffer 共享同一 VA 空间</li>
+<li>无需跨进程通信，直接函数调用</li>
+</ul>
+
+<h2 id="deploy-buffer">8.2 ElasticBuffer 生命周期</h2>
+
+<pre><code>
+初始化:
+  1. 创建 NCCL communicator (ProcessGroup)
+  2. 计算 buffer 大小 (GPU + CPU)
+  3. 创建 HybridElasticSymmetricMemory
+     - Reserve VA space
+     - Map GPU segment (front)
+     - Import + map CPU segments from all scale-up ranks
+  4. 初始化 workspace (barrier 等)
+
+使用:
+  - engram_write(): GPU tensor → CPU 段 (cudaMemcpyAsync)
+  - engram_fetch(): 发起 RDMA Get → 返回 hook
+  - hook(): 等待 RDMA 完成 → 返回数据
+
+销毁:
+  - barrier() 确保所有操作完成
+  - 释放 host workspace
+  - 销毁 NCCL symmetric memory context
+  - Unmap + release GPU/CPU segments
+  - Free VA space</code></pre>
+
+<h2 id="deploy-standalone">8.3 独立部署可行性分析</h2>
+
+<p>Engram 能否作为独立服务部署（类似 KV Cache 池化）？</p>
+
+<table>
+<tr><th>部署模式</th><th>当前状态</th><th>可行性</th><th>挑战</th></tr>
+<tr><td>与模型共部署</td><td>✅ 当前实现</td><td>完全支持</td><td>无</td></tr>
+<tr><td>独立进程（同 GPU）</td><td>❌ 未实现</td><td>可行但复杂</td><td>需要 IPC 机制传递 indices</td></tr>
+<tr><td>独立 GPU（分离式）</td><td>❌ 未实现</td><td>理论上可行</td><td>需要独立 NCCL group</td></tr>
+<tr><td>CPU-only 节点</td><td>❌ 不支持</td><td>需要重新设计</td><td>Engram 需要 GPU 发起 RDMA</td></tr>
+</table>
+
+<div class="key-callout">
+<p><strong>独立部署的关键障碍</strong>：</p>
+<ol>
+<li><strong>NCCL Communicator 绑定</strong>：Engram 依赖 NCCL communicator 管理对称内存窗口，独立部署需要独立的 NCCL group</li>
+<li><strong>地址空间隔离</strong>：<code>engram_fetch</code> 直接在 GPU kernel 内计算远端地址，独立进程需要跨进程 VA 映射</li>
+<li><strong>同步机制</strong>：当前使用 <code>dist.barrier()</code> 进行 CPU 同步，独立部署需要替代同步方案</li>
+<li><strong>内存注册</strong>：CPU 段的跨进程共享依赖 POSIX FD + pidfd，独立部署需要额外的服务发现机制</li>
+</ol>
+</div>
+
+<h1 id="testing">9. 测试方法</h1>
+
+<h2 id="test-correctness">9.1 正确性验证</h2>
+
+<p>测试代码在 <span class="file-ref">tests/elastic/test_engram.py</span>：</p>
+
+<pre><code class="language-python">@torch.inference_mode()
+def test(local_rank, num_local_ranks, args):
+    rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
+
+    # 1. 创建 buffer
+    buffer = deep_ep.ElasticBuffer(group, ...)
+
+    # 2. 写入本地数据
+    local_bf16 = torch.randn((num_entries, hidden), dtype=torch.bfloat16)
+    buffer.engram_write(local_bf16)
+
+    # 3. 生成随机 indices
+    indices = torch.randint(0, num_ranks * num_entries, (num_tokens, num_entries_per_token))
+
+    # 4. 正确性检查：与 all-gather 结果对比
+    global_storage = torch.empty((num_ranks * num_entries, hidden), ...)
+    dist.all_gather_into_tensor(global_storage, local_storage, group)
+    ref_data = global_storage[indices.view(-1)].view(num_tokens, -1)
+
+    data, _ = buffer.engram_fetch(indices)()
+    assert torch.equal(ref_data, data), 'data mismatch'</code></pre>
+
+<p>正确性验证策略：</p>
+<ul>
+<li>使用 <code>dist.all_gather_into_tensor</code> 获取全局数据作为 reference</li>
+<li>对比 Engram fetch 结果与 reference 是否 bitwise identical</li>
+<li>FP8 模式下额外验证 scaling factor 一致性</li>
+</ul>
+
+<h2 id="test-perf">9.2 性能基准</h2>
+
+<pre><code class="language-python"># 性能测量
+issue_t, wait_t = bench_kineto(
+    fetch_and_wait,
+    kernel_names=('engram_fetch_impl', 'engram_fetch_wait_impl'),
+    barrier_comm_profiling=True,
+    barrier=buffer.barrier)
+
+# 计算吞吐
+mpps = num_tokens * num_entries_per_token / (issue_t + wait_t) / 1e6  # MPPS
+gb_s = num_fetched_bytes / (issue_t + wait_t) / 1e9  # GB/s</code></pre>
+
+<p>性能指标：</p>
+<ul>
+<li><strong>issue time</strong>：从发起 RDMA 到 kernel 结束的时间</li>
+<li><strong>wait time</strong>：从 wait 开始到所有 RDMA 完成的时间</li>
+<li><strong>MPPS</strong>: Million Packets Per Second（百万次查表/秒）</li>
+<li><strong>GB/s</strong>：有效带宽</li>
+</ul>
+
+<h2 id="test-params">9.3 参数空间</h2>
+
+<table>
+<tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+<tr><td>num_processes</td><td>4</td><td>测试进程数</td></tr>
+<tr><td>num_qps</td><td>0 (= max)</td><td>QP 数量（0 = 全部 SM）</td></tr>
+<tr><td>num_entries</td><td>524288</td><td>每个 rank 的 entry 数</td></tr>
+<tr><td>hidden</td><td>128</td><td>每个 entry 的 hidden dim</td></tr>
+<tr><td>num_tokens</td><td>512</td><td>每次 fetch 的 token 数</td></tr>
+<tr><td>num_entries_per_token</td><td>24</td><td>每个 token 查表的 entry 数</td></tr>
+<tr><td>use_fp8</td><td>False</td><td>是否使用 FP8 存储</td></tr>
+<tr><td>allow_hybrid_mode</td><td>False</td><td>是否启用 hybrid 模式</td></tr>
+</table>
+
+<h1 id="conclusion">10. 总结与设计洞察</h1>
+
+<h3>核心设计原则</h3>
+
+<ol>
+<li><strong>GPU-Initiated Everything</strong>：从地址计算到 RDMA doorbell，全部在 GPU kernel 内完成，消除 CPU 瓶颈</li>
+<li><strong>对称内存抽象</strong>：通过 CUDA Virtual Memory Management 将远端 CPU 内存映射到本地 VA，实现位置透明的查表</li>
+<li><strong>QP 并行化</strong>：每个 SM 一个 QP，warp 级协作，最大化 RDMA 并发</li>
+<li><strong>延迟执行</strong>：fetch 返回 callable，支持通信-计算 overlap</li>
+<li><strong>FP8 优化</strong>：数据走 RDMA，scaling factor 本地冗余，避免小数据传输</li>
+</ol>
+
+<h3>与 DeepEP 其他原语的关系</h3>
+
+<table>
+<tr><th>原语</th><th>SM 占用</th><th>通信方向</th><th>使用场景</th></tr>
+<tr><td>Dispatch/Combine</td><td>4-64 SM</td><td>All-to-all</td><td>MoE EP 通信</td></tr>
+<tr><td>PP Send/Recv</td><td>0 SM</td><td>Point-to-point</td><td>Pipeline Parallelism</td></tr>
+<tr><td>AGRS</td><td>0 SM (Copy Engine)</td><td>All-gather</td><td>权重同步</td></tr>
+<tr><td><b>Engram</b></td><td><b>0 SM (瞬时)</b></td><td><b>Remote read</b></td><td><b>KV Cache 远程访问</b></td></tr>
+</table>
+
+<h3>局限与展望</h3>
+
+<ul>
+<li><strong>只支持 read</strong>：当前 Engram 只支持远程读取（Get），不支持远程写入</li>
+<li><strong>CPU 段依赖</strong>：Engram 存储必须在 CPU 物理内存，无法直接存储在远端 GPU VRAM</li>
+<li><strong>RDMA 路径唯一</strong>：即使目标在同一 NVLink 域，仍然走 RDMA（无法利用 NVLink 的 GPU-to-GPU 带宽）</li>
+<li><strong>实验性质</strong>：API 标记为 Experimental，接口可能变化</li>
+<li><strong>未来方向</strong>：支持 GPU VRAM 直接注册（绕过 CPU 段）、支持 write 原语、与 Disaggregated Inference 框架集成</li>
+</ul>
+
+<h1 id="references">References</h1>
+
+<table>
+<tr><th>文件</th><th>路径</th><th>说明</th></tr>
+<tr><td>Python API</td><td><code>deep_ep/buffers/elastic.py</code> (L409-604)</td><td>Engram Python 接口</td></tr>
+<tr><td>C++ Runtime</td><td><code>csrc/elastic/buffer.hpp</code> (L210-325)</td><td>engram_write / engram_fetch 实现</td></tr>
+<tr><td>CUDA Kernel (Fetch)</td><td><code>deep_ep/include/deep_ep/impls/engram_fetch.cuh</code></td><td>RDMA Get kernel</td></tr>
+<tr><td>CUDA Kernel (Wait)</td><td><code>deep_ep/include/deep_ep/impls/engram_fetch_wait.cuh</code></td><td>RDMA wait kernel</td></tr>
+<tr><td>JIT Runtime</td><td><code>csrc/kernels/elastic/engram.hpp</code></td><td>模板代码生成与 launch</td></tr>
+<tr><td>Symmetric Memory</td><td><code>csrc/kernels/backend/symmetric.hpp</code> (L191-309)</td><td>HybridElasticSymmetricMemory</td></tr>
+<tr><td>Comm Utils</td><td><code>deep_ep/include/deep_ep/common/comm.cuh</code></td><td>Gin barrier / QP mode</td></tr>
+<tr><td>Test</td><td><code>tests/elastic/test_engram.py</code></td><td>正确性 + 性能测试</td></tr>
+<tr><td>Indexing</td><td><code>csrc/indexing/main.cu</code></td><td>Kernel 实例化入口</td></tr>
+</table>
+
+<p style="margin-top:2em;text-align:center;color:var(--ink-mute);font-size:.85em">— Engram 架构深潜 · DeepEP v2.1.0 源码分析 · backyes.github.io/deepepv2 —</p>
+
+</article>
+</div>
+</div>
+</body>
+</html>
