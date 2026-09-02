@@ -37,22 +37,11 @@
 <div class="article-layout">
   <aside class="toc-sidebar">
     <div class="toc"><div class="toc-title">Contents</div><ul><li><a href="#thesis" class="toc-h2">Thesis</a></li>
-<li><a href="#1-what-bam-actually-built" class="toc-h2">1. What BaM Actually Built</a></li>
-<li><a href="#11-tested-configuration" class="toc-h3">1.1 Tested Configuration</a></li>
-<li><a href="#2-the-two-pillars-of-bams-cost-argument" class="toc-h2">2. The Two Pillars of BaM's Cost Argument</a></li>
-<li><a href="#pillar-①-capacity-cost-gb" class="toc-h3">Pillar ①: Capacity Cost ($/GB)</a></li>
-<li><a href="#pillar-②-performance-efficiency-iops-delivered-vs-" class="toc-h3">Pillar ②: Performance Efficiency (IOPS Delivered vs. IOPS Possible)</a></li>
-<li><a href="#3-the-logical-gap-where-①-②-③" class="toc-h2">3. The Logical Gap: Where ① × ② ≠ ③</a></li>
-<li><a href="#31-the-core-problem-drams-iops-is-free" class="toc-h3">3.1 The Core Problem: DRAM's IOPS Is "Free"</a></li>
-<li><a href="#32-the-two-cost-curves" class="toc-h3">3.2 The Two Cost Curves</a></li>
-<li><a href="#4-the-physical-constraints-that-dont-appear-at-10" class="toc-h2">4. The Physical Constraints That Don't Appear at ×10</a></li>
-<li><a href="#41-pcie-lane-budget" class="toc-h3">4.1 PCIe Lane Budget</a></li>
-<li><a href="#42-chassis-and-power" class="toc-h3">4.2 Chassis and Power</a></li>
-<li><a href="#43-the-optane-escape-hatch-shrinks" class="toc-h3">4.3 The Optane Escape Hatch Shrinks</a></li>
-<li><a href="#5-what-the-paper-would-need-to-show" class="toc-h2">5. What the Paper Would Need to Show</a></li>
-<li><a href="#6-when-does-this-gap-actually-matter" class="toc-h2">6. When Does This Gap Actually Matter?</a></li>
-<li><a href="#7-the-deeper-lesson-gb-is-the-wrong-metric-for-sto" class="toc-h2">7. The Deeper Lesson: $/GB Is the Wrong Metric for Storage-Class Memory</a></li>
-<li><a href="#8-conclusion" class="toc-h2">8. Conclusion</a></li>
+<li><a href="#1-what-bam-built" class="toc-h2">1. What BaM Built</a></li>
+<li><a href="#2-the-cost-argument-two-pillars" class="toc-h2">2. The Cost Argument — Two Pillars</a></li>
+<li><a href="#3-the-gap-①-②-system-level-cost-advantage" class="toc-h2">3. The Gap: ① + ② ≠ System-Level Cost Advantage</a></li>
+<li><a href="#4-what-happens-at-scale" class="toc-h2">4. What Happens at Scale</a></li>
+<li><a href="#5-the-bottom-line" class="toc-h2">5. The Bottom Line</a></li>
 <li><a href="#references" class="toc-h2">References</a></li></ul></div>
   </aside>
   <article class="article">
@@ -61,128 +50,44 @@
     <div class="meta"><span>📅 2026-09-02</span><div><span class="ptag">BaM</span><span class="ptag">GPU-Initiated-Storage</span><span class="ptag">GDS</span><span class="ptag">SSD</span><span class="ptag">IOPS</span><span class="ptag">Cost-Analysis</span><span class="ptag">Memory-Wall</span><span class="ptag">PCIe</span><span class="ptag">Optane</span><span class="ptag">System-Architecture</span></div></div>
     <div class="article-body">
 <h2 id="thesis">Thesis</h2>
-<p><strong>BaM's cost advantage is real within its tested envelope — but the paper proves a $/GB claim and sells it as a $/IOPS conclusion. The gap between these two metrics only widens as IOPS demand scales, and that scaling behavior is precisely what the paper leaves unexamined.</strong></p>
-<blockquote><p>BaM (Big accelerator Memory) lets GPU threads bypass the CPU entirely to initiate storage I/O against SSDs — a clean architectural idea with impressive engineering. Its cost claim — <mark>4.4×~21.8× cost advantage</mark> over pure DRAM — has been widely cited. This post does not argue that claim is <em>wrong</em>. It argues the claim is <em>narrower than it sounds</em>, and the jump from "measured at 10 SSDs" to "system-level cost advantage" skips a question that matters most for the people who would push BaM-style architectures to their limit: <mark>what happens to that ratio when you need 50 or 100 SSDs' worth of IOPS?</mark></p></blockquote>
+<p><strong>BaM proves a $/GB claim and sells it as a system-level cost conclusion. The gap between these two metrics only widens as IOPS demand scales — and that scaling behavior is what the paper leaves unexamined.</strong></p>
+<blockquote><p>BaM (Big accelerator Memory) lets GPU threads bypass the CPU to initiate storage I/O directly against SSDs. Its cost claim — <mark>4.4×~21.8× cost advantage</mark> over pure DRAM — has been widely cited. This post does not argue the claim is <em>wrong</em>. It argues the claim is <mark>narrower than it sounds</mark>: the jump from "measured at 10 SSDs" to "system-level cost advantage" skips a question that matters when you push BaM-style architectures to their limit.</p></blockquote>
 <hr>
-<h2 id="1-what-bam-actually-built">1. What BaM Actually Built</h2>
-<p>BaM's core idea is straightforward: GPU threads issue storage requests directly to SSDs via PCIe, without CPU mediation in the hot path. The software stack handles:</p>
-<table><thead><tr><th>Component</th><th>Mechanism</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><strong>Ticket allocation</strong></td><td>GPU-managed circular buffer with producer/consumer indices</td><td>Ordering and concurrency control without CPU involvement</td></tr>
-<tr><td><strong>Mark bitmap</strong></td><td>Per-block completion tracking</td><td>Fine-grained I/O completion detection</td></tr>
-<tr><td><strong>Doorbell coalescing</strong></td><td>Batched MMIO writes to SSD submission queues</td><td>Amortize PCIe transaction overhead</td></tr>
-<tr><td><strong>Request batching</strong></td><td>GPU threads aggregate small requests into larger SSD commands</td><td>Approach SSD peak efficiency (larger queue depths)</td></tr>
-</tbody></table>
-<p>The result: BaM achieves <mark>~90% PCIe bandwidth utilization</mark> on its tested SSD configurations. This is genuine systems engineering — getting within 10% of theoretical PCIe throughput from a GPU-initiated storage stack is not trivial.</p>
-<h3 id="11-tested-configuration">1.1 Tested Configuration</h3>
-<table><thead><tr><th>Parameter</th><th>BaM's Setup</th></tr></thead><tbody>
-<tr><td><strong>GPU</strong></td><td>NVIDIA A100 (40/80 GB HBM)</td></tr>
-<tr><td><strong>Optane SSDs</strong></td><td>Up to ×10 (Intel P5800X, PCIe 4.0)</td></tr>
-<tr><td><strong>Consumer NVMe</strong></td><td>Up to ×4 (Samsung 980 Pro or similar)</td></tr>
-<tr><td><strong>Workloads</strong></td><td>Graph analytics (BFS, SSP), recommendation embedding lookups, data analytics</td></tr>
-<tr><td><strong>Dataset scale</strong></td><td>Exceeds DRAM capacity — the entire point of using SSDs</td></tr>
-</tbody></table>
+<h2 id="1-what-bam-built">1. What BaM Built</h2>
+<p>BaM's idea: GPU threads issue storage requests directly to SSDs via PCIe, no CPU in the hot path. Through careful queue design (ticket allocation, mark bitmap, doorbell coalescing), BaM achieves <mark>~90% PCIe bandwidth utilization</mark> — genuine systems engineering.</p>
+<p><strong>Tested setup</strong>: NVIDIA A100, up to ×10 Intel Optane SSDs or ×4 consumer NVMe, running graph analytics (BFS, SSP), recommendation embedding lookups, and data analytics.</p>
 <hr>
-<h2 id="2-the-two-pillars-of-bams-cost-argument">2. The Two Pillars of BaM's Cost Argument</h2>
-<p>BaM's "× cost advantage" rests on two sub-claims, each individually defensible:</p>
-<h3 id="pillar-①-capacity-cost-gb">Pillar ①: Capacity Cost ($/GB)</h3>
-<p>This is the easy one. The paper presents a $/GB comparison:</p>
-<table><thead><tr><th>Media</th><th>Approximate $/GB (2021–2022 pricing)</th><th>Ratio vs DRAM</th></tr></thead><tbody>
-<tr><td><strong>DRAM (HBM/DDR)</strong></td><td>~$15–30/GB</td><td>1× (baseline)</td></tr>
-<tr><td><strong>Intel Optane (P5800X)</strong></td><td>~$3–5/GB</td><td>~5–10× cheaper</td></tr>
-<tr><td><strong>Consumer NVMe (TLC)</strong></td><td>~$0.10–0.20/GB</td><td>~100–200× cheaper</td></tr>
-</tbody></table>
-<p>BaM's reported 4.4×~21.8× advantage reflects a <em>system-level</em> comparison (not raw media cost) — accounting for the fact that BaM needs some DRAM as a cache/buffer layer, and that the comparison is against a DRAM-only system provisioned for the same <em>capacity</em>. The 4.4× end corresponds to Optane (expensive per GB but low-latency), the 21.8× end to consumer NAND (cheap per GB, higher latency).</p>
-<p><strong>This pillar holds.</strong> For workloads whose datasets exceed economically feasible DRAM capacity — BaM targets graph analytics on hundred-billion-edge graphs, recommendation tables with terabyte-scale embeddings, scan-heavy data analytics — SSDs are unambiguously cheaper per GB. No argument here.</p>
-<h3 id="pillar-②-performance-efficiency-iops-delivered-vs-">Pillar ②: Performance Efficiency (IOPS Delivered vs. IOPS Possible)</h3>
-<p>This is where BaM's engineering shines. The paper demonstrates that its software stack can drive SSDs toward their hardware limits:</p>
-<table><thead><tr><th>Metric</th><th>BaM's Achievement</th></tr></thead><tbody>
-<tr><td><strong>PCIe bandwidth utilization</strong></td><td>~90% of theoretical</td></tr>
-<tr><td><strong>Per-SSD IOPS</strong></td><td>Near vendor-spec peak (with sufficient queue depth)</td></tr>
-<tr><td><strong>CPU offload</strong></td><td>CPU not in hot path — free for compute</td></tr>
-</tbody></table>
-<p>The key insight: traditional CPU-initiated storage stacks waste SSD capability through software overhead (context switches, kernel transitions, descriptor setup). BaM's GPU-initiated path eliminates these bottlenecks, letting the SSDs actually <em>do what they're capable of</em>.</p>
-<p><strong>This pillar also holds</strong> — within the tested configuration. BaM genuinely extracts near-peak IOPS from each SSD.</p>
+<h2 id="2-the-cost-argument-two-pillars">2. The Cost Argument — Two Pillars</h2>
+<p>BaM's "× cost advantage" combines two claims:</p>
+<p><strong>① Capacity cost ($/GB)</strong>: SSD is unambiguously cheaper per GB than DRAM. Consumer NAND is ~100× cheaper; Optane ~5–10× cheaper. For datasets exceeding DRAM capacity — BaM's target — this is true.</p>
+<p><strong>② Performance efficiency</strong>: BaM's software stack drives SSDs toward their hardware limits. ~90% PCIe utilization, near peak-IOPS per drive. Also true — at the tested scale.</p>
 <hr>
-<h2 id="3-the-logical-gap-where-①-②-③">3. The Logical Gap: Where ① × ② ≠ ③</h2>
-<p>The paper's implicit argument structure is:</p>
-<pre><code>① Capacity cost advantage (SSD cheaper per GB)     ✓ Proven at tested scale<br>② Performance loss可控 (software stack near-optimal) ✓ Proven at tested scale<br>─────────────────────────────────────────────────<br>③ ∴ System-level cost advantage = several ×         ?</code></pre>
-<p>The leap from ① and ② to ③ assumes that the <em>cost per IOPS</em> scales linearly with the <em>cost per GB</em> — that the ratio you measure at 10 SSDs holds at 50 or 100 SSDs. This assumption is never tested.</p>
-<h3 id="31-the-core-problem-drams-iops-is-free">3.1 The Core Problem: DRAM's IOPS Is "Free"</h3>
-<p>Here is the asymmetry the paper does not address:</p>
-<pre><code>DRAM:  Pay for capacity → IOPS comes along at zero marginal cost<br>       (DRAM bandwidth is ~500-1000 GB/s per GPU — any byte is equally accessible)<br><br>SSD:   Pay for capacity → IOPS is FIXED per drive<br>       To get 2× IOPS → need 2× SSDs → 2× $ + 2× PCIe lanes + 2× physical slots</code></pre>
-<p>DRAM's IOPS is a <em>byproduct of its capacity</em> — the same HBM that stores your data also delivers TB/s of bandwidth. You do not buy DRAM for capacity and then separately provision IOPS. But with SSDs, capacity and IOPS are <em>independent cost dimensions</em>: a 4 TB consumer SSD might give you 100K IOPS — if you need 1M IOPS, you need 10 of them, and you now have 40 TB you may not need.</p>
-<h3 id="32-the-two-cost-curves">3.2 The Two Cost Curves</h3>
-<pre><code>Cost<br> │<br> │                          ╱ SSD ($/IOPS — linear in drive count)<br> │                        ╱<br> │                      ╱    ····· DRAM ($/IOPS — near-zero marginal)<br> │                    ╱   ···<br> │                  ╱  ···<br> │                ╱ ···<br> │              ╱···<br> │··········· ╱<br> │          ╱<br> │        ╱<br> │──────╱──────────────────────────────── IOPS Demand<br>       Low          Medium         High<br>       (BaM tested)  (untested)     (untested)</code></pre>
-<p>At the <em>low-to-medium</em> IOPS range BaM tested (10 Optane or 4 consumer SSDs), the SSD cost curve sits well below DRAM. The 4.4×~21.8× advantage is real <em>in this region</em>.</p>
-<p>But the curves have different shapes:</p>
+<h2 id="3-the-gap-①-②-system-level-cost-advantage">3. The Gap: ① + ② ≠ System-Level Cost Advantage</h2>
+<p>The paper's logic: "SSD cheaper per GB" + "performance loss可控" → "system costs several × less."</p>
+<p>The missing step: <mark>cost per GB and cost per IOPS are two different curves.</mark></p>
+<p><strong>DRAM's IOPS is "free"</strong> — buy capacity, get TB/s bandwidth at zero marginal cost. The same HBM that stores your data also serves it.</p>
+<p><strong>SSD's IOPS is fixed per drive</strong> — need 2× IOPS? Buy 2× SSDs, 2× PCIe lanes, 2× physical slots. Capacity and IOPS are independent cost dimensions.</p>
+<p>At 10 SSDs (BaM's tested scale), the SSD cost curve sits well below DRAM. But the curves have different shapes: DRAM $/IOPS is flat, SSD $/IOPS is linear in drive count. <mark>The paper measures at one point on the curve and extrapolates to a universal claim.</mark></p>
+<hr>
+<h2 id="4-what-happens-at-scale">4. What Happens at Scale</h2>
+<p>At 10 SSDs, several costs are invisible. At 50–100 SSDs, they dominate:</p>
 <ul>
-<li><strong>DRAM $/IOPS</strong>: essentially flat — you already paid for bandwidth when you bought capacity</li>
-<li><strong>SSD $/IOPS</strong>: linear — each additional 100K IOPS costs one more SSD + PCIe lane + slot + power</li>
+<li><strong>PCIe lanes</strong>: 10 SSDs need ~40 lanes (fits). 50 SSDs need ~200 (exceeds platform — needs external switches, $$).</li>
+<li><strong>Chassis and power</strong>: 10 SSDs fit in 2U. 100 SSDs need dedicated storage enclosures, ~1500W, storage-grade cooling.</li>
+<li><strong>The Optane escape hatch</strong>: When consumer NAND can't deliver enough IOPS, move to Optane. But Optane's cost advantage over DRAM shrinks from ~20× (NAND) to ~4.4×. <mark>The more IOPS you need, the less "cheap" SSD becomes.</mark></li>
 </ul>
-<p>At some IOPS demand — the paper never identifies where — the SSD line crosses above where DRAM would be. Not because SSDs got more expensive, but because you're paying for IOPS you could have gotten "for free" with a DRAM-only system of equivalent bandwidth.</p>
+<p>None of this appears in the paper's $/GB table.</p>
 <hr>
-<h2 id="4-the-physical-constraints-that-dont-appear-at-10">4. The Physical Constraints That Don't Appear at ×10</h2>
-<p>At 10 SSDs, several costs are invisible or negligible. They become dominant at scale:</p>
-<h3 id="41-pcie-lane-budget">4.1 PCIe Lane Budget</h3>
-<table><thead><tr><th>Resource</th><th>Available (typical H100/A100 node)</th><th>Consumed by 10× SSDs</th><th>Consumed by 50× SSDs</th></tr></thead><tbody>
-<tr><td><strong>PCIe lanes (CPU)</strong></td><td>128 (×16 for GPU) + 64 (chipset)</td><td>~40 (×4 per SSD)</td><td>~200 — <strong>exceeds platform</strong></td></tr>
-<tr><td><strong>PCIe switch ports</strong></td><td>Limited by topology</td><td>Fits</td><td>Needs external switches</td></tr>
-<tr><td><strong>GPU PCIe root complex</strong></td><td>16 lanes (typically all to GPU NIC)</td><td>N/A (SSD via CPU)</td><td>N/A</td></tr>
-</tbody></table>
-<p>At 10 SSDs, you can route them through the CPU's PCIe root complex and a couple of switches. At 50–100 SSDs, you need PCIe switches ($$), riser cards, external chassis — each adding cost, latency, and failure points that the $/GB table does not capture.</p>
-<h3 id="42-chassis-and-power">4.2 Chassis and Power</h3>
-<table><thead><tr><th>Factor</th><th>10 SSDs</th><th>50 SSDs</th><th>100 SSDs</th></tr></thead><tbody>
-<tr><td><strong>Drive bays</strong></td><td>Fits in 2U server</td><td>Needs 4U+ or JBOD</td><td>Needs dedicated storage enclosure</td></tr>
-<tr><td><strong>Power (~15W/active SSD)</strong></td><td>~150W</td><td>~750W</td><td>~1500W</td></tr>
-<tr><td><strong>Cooling</strong></td><td>Standard server airflow</td><td>Enhanced cooling needed</td><td>Storage-grade thermal design</td></tr>
-<tr><td><strong>Cost impact</strong></td><td>Negligible</td><td>Significant (JBOD $, power $, cooling $)</td><td>Dominates TCO</td></tr>
-</tbody></table>
-<h3 id="43-the-optane-escape-hatch-shrinks">4.3 The Optane Escape Hatch Shrinks</h3>
-<p>When IOPS demand exceeds what consumer NAND can deliver per dollar, the natural move is to Optane (or Z-NAND) — lower latency, higher IOPS per drive, fewer drives needed. But:</p>
-<table><thead><tr><th>Media</th><th>$/GB Ratio vs DRAM</th><th>$/IOPS Ratio vs DRAM</th></tr></thead><tbody>
-<tr><td><strong>Consumer NAND</strong></td><td>~100× cheaper</td><td>~20× cheaper (BaM's 21.8×)</td></tr>
-<tr><td><strong>Optane</strong></td><td>~5–10× cheaper</td><td>~4× cheaper (BaM's 4.4×)</td></tr>
-</tbody></table>
-<p>The cost advantage <em>compresses by 5×</em> when you move from the capacity-optimized to the IOPS-optimized media. And that compression is a signal: <mark>the $/GB and $/IOPS curves diverge, and the paper's headline number tracks the more favorable of the two.</mark></p>
-<hr>
-<h2 id="5-what-the-paper-would-need-to-show">5. What the Paper Would Need to Show</h2>
-<p>This critique does not demand that BaM be wrong — it demands that the <em>scope</em> of the claim match the <em>scope</em> of the evidence. To support a general "× cost advantage" claim, the paper would need:</p>
-<table><thead><tr><th>Missing Analysis</th><th>Why It Matters</th></tr></thead><tbody>
-<tr><td><strong>$/IOPS curve across drive counts</strong></td><td>Show the cost ratio at 10, 20, 50, 100 SSDs — does it stay flat or bend?</td></tr>
-<tr><td><strong>PCIe topology cost model</strong></td><td>Include switch/riser/enclosure costs at scale</td></tr>
-<tr><td><strong>Break-even IOPS analysis</strong></td><td>At what IOPS demand does DRAM become cheaper? (Answer: probably very high, but "very high" ≠ "infinity")</td></tr>
-<tr><td><strong>Workload IOPS requirement characterization</strong></td><td>What IOPS does each target workload actually need? Does it stay within the flat region?</td></tr>
-<tr><td><strong>Sensitivity to SSD generation</strong></td><td>PCIe 5.0 SSDs double per-drive IOPS — does this help or hurt the ratio?</td></tr>
-</tbody></table>
-<p>Without these, the 4.4×~21.8× number is best read as: <em>"at the specific IOPS demand level of our tested workloads, with our specific SSD configuration, under our specific assumptions."</em> That is a valid and useful result — it is just not the sweeping claim the abstract implies.</p>
-<hr>
-<h2 id="6-when-does-this-gap-actually-matter">6. When Does This Gap Actually Matter?</h2>
-<p>For fairness, let me note when the gap <em>doesn't</em> matter:</p>
-<table><thead><tr><th>Scenario</th><th>BaM's Claim Holds?</th><th>Why</th></tr></thead><tbody>
-<tr><td><strong>Dataset >> DRAM, IOPS demand moderate</strong></td><td>✓ Yes</td><td>This is BaM's sweet spot — exactly what was tested</td></tr>
-<tr><td><strong>Graph analytics on 100B-edge graphs</strong></td><td>✓ Likely</td><td>BFS/SSSP are bandwidth-bound, not IOPS-bound at extreme scale</td></tr>
-<tr><td><strong>Recommendation embedding tables</strong></td><td>✓ Likely</td><td>Large capacity, access patterns amenable to caching</td></tr>
-<tr><td><strong>High-frequency trading / real-time inference</strong></td><td>✗ No</td><td>IOPS-bound, latency-sensitive — Optane required, advantage shrinks to 4.4×</td></tr>
-<tr><td><strong>50+ GPU cluster, each needing 1M+ IOPS</strong></td><td>✗ Unclear</td><td>Aggregate IOPS demand may push beyond tested regime</td></tr>
-</tbody></table>
-<p>The gap matters most for anyone considering BaM-style architectures for <em>IOPS-bound</em> workloads at <em>large scale</em> — precisely the scenario where you'd want to deploy such a system most aggressively.</p>
-<hr>
-<h2 id="7-the-deeper-lesson-gb-is-the-wrong-metric-for-sto">7. The Deeper Lesson: $/GB Is the Wrong Metric for Storage-Class Memory</h2>
-<p>BaM is not alone in this analytical pattern. The entire "storage-class memory" discourse — CXL memory, SSD-as-memory, computational storage — tends to anchor on $/GB because it is the easy number to cite. But for GPU-accelerated workloads:</p>
-<pre><code>The right metric chain:<br><br>  Workload characteristic<br>        │<br>        ▼<br>  What limits throughput? ──→ Capacity? → $/GB matters<br>        │                      IOPS?     → $/IOPS matters<br>        │                      Latency?  → $/access matters<br>        ▼<br>  Provision the bottleneck resource<br>        │<br>        ▼<br>  Compare total cost at equivalent bottleneck performance</code></pre>
-<p>BaM's workloads are <em>capacity-bound</em> (datasets exceed DRAM) — so $/GB is indeed the right primary metric for them. The paper's conclusions are valid for its tested workloads. The problem is one of <em>rhetoric</em>, not <em>results</em>: the abstract's "× cost advantage" reads as a universal claim, when the evidence supports a narrower one.</p>
-<hr>
-<h2 id="8-conclusion">8. Conclusion</h2>
-<p>BaM is a well-engineered system that demonstrates GPU-initiated storage can approach hardware bandwidth limits. Its 4.4×~21.8× cost advantage is real <em>within the tested regime</em> — moderate IOPS demand, 10 or fewer SSDs, capacity-bound workloads.</p>
-<p>The critique is not that BaM is wrong. It is that <mark>the paper proves a point about capacity cost and narrates it as a point about system cost</mark>, skipping the question of how that number behaves when IOPS demand grows beyond the tested envelope. The $/GB curve and the $/IOPS curve are different shapes — and the gap between them is where the real cost analysis lives.</p>
-<p>For practitioners: if your workload looks like BaM's targets (large graph, large embedding table, scan-heavy analytics), the cost advantage is probably real. If you are pushing toward higher IOPS or larger scale, <mark>recompute the ratio at your actual IOPS target</mark> — the answer may be different from 21.8×.</p>
+<h2 id="5-the-bottom-line">5. The Bottom Line</h2>
+<p>BaM is well-engineered. Its 4.4×~21.8× advantage is real <em>within the tested regime</em> — moderate IOPS demand, ≤10 SSDs, capacity-bound workloads.</p>
+<p>But <mark>the paper proves a point about capacity cost and narrates it as a point about system cost.</mark> The $/GB curve and the $/IOPS curve diverge as IOPS demand grows. The paper never measures where.</p>
+<p><strong>For practitioners</strong>: if your workload matches BaM's targets (large graph, large embedding table, scan-heavy analytics), the advantage is real. If you need higher IOPS or larger scale, recompute the ratio at your actual target — the answer may be different from 21.8×.</p>
 <hr>
 <h2 id="references">References</h2>
 <ul>
 <li><strong>BaM Paper</strong>: "GPU-Initiated On-Demand High-Throughput Storage Access in the BaM System Architecture" — Qin et al., MICRO 2022</li>
-<li><strong>Related</strong>: NVIDIA GPUDirect Storage (GDS) — the production-grade realization of GPU-initiated storage I/O</li>
-<li><strong>Related</strong>: Intel Optane P5800X specifications — the low-latency SSD used in BaM's evaluation</li>
-<li><strong>Context</strong>: CXL memory expansion — an alternative approach to the capacity-cost problem that avoids the IOPS-scaling issue entirely</li>
+<li><strong>Related</strong>: NVIDIA GPUDirect Storage (GDS) — production-grade GPU-initiated storage I/O</li>
+<li><strong>Related</strong>: Intel Optane P5800X — the low-latency SSD used in BaM's evaluation</li>
 </ul>
     </div>
   </article>
