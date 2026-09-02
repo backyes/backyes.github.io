@@ -150,9 +150,57 @@
 
 ### 子页面结构标准（参照 UMDK）
 1. 使用 `<link rel="stylesheet" href="shared.css">`（不内联 style）
-2. `article-layout` 网格（TOC 侧边栏 + 主文章区）
+2. `article-layout` 使用 **flexbox** 布局（TOC 侧边栏 + 主文章区）
 3. `toc-sidebar` 自动生成目录（从 h1/h2/h3 提取）
 4. `article-body` 使用 Libre Baskerville serif 字体
+
+### ⚠️ 侧边栏布局关键经验（2026-08-21）
+
+**问题背景**：deepepv2 报告使用 `shared.css`（`display: grid`），长页面点击 TOC 锚点时侧边栏异常。
+
+**根因分析**：
+- `shared.css` 的 `.article-layout` 使用 `display: grid; grid-template-columns: 220px 1fr`
+- 正常 post 的 `main.css` 使用 `display: flex` 模型
+- `position: sticky` 在 grid 布局中对长页面锚点跳转表现不稳定
+
+**正确做法**（覆盖 shared.css 默认值）：
+```css
+/* 在报告的 <style> 中覆盖 */
+.article-layout {
+    display: flex;           /* 不是 grid */
+    gap: 32px;
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 32px;
+}
+.toc-sidebar {
+    flex: 0 0 220px;         /* 固定宽度，不伸缩 */
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;  /* 关键：防止 sticky 被拉伸 */
+    padding: 40px 0;
+    max-height: 100vh;       /* 不是 80vh */
+    overflow-y: auto;
+}
+.article-body {
+    flex: 1;
+    min-width: 0;            /* 防止内容溢出 */
+}
+```
+
+**错误做法（避免）**：
+- ❌ `position: fixed` — 脱离文档流，正文宽度计算异常
+- ❌ `padding-left: 260px` 在正文上 — 与 grid 冲突
+- ❌ 保留 `display: grid` + `scroll-behavior: smooth` — 长页面侧边栏消失
+
+**移动端适配**：
+```css
+@media(max-width:900px){
+    .article-layout{flex-direction:column; padding:0 16px}
+    .toc-sidebar{position:static; flex:none; width:auto; max-height:none;
+                 border-bottom:1px solid var(--line); padding:0 0 16px 0; margin-bottom:24px}
+}
+```
 
 ### 同步配置
 - `sync_reports.sh` 的 `PROJECTS` 数组中，entry 字段指向首页 `index.html` 而非具体报告
@@ -186,6 +234,56 @@
 - **rsync --delete 删除自定义文件**: 源目录没有 index.html 时会被删除 → 将 index.html 放入源目录
 - **rsync 时间戳跳过**: 目标文件时间戳比源文件新时会跳过 → 删除目标文件或强制 rsync
 - **git pull 恢复旧文件**: sync_reports.sh 先 git pull 会恢复刚删除的文件 → 手动 rsync 后直接提交
+- **shared.css 404（严重）**: 报告在子目录（如 `deepepv2/html/`）时，`href="shared.css"` 相对路径指向子目录内的 shared.css。必须将 shared.css 复制到每个子目录：`cp deepepv2/shared.css deepepv2/html/shared.css`。否则所有页面样式丢失（HTTP 404）
+- **scroll-behavior: smooth 长页面问题**: shared.css 设置 `html{scroll-behavior:smooth}`，长页面（>1000行）点击 TOC 锚点时粘性侧边栏会视觉"消失"。修复：在报告 `<style>` 中添加 `html{scroll-behavior:auto}` 覆盖
+
+---
+
+## 任务经验记录
+
+### 2026-08-21: deepepv2 站点重构 + Engram 深度分析报告
+
+#### 任务概述
+- **目标**: 重构 deepepv2 报告站点（参照 UMDK 暖纸色风格），新增 Engram 0 SM RDMA 深度分析报告
+- **产出**: 导航页 restyle + 新报告 `00_deep_ep_engram_architecture_deepdive.html` + 计数修正 46→50
+
+#### 关键改动
+1. **导航页 `deepepv2/html/index.html`**: 旧版 Notion 白底 → UMDK 暖纸色 warm paper 风格
+   - topbar + hero + stat-card + 7 大类别卡片网格 + 演进表 + 阅读路径
+   - 复用 shared.css 设计系统
+2. **新增 Engram 报告**: 11 节完整分析（架构/Gin 交互/RoCE-NVLink/并发/对称内存/SM 调用 RoCE/部署/测试）
+3. **新增 HybridElasticSymmetricMemory 深度专题**: 回答三个核心问题
+   - 为什么要对称架构 → O(1) 全局地址计算
+   - 对称性对单向查表意义 → 无状态路由 + 单向性 + 消除 CPU 查表
+   - 是否跨节点 → **物理本地 + 逻辑全局**（CPU 段 NUMA-local，VA 布局全局对称，RDMA 跨节点访问）
+4. **计数修正**: 旧索引遗漏 file 12，总数 46→49→50（含 Engram 报告）
+
+#### 踩坑与教训
+1. **shared.css 404（严重）**:
+   - 报告在 `deepepv2/html/` 子目录，引用 `href="shared.css"` 相对路径
+   - 文件只在 `deepepv2/shared.css`，子目录没有 → HTTP 404 → 全部页面样式丢失
+   - 修复：`cp deepepv2/shared.css deepepv2/html/shared.css`
+   - **预防**: 新增子目录报告时，必须同时复制 shared.css
+
+2. **侧边栏布局问题（三次修复）**:
+   - v1: `scroll-behavior:smooth` + `position:sticky` → 长页面锚点跳转时侧边栏视觉"消失"
+   - v2: 改为 `position:fixed` → 侧边栏固定但正文宽度异常（脱离文档流）
+   - v3（最终）: 改为 flexbox 模型（对齐 main.css）→ 正常
+   - **教训**: 长页面侧边栏不要用 grid + sticky，用 flexbox + `align-self:flex-start`
+
+3. **报告计数不一致**:
+   - sync_reports.sh 描述写 47，实际 46 → 发现遗漏 file 12
+   - 修正所有计数（inner index + outer index + sync_reports.sh）
+
+#### 有效策略
+1. **Explore agent 并行分析源码**: 用 Explore agent 并行读取 8+ 个源文件，快速收集技术细节
+2. **先写 HTML 再调样式**: 先完成完整内容，再统一修复布局问题
+3. **对比正常页面**: 出问题时对比 `main.css`（正常 post）和 `shared.css`（deepepv2）的差异
+
+#### 方法论沉淀
+- **长页面侧边栏标准模型**: flexbox + `flex:0 0 220px` + `position:sticky` + `align-self:flex-start`
+- **shared.css 部署检查清单**: 子目录报告必须包含 shared.css 副本
+- **站点计数同步原则**: 新增报告后必须同步更新 inner index + outer index + sync_reports.sh 三处计数
 
 ---
 
